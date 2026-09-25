@@ -100,6 +100,15 @@ func (q *Queries) ClearBlockTripIndices(ctx context.Context) error {
 	return err
 }
 
+const clearBookingRules = `-- name: ClearBookingRules :exec
+DELETE FROM booking_rules
+`
+
+func (q *Queries) ClearBookingRules(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearBookingRulesStmt, clearBookingRules)
+	return err
+}
+
 const clearCalendar = `-- name: ClearCalendar :exec
 DELETE FROM calendar
 `
@@ -118,12 +127,75 @@ func (q *Queries) ClearCalendarDates(ctx context.Context) error {
 	return err
 }
 
+const clearFlexStopTimes = `-- name: ClearFlexStopTimes :exec
+DELETE FROM flex_stop_times
+`
+
+func (q *Queries) ClearFlexStopTimes(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearFlexStopTimesStmt, clearFlexStopTimes)
+	return err
+}
+
 const clearFrequencies = `-- name: ClearFrequencies :exec
 DELETE FROM frequencies
 `
 
 func (q *Queries) ClearFrequencies(ctx context.Context) error {
 	_, err := q.exec(ctx, q.clearFrequenciesStmt, clearFrequencies)
+	return err
+}
+
+const clearLocationGroupStops = `-- name: ClearLocationGroupStops :exec
+DELETE FROM location_group_stops
+`
+
+func (q *Queries) ClearLocationGroupStops(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearLocationGroupStopsStmt, clearLocationGroupStops)
+	return err
+}
+
+const clearLocationGroups = `-- name: ClearLocationGroups :exec
+DELETE FROM location_groups
+`
+
+func (q *Queries) ClearLocationGroups(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearLocationGroupsStmt, clearLocationGroups)
+	return err
+}
+
+const clearLocations = `-- name: ClearLocations :exec
+DELETE FROM locations
+`
+
+func (q *Queries) ClearLocations(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearLocationsStmt, clearLocations)
+	return err
+}
+
+const clearOnDemandRules = `-- name: ClearOnDemandRules :exec
+DELETE FROM ondemand_rules
+`
+
+func (q *Queries) ClearOnDemandRules(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearOnDemandRulesStmt, clearOnDemandRules)
+	return err
+}
+
+const clearOnDemandServices = `-- name: ClearOnDemandServices :exec
+DELETE FROM ondemand_services
+`
+
+func (q *Queries) ClearOnDemandServices(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearOnDemandServicesStmt, clearOnDemandServices)
+	return err
+}
+
+const clearOnDemandStopServices = `-- name: ClearOnDemandStopServices :exec
+DELETE FROM ondemand_stop_services
+`
+
+func (q *Queries) ClearOnDemandStopServices(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearOnDemandStopServicesStmt, clearOnDemandStopServices)
 	return err
 }
 
@@ -380,6 +452,58 @@ func (q *Queries) CreateBlockTripIndex(ctx context.Context, arg CreateBlockTripI
 	return id, err
 }
 
+const createBookingRule = `-- name: CreateBookingRule :exec
+
+INSERT INTO booking_rules (
+    id, booking_type, prior_notice_duration_min, prior_notice_duration_max,
+    prior_notice_last_day, prior_notice_last_time, prior_notice_start_day,
+    prior_notice_start_time, prior_notice_service_id, message, pickup_message,
+    drop_off_message, phone_number, info_url, booking_url
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type CreateBookingRuleParams struct {
+	ID                     string
+	BookingType            int64
+	PriorNoticeDurationMin sql.NullInt64
+	PriorNoticeDurationMax sql.NullInt64
+	PriorNoticeLastDay     sql.NullInt64
+	PriorNoticeLastTime    sql.NullInt64
+	PriorNoticeStartDay    sql.NullInt64
+	PriorNoticeStartTime   sql.NullInt64
+	PriorNoticeServiceID   sql.NullString
+	Message                sql.NullString
+	PickupMessage          sql.NullString
+	DropOffMessage         sql.NullString
+	PhoneNumber            sql.NullString
+	InfoUrl                sql.NullString
+	BookingUrl             sql.NullString
+}
+
+// ---------------------------------------------------------------------------
+// GTFS-Flex
+// ---------------------------------------------------------------------------
+func (q *Queries) CreateBookingRule(ctx context.Context, arg CreateBookingRuleParams) error {
+	_, err := q.exec(ctx, q.createBookingRuleStmt, createBookingRule,
+		arg.ID,
+		arg.BookingType,
+		arg.PriorNoticeDurationMin,
+		arg.PriorNoticeDurationMax,
+		arg.PriorNoticeLastDay,
+		arg.PriorNoticeLastTime,
+		arg.PriorNoticeStartDay,
+		arg.PriorNoticeStartTime,
+		arg.PriorNoticeServiceID,
+		arg.Message,
+		arg.PickupMessage,
+		arg.DropOffMessage,
+		arg.PhoneNumber,
+		arg.InfoUrl,
+		arg.BookingUrl,
+	)
+	return err
+}
+
 const createCalendar = `-- name: CreateCalendar :one
 INSERT
 OR REPLACE INTO calendar (
@@ -460,6 +584,49 @@ func (q *Queries) CreateCalendarDate(ctx context.Context, arg CreateCalendarDate
 	return i, err
 }
 
+const createFlexStopTime = `-- name: CreateFlexStopTime :exec
+INSERT INTO flex_stop_times (
+    trip_id, stop_sequence, stop_id, location_id, location_group_id,
+    start_pickup_drop_off_window, end_pickup_drop_off_window, pickup_type, drop_off_type,
+    pickup_booking_rule_id, drop_off_booking_rule_id, safe_duration_factor, safe_duration_offset
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type CreateFlexStopTimeParams struct {
+	TripID                   string
+	StopSequence             int64
+	StopID                   sql.NullString
+	LocationID               sql.NullString
+	LocationGroupID          sql.NullString
+	StartPickupDropOffWindow int64
+	EndPickupDropOffWindow   int64
+	PickupType               int64
+	DropOffType              int64
+	PickupBookingRuleID      sql.NullString
+	DropOffBookingRuleID     sql.NullString
+	SafeDurationFactor       sql.NullFloat64
+	SafeDurationOffset       sql.NullFloat64
+}
+
+func (q *Queries) CreateFlexStopTime(ctx context.Context, arg CreateFlexStopTimeParams) error {
+	_, err := q.exec(ctx, q.createFlexStopTimeStmt, createFlexStopTime,
+		arg.TripID,
+		arg.StopSequence,
+		arg.StopID,
+		arg.LocationID,
+		arg.LocationGroupID,
+		arg.StartPickupDropOffWindow,
+		arg.EndPickupDropOffWindow,
+		arg.PickupType,
+		arg.DropOffType,
+		arg.PickupBookingRuleID,
+		arg.DropOffBookingRuleID,
+		arg.SafeDurationFactor,
+		arg.SafeDurationOffset,
+	)
+	return err
+}
+
 const createFrequency = `-- name: CreateFrequency :exec
 INSERT OR IGNORE INTO frequencies (
     trip_id,
@@ -486,6 +653,152 @@ func (q *Queries) CreateFrequency(ctx context.Context, arg CreateFrequencyParams
 		arg.HeadwaySecs,
 		arg.ExactTimes,
 	)
+	return err
+}
+
+const createLocation = `-- name: CreateLocation :exec
+INSERT INTO locations (
+    id, name, description, geometry, geometry_simplified, min_lat, max_lat, min_lon, max_lon
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type CreateLocationParams struct {
+	ID                 string
+	Name               sql.NullString
+	Description        sql.NullString
+	Geometry           string
+	GeometrySimplified sql.NullString
+	MinLat             float64
+	MaxLat             float64
+	MinLon             float64
+	MaxLon             float64
+}
+
+func (q *Queries) CreateLocation(ctx context.Context, arg CreateLocationParams) error {
+	_, err := q.exec(ctx, q.createLocationStmt, createLocation,
+		arg.ID,
+		arg.Name,
+		arg.Description,
+		arg.Geometry,
+		arg.GeometrySimplified,
+		arg.MinLat,
+		arg.MaxLat,
+		arg.MinLon,
+		arg.MaxLon,
+	)
+	return err
+}
+
+const createLocationGroup = `-- name: CreateLocationGroup :exec
+INSERT INTO location_groups (id, name) VALUES (?, ?)
+`
+
+type CreateLocationGroupParams struct {
+	ID   string
+	Name sql.NullString
+}
+
+func (q *Queries) CreateLocationGroup(ctx context.Context, arg CreateLocationGroupParams) error {
+	_, err := q.exec(ctx, q.createLocationGroupStmt, createLocationGroup, arg.ID, arg.Name)
+	return err
+}
+
+const createLocationGroupStop = `-- name: CreateLocationGroupStop :exec
+INSERT INTO location_group_stops (location_group_id, stop_id) VALUES (?, ?)
+`
+
+type CreateLocationGroupStopParams struct {
+	LocationGroupID string
+	StopID          string
+}
+
+func (q *Queries) CreateLocationGroupStop(ctx context.Context, arg CreateLocationGroupStopParams) error {
+	_, err := q.exec(ctx, q.createLocationGroupStopStmt, createLocationGroupStop, arg.LocationGroupID, arg.StopID)
+	return err
+}
+
+const createOnDemandRule = `-- name: CreateOnDemandRule :exec
+INSERT INTO ondemand_rules (
+    service_id, trip_id, from_id, from_kind, to_id, to_kind,
+    start_pickup_time, end_pickup_time, end_drop_off_time, gtfs_service_id,
+    pickup_type, drop_off_type, pickup_booking_rule_id, drop_off_booking_rule_id,
+    safe_duration_factor, safe_duration_offset
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type CreateOnDemandRuleParams struct {
+	ServiceID            string
+	TripID               string
+	FromID               string
+	FromKind             int64
+	ToID                 string
+	ToKind               int64
+	StartPickupTime      sql.NullInt64
+	EndPickupTime        sql.NullInt64
+	EndDropOffTime       sql.NullInt64
+	GtfsServiceID        string
+	PickupType           int64
+	DropOffType          int64
+	PickupBookingRuleID  sql.NullString
+	DropOffBookingRuleID sql.NullString
+	SafeDurationFactor   sql.NullFloat64
+	SafeDurationOffset   sql.NullFloat64
+}
+
+func (q *Queries) CreateOnDemandRule(ctx context.Context, arg CreateOnDemandRuleParams) error {
+	_, err := q.exec(ctx, q.createOnDemandRuleStmt, createOnDemandRule,
+		arg.ServiceID,
+		arg.TripID,
+		arg.FromID,
+		arg.FromKind,
+		arg.ToID,
+		arg.ToKind,
+		arg.StartPickupTime,
+		arg.EndPickupTime,
+		arg.EndDropOffTime,
+		arg.GtfsServiceID,
+		arg.PickupType,
+		arg.DropOffType,
+		arg.PickupBookingRuleID,
+		arg.DropOffBookingRuleID,
+		arg.SafeDurationFactor,
+		arg.SafeDurationOffset,
+	)
+	return err
+}
+
+const createOnDemandService = `-- name: CreateOnDemandService :exec
+INSERT INTO ondemand_services (id, agency_id, route_id, service_kind) VALUES (?, ?, ?, ?)
+`
+
+type CreateOnDemandServiceParams struct {
+	ID          string
+	AgencyID    string
+	RouteID     string
+	ServiceKind string
+}
+
+func (q *Queries) CreateOnDemandService(ctx context.Context, arg CreateOnDemandServiceParams) error {
+	_, err := q.exec(ctx, q.createOnDemandServiceStmt, createOnDemandService,
+		arg.ID,
+		arg.AgencyID,
+		arg.RouteID,
+		arg.ServiceKind,
+	)
+	return err
+}
+
+const createOnDemandStopService = `-- name: CreateOnDemandStopService :exec
+INSERT OR IGNORE INTO ondemand_stop_services (stop_id, service_id) VALUES (?, ?)
+`
+
+type CreateOnDemandStopServiceParams struct {
+	StopID    string
+	ServiceID string
+}
+
+func (q *Queries) CreateOnDemandStopService(ctx context.Context, arg CreateOnDemandStopServiceParams) error {
+	_, err := q.exec(ctx, q.createOnDemandStopServiceStmt, createOnDemandStopService, arg.StopID, arg.ServiceID)
 	return err
 }
 
@@ -2044,6 +2357,59 @@ func (q *Queries) GetBlocksForBlockTripIndexIDs(ctx context.Context, arg GetBloc
 	return items, nil
 }
 
+const getBookingRulesByIDs = `-- name: GetBookingRulesByIDs :many
+SELECT id, booking_type, prior_notice_duration_min, prior_notice_duration_max, prior_notice_last_day, prior_notice_last_time, prior_notice_start_day, prior_notice_start_time, prior_notice_service_id, message, pickup_message, drop_off_message, phone_number, info_url, booking_url FROM booking_rules WHERE id IN (/*SLICE:booking_rule_ids*/?) ORDER BY id
+`
+
+func (q *Queries) GetBookingRulesByIDs(ctx context.Context, bookingRuleIds []string) ([]BookingRule, error) {
+	query := getBookingRulesByIDs
+	var queryParams []interface{}
+	if len(bookingRuleIds) > 0 {
+		for _, v := range bookingRuleIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:booking_rule_ids*/?", strings.Repeat(",?", len(bookingRuleIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:booking_rule_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BookingRule
+	for rows.Next() {
+		var i BookingRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.BookingType,
+			&i.PriorNoticeDurationMin,
+			&i.PriorNoticeDurationMax,
+			&i.PriorNoticeLastDay,
+			&i.PriorNoticeLastTime,
+			&i.PriorNoticeStartDay,
+			&i.PriorNoticeStartTime,
+			&i.PriorNoticeServiceID,
+			&i.Message,
+			&i.PickupMessage,
+			&i.DropOffMessage,
+			&i.PhoneNumber,
+			&i.InfoUrl,
+			&i.BookingUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getCalendarByServiceID = `-- name: GetCalendarByServiceID :one
 SELECT
     id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date
@@ -2090,6 +2456,91 @@ func (q *Queries) GetCalendarDateExceptionsForServiceID(ctx context.Context, ser
 	for rows.Next() {
 		var i CalendarDate
 		if err := rows.Scan(&i.ServiceID, &i.Date, &i.ExceptionType); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getCalendarDatesForServiceIDs = `-- name: GetCalendarDatesForServiceIDs :many
+SELECT service_id, date, exception_type FROM calendar_dates WHERE service_id IN (/*SLICE:service_ids*/?) ORDER BY service_id, date
+`
+
+func (q *Queries) GetCalendarDatesForServiceIDs(ctx context.Context, serviceIds []string) ([]CalendarDate, error) {
+	query := getCalendarDatesForServiceIDs
+	var queryParams []interface{}
+	if len(serviceIds) > 0 {
+		for _, v := range serviceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(serviceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CalendarDate
+	for rows.Next() {
+		var i CalendarDate
+		if err := rows.Scan(&i.ServiceID, &i.Date, &i.ExceptionType); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getCalendarsByIDs = `-- name: GetCalendarsByIDs :many
+SELECT id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date FROM calendar WHERE id IN (/*SLICE:service_ids*/?) ORDER BY id
+`
+
+func (q *Queries) GetCalendarsByIDs(ctx context.Context, serviceIds []string) ([]Calendar, error) {
+	query := getCalendarsByIDs
+	var queryParams []interface{}
+	if len(serviceIds) > 0 {
+		for _, v := range serviceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(serviceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Calendar
+	for rows.Next() {
+		var i Calendar
+		if err := rows.Scan(
+			&i.ID,
+			&i.Monday,
+			&i.Tuesday,
+			&i.Wednesday,
+			&i.Thursday,
+			&i.Friday,
+			&i.Saturday,
+			&i.Sunday,
+			&i.StartDate,
+			&i.EndDate,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2169,6 +2620,66 @@ func (q *Queries) GetFirstStopOfNextTripInBlock(ctx context.Context, arg GetFirs
 		&i.Timepoint,
 	)
 	return i, err
+}
+
+const getFlexRecordReferencesForRoutes = `-- name: GetFlexRecordReferencesForRoutes :many
+SELECT DISTINCT
+    t.route_id,
+    fst.location_id,
+    fst.location_group_id,
+    fst.pickup_booking_rule_id,
+    fst.drop_off_booking_rule_id
+FROM flex_stop_times fst
+JOIN trips t ON t.id = fst.trip_id
+WHERE t.route_id IN (/*SLICE:route_ids*/?)
+ORDER BY t.route_id, fst.location_id, fst.location_group_id
+`
+
+type GetFlexRecordReferencesForRoutesRow struct {
+	RouteID              string
+	LocationID           sql.NullString
+	LocationGroupID      sql.NullString
+	PickupBookingRuleID  sql.NullString
+	DropOffBookingRuleID sql.NullString
+}
+
+func (q *Queries) GetFlexRecordReferencesForRoutes(ctx context.Context, routeIds []string) ([]GetFlexRecordReferencesForRoutesRow, error) {
+	query := getFlexRecordReferencesForRoutes
+	var queryParams []interface{}
+	if len(routeIds) > 0 {
+		for _, v := range routeIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:route_ids*/?", strings.Repeat(",?", len(routeIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:route_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFlexRecordReferencesForRoutesRow
+	for rows.Next() {
+		var i GetFlexRecordReferencesForRoutesRow
+		if err := rows.Scan(
+			&i.RouteID,
+			&i.LocationID,
+			&i.LocationGroupID,
+			&i.PickupBookingRuleID,
+			&i.DropOffBookingRuleID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getFrequenciesForTrip = `-- name: GetFrequenciesForTrip :many
@@ -2375,6 +2886,129 @@ func (q *Queries) GetInServiceTripIDsForStops(ctx context.Context, arg GetInServ
 	return items, nil
 }
 
+const getLocationGroupStopsForGroups = `-- name: GetLocationGroupStopsForGroups :many
+SELECT location_group_id, stop_id FROM location_group_stops
+WHERE location_group_id IN (/*SLICE:group_ids*/?)
+ORDER BY location_group_id, stop_id
+`
+
+func (q *Queries) GetLocationGroupStopsForGroups(ctx context.Context, groupIds []string) ([]LocationGroupStop, error) {
+	query := getLocationGroupStopsForGroups
+	var queryParams []interface{}
+	if len(groupIds) > 0 {
+		for _, v := range groupIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:group_ids*/?", strings.Repeat(",?", len(groupIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:group_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LocationGroupStop
+	for rows.Next() {
+		var i LocationGroupStop
+		if err := rows.Scan(&i.LocationGroupID, &i.StopID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getLocationGroupsByIDs = `-- name: GetLocationGroupsByIDs :many
+SELECT id, name FROM location_groups WHERE id IN (/*SLICE:group_ids*/?) ORDER BY id
+`
+
+func (q *Queries) GetLocationGroupsByIDs(ctx context.Context, groupIds []string) ([]LocationGroup, error) {
+	query := getLocationGroupsByIDs
+	var queryParams []interface{}
+	if len(groupIds) > 0 {
+		for _, v := range groupIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:group_ids*/?", strings.Repeat(",?", len(groupIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:group_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LocationGroup
+	for rows.Next() {
+		var i LocationGroup
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getLocationsByIDs = `-- name: GetLocationsByIDs :many
+SELECT id, name, description, geometry, geometry_simplified, min_lat, max_lat, min_lon, max_lon FROM locations WHERE id IN (/*SLICE:location_ids*/?) ORDER BY id
+`
+
+func (q *Queries) GetLocationsByIDs(ctx context.Context, locationIds []string) ([]Location, error) {
+	query := getLocationsByIDs
+	var queryParams []interface{}
+	if len(locationIds) > 0 {
+		for _, v := range locationIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:location_ids*/?", strings.Repeat(",?", len(locationIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:location_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Location
+	for rows.Next() {
+		var i Location
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.Geometry,
+			&i.GeometrySimplified,
+			&i.MinLat,
+			&i.MaxLat,
+			&i.MinLon,
+			&i.MaxLon,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getNextAndPreviousTripsInBlock = `-- name: GetNextAndPreviousTripsInBlock :one
 WITH NavTrips AS (
     SELECT
@@ -2447,6 +3081,151 @@ func (q *Queries) GetNextStopInTrip(ctx context.Context, arg GetNextStopInTripPa
 	var i GetNextStopInTripRow
 	err := row.Scan(&i.Lat, &i.Lon, &i.ID)
 	return i, err
+}
+
+const getOnDemandRulesForServices = `-- name: GetOnDemandRulesForServices :many
+SELECT id, service_id, trip_id, from_id, from_kind, to_id, to_kind, start_pickup_time, end_pickup_time, end_drop_off_time, gtfs_service_id, pickup_type, drop_off_type, pickup_booking_rule_id, drop_off_booking_rule_id, safe_duration_factor, safe_duration_offset FROM ondemand_rules WHERE service_id IN (/*SLICE:service_ids*/?) ORDER BY service_id, id
+`
+
+func (q *Queries) GetOnDemandRulesForServices(ctx context.Context, serviceIds []string) ([]OndemandRule, error) {
+	query := getOnDemandRulesForServices
+	var queryParams []interface{}
+	if len(serviceIds) > 0 {
+		for _, v := range serviceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(serviceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OndemandRule
+	for rows.Next() {
+		var i OndemandRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.ServiceID,
+			&i.TripID,
+			&i.FromID,
+			&i.FromKind,
+			&i.ToID,
+			&i.ToKind,
+			&i.StartPickupTime,
+			&i.EndPickupTime,
+			&i.EndDropOffTime,
+			&i.GtfsServiceID,
+			&i.PickupType,
+			&i.DropOffType,
+			&i.PickupBookingRuleID,
+			&i.DropOffBookingRuleID,
+			&i.SafeDurationFactor,
+			&i.SafeDurationOffset,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getOnDemandService = `-- name: GetOnDemandService :one
+SELECT id, agency_id, route_id, service_kind FROM ondemand_services WHERE id = ?
+`
+
+func (q *Queries) GetOnDemandService(ctx context.Context, id string) (OndemandService, error) {
+	row := q.queryRow(ctx, q.getOnDemandServiceStmt, getOnDemandService, id)
+	var i OndemandService
+	err := row.Scan(
+		&i.ID,
+		&i.AgencyID,
+		&i.RouteID,
+		&i.ServiceKind,
+	)
+	return i, err
+}
+
+const getOnDemandServicesByIDs = `-- name: GetOnDemandServicesByIDs :many
+SELECT id, agency_id, route_id, service_kind FROM ondemand_services WHERE id IN (/*SLICE:service_ids*/?) ORDER BY id
+`
+
+func (q *Queries) GetOnDemandServicesByIDs(ctx context.Context, serviceIds []string) ([]OndemandService, error) {
+	query := getOnDemandServicesByIDs
+	var queryParams []interface{}
+	if len(serviceIds) > 0 {
+		for _, v := range serviceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(serviceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OndemandService
+	for rows.Next() {
+		var i OndemandService
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgencyID,
+			&i.RouteID,
+			&i.ServiceKind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getOnDemandServicesForAgency = `-- name: GetOnDemandServicesForAgency :many
+SELECT id, agency_id, route_id, service_kind FROM ondemand_services WHERE agency_id = ? ORDER BY id
+`
+
+func (q *Queries) GetOnDemandServicesForAgency(ctx context.Context, agencyID string) ([]OndemandService, error) {
+	rows, err := q.query(ctx, q.getOnDemandServicesForAgencyStmt, getOnDemandServicesForAgency, agencyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OndemandService
+	for rows.Next() {
+		var i OndemandService
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgencyID,
+			&i.RouteID,
+			&i.ServiceKind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getOrderedStopIDsForRouteDirection = `-- name: GetOrderedStopIDsForRouteDirection :many
@@ -5411,6 +6190,190 @@ func (q *Queries) ListAgencyIds(ctx context.Context) ([]string, error) {
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLocations = `-- name: ListLocations :many
+SELECT id, name, description, min_lat, max_lat, min_lon, max_lon, geometry FROM locations ORDER BY id
+`
+
+type ListLocationsRow struct {
+	ID          string
+	Name        sql.NullString
+	Description sql.NullString
+	MinLat      float64
+	MaxLat      float64
+	MinLon      float64
+	MaxLon      float64
+	Geometry    string
+}
+
+func (q *Queries) ListLocations(ctx context.Context) ([]ListLocationsRow, error) {
+	rows, err := q.query(ctx, q.listLocationsStmt, listLocations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLocationsRow
+	for rows.Next() {
+		var i ListLocationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.MinLat,
+			&i.MaxLat,
+			&i.MinLon,
+			&i.MaxLon,
+			&i.Geometry,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOnDemandServiceLocationIDs = `-- name: ListOnDemandServiceLocationIDs :many
+SELECT DISTINCT t.route_id AS service_id, fst.location_id
+FROM flex_stop_times fst
+JOIN trips t ON t.id = fst.trip_id
+WHERE fst.location_id IS NOT NULL
+ORDER BY t.route_id, fst.location_id
+`
+
+type ListOnDemandServiceLocationIDsRow struct {
+	ServiceID  string
+	LocationID sql.NullString
+}
+
+func (q *Queries) ListOnDemandServiceLocationIDs(ctx context.Context) ([]ListOnDemandServiceLocationIDsRow, error) {
+	rows, err := q.query(ctx, q.listOnDemandServiceLocationIDsStmt, listOnDemandServiceLocationIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOnDemandServiceLocationIDsRow
+	for rows.Next() {
+		var i ListOnDemandServiceLocationIDsRow
+		if err := rows.Scan(&i.ServiceID, &i.LocationID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOnDemandServiceStopPoints = `-- name: ListOnDemandServiceStopPoints :many
+SELECT oss.service_id, oss.stop_id, s.lat, s.lon
+FROM ondemand_stop_services oss
+JOIN stops s ON s.id = oss.stop_id
+ORDER BY oss.service_id, oss.stop_id
+`
+
+type ListOnDemandServiceStopPointsRow struct {
+	ServiceID string
+	StopID    string
+	Lat       float64
+	Lon       float64
+}
+
+func (q *Queries) ListOnDemandServiceStopPoints(ctx context.Context) ([]ListOnDemandServiceStopPointsRow, error) {
+	rows, err := q.query(ctx, q.listOnDemandServiceStopPointsStmt, listOnDemandServiceStopPoints)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOnDemandServiceStopPointsRow
+	for rows.Next() {
+		var i ListOnDemandServiceStopPointsRow
+		if err := rows.Scan(
+			&i.ServiceID,
+			&i.StopID,
+			&i.Lat,
+			&i.Lon,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOnDemandServices = `-- name: ListOnDemandServices :many
+SELECT id, agency_id, route_id, service_kind FROM ondemand_services ORDER BY id
+`
+
+func (q *Queries) ListOnDemandServices(ctx context.Context) ([]OndemandService, error) {
+	rows, err := q.query(ctx, q.listOnDemandServicesStmt, listOnDemandServices)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OndemandService
+	for rows.Next() {
+		var i OndemandService
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgencyID,
+			&i.RouteID,
+			&i.ServiceKind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOnDemandStopServices = `-- name: ListOnDemandStopServices :many
+SELECT stop_id, service_id FROM ondemand_stop_services ORDER BY stop_id, service_id
+`
+
+func (q *Queries) ListOnDemandStopServices(ctx context.Context) ([]OndemandStopService, error) {
+	rows, err := q.query(ctx, q.listOnDemandStopServicesStmt, listOnDemandStopServices)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OndemandStopService
+	for rows.Next() {
+		var i OndemandStopService
+		if err := rows.Scan(&i.StopID, &i.ServiceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

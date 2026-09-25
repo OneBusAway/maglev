@@ -45,14 +45,38 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.clearBlockTripIndicesStmt, err = db.PrepareContext(ctx, clearBlockTripIndices); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearBlockTripIndices: %w", err)
 	}
+	if q.clearBookingRulesStmt, err = db.PrepareContext(ctx, clearBookingRules); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearBookingRules: %w", err)
+	}
 	if q.clearCalendarStmt, err = db.PrepareContext(ctx, clearCalendar); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearCalendar: %w", err)
 	}
 	if q.clearCalendarDatesStmt, err = db.PrepareContext(ctx, clearCalendarDates); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearCalendarDates: %w", err)
 	}
+	if q.clearFlexStopTimesStmt, err = db.PrepareContext(ctx, clearFlexStopTimes); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearFlexStopTimes: %w", err)
+	}
 	if q.clearFrequenciesStmt, err = db.PrepareContext(ctx, clearFrequencies); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearFrequencies: %w", err)
+	}
+	if q.clearLocationGroupStopsStmt, err = db.PrepareContext(ctx, clearLocationGroupStops); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearLocationGroupStops: %w", err)
+	}
+	if q.clearLocationGroupsStmt, err = db.PrepareContext(ctx, clearLocationGroups); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearLocationGroups: %w", err)
+	}
+	if q.clearLocationsStmt, err = db.PrepareContext(ctx, clearLocations); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearLocations: %w", err)
+	}
+	if q.clearOnDemandRulesStmt, err = db.PrepareContext(ctx, clearOnDemandRules); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearOnDemandRules: %w", err)
+	}
+	if q.clearOnDemandServicesStmt, err = db.PrepareContext(ctx, clearOnDemandServices); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearOnDemandServices: %w", err)
+	}
+	if q.clearOnDemandStopServicesStmt, err = db.PrepareContext(ctx, clearOnDemandStopServices); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearOnDemandStopServices: %w", err)
 	}
 	if q.clearRoutesStmt, err = db.PrepareContext(ctx, clearRoutes); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearRoutes: %w", err)
@@ -96,14 +120,38 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.createBlockTripIndexStmt, err = db.PrepareContext(ctx, createBlockTripIndex); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateBlockTripIndex: %w", err)
 	}
+	if q.createBookingRuleStmt, err = db.PrepareContext(ctx, createBookingRule); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateBookingRule: %w", err)
+	}
 	if q.createCalendarStmt, err = db.PrepareContext(ctx, createCalendar); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateCalendar: %w", err)
 	}
 	if q.createCalendarDateStmt, err = db.PrepareContext(ctx, createCalendarDate); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateCalendarDate: %w", err)
 	}
+	if q.createFlexStopTimeStmt, err = db.PrepareContext(ctx, createFlexStopTime); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateFlexStopTime: %w", err)
+	}
 	if q.createFrequencyStmt, err = db.PrepareContext(ctx, createFrequency); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateFrequency: %w", err)
+	}
+	if q.createLocationStmt, err = db.PrepareContext(ctx, createLocation); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateLocation: %w", err)
+	}
+	if q.createLocationGroupStmt, err = db.PrepareContext(ctx, createLocationGroup); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateLocationGroup: %w", err)
+	}
+	if q.createLocationGroupStopStmt, err = db.PrepareContext(ctx, createLocationGroupStop); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateLocationGroupStop: %w", err)
+	}
+	if q.createOnDemandRuleStmt, err = db.PrepareContext(ctx, createOnDemandRule); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateOnDemandRule: %w", err)
+	}
+	if q.createOnDemandServiceStmt, err = db.PrepareContext(ctx, createOnDemandService); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateOnDemandService: %w", err)
+	}
+	if q.createOnDemandStopServiceStmt, err = db.PrepareContext(ctx, createOnDemandStopService); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateOnDemandStopService: %w", err)
 	}
 	if q.createProblemReportStopStmt, err = db.PrepareContext(ctx, createProblemReportStop); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateProblemReportStop: %w", err)
@@ -192,17 +240,29 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getBlocksForBlockTripIndexIDsStmt, err = db.PrepareContext(ctx, getBlocksForBlockTripIndexIDs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBlocksForBlockTripIndexIDs: %w", err)
 	}
+	if q.getBookingRulesByIDsStmt, err = db.PrepareContext(ctx, getBookingRulesByIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetBookingRulesByIDs: %w", err)
+	}
 	if q.getCalendarByServiceIDStmt, err = db.PrepareContext(ctx, getCalendarByServiceID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetCalendarByServiceID: %w", err)
 	}
 	if q.getCalendarDateExceptionsForServiceIDStmt, err = db.PrepareContext(ctx, getCalendarDateExceptionsForServiceID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetCalendarDateExceptionsForServiceID: %w", err)
 	}
+	if q.getCalendarDatesForServiceIDsStmt, err = db.PrepareContext(ctx, getCalendarDatesForServiceIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetCalendarDatesForServiceIDs: %w", err)
+	}
+	if q.getCalendarsByIDsStmt, err = db.PrepareContext(ctx, getCalendarsByIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetCalendarsByIDs: %w", err)
+	}
 	if q.getFeedEndDateStmt, err = db.PrepareContext(ctx, getFeedEndDate); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFeedEndDate: %w", err)
 	}
 	if q.getFirstStopOfNextTripInBlockStmt, err = db.PrepareContext(ctx, getFirstStopOfNextTripInBlock); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFirstStopOfNextTripInBlock: %w", err)
+	}
+	if q.getFlexRecordReferencesForRoutesStmt, err = db.PrepareContext(ctx, getFlexRecordReferencesForRoutes); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFlexRecordReferencesForRoutes: %w", err)
 	}
 	if q.getFrequenciesForTripStmt, err = db.PrepareContext(ctx, getFrequenciesForTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFrequenciesForTrip: %w", err)
@@ -219,11 +279,32 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getInServiceTripIDsForStopsStmt, err = db.PrepareContext(ctx, getInServiceTripIDsForStops); err != nil {
 		return nil, fmt.Errorf("error preparing query GetInServiceTripIDsForStops: %w", err)
 	}
+	if q.getLocationGroupStopsForGroupsStmt, err = db.PrepareContext(ctx, getLocationGroupStopsForGroups); err != nil {
+		return nil, fmt.Errorf("error preparing query GetLocationGroupStopsForGroups: %w", err)
+	}
+	if q.getLocationGroupsByIDsStmt, err = db.PrepareContext(ctx, getLocationGroupsByIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetLocationGroupsByIDs: %w", err)
+	}
+	if q.getLocationsByIDsStmt, err = db.PrepareContext(ctx, getLocationsByIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetLocationsByIDs: %w", err)
+	}
 	if q.getNextAndPreviousTripsInBlockStmt, err = db.PrepareContext(ctx, getNextAndPreviousTripsInBlock); err != nil {
 		return nil, fmt.Errorf("error preparing query GetNextAndPreviousTripsInBlock: %w", err)
 	}
 	if q.getNextStopInTripStmt, err = db.PrepareContext(ctx, getNextStopInTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetNextStopInTrip: %w", err)
+	}
+	if q.getOnDemandRulesForServicesStmt, err = db.PrepareContext(ctx, getOnDemandRulesForServices); err != nil {
+		return nil, fmt.Errorf("error preparing query GetOnDemandRulesForServices: %w", err)
+	}
+	if q.getOnDemandServiceStmt, err = db.PrepareContext(ctx, getOnDemandService); err != nil {
+		return nil, fmt.Errorf("error preparing query GetOnDemandService: %w", err)
+	}
+	if q.getOnDemandServicesByIDsStmt, err = db.PrepareContext(ctx, getOnDemandServicesByIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetOnDemandServicesByIDs: %w", err)
+	}
+	if q.getOnDemandServicesForAgencyStmt, err = db.PrepareContext(ctx, getOnDemandServicesForAgency); err != nil {
+		return nil, fmt.Errorf("error preparing query GetOnDemandServicesForAgency: %w", err)
 	}
 	if q.getOrderedStopIDsForRouteDirectionStmt, err = db.PrepareContext(ctx, getOrderedStopIDsForRouteDirection); err != nil {
 		return nil, fmt.Errorf("error preparing query GetOrderedStopIDsForRouteDirection: %w", err)
@@ -390,6 +471,21 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listAgencyIdsStmt, err = db.PrepareContext(ctx, listAgencyIds); err != nil {
 		return nil, fmt.Errorf("error preparing query ListAgencyIds: %w", err)
 	}
+	if q.listLocationsStmt, err = db.PrepareContext(ctx, listLocations); err != nil {
+		return nil, fmt.Errorf("error preparing query ListLocations: %w", err)
+	}
+	if q.listOnDemandServiceLocationIDsStmt, err = db.PrepareContext(ctx, listOnDemandServiceLocationIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query ListOnDemandServiceLocationIDs: %w", err)
+	}
+	if q.listOnDemandServiceStopPointsStmt, err = db.PrepareContext(ctx, listOnDemandServiceStopPoints); err != nil {
+		return nil, fmt.Errorf("error preparing query ListOnDemandServiceStopPoints: %w", err)
+	}
+	if q.listOnDemandServicesStmt, err = db.PrepareContext(ctx, listOnDemandServices); err != nil {
+		return nil, fmt.Errorf("error preparing query ListOnDemandServices: %w", err)
+	}
+	if q.listOnDemandStopServicesStmt, err = db.PrepareContext(ctx, listOnDemandStopServices); err != nil {
+		return nil, fmt.Errorf("error preparing query ListOnDemandStopServices: %w", err)
+	}
 	if q.listRoutesStmt, err = db.PrepareContext(ctx, listRoutes); err != nil {
 		return nil, fmt.Errorf("error preparing query ListRoutes: %w", err)
 	}
@@ -460,6 +556,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing clearBlockTripIndicesStmt: %w", cerr)
 		}
 	}
+	if q.clearBookingRulesStmt != nil {
+		if cerr := q.clearBookingRulesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearBookingRulesStmt: %w", cerr)
+		}
+	}
 	if q.clearCalendarStmt != nil {
 		if cerr := q.clearCalendarStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearCalendarStmt: %w", cerr)
@@ -470,9 +571,44 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing clearCalendarDatesStmt: %w", cerr)
 		}
 	}
+	if q.clearFlexStopTimesStmt != nil {
+		if cerr := q.clearFlexStopTimesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearFlexStopTimesStmt: %w", cerr)
+		}
+	}
 	if q.clearFrequenciesStmt != nil {
 		if cerr := q.clearFrequenciesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearFrequenciesStmt: %w", cerr)
+		}
+	}
+	if q.clearLocationGroupStopsStmt != nil {
+		if cerr := q.clearLocationGroupStopsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearLocationGroupStopsStmt: %w", cerr)
+		}
+	}
+	if q.clearLocationGroupsStmt != nil {
+		if cerr := q.clearLocationGroupsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearLocationGroupsStmt: %w", cerr)
+		}
+	}
+	if q.clearLocationsStmt != nil {
+		if cerr := q.clearLocationsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearLocationsStmt: %w", cerr)
+		}
+	}
+	if q.clearOnDemandRulesStmt != nil {
+		if cerr := q.clearOnDemandRulesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearOnDemandRulesStmt: %w", cerr)
+		}
+	}
+	if q.clearOnDemandServicesStmt != nil {
+		if cerr := q.clearOnDemandServicesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearOnDemandServicesStmt: %w", cerr)
+		}
+	}
+	if q.clearOnDemandStopServicesStmt != nil {
+		if cerr := q.clearOnDemandStopServicesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearOnDemandStopServicesStmt: %w", cerr)
 		}
 	}
 	if q.clearRoutesStmt != nil {
@@ -545,6 +681,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing createBlockTripIndexStmt: %w", cerr)
 		}
 	}
+	if q.createBookingRuleStmt != nil {
+		if cerr := q.createBookingRuleStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createBookingRuleStmt: %w", cerr)
+		}
+	}
 	if q.createCalendarStmt != nil {
 		if cerr := q.createCalendarStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createCalendarStmt: %w", cerr)
@@ -555,9 +696,44 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing createCalendarDateStmt: %w", cerr)
 		}
 	}
+	if q.createFlexStopTimeStmt != nil {
+		if cerr := q.createFlexStopTimeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createFlexStopTimeStmt: %w", cerr)
+		}
+	}
 	if q.createFrequencyStmt != nil {
 		if cerr := q.createFrequencyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createFrequencyStmt: %w", cerr)
+		}
+	}
+	if q.createLocationStmt != nil {
+		if cerr := q.createLocationStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createLocationStmt: %w", cerr)
+		}
+	}
+	if q.createLocationGroupStmt != nil {
+		if cerr := q.createLocationGroupStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createLocationGroupStmt: %w", cerr)
+		}
+	}
+	if q.createLocationGroupStopStmt != nil {
+		if cerr := q.createLocationGroupStopStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createLocationGroupStopStmt: %w", cerr)
+		}
+	}
+	if q.createOnDemandRuleStmt != nil {
+		if cerr := q.createOnDemandRuleStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createOnDemandRuleStmt: %w", cerr)
+		}
+	}
+	if q.createOnDemandServiceStmt != nil {
+		if cerr := q.createOnDemandServiceStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createOnDemandServiceStmt: %w", cerr)
+		}
+	}
+	if q.createOnDemandStopServiceStmt != nil {
+		if cerr := q.createOnDemandStopServiceStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createOnDemandStopServiceStmt: %w", cerr)
 		}
 	}
 	if q.createProblemReportStopStmt != nil {
@@ -705,6 +881,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getBlocksForBlockTripIndexIDsStmt: %w", cerr)
 		}
 	}
+	if q.getBookingRulesByIDsStmt != nil {
+		if cerr := q.getBookingRulesByIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getBookingRulesByIDsStmt: %w", cerr)
+		}
+	}
 	if q.getCalendarByServiceIDStmt != nil {
 		if cerr := q.getCalendarByServiceIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getCalendarByServiceIDStmt: %w", cerr)
@@ -715,6 +896,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getCalendarDateExceptionsForServiceIDStmt: %w", cerr)
 		}
 	}
+	if q.getCalendarDatesForServiceIDsStmt != nil {
+		if cerr := q.getCalendarDatesForServiceIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getCalendarDatesForServiceIDsStmt: %w", cerr)
+		}
+	}
+	if q.getCalendarsByIDsStmt != nil {
+		if cerr := q.getCalendarsByIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getCalendarsByIDsStmt: %w", cerr)
+		}
+	}
 	if q.getFeedEndDateStmt != nil {
 		if cerr := q.getFeedEndDateStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFeedEndDateStmt: %w", cerr)
@@ -723,6 +914,11 @@ func (q *Queries) Close() error {
 	if q.getFirstStopOfNextTripInBlockStmt != nil {
 		if cerr := q.getFirstStopOfNextTripInBlockStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFirstStopOfNextTripInBlockStmt: %w", cerr)
+		}
+	}
+	if q.getFlexRecordReferencesForRoutesStmt != nil {
+		if cerr := q.getFlexRecordReferencesForRoutesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFlexRecordReferencesForRoutesStmt: %w", cerr)
 		}
 	}
 	if q.getFrequenciesForTripStmt != nil {
@@ -750,6 +946,21 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getInServiceTripIDsForStopsStmt: %w", cerr)
 		}
 	}
+	if q.getLocationGroupStopsForGroupsStmt != nil {
+		if cerr := q.getLocationGroupStopsForGroupsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getLocationGroupStopsForGroupsStmt: %w", cerr)
+		}
+	}
+	if q.getLocationGroupsByIDsStmt != nil {
+		if cerr := q.getLocationGroupsByIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getLocationGroupsByIDsStmt: %w", cerr)
+		}
+	}
+	if q.getLocationsByIDsStmt != nil {
+		if cerr := q.getLocationsByIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getLocationsByIDsStmt: %w", cerr)
+		}
+	}
 	if q.getNextAndPreviousTripsInBlockStmt != nil {
 		if cerr := q.getNextAndPreviousTripsInBlockStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getNextAndPreviousTripsInBlockStmt: %w", cerr)
@@ -758,6 +969,26 @@ func (q *Queries) Close() error {
 	if q.getNextStopInTripStmt != nil {
 		if cerr := q.getNextStopInTripStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getNextStopInTripStmt: %w", cerr)
+		}
+	}
+	if q.getOnDemandRulesForServicesStmt != nil {
+		if cerr := q.getOnDemandRulesForServicesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getOnDemandRulesForServicesStmt: %w", cerr)
+		}
+	}
+	if q.getOnDemandServiceStmt != nil {
+		if cerr := q.getOnDemandServiceStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getOnDemandServiceStmt: %w", cerr)
+		}
+	}
+	if q.getOnDemandServicesByIDsStmt != nil {
+		if cerr := q.getOnDemandServicesByIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getOnDemandServicesByIDsStmt: %w", cerr)
+		}
+	}
+	if q.getOnDemandServicesForAgencyStmt != nil {
+		if cerr := q.getOnDemandServicesForAgencyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getOnDemandServicesForAgencyStmt: %w", cerr)
 		}
 	}
 	if q.getOrderedStopIDsForRouteDirectionStmt != nil {
@@ -1035,6 +1266,31 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listAgencyIdsStmt: %w", cerr)
 		}
 	}
+	if q.listLocationsStmt != nil {
+		if cerr := q.listLocationsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listLocationsStmt: %w", cerr)
+		}
+	}
+	if q.listOnDemandServiceLocationIDsStmt != nil {
+		if cerr := q.listOnDemandServiceLocationIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listOnDemandServiceLocationIDsStmt: %w", cerr)
+		}
+	}
+	if q.listOnDemandServiceStopPointsStmt != nil {
+		if cerr := q.listOnDemandServiceStopPointsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listOnDemandServiceStopPointsStmt: %w", cerr)
+		}
+	}
+	if q.listOnDemandServicesStmt != nil {
+		if cerr := q.listOnDemandServicesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listOnDemandServicesStmt: %w", cerr)
+		}
+	}
+	if q.listOnDemandStopServicesStmt != nil {
+		if cerr := q.listOnDemandStopServicesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listOnDemandStopServicesStmt: %w", cerr)
+		}
+	}
 	if q.listRoutesStmt != nil {
 		if cerr := q.listRoutesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listRoutesStmt: %w", cerr)
@@ -1131,9 +1387,17 @@ type Queries struct {
 	clearBlockLayoversStmt                        *sql.Stmt
 	clearBlockTripEntriesStmt                     *sql.Stmt
 	clearBlockTripIndicesStmt                     *sql.Stmt
+	clearBookingRulesStmt                         *sql.Stmt
 	clearCalendarStmt                             *sql.Stmt
 	clearCalendarDatesStmt                        *sql.Stmt
+	clearFlexStopTimesStmt                        *sql.Stmt
 	clearFrequenciesStmt                          *sql.Stmt
+	clearLocationGroupStopsStmt                   *sql.Stmt
+	clearLocationGroupsStmt                       *sql.Stmt
+	clearLocationsStmt                            *sql.Stmt
+	clearOnDemandRulesStmt                        *sql.Stmt
+	clearOnDemandServicesStmt                     *sql.Stmt
+	clearOnDemandStopServicesStmt                 *sql.Stmt
 	clearRoutesStmt                               *sql.Stmt
 	clearShapesStmt                               *sql.Stmt
 	clearStopAgenciesStmt                         *sql.Stmt
@@ -1148,9 +1412,17 @@ type Queries struct {
 	createBlockLayoverStmt                        *sql.Stmt
 	createBlockTripEntryStmt                      *sql.Stmt
 	createBlockTripIndexStmt                      *sql.Stmt
+	createBookingRuleStmt                         *sql.Stmt
 	createCalendarStmt                            *sql.Stmt
 	createCalendarDateStmt                        *sql.Stmt
+	createFlexStopTimeStmt                        *sql.Stmt
 	createFrequencyStmt                           *sql.Stmt
+	createLocationStmt                            *sql.Stmt
+	createLocationGroupStmt                       *sql.Stmt
+	createLocationGroupStopStmt                   *sql.Stmt
+	createOnDemandRuleStmt                        *sql.Stmt
+	createOnDemandServiceStmt                     *sql.Stmt
+	createOnDemandStopServiceStmt                 *sql.Stmt
 	createProblemReportStopStmt                   *sql.Stmt
 	createProblemReportTripStmt                   *sql.Stmt
 	createRouteStmt                               *sql.Stmt
@@ -1180,17 +1452,28 @@ type Queries struct {
 	getBlockTripIndexIDsForRouteStmt              *sql.Stmt
 	getBlockTripSequenceStmt                      *sql.Stmt
 	getBlocksForBlockTripIndexIDsStmt             *sql.Stmt
+	getBookingRulesByIDsStmt                      *sql.Stmt
 	getCalendarByServiceIDStmt                    *sql.Stmt
 	getCalendarDateExceptionsForServiceIDStmt     *sql.Stmt
+	getCalendarDatesForServiceIDsStmt             *sql.Stmt
+	getCalendarsByIDsStmt                         *sql.Stmt
 	getFeedEndDateStmt                            *sql.Stmt
 	getFirstStopOfNextTripInBlockStmt             *sql.Stmt
+	getFlexRecordReferencesForRoutesStmt          *sql.Stmt
 	getFrequenciesForTripStmt                     *sql.Stmt
 	getFrequenciesForTripsStmt                    *sql.Stmt
 	getFrequencyTripIDsStmt                       *sql.Stmt
 	getImportMetadataStmt                         *sql.Stmt
 	getInServiceTripIDsForStopsStmt               *sql.Stmt
+	getLocationGroupStopsForGroupsStmt            *sql.Stmt
+	getLocationGroupsByIDsStmt                    *sql.Stmt
+	getLocationsByIDsStmt                         *sql.Stmt
 	getNextAndPreviousTripsInBlockStmt            *sql.Stmt
 	getNextStopInTripStmt                         *sql.Stmt
+	getOnDemandRulesForServicesStmt               *sql.Stmt
+	getOnDemandServiceStmt                        *sql.Stmt
+	getOnDemandServicesByIDsStmt                  *sql.Stmt
+	getOnDemandServicesForAgencyStmt              *sql.Stmt
 	getOrderedStopIDsForRouteDirectionStmt        *sql.Stmt
 	getOrderedStopIDsForTripStmt                  *sql.Stmt
 	getOrderedStopIDsForTripsStmt                 *sql.Stmt
@@ -1246,6 +1529,11 @@ type Queries struct {
 	getTripsInBlockStmt                           *sql.Stmt
 	listAgenciesStmt                              *sql.Stmt
 	listAgencyIdsStmt                             *sql.Stmt
+	listLocationsStmt                             *sql.Stmt
+	listOnDemandServiceLocationIDsStmt            *sql.Stmt
+	listOnDemandServiceStopPointsStmt             *sql.Stmt
+	listOnDemandServicesStmt                      *sql.Stmt
+	listOnDemandStopServicesStmt                  *sql.Stmt
 	listRoutesStmt                                *sql.Stmt
 	listStopsStmt                                 *sql.Stmt
 	listTripsStmt                                 *sql.Stmt
@@ -1269,9 +1557,17 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		clearBlockLayoversStmt:                        q.clearBlockLayoversStmt,
 		clearBlockTripEntriesStmt:                     q.clearBlockTripEntriesStmt,
 		clearBlockTripIndicesStmt:                     q.clearBlockTripIndicesStmt,
+		clearBookingRulesStmt:                         q.clearBookingRulesStmt,
 		clearCalendarStmt:                             q.clearCalendarStmt,
 		clearCalendarDatesStmt:                        q.clearCalendarDatesStmt,
+		clearFlexStopTimesStmt:                        q.clearFlexStopTimesStmt,
 		clearFrequenciesStmt:                          q.clearFrequenciesStmt,
+		clearLocationGroupStopsStmt:                   q.clearLocationGroupStopsStmt,
+		clearLocationGroupsStmt:                       q.clearLocationGroupsStmt,
+		clearLocationsStmt:                            q.clearLocationsStmt,
+		clearOnDemandRulesStmt:                        q.clearOnDemandRulesStmt,
+		clearOnDemandServicesStmt:                     q.clearOnDemandServicesStmt,
+		clearOnDemandStopServicesStmt:                 q.clearOnDemandStopServicesStmt,
 		clearRoutesStmt:                               q.clearRoutesStmt,
 		clearShapesStmt:                               q.clearShapesStmt,
 		clearStopAgenciesStmt:                         q.clearStopAgenciesStmt,
@@ -1286,9 +1582,17 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createBlockLayoverStmt:                        q.createBlockLayoverStmt,
 		createBlockTripEntryStmt:                      q.createBlockTripEntryStmt,
 		createBlockTripIndexStmt:                      q.createBlockTripIndexStmt,
+		createBookingRuleStmt:                         q.createBookingRuleStmt,
 		createCalendarStmt:                            q.createCalendarStmt,
 		createCalendarDateStmt:                        q.createCalendarDateStmt,
+		createFlexStopTimeStmt:                        q.createFlexStopTimeStmt,
 		createFrequencyStmt:                           q.createFrequencyStmt,
+		createLocationStmt:                            q.createLocationStmt,
+		createLocationGroupStmt:                       q.createLocationGroupStmt,
+		createLocationGroupStopStmt:                   q.createLocationGroupStopStmt,
+		createOnDemandRuleStmt:                        q.createOnDemandRuleStmt,
+		createOnDemandServiceStmt:                     q.createOnDemandServiceStmt,
+		createOnDemandStopServiceStmt:                 q.createOnDemandStopServiceStmt,
 		createProblemReportStopStmt:                   q.createProblemReportStopStmt,
 		createProblemReportTripStmt:                   q.createProblemReportTripStmt,
 		createRouteStmt:                               q.createRouteStmt,
@@ -1318,17 +1622,28 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getBlockTripIndexIDsForRouteStmt:              q.getBlockTripIndexIDsForRouteStmt,
 		getBlockTripSequenceStmt:                      q.getBlockTripSequenceStmt,
 		getBlocksForBlockTripIndexIDsStmt:             q.getBlocksForBlockTripIndexIDsStmt,
+		getBookingRulesByIDsStmt:                      q.getBookingRulesByIDsStmt,
 		getCalendarByServiceIDStmt:                    q.getCalendarByServiceIDStmt,
 		getCalendarDateExceptionsForServiceIDStmt:     q.getCalendarDateExceptionsForServiceIDStmt,
+		getCalendarDatesForServiceIDsStmt:             q.getCalendarDatesForServiceIDsStmt,
+		getCalendarsByIDsStmt:                         q.getCalendarsByIDsStmt,
 		getFeedEndDateStmt:                            q.getFeedEndDateStmt,
 		getFirstStopOfNextTripInBlockStmt:             q.getFirstStopOfNextTripInBlockStmt,
+		getFlexRecordReferencesForRoutesStmt:          q.getFlexRecordReferencesForRoutesStmt,
 		getFrequenciesForTripStmt:                     q.getFrequenciesForTripStmt,
 		getFrequenciesForTripsStmt:                    q.getFrequenciesForTripsStmt,
 		getFrequencyTripIDsStmt:                       q.getFrequencyTripIDsStmt,
 		getImportMetadataStmt:                         q.getImportMetadataStmt,
 		getInServiceTripIDsForStopsStmt:               q.getInServiceTripIDsForStopsStmt,
+		getLocationGroupStopsForGroupsStmt:            q.getLocationGroupStopsForGroupsStmt,
+		getLocationGroupsByIDsStmt:                    q.getLocationGroupsByIDsStmt,
+		getLocationsByIDsStmt:                         q.getLocationsByIDsStmt,
 		getNextAndPreviousTripsInBlockStmt:            q.getNextAndPreviousTripsInBlockStmt,
 		getNextStopInTripStmt:                         q.getNextStopInTripStmt,
+		getOnDemandRulesForServicesStmt:               q.getOnDemandRulesForServicesStmt,
+		getOnDemandServiceStmt:                        q.getOnDemandServiceStmt,
+		getOnDemandServicesByIDsStmt:                  q.getOnDemandServicesByIDsStmt,
+		getOnDemandServicesForAgencyStmt:              q.getOnDemandServicesForAgencyStmt,
 		getOrderedStopIDsForRouteDirectionStmt:        q.getOrderedStopIDsForRouteDirectionStmt,
 		getOrderedStopIDsForTripStmt:                  q.getOrderedStopIDsForTripStmt,
 		getOrderedStopIDsForTripsStmt:                 q.getOrderedStopIDsForTripsStmt,
@@ -1384,6 +1699,11 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getTripsInBlockStmt:                           q.getTripsInBlockStmt,
 		listAgenciesStmt:                              q.listAgenciesStmt,
 		listAgencyIdsStmt:                             q.listAgencyIdsStmt,
+		listLocationsStmt:                             q.listLocationsStmt,
+		listOnDemandServiceLocationIDsStmt:            q.listOnDemandServiceLocationIDsStmt,
+		listOnDemandServiceStopPointsStmt:             q.listOnDemandServiceStopPointsStmt,
+		listOnDemandServicesStmt:                      q.listOnDemandServicesStmt,
+		listOnDemandStopServicesStmt:                  q.listOnDemandStopServicesStmt,
 		listRoutesStmt:                                q.listRoutesStmt,
 		listStopsStmt:                                 q.listStopsStmt,
 		listTripsStmt:                                 q.listTripsStmt,
