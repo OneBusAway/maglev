@@ -77,6 +77,7 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		references.Agencies = agencies
 	}
 
+	api.attachOnDemandPointers(results, nil)
 	response := models.NewListResponseWithRange(results, *references, false, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }

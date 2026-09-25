@@ -268,6 +268,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 	// Spec: this endpoint returns all matching vehicles, so limitExceeded is always false.
 	const outOfRange, limitExceeded = false, false
+	api.attachOnDemandPointersToReferences(references)
 	response := models.NewListResponseWithRange(vehiclesList, *references, outOfRange, api.Clock, limitExceeded)
 	api.sendResponse(w, r, response)
 }

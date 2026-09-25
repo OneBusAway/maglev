@@ -56,6 +56,7 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Spec: this endpoint returns all matching routes, so limitExceeded is always false.
+	api.attachOnDemandPointers(routesList, nil)
 	response := models.NewListResponse(routesList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }

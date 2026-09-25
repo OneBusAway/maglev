@@ -95,5 +95,6 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 	}
 
+	api.attachOnDemandPointersToReferences(references)
 	api.sendResponse(w, r, models.NewEntryResponse(tripResponse, *references, api.Clock))
 }
