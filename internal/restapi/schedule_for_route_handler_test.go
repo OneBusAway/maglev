@@ -350,6 +350,9 @@ func setupHeadsignlessTrip(t *testing.T, api *RestAPI) (combinedRouteID, expecte
 
 	createStopTime(t, ctx, q, tripID, "hsstopone", 1, 8*3600)
 	createStopTime(t, ctx, q, tripID, "hsstoptwo", 2, 9*3600)
+	// The importer caches each trip's time bounds; do the same so the trip
+	// counts as timed rather than flex-only.
+	require.NoError(t, q.BulkUpdateTripTimeBounds(ctx))
 
 	return utils.FormCombinedID(agencyID, routeID), lastStopName
 }
