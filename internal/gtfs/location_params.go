@@ -13,6 +13,22 @@ type LocationParams struct {
 	LonSpan float64
 }
 
+// IsViewport reports whether the params describe a viewport search: both
+// spans given and no radius. Radius takes precedence when both are supplied,
+// per the OBA spec.
+func (loc *LocationParams) IsViewport() bool {
+	return loc.Radius <= 0 && loc.LatSpan > 0 && loc.LonSpan > 0
+}
+
+// RadiusOrDefault is the search radius, or DefaultSearchRadiusInMeters when
+// none was given.
+func (loc *LocationParams) RadiusOrDefault() float64 {
+	if loc.Radius <= 0 {
+		return models.DefaultSearchRadiusInMeters
+	}
+	return loc.Radius
+}
+
 // BoundsFromParams converts LocationParams into a CoordinateBounds bounding box.
 // If Radius is positive (or when neither Radius nor valid Spans are provided),
 // the box is computed from Radius (defaulting to DefaultSearchRadiusInMeters).
@@ -22,15 +38,10 @@ type LocationParams struct {
 func BoundsFromParams(loc *LocationParams, clamp ...bool) utils.CoordinateBounds {
 	shouldClamp := len(clamp) > 0 && clamp[0]
 
-	// If Radius is specified (>0) OR neither Radius nor both Spans are provided (>0), use radius calculation.
-	// This ensures radius takes precedence when both radius and span are supplied per OBA spec.
-	if loc.Radius > 0 || !(loc.LatSpan > 0 && loc.LonSpan > 0) {
-		radius := loc.Radius
-		if radius <= 0 {
-			radius = models.DefaultSearchRadiusInMeters
-		}
-		if shouldClamp && radius > models.MaxSearchRadiusInMeters {
-			radius = models.MaxSearchRadiusInMeters
+	if !loc.IsViewport() {
+		radius := loc.RadiusOrDefault()
+		if shouldClamp {
+			radius = utils.ClampRadius(radius)
 		}
 		return utils.CalculateBounds(loc.Lat, loc.Lon, radius)
 	}
@@ -58,19 +69,20 @@ func BoundsFromParams(loc *LocationParams, clamp ...bool) utils.CoordinateBounds
 // search. Reporting on unclamped bounds while searching clamped ones lets an
 // oversized radius overlap a region it never actually searched.
 func (manager *Manager) CheckIfOutOfBounds(loc *LocationParams, clamp ...bool) bool {
-	boundsMap := manager.GetRegionBounds()
-	if len(boundsMap) == 0 {
-		return false
-	}
+	overlaps, hasRegions := manager.OverlapsAnyRegion(BoundsFromParams(loc, clamp...))
+	return hasRegions && !overlaps
+}
 
-	innerBounds := BoundsFromParams(loc, clamp...)
-
-	for _, region := range boundsMap {
-		outerBounds := utils.CalculateBoundsFromSpan(region.Lat, region.Lon, region.LatSpan/2, region.LonSpan/2)
-		if !utils.IsOutOfBounds(innerBounds, outerBounds) {
-			return false
+// OverlapsAnyRegion reports whether bounds overlap at least one agency's
+// region bounds. hasRegions is false when no region bounds are loaded, so a
+// caller can tell "nothing to be outside of" from "outside every region".
+func (manager *Manager) OverlapsAnyRegion(bounds utils.CoordinateBounds) (overlaps, hasRegions bool) {
+	regions := manager.GetRegionBounds()
+	for _, region := range regions {
+		regionBounds := utils.CalculateBoundsFromSpan(region.Lat, region.Lon, region.LatSpan/2, region.LonSpan/2)
+		if !utils.IsOutOfBounds(bounds, regionBounds) {
+			return true, true
 		}
 	}
-
-	return true
+	return false, len(regions) > 0
 }
