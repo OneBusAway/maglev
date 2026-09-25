@@ -50,6 +50,10 @@ func (scope serviceIDScope) endpointID(id string, kind int64) string {
 // prefixes every id through scope, resolves calendarIds through
 // calendarIDsByService (bare gtfs service id → combined calendar ids) and
 // returns the rules in the wiki §3.4 total order. Never nil.
+//
+// A rule whose calendars all compile to nothing (no service days and no added
+// dates) is dropped: it can never apply, and wiki §3.4 requires calendarIds to
+// be non-empty. buildFlexIndex logs those calendars once per reload.
 func buildAvailabilityRules(rows []gtfsdb.OndemandRule, scope serviceIDScope, calendarIDsByService map[string][]string) []models.AvailabilityRule {
 	groups := make(map[ruleGroupKey]*models.AvailabilityRule)
 	var order []ruleGroupKey
@@ -67,6 +71,9 @@ func buildAvailabilityRules(rows []gtfsdb.OndemandRule, scope serviceIDScope, ca
 	rules := make([]models.AvailabilityRule, 0, len(order))
 	for _, key := range order {
 		rule := groups[key]
+		if len(rule.CalendarIds) == 0 {
+			continue
+		}
 		rule.CalendarIds = utils.SortedUnique(rule.CalendarIds)
 		rules = append(rules, *rule)
 	}
