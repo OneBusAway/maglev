@@ -80,7 +80,7 @@ func collectKeyPaths(value any, prefix string, paths map[string]struct{}, flexKe
 }
 
 func TestWhereResponses_StayAdditiveOnNonFlexFeed(t *testing.T) {
-	api := createTestApiWithClock(t, clock.NewMockClock(regressionClock))
+	api := createTestApiWithFeedAndClock(t, filepath.Join("../../testdata", "raba.zip"), clock.NewMockClock(regressionClock))
 	defer api.Shutdown()
 	server := httptest.NewServer(api.SetupAPIRoutes())
 	defer server.Close()
