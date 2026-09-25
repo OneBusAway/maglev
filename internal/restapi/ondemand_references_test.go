@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/geo"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
-	"maglev.onebusaway.org/internal/utils"
 )
 
 func buildAllOnDemandServices(t *testing.T, api *RestAPI, opts onDemandBuildOptions) ([]models.OnDemandService, *models.OnDemandReferences) {
@@ -122,7 +122,7 @@ func TestBuildOnDemandServices_GeometryDetail(t *testing.T) {
 	api := createTestApiWithFeed(t, models.GetFixturePath(t, "alexandria-flex.zip"))
 
 	ringLength := func(raw json.RawMessage) int {
-		_, polygons, err := utils.ParseGeoJSONPolygons(raw)
+		_, polygons, err := geo.ParseGeoJSONPolygons(raw)
 		require.NoError(t, err)
 		return len(polygons[0][0])
 	}
@@ -134,7 +134,7 @@ func TestBuildOnDemandServices_GeometryDetail(t *testing.T) {
 	assert.Nil(t, refs.ServiceAreas[0].Name)
 
 	_, refs = buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailSimplified})
-	assert.LessOrEqual(t, ringLength(refs.ServiceAreas[0].Geometry), utils.SimplifyMaxRingPoints)
+	assert.LessOrEqual(t, ringLength(refs.ServiceAreas[0].Geometry), geo.SimplifyMaxRingPoints)
 
 	_, refs = buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
 	assert.Empty(t, refs.ServiceAreas[0].Geometry)

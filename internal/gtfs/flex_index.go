@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/geo"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -127,7 +128,7 @@ func (idx *FlexIndex) loadAreas(ctx context.Context, gtfsDB *gtfsdb.Client, logg
 		return fmt.Errorf("list locations: %w", err)
 	}
 	for _, location := range locations {
-		_, polygons, err := utils.ParseGeoJSONPolygons([]byte(location.Geometry))
+		_, polygons, err := geo.ParseGeoJSONPolygons([]byte(location.Geometry))
 		if err != nil {
 			// Skip rather than fail: one bad zone must not wedge every reload.
 			logger.Warn("skipping on-demand zone with unparseable geometry",
@@ -205,7 +206,7 @@ func (idx *FlexIndex) computeServiceBounds() {
 
 func (idx *FlexIndex) addServiceBounds(serviceID string, bounds utils.CoordinateBounds) {
 	if existing, ok := idx.ServiceBounds[serviceID]; ok {
-		bounds = utils.UnionBounds(existing, bounds)
+		bounds = geo.UnionBounds(existing, bounds)
 	}
 	idx.ServiceBounds[serviceID] = bounds
 }
