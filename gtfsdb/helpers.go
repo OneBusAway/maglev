@@ -234,6 +234,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 
 	logging.LogOperation(logger, "retrieved_static_data", slog.Int("warnings", len(data.Static.Warnings)))
+	logStaticWarnings(logger, data.Static.Warnings)
 
 	staticCounts := c.staticDataCounts(data.Static)
 	for k, v := range staticCounts {
@@ -351,6 +352,18 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		return false, fmt.Errorf("unable to create stops: %w", err)
 	}
 
+	insertedStopIDs := make(map[string]struct{}, len(allStopParams))
+	for _, params := range allStopParams {
+		insertedStopIDs[params.ID] = struct{}{}
+	}
+	logging.LogOperation(logger, "inserting_flex_entities",
+		slog.Int("booking_rules", len(data.Static.BookingRules)),
+		slog.Int("locations", len(data.Static.Locations)),
+		slog.Int("location_groups", len(data.Static.LocationGroups)))
+	if err := c.storeFlexEntities(ctx, data.Static, insertedStopIDs, qtx); err != nil {
+		return false, fmt.Errorf("unable to create flex entities: %w", err)
+	}
+
 	logging.LogOperation(logger, "agencies_and_routes_inserted",
 		slog.Int("agencies", len(data.Static.Agencies)),
 		slog.Int("routes", len(data.Static.Routes)))
@@ -433,6 +446,9 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 	if err := c.bulkInsertStopTimes(ctx, allStopTimeParams, tx); err != nil {
 		return false, fmt.Errorf("unable to create stop times: %w", err)
+	}
+	if err := c.storeFlexStopTimes(ctx, data.Static, qtx); err != nil {
+		return false, fmt.Errorf("unable to create flex stop times: %w", err)
 	}
 
 	// Collect frequency entries from all trips
