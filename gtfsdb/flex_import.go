@@ -69,7 +69,7 @@ func storeLocations(ctx context.Context, locations []gtfs.Location, qtx *Queries
 	for _, location := range lastByID(locations, func(location gtfs.Location) string { return location.Id }) {
 		params, err := locationParams(location)
 		if err != nil {
-			slog.Default().Warn("gtfs_flex_location_skipped",
+			slog.Default().With(slog.String("component", "gtfs_importer")).Warn("gtfs_flex_location_skipped",
 				slog.String("location_id", location.Id),
 				slog.String("reason", err.Error()))
 			continue
