@@ -63,14 +63,15 @@ func (api *RestAPI) onDemandServicesForLocationHandler(w http.ResponseWriter, r 
 	ctx := r.Context()
 	search := newOnDemandSearch(loc)
 	idx := api.GtfsManager.FlexIndex()
-	matches := matchOnDemandServices(idx, search)
+	distances := search.areaDistances(idx)
+	matches := matchOnDemandServices(idx, search, distances)
 
 	services, err := api.loadMatchedOnDemandServices(ctx, matches)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	list, references, err := api.buildOnDemandServices(ctx, services, onDemandSearchBuildOptions(search, geometryDetail))
+	list, references, err := api.buildOnDemandServices(ctx, services, onDemandBuildOptions{GeometryDetail: geometryDetail, AreaDistances: distances})
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -97,22 +98,22 @@ func requireCoordinates(query url.Values) map[string][]string {
 	return fieldErrors
 }
 
-// onDemandSearchBuildOptions asks the builder for area distances only in
-// point mode; viewport mode has no single query point to measure from.
-func onDemandSearchBuildOptions(search onDemandSearch, geometryDetail GeometryDetail) onDemandBuildOptions {
-	opts := onDemandBuildOptions{GeometryDetail: geometryDetail}
-	if !search.Viewport {
-		opts.QueryPoint = &search.Point
+// areaDistances measures from the query point in point mode; viewport mode has
+// no single point to measure from, so it returns nil and areas carry no
+// distance.
+func (search onDemandSearch) areaDistances(idx *gtfs.FlexIndex) *areaDistances {
+	if search.Viewport {
+		return nil
 	}
-	return opts
+	return newAreaDistances(idx, search.Point)
 }
 
 // matchOnDemandServices tests every service whose bounds overlap the search
 // bounds and returns the ones that match, with their strongest reason.
-func matchOnDemandServices(idx *gtfs.FlexIndex, search onDemandSearch) []onDemandMatch {
+func matchOnDemandServices(idx *gtfs.FlexIndex, search onDemandSearch, distances *areaDistances) []onDemandMatch {
 	var matches []onDemandMatch
 	for _, serviceID := range idx.ServiceBoundsOverlapping(search.Bounds) {
-		if reason, ok := matchOnDemandService(idx, serviceID, search); ok {
+		if reason, ok := matchOnDemandService(idx, serviceID, search, distances); ok {
 			matches = append(matches, onDemandMatch{ServiceID: serviceID, Reason: reason})
 		}
 	}
@@ -120,13 +121,13 @@ func matchOnDemandServices(idx *gtfs.FlexIndex, search onDemandSearch) []onDeman
 }
 
 // matchOnDemandService applies the grounds of the search's mode to one service.
-func matchOnDemandService(idx *gtfs.FlexIndex, serviceID string, search onDemandSearch) (string, bool) {
+func matchOnDemandService(idx *gtfs.FlexIndex, serviceID string, search onDemandSearch, distances *areaDistances) (string, bool) {
 	areas := serviceFlexAreas(idx, serviceID)
 	stops := idx.ServiceStops[serviceID]
 	if search.Viewport {
 		return matchViewport(areas, stops, search.Bounds)
 	}
-	return matchPoint(areas, stops, search.Point, search.Radius)
+	return matchPoint(areas, stops, distances, search.Radius)
 }
 
 func serviceFlexAreas(idx *gtfs.FlexIndex, serviceID string) []*gtfs.FlexArea {
@@ -140,19 +141,20 @@ func serviceFlexAreas(idx *gtfs.FlexIndex, serviceID string) []*gtfs.FlexArea {
 
 // matchPoint applies the point-mode grounds in strength order:
 // areaContainsPoint > stopWithinRadius > areaNearby.
-func matchPoint(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, point geoPoint, radius float64) (string, bool) {
+func matchPoint(areas []*gtfs.FlexArea, stops []gtfs.FlexStopPoint, distances *areaDistances, radius float64) (string, bool) {
 	for _, area := range areas {
-		if geo.PointInPolygon(point.Lat, point.Lon, area.Polygons) {
+		if distances.of(area).Inside {
 			return models.MatchReasonAreaContainsPoint, true
 		}
 	}
+	point := distances.point
 	for _, stop := range stops {
 		if utils.Distance(point.Lat, point.Lon, stop.Lat, stop.Lon) <= radius {
 			return models.MatchReasonStopWithinRadius, true
 		}
 	}
 	for _, area := range areas {
-		if distance, _, _ := geo.NearestPointOnBoundary(point.Lat, point.Lon, area.Polygons); distance <= radius {
+		if distances.of(area).Meters <= radius {
 			return models.MatchReasonAreaNearby, true
 		}
 	}
