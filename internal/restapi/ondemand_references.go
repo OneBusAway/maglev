@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -139,6 +140,7 @@ func (api *RestAPI) buildOnDemandServices(ctx context.Context, services []gtfsdb
 		return nil, nil, err
 	}
 	references.Calendars = calendars
+	dropDanglingPriorNoticeCalendars(ctx, references.BookingRules, calendars)
 
 	routes, err := api.loadRoutesByBareID(ctx, services)
 	if err != nil {
@@ -314,6 +316,30 @@ func (api *RestAPI) onDemandCalendars(ctx context.Context, gtfsServices map[agen
 	return calendarIDs, calendars, nil
 }
 
+// dropDanglingPriorNoticeCalendars nulls any priorNoticeCalendarId that names
+// no emitted calendar. The compiler emits no base calendar for a service with
+// no usable calendar row (for example one defined only by calendar_dates), and
+// every calendar id on the wire must resolve in references.calendars.
+func dropDanglingPriorNoticeCalendars(ctx context.Context, bookingRules []models.BookingRule, calendars []models.OnDemandCalendar) {
+	emitted := make(map[string]struct{}, len(calendars))
+	for _, calendar := range calendars {
+		emitted[calendar.ID] = struct{}{}
+	}
+	logger := logging.ForComponent(ctx, "ondemand_references")
+	for i := range bookingRules {
+		calendarID := bookingRules[i].PriorNoticeCalendarId
+		if calendarID == nil {
+			continue
+		}
+		if _, ok := emitted[*calendarID]; ok {
+			continue
+		}
+		logger.Warn("dropping prior-notice calendar with no emitted calendar",
+			"booking_rule_id", bookingRules[i].ID, "prior_notice_calendar_id", *calendarID)
+		bookingRules[i].PriorNoticeCalendarId = nil
+	}
+}
+
 // calendarIDsForAgency narrows the scoped calendar map to one agency, keyed by
 // bare gtfs service id as buildAvailabilityRules expects.
 func calendarIDsForAgency(calendarIDs map[agencyScopedID][]string, agencyID string) map[string][]string {
@@ -379,12 +405,12 @@ func (api *RestAPI) onDemandServiceAreas(ctx context.Context, locations map[agen
 		if !ok {
 			continue
 		}
-		areas = append(areas, api.serviceAreaReference(location, scoped.AgencyID, opts))
+		areas = append(areas, api.serviceAreaReference(ctx, location, scoped.AgencyID, opts))
 	}
 	return areas, nil
 }
 
-func (api *RestAPI) serviceAreaReference(location gtfsdb.Location, agencyID string, opts onDemandBuildOptions) models.ServiceArea {
+func (api *RestAPI) serviceAreaReference(ctx context.Context, location gtfsdb.Location, agencyID string, opts onDemandBuildOptions) models.ServiceArea {
 	area := models.ServiceArea{
 		ID:          utils.FormCombinedID(agencyID, location.ID),
 		Name:        models.NullableString(nulls.StringOrEmpty(location.Name)),
@@ -393,15 +419,26 @@ func (api *RestAPI) serviceAreaReference(location gtfsdb.Location, agencyID stri
 	}
 	switch opts.GeometryDetail {
 	case GeometryDetailFull:
-		area.Geometry = json.RawMessage(location.Geometry)
+		area.Geometry = validStoredGeometry(ctx, location.ID, location.Geometry)
 	case GeometryDetailSimplified:
 		// NULL means the feed geometry already met the display target.
-		area.Geometry = json.RawMessage(nulls.StringOrDefault(location.GeometrySimplified, location.Geometry))
+		area.Geometry = validStoredGeometry(ctx, location.ID, nulls.StringOrDefault(location.GeometrySimplified, location.Geometry))
 	}
 	if opts.QueryPoint != nil {
 		api.applyAreaDistance(&area, location.ID, *opts.QueryPoint)
 	}
 	return area
+}
+
+// validStoredGeometry embeds stored GeoJSON verbatim, or returns nil when the
+// row is not valid JSON: a raw message that fails to marshal would fail the
+// whole response, not just this area.
+func validStoredGeometry(ctx context.Context, locationID, geometry string) json.RawMessage {
+	if !json.Valid([]byte(geometry)) {
+		logging.ForComponent(ctx, "ondemand_references").Warn("omitting invalid stored geometry", "location_id", locationID)
+		return nil
+	}
+	return json.RawMessage(geometry)
 }
 
 // applyAreaDistance fills distanceToArea (0 inside) and, outside, the nearest
