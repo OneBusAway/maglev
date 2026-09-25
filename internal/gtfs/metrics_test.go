@@ -886,3 +886,25 @@ func TestGetMetrics_ConfiguredFilteredFeedNeverFetchedIsUnknown(t *testing.T) {
 	assert.Equal(t, realtimeUpdateUnknown, snapshot.TimeSinceLastRealtimeUpdate["A"],
 		"a configured feed that has never fetched must report unknown for its covered agency, not the fresh-looking 0")
 }
+
+// An enabled feed without agency-ids that has never fetched has no entry in
+// any per-feed map, so only the config reveals it. It covers every agency,
+// so every agency must report unknown rather than the no-feed 0.
+func TestGetMetrics_ConfiguredUnfilteredFeedNeverFetchedIsUnknown(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"RA": {Id: "RA", Agency: &gtfs.Agency{Id: "A"}},
+		"RB": {Id: "RB", Agency: &gtfs.Agency{Id: "B"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+	manager.config.RTFeeds = []RTFeedConfig{
+		{ID: "feed-1", TripUpdatesURL: "http://example.com/tu", Enabled: true},
+	}
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	for _, agencyID := range []string{"A", "B"} {
+		assert.Equal(t, realtimeUpdateUnknown, snapshot.TimeSinceLastRealtimeUpdate[agencyID],
+			"an unfiltered feed that has never fetched must report unknown for every agency")
+	}
+}
