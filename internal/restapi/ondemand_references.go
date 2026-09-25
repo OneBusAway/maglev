@@ -149,7 +149,7 @@ func (api *RestAPI) buildOnDemandServices(ctx context.Context, services []gtfsdb
 		return nil, nil, err
 	}
 	references.Calendars = calendars
-	dropDanglingPriorNoticeCalendars(ctx, references.BookingRules, calendars)
+	dropDanglingPriorNoticeCalendars(references.BookingRules, calendars)
 
 	routes, err := api.loadRoutesByBareID(ctx, services)
 	if err != nil {
@@ -331,23 +331,20 @@ func (api *RestAPI) onDemandCalendars(ctx context.Context, gtfsServices map[agen
 // no emitted calendar. The compiler emits no base calendar for a service with
 // no usable calendar row (for example one defined only by calendar_dates), and
 // every calendar id on the wire must resolve in references.calendars.
-func dropDanglingPriorNoticeCalendars(ctx context.Context, bookingRules []models.BookingRule, calendars []models.OnDemandCalendar) {
+// buildFlexIndex logs these once per reload, so this stays silent.
+func dropDanglingPriorNoticeCalendars(bookingRules []models.BookingRule, calendars []models.OnDemandCalendar) {
 	emitted := make(map[string]struct{}, len(calendars))
 	for _, calendar := range calendars {
 		emitted[calendar.ID] = struct{}{}
 	}
-	logger := logging.ForComponent(ctx, "ondemand_references")
 	for i := range bookingRules {
 		calendarID := bookingRules[i].PriorNoticeCalendarId
 		if calendarID == nil {
 			continue
 		}
-		if _, ok := emitted[*calendarID]; ok {
-			continue
+		if _, ok := emitted[*calendarID]; !ok {
+			bookingRules[i].PriorNoticeCalendarId = nil
 		}
-		logger.Warn("dropping prior-notice calendar with no emitted calendar",
-			"booking_rule_id", bookingRules[i].ID, "prior_notice_calendar_id", *calendarID)
-		bookingRules[i].PriorNoticeCalendarId = nil
 	}
 }
 
