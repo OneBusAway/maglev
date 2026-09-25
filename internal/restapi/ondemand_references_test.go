@@ -1,14 +1,18 @@
 package restapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -16,11 +20,23 @@ import (
 
 func buildAllOnDemandServices(t *testing.T, api *RestAPI, opts onDemandBuildOptions) ([]models.OnDemandService, *models.OnDemandReferences) {
 	t.Helper()
-	services, err := api.GtfsManager.GtfsDB.Queries.ListOnDemandServices(context.Background())
+	return buildAllOnDemandServicesWithContext(t, context.Background(), api, opts)
+}
+
+func buildAllOnDemandServicesWithContext(t *testing.T, ctx context.Context, api *RestAPI, opts onDemandBuildOptions) ([]models.OnDemandService, *models.OnDemandReferences) {
+	t.Helper()
+	services, err := api.GtfsManager.GtfsDB.Queries.ListOnDemandServices(ctx)
 	require.NoError(t, err)
-	list, refs, err := api.buildOnDemandServices(context.Background(), services, opts)
+	list, refs, err := api.buildOnDemandServices(ctx, services, opts)
 	require.NoError(t, err)
 	return list, refs
+}
+
+// contextCapturingLogs returns a context whose logger writes to the buffer.
+func contextCapturingLogs() (context.Context, *bytes.Buffer) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	return logging.WithLogger(context.Background(), logger), &logs
 }
 
 func ids[T any](items []T, id func(T) string) []string {
@@ -172,7 +188,8 @@ func TestBuildOnDemandServices_TwoAgenciesSharingAZone(t *testing.T) {
 	assert.Equal(t, []string{"a1", "a2"}, ids(refs.Agencies, func(a models.AgencyReference) string { return a.ID }))
 
 	// prior_notice_service_id names a service with no calendar rows at all.
-	assert.Equal(t, "a1_ghost", *refs.BookingRules[0].PriorNoticeCalendarId)
+	assert.Nil(t, refs.BookingRules[0].PriorNoticeCalendarId, "an id with no emitted calendar would dangle")
+	assert.Nil(t, refs.BookingRules[1].PriorNoticeCalendarId)
 	assert.Equal(t, []string{"a1_svc", "a2_svc"}, ids(refs.Calendars, func(c models.OnDemandCalendar) string { return c.ID }),
 		"a prior-notice service with no rows compiles to no calendar and no error")
 }
@@ -271,6 +288,29 @@ func TestBuildOnDemandServices_UnindexedAreaHasNoDistance(t *testing.T) {
 	}
 }
 
+func TestBuildOnDemandServices_InvalidStoredGeometryIsOmitted(t *testing.T) {
+	api := createTestApiWithFeed(t, models.GetFixturePath(t, "charlevoix-flex.zip"))
+	ctx, logs := contextCapturingLogs()
+	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(ctx, "UPDATE locations SET geometry = 'not geojson', geometry_simplified = NULL WHERE id = 'gaylord'")
+	require.NoError(t, err)
+
+	for _, detail := range []GeometryDetail{GeometryDetailFull, GeometryDetailSimplified} {
+		_, refs := buildAllOnDemandServicesWithContext(t, ctx, api, onDemandBuildOptions{GeometryDetail: detail})
+
+		for _, area := range refs.ServiceAreas {
+			if area.ID != "CC_gaylord" {
+				assert.NotEmpty(t, area.Geometry, area.ID)
+				continue
+			}
+			assert.Nil(t, area.Geometry, "invalid JSON is not embedded")
+			assert.NotEqual(t, [4]float64{}, area.BBox, "bbox and metadata survive")
+		}
+		_, err = json.Marshal(refs)
+		assert.NoError(t, err, "one corrupt row must not break the response")
+	}
+	assert.Contains(t, logs.String(), "location_id=gaylord")
+}
+
 func TestBuildOnDemandServices_SimplifiedFallsBackToFullGeometry(t *testing.T) {
 	api := createTestApiWithFeed(t, models.GetFixturePath(t, "charlevoix-flex.zip"))
 	var unsimplifiedID, fullGeometry string
@@ -338,4 +378,25 @@ func TestOnDemandServiceModel_NameFallbacks(t *testing.T) {
 			assert.Nil(t, model.URL)
 		})
 	}
+}
+
+func TestBuildOnDemandServices_PriorNoticeCalendarMustResolve(t *testing.T) {
+	files := twoAgencySharedZoneFiles()
+	files["booking_rules.txt"] = "booking_rule_id,booking_type,prior_notice_last_day,prior_notice_last_time,prior_notice_service_id\n" +
+		"br,2,1,17:00:00,holiday\nbr_svc,2,1,17:00:00,svc\n"
+	files["calendar_dates.txt"] = "service_id,date,exception_type\nholiday,20260704,1\n"
+	files["stop_times.txt"] = strings.ReplaceAll(files["stop_times.txt"], "09:00:00,17:00:00,br,br", "09:00:00,17:00:00,br_svc,br_svc")
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "prior-notice-dates.zip", files)
+	ctx, logs := contextCapturingLogs()
+
+	_, refs := buildAllOnDemandServicesWithContext(t, ctx, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
+
+	require.Equal(t, []string{"a1_br", "a2_br_svc"}, ids(refs.BookingRules, func(b models.BookingRule) string { return b.ID }))
+	assert.NotContains(t, ids(refs.Calendars, func(c models.OnDemandCalendar) string { return c.ID }), "a1_holiday",
+		"a calendar_dates-only service has no base calendar")
+	assert.Nil(t, refs.BookingRules[0].PriorNoticeCalendarId, "an id with no emitted calendar is dropped")
+	assert.Equal(t, "a2_svc", *refs.BookingRules[1].PriorNoticeCalendarId, "an id that resolves is kept")
+	assert.Contains(t, logs.String(), "booking_rule_id=a1_br")
+	assert.Contains(t, logs.String(), "prior_notice_calendar_id=a1_holiday")
+	assert.NotContains(t, logs.String(), "a2_br_svc")
 }
