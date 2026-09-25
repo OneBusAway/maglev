@@ -1,10 +1,7 @@
 package restapi
 
 import (
-	"encoding/json"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,20 +10,6 @@ import (
 	"maglev.onebusaway.org/internal/flexfixtures"
 	"maglev.onebusaway.org/internal/models"
 )
-
-func getJSON(t *testing.T, api *RestAPI, endpoint string) (int, map[string]any) {
-	t.Helper()
-	server := httptest.NewServer(api.SetupAPIRoutes())
-	defer server.Close()
-	resp, err := http.Get(server.URL + endpoint)
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	var parsed map[string]any
-	require.NoError(t, json.Unmarshal(body, &parsed), string(body))
-	return resp.StatusCode, parsed
-}
 
 func TestFlexOnlyTrips_LegacySurfaces(t *testing.T) {
 	api := alexandriaAPI(t)
@@ -41,8 +24,9 @@ func TestFlexOnlyTrips_LegacySurfaces(t *testing.T) {
 	})
 
 	t.Run("trip-details/{id} has an empty schedule and no status", func(t *testing.T) {
-		status, body := getJSON(t, api, "/api/where/trip-details/"+tripID+".json?key=TEST")
-		require.Equal(t, http.StatusOK, status)
+		// Decoded untyped: the typed model cannot tell a missing status key from a null one.
+		resp, body := callAPIHandler[map[string]any](t, api, "/api/where/trip-details/"+tripID+".json?key=TEST")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
 		entry := body["data"].(map[string]any)["entry"].(map[string]any)
 		assert.Equal(t, tripID, entry["tripId"])
 		schedule := entry["schedule"].(map[string]any)
