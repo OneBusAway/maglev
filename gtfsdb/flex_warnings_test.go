@@ -18,6 +18,7 @@ func TestLogStaticWarnings_CapsAtTwoHundredLines(t *testing.T) {
 		wantTruncate string
 	}{
 		{name: "under the cap logs every warning", count: 3, wantLines: 3},
+		{name: "exactly at the cap logs no summary", count: 200, wantLines: 200},
 		{name: "over the cap logs 200 and a summary", count: 250, wantLines: 201, wantTruncate: "remaining=50"},
 	}
 	for _, tt := range tests {
