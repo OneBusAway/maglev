@@ -87,3 +87,34 @@ func NewResponseAt(code int, data any, text string, t time.Time) ResponseModel {
 func ResponseCurrentTime(c clock.Clock) int64 {
 	return c.Now().UnixMilli()
 }
+
+// NewOnDemandEntryResponse is NewEntryResponse for the /ondemand references block.
+func NewOnDemandEntryResponse(entry any, references OnDemandReferences, c clock.Clock) ResponseModel {
+	data := map[string]any{
+		"entry":      entry,
+		"references": references,
+	}
+	return NewOKResponse(data, c)
+}
+
+// NewOnDemandListResponse is the /ondemand list envelope; limitExceeded is
+// always false because on-demand service counts are small (wiki §3).
+func NewOnDemandListResponse(list any, references OnDemandReferences, c clock.Clock) ResponseModel {
+	data := map[string]any{
+		"limitExceeded": false,
+		"list":          list,
+		"references":    references,
+	}
+	return NewOKResponse(data, c)
+}
+
+// NewOnDemandListResponseWithRange adds outOfRange for services-for-location.
+func NewOnDemandListResponseWithRange(list any, references OnDemandReferences, outOfRange bool, c clock.Clock) ResponseModel {
+	data := map[string]any{
+		"limitExceeded": false,
+		"list":          list,
+		"outOfRange":    outOfRange,
+		"references":    references,
+	}
+	return NewOKResponse(data, c)
+}
