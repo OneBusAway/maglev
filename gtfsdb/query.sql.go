@@ -54,6 +54,17 @@ FROM
     -- Pointers may name stops that were never stored (no coordinates);
     -- stop_agencies has a foreign key to stops.
     JOIN stops ON stops.id = ondemand_stop_services.stop_id
+WHERE
+    -- A stop a fixed route serves keeps that route's agency: adding the flex
+    -- service's agency could change its /where id (MIN rule) and list it under
+    -- an agency whose /where/stop lookup 404s. Only flex-only stops fall back.
+    NOT EXISTS (
+        SELECT 1
+        FROM stop_times
+        JOIN trips ON stop_times.trip_id = trips.id
+        JOIN routes ON trips.route_id = routes.id
+        WHERE stop_times.stop_id = ondemand_stop_services.stop_id
+    )
 `
 
 func (q *Queries) BuildStopAgencies(ctx context.Context) error {
