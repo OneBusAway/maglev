@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -443,24 +444,30 @@ const (
 	GeometryDetailFull       GeometryDetail = "full"
 )
 
-const geometryDetailParam = "geometryDetail"
-
 // ParseGeometryDetail reads the tri-state geometryDetail parameter, returning
 // fallback when absent and recording a field error for any other value.
 func ParseGeometryDetail(params url.Values, fallback GeometryDetail, fieldErrors map[string][]string) (GeometryDetail, map[string][]string) {
+	allowed := []GeometryDetail{GeometryDetailNone, GeometryDetailSimplified, GeometryDetailFull}
+	return ParseEnumParam(params, "geometryDetail", allowed, fallback, fieldErrors)
+}
+
+// ParseEnumParam retrieves a parameter that must be one of allowed, returning
+// fallback when the key is absent. Any other value records a field error and
+// leaves the fallback in place.
+func ParseEnumParam[T ~string](params url.Values, key string, allowed []T, fallback T, fieldErrors map[string][]string) (T, map[string][]string) {
 	if fieldErrors == nil {
 		fieldErrors = make(map[string][]string)
 	}
-	value := params.Get(geometryDetailParam)
-	switch GeometryDetail(value) {
-	case "":
-		return fallback, fieldErrors
-	case GeometryDetailNone, GeometryDetailSimplified, GeometryDetailFull:
-		return GeometryDetail(value), fieldErrors
-	default:
-		fieldErrors[geometryDetailParam] = append(fieldErrors[geometryDetailParam], `Invalid field value for field "geometryDetail".`)
+
+	val := T(params.Get(key))
+	if val == "" {
 		return fallback, fieldErrors
 	}
+	if !slices.Contains(allowed, val) {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
+		return fallback, fieldErrors
+	}
+	return val, fieldErrors
 }
 
 // ClampRadius restricts a radius value to MaxSearchRadiusInMeters
