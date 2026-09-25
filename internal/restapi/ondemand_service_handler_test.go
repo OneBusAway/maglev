@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/geo"
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/utils"
 )
 
 // onDemandEntryResponse decodes the /ondemand entry envelope.
@@ -100,9 +100,9 @@ func TestOnDemandServiceHandler_AlexandriaMatchesWorkedExample(t *testing.T) {
 	assert.Equal(t, [4]float64{-77.5372039, 38.617508, -76.9092198, 39.057831}, area.BBox)
 	assert.Nil(t, area.DistanceToArea)
 	assert.Nil(t, area.NearestPointOnBoundary)
-	geometryType, polygons, err := utils.ParseGeoJSONPolygons(area.Geometry)
+	geometryType, polygons, err := geo.ParseGeoJSONPolygons(area.Geometry)
 	require.NoError(t, err)
-	assert.Equal(t, utils.GeoJSONPolygon, geometryType)
+	assert.Equal(t, geo.GeoJSONPolygon, geometryType)
 	assert.Len(t, polygons[0][0], 4239, "geometryDetail defaults to full on service/{id}")
 
 	require.Len(t, refs.BookingRules, 1)
@@ -138,7 +138,7 @@ func TestOnDemandServiceHandler_GeometryDetail(t *testing.T) {
 		wantRing     func(t *testing.T, n int)
 		wantGeometry bool
 	}{
-		{"simplified", "&geometryDetail=simplified", func(t *testing.T, n int) { assert.LessOrEqual(t, n, utils.SimplifyMaxRingPoints) }, true},
+		{"simplified", "&geometryDetail=simplified", func(t *testing.T, n int) { assert.LessOrEqual(t, n, geo.SimplifyMaxRingPoints) }, true},
 		{"full", "&geometryDetail=full", func(t *testing.T, n int) { assert.Equal(t, 4239, n) }, true},
 		{"none", "&geometryDetail=none", nil, false},
 	}
@@ -152,7 +152,7 @@ func TestOnDemandServiceHandler_GeometryDetail(t *testing.T) {
 				assert.Empty(t, area.Geometry)
 				return
 			}
-			_, polygons, err := utils.ParseGeoJSONPolygons(area.Geometry)
+			_, polygons, err := geo.ParseGeoJSONPolygons(area.Geometry)
 			require.NoError(t, err)
 			tt.wantRing(t, len(polygons[0][0]))
 		})

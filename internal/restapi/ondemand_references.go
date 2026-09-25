@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/geo"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -453,12 +454,12 @@ func (api *RestAPI) applyAreaDistance(area *models.ServiceArea, locationID strin
 	if flexArea == nil {
 		return
 	}
-	if utils.PointInPolygon(point.Lat, point.Lon, flexArea.Polygons) {
+	if geo.PointInPolygon(point.Lat, point.Lon, flexArea.Polygons) {
 		zero := 0.0
 		area.DistanceToArea = &zero
 		return
 	}
-	distance, lon, lat := utils.NearestPointOnBoundary(point.Lat, point.Lon, flexArea.Polygons)
+	distance, lon, lat := geo.NearestPointOnBoundary(point.Lat, point.Lon, flexArea.Polygons)
 	area.DistanceToArea = &distance
 	area.NearestPointOnBoundary = &[2]float64{lon, lat}
 }

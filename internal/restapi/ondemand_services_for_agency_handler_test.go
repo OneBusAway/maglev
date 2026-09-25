@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/flexfixtures"
+	"maglev.onebusaway.org/internal/geo"
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/utils"
 )
 
 func TestOnDemandServicesForAgencyHandler_Manistee(t *testing.T) {
@@ -44,9 +44,9 @@ func TestOnDemandServicesForAgencyHandler_Manistee(t *testing.T) {
 	refs := model.Data.References
 	assert.Len(t, refs.ServiceAreas, 6, "grand_traverse_county is stored but referenced by no record")
 	for _, area := range refs.ServiceAreas {
-		_, polygons, err := utils.ParseGeoJSONPolygons(area.Geometry)
+		_, polygons, err := geo.ParseGeoJSONPolygons(area.Geometry)
 		require.NoError(t, err, area.ID)
-		assert.LessOrEqual(t, len(polygons[0][0]), utils.SimplifyMaxRingPoints, "list endpoints default to simplified geometry")
+		assert.LessOrEqual(t, len(polygons[0][0]), geo.SimplifyMaxRingPoints, "list endpoints default to simplified geometry")
 	}
 	assert.Len(t, refs.BookingRules, 6, "MC3_college and MC4_med are referenced by no rule or record")
 	require.Len(t, refs.Calendars, 2)
@@ -94,7 +94,7 @@ func TestOnDemandServicesForAgencyHandler_ZeroStopsFeedOnTheWire(t *testing.T) {
 		if area.ID != "AP_nemt_all_michigan_upper" {
 			continue
 		}
-		_, polygons, err := utils.ParseGeoJSONPolygons(area.Geometry)
+		_, polygons, err := geo.ParseGeoJSONPolygons(area.Geometry)
 		require.NoError(t, err)
 		require.Len(t, polygons[0], 2, "the interior ring (hole) survives import")
 		assert.Len(t, polygons[0][1], 5)
