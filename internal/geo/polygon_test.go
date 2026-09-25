@@ -31,6 +31,7 @@ func TestPointInPolygon(t *testing.T) {
 		{"between hole and exterior", 0.002, 0.002, unitSquare(true), true},
 		{"on the exterior boundary", 0, 0.005, unitSquare(false), true},
 		{"on a vertex", 0.01, 0.01, unitSquare(false), true},
+		{"on a hole boundary is outside", 0.005, 0.004, unitSquare(true), false},
 		{"second polygon of a multipolygon", 1.005, 1.005, multi, true},
 		{"gap between multipolygon members", 0.5, 0.5, multi, false},
 		{"empty geometry", 0, 0, nil, false},
