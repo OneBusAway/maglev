@@ -12,6 +12,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/servicedate"
 )
 
 func CalculateServiceDate(currentTime time.Time) time.Time {
@@ -360,10 +361,7 @@ func ParseDate(date string, loc *time.Location) (time.Time, error) {
 		if v < minUnixMillis || v > maxUnixMillis {
 			return time.Time{}, errors.New("unix millisecond timestamp out of reasonable bounds")
 		}
-		// Convert to the provided timezone and explicitly set to midnight
-		t := time.UnixMilli(v).In(loc)
-		y, m, d := t.Date()
-		return time.Date(y, m, d, 0, 0, 0, 0, loc), nil
+		return servicedate.FromInstant(time.UnixMilli(v), loc).Midnight(loc), nil
 	}
 
 	// Parsing in YYYY-MM-DD format
