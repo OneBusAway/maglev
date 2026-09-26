@@ -13,6 +13,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -242,15 +243,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		currentTime = api.Clock.Now().In(loc)
 	}
 
-	// serviceDate is already localized above; extract midnight in agency's TZ.
-	serviceDate := *params.ServiceDate
-	serviceMidnight := time.Date(
-		serviceDate.Year(),
-		serviceDate.Month(),
-		serviceDate.Day(),
-		0, 0, 0, 0,
-		loc,
-	)
+	serviceDate := servicedate.FromInstant(*params.ServiceDate, loc)
+	serviceMidnight := serviceDate.Midnight(loc)
+	serviceStart := serviceDate.Start(loc)
 
 	orderedStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 	if err != nil {
@@ -271,9 +266,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	arrivalOffset := time.Duration(matchedStopTime.ArrivalTime)
 	departureOffset := time.Duration(matchedStopTime.DepartureTime)
 
-	// Add offsets to midnight
-	scheduledArrivalTime := serviceMidnight.Add(arrivalOffset)
-	scheduledDepartureTime := serviceMidnight.Add(departureOffset)
+	scheduledArrivalTime := serviceStart.Add(arrivalOffset)
+	scheduledDepartureTime := serviceStart.Add(departureOffset)
 
 	// Get real-time data for this trip if available.
 	//
@@ -410,7 +404,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// The arrival's frequency uses the window-matched row fetched above.
 	if len(freqRows) > 0 {
-		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceMidnight, currentTime), serviceMidnight)
+		converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqRows, serviceStart, currentTime), serviceStart)
 		arrival.Frequency = &converted
 	}
 
