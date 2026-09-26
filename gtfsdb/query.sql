@@ -1248,26 +1248,6 @@ WHERE active_trip.max_departure_time >= sqlc.arg('from_time')
   AND active_bte.service_id IN (sqlc.slice('active_service_ids'))
   AND route_bte.service_id IN (sqlc.slice('route_service_ids'));
 
--- name: GetActiveTripInBlockAtTime :one
--- Find the currently active trip in a specific block at the given time
--- Returns the trip whose stop times contain the current time (with late/early windows)
--- Orders by departure time ASC to get the EARLIEST matching trip (the one currently in progress)
-SELECT t.id
-FROM trips t
-WHERE t.block_id = sqlc.arg('block_id')
-  AND t.min_arrival_time <= sqlc.arg('current_time')
-  AND t.max_departure_time >= sqlc.arg('current_time')
-  AND t.service_id IN (sqlc.slice('service_ids'))
-ORDER BY t.min_arrival_time ASC
-LIMIT 1;
-
--- name: GetTripsInBlock :many
--- Get all trip IDs in a specific block for the given service IDs
-SELECT id
-FROM trips
-WHERE block_id = sqlc.arg('block_id')
-  AND service_id IN (sqlc.slice('service_ids'));
-
 -- name: GetActiveTripsWithNullBlockForRoute :many
 -- Returns null-block trips whose service window overlaps [time_range_start, time_range_end].
 -- Use time_range_start = now - 30 min and time_range_end = now + 10 min to include
