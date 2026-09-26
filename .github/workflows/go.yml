@@ -59,6 +59,20 @@ jobs:
         run: bash scripts/check-openapi.sh
         shell: bash
 
+      - name: Run go vet (fast mode)
+        if: matrix.os == 'ubuntu-latest'
+        run: go vet -tags='sqlite_fts5 sqlite_math_functions' ./...
+        env:
+          CGO_ENABLED: 1
+        shell: bash
+
+      - name: Run go vet (compatible mode)
+        if: matrix.os == 'windows-latest'
+        run: go vet -tags=purego ./...
+        env:
+          CGO_ENABLED: 0
+        shell: bash
+
       - name: Run tests (fast mode)
         if: matrix.os == 'ubuntu-latest'
         run: go test -v -tags='sqlite_fts5 sqlite_math_functions' -coverprofile=profile.cov -timeout 40m ./...
