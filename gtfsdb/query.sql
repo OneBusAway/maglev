@@ -1469,44 +1469,7 @@ SELECT CAST((
     )
 ) AS INTEGER) AS has_future_service;
 
--- Optimized queries using SQLite window functions
 
--- name: GetTargetStopTimeWithTotalStops :one
--- Fetches a specific stop time for a trip+stop, along with the total stop count,
-SELECT
-    st.trip_id,
-    st.arrival_time,
-    st.departure_time,
-    st.stop_id,
-    st.stop_sequence,
-    st.stop_headsign,
-    st.pickup_type,
-    st.drop_off_type,
-    st.shape_dist_traveled,
-    st.timepoint,
-    (SELECT COUNT(*) FROM stop_times st2 WHERE st2.trip_id = @trip_id) AS total_stops
-FROM stop_times st
-WHERE st.trip_id = @trip_id AND st.stop_id = @stop_id
-ORDER BY st.stop_sequence
-LIMIT 1;
-
--- name: GetTargetStopTimeWithTotalStopsBySequence :one
--- Fetches a specific stop time for a trip+stop+sequence, along with the total stop count,
-SELECT
-    st.trip_id,
-    st.arrival_time,
-    st.departure_time,
-    st.stop_id,
-    st.stop_sequence,
-    st.stop_headsign,
-    st.pickup_type,
-    st.drop_off_type,
-    st.shape_dist_traveled,
-    st.timepoint,
-    (SELECT COUNT(*) FROM stop_times st2 WHERE st2.trip_id = @trip_id) AS total_stops
-FROM stop_times st
-WHERE st.trip_id = @trip_id AND st.stop_id = @stop_id AND st.stop_sequence = @stop_sequence
-LIMIT 1;
 
 -- name: GetBlockTripSequence :one
 -- Calculates a trip's zero-based index within its block's ordered sequence,
