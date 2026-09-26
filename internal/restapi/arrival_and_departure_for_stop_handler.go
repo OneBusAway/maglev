@@ -13,6 +13,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -242,15 +243,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		currentTime = api.Clock.Now().In(loc)
 	}
 
-	// serviceDate is already localized above; extract midnight in agency's TZ.
-	serviceDate := *params.ServiceDate
-	serviceMidnight := time.Date(
-		serviceDate.Year(),
-		serviceDate.Month(),
-		serviceDate.Day(),
-		0, 0, 0, 0,
-		loc,
-	)
+	serviceDate := servicedate.FromInstant(*params.ServiceDate, loc)
+	serviceMidnight := serviceDate.Midnight(loc)
+	serviceStart := serviceDate.Start(loc)
 
 	orderedStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 	if err != nil {
@@ -258,7 +253,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
-	queryOffset := int64(currentTime.Sub(serviceMidnight))
+	queryOffset := int64(currentTime.Sub(serviceStart))
 
 	matchedStopTime, matchedIdx, found := findStopTimeForTripStop(orderedStopTimes, stopCode, params.StopSequence, queryOffset)
 	if !found {
@@ -271,9 +266,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	arrivalOffset := time.Duration(matchedStopTime.ArrivalTime)
 	departureOffset := time.Duration(matchedStopTime.DepartureTime)
 
-	// Add offsets to midnight
-	scheduledArrivalTime := serviceMidnight.Add(arrivalOffset)
-	scheduledDepartureTime := serviceMidnight.Add(departureOffset)
+	scheduledArrivalTime := serviceStart.Add(arrivalOffset)
+	scheduledDepartureTime := serviceStart.Add(departureOffset)
 
 	// Get real-time data for this trip if available.
 	//
@@ -410,7 +404,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// The arrival's frequency uses the window-matched row fetched above.
 	if len(freqRows) > 0 {
-		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceMidnight, currentTime), serviceMidnight)
+		converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqRows, serviceStart, currentTime), serviceStart)
 		arrival.Frequency = &converted
 	}
 
@@ -748,7 +742,7 @@ func (api *RestAPI) getPredictedTimes(
 // If requestedIndex is nil, it mirrors Java's ArrivalAndDepartureServiceImpl
 // .getBlockStopTime (no-stopSequence branch): among all visits of stopCode
 // on this trip, pick the one whose arrival or departure time is closest to
-// queryOffset (nanoseconds since service midnight).
+// queryOffset (nanoseconds since the service day start).
 //
 // If requestedIndex is non-nil, it is treated as the 0-based position of the
 // stop within the trip's stop list (per the OBA API spec — NOT the raw GTFS

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/servicedate"
 )
 
 // FrequencyWindow holds the fields common to both legacy frequency shapes.
@@ -38,8 +39,13 @@ type ScheduleFrequency struct {
 // The DB stores start_time / end_time as nanoseconds since midnight (time.Duration).
 // The resulting StartTime/EndTime are Unix epoch milliseconds.
 func NewFrequencyFromDB(dbFreq gtfsdb.Frequency, serviceDate time.Time) Frequency {
+	return NewFrequencyFromServiceStart(dbFreq, startOfLocalDay(serviceDate))
+}
+
+// NewFrequencyFromServiceStart converts a Frequency row, adding its offsets to serviceStart.
+func NewFrequencyFromServiceStart(dbFreq gtfsdb.Frequency, serviceStart time.Time) Frequency {
 	return Frequency{
-		FrequencyWindow: NewFrequencyWindowFromDB(dbFreq, serviceDate),
+		FrequencyWindow: frequencyWindowFrom(dbFreq, serviceStart),
 		ExactTimes:      int(dbFreq.ExactTimes),
 	}
 }
@@ -48,9 +54,14 @@ func NewFrequencyFromDB(dbFreq gtfsdb.Frequency, serviceDate time.Time) Frequenc
 // for the frequency shapes that carry a window but no exactTimes field. See
 // NewFrequencyFromDB for the unit conventions involved.
 func NewFrequencyWindowFromDB(dbFreq gtfsdb.Frequency, serviceDate time.Time) FrequencyWindow {
-	// Correctly compute start of day in the agency's local timezone
-	startOfDay := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 0, 0, 0, 0, serviceDate.Location())
+	return frequencyWindowFrom(dbFreq, startOfLocalDay(serviceDate))
+}
 
+func startOfLocalDay(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+}
+
+func frequencyWindowFrom(dbFreq gtfsdb.Frequency, startOfDay time.Time) FrequencyWindow {
 	return FrequencyWindow{
 		StartTime: NewModelTime(startOfDay.Add(time.Duration(dbFreq.StartTime))),
 		EndTime:   NewModelTime(startOfDay.Add(time.Duration(dbFreq.EndTime))),
@@ -60,7 +71,7 @@ func NewFrequencyWindowFromDB(dbFreq gtfsdb.Frequency, serviceDate time.Time) Fr
 
 // NewScheduleFrequencyFromDB converts a database Frequency row into a
 // ScheduleFrequency for use in schedule-for-stop responses.
-// serviceDate is the start-of-day in the agency's local timezone.
+// serviceDate is local midnight on the service date; the window is measured from its Start.
 // serviceID and tripID must already be combined (agencyID_rawID) form.
 func NewScheduleFrequencyFromDB(
 	dbFreq gtfsdb.Frequency,
@@ -68,12 +79,11 @@ func NewScheduleFrequencyFromDB(
 	serviceID, tripID, stopHeadsign string,
 	arrivalEnabled, departureEnabled bool,
 ) ScheduleFrequency {
-	startOfDay := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
-		0, 0, 0, 0, serviceDate.Location())
+	date := servicedate.Of(serviceDate)
 
 	return ScheduleFrequency{
-		FrequencyWindow:  NewFrequencyWindowFromDB(dbFreq, serviceDate),
-		ServiceDate:      NewModelTime(startOfDay),
+		FrequencyWindow:  frequencyWindowFrom(dbFreq, date.Start(serviceDate.Location())),
+		ServiceDate:      NewModelTime(date.Midnight(serviceDate.Location())),
 		ServiceID:        serviceID,
 		TripID:           tripID,
 		StopHeadsign:     stopHeadsign,

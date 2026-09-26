@@ -15,6 +15,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -76,8 +77,9 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		startOfDay = time.Date(y, m, d, 0, 0, 0, 0, loc)
 	}
 
-	targetDate := startOfDay.Format("20060102")
-	weekday := strings.ToLower(startOfDay.Weekday().String())
+	serviceDate := servicedate.Of(startOfDay)
+	targetDate := serviceDate.String()
+	weekday := strings.ToLower(serviceDate.Weekday().String())
 
 	// Verify stop exists
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
@@ -179,6 +181,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		ctx, scheduleRows, scheduleRowContext{
 			agencyID:                   agencyID,
 			startOfDay:                 startOfDay,
+			serviceStart:               serviceDate.Start(loc),
 			activeServiceBlockTripsMap: activeServiceBlockTripsMap,
 			freqMap:                    freqMap,
 			logger:                     reqLogger,
@@ -362,6 +365,8 @@ func buildQueriedStopRef(agencyID string, stop gtfsdb.Stop, routeIDs []string) m
 type scheduleRowContext struct {
 	agencyID   string
 	startOfDay time.Time
+	// serviceStart is noon less twelve hours on the service date, the base for stop time offsets.
+	serviceStart time.Time
 	// activeServiceBlockTripsMap maps block ID to that block's trips, already filtered to
 	// the queried date's active service IDs (see GetActiveServiceIDsForDate). The name is
 	// load-bearing: blockBoundaries's first/last-in-block comparisons are only correct
@@ -496,8 +501,8 @@ func newScheduleStopTime(row gtfsdb.GetScheduleForStopOnDateRow, rowCtx schedule
 // buildScheduleStopTime converts a schedule row into a ScheduleStopTime, converting GTFS
 // times (nanoseconds since midnight) to Unix millisecond timestamps.
 func buildScheduleStopTime(row gtfsdb.GetScheduleForStopOnDateRow, rowCtx scheduleRowContext) models.ScheduleStopTime {
-	arrivalTimeMs := rowCtx.startOfDay.Add(time.Duration(row.ArrivalTime)).UnixMilli()
-	departureTimeMs := rowCtx.startOfDay.Add(time.Duration(row.DepartureTime)).UnixMilli()
+	arrivalTimeMs := rowCtx.serviceStart.Add(time.Duration(row.ArrivalTime)).UnixMilli()
+	departureTimeMs := rowCtx.serviceStart.Add(time.Duration(row.DepartureTime)).UnixMilli()
 
 	isFirstInBlock, isLastInBlock := blockBoundaries(row, rowCtx.activeServiceBlockTripsMap)
 	return newScheduleStopTime(row, rowCtx, arrivalTimeMs, departureTimeMs, isFirstInBlock, isLastInBlock)
@@ -576,8 +581,8 @@ func expandExactTimesStopTimes(row gtfsdb.GetScheduleForStopOnDateRow, freq gtfs
 			}
 			break
 		}
-		arrivalMs := rowCtx.startOfDay.Add(time.Duration(freq.StartTime + offset + arrivalOffset)).UnixMilli()
-		departureMs := rowCtx.startOfDay.Add(time.Duration(freq.StartTime + offset + departureOffset)).UnixMilli()
+		arrivalMs := rowCtx.serviceStart.Add(time.Duration(freq.StartTime + offset + arrivalOffset)).UnixMilli()
+		departureMs := rowCtx.serviceStart.Add(time.Duration(freq.StartTime + offset + departureOffset)).UnixMilli()
 
 		stopTime := newScheduleStopTime(row, rowCtx, arrivalMs, departureMs, isFirstInBlock, isLastInBlock)
 		expanded = append(expanded, stopTime)
