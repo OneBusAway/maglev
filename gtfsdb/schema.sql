@@ -588,3 +588,6 @@ CREATE INDEX IF NOT EXISTS idx_trips_route_headsign ON trips (route_id, trip_hea
 
 -- migrate
 CREATE INDEX IF NOT EXISTS idx_trips_time_window ON trips (max_departure_time, min_arrival_time);
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_stop_times_stop_revenue ON stop_times (stop_id, pickup_type, drop_off_type);

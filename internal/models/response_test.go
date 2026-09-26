@@ -64,6 +64,19 @@ func TestNewOKResponse(t *testing.T) {
 	assert.InDelta(t, time.Now().UnixNano()/int64(time.Millisecond), response.CurrentTime, 100, "Response current time should be recent")
 }
 
+func TestNewOKResponseAt(t *testing.T) {
+	testData := map[string]string{"status": "all good"}
+	fixed := time.Date(2024, 6, 15, 14, 30, 0, 0, time.UTC)
+
+	response := NewOKResponseAt(testData, fixed)
+
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.Equal(t, "OK", response.Text)
+	assert.Equal(t, testData, response.Data)
+	assert.Equal(t, APIVersion, response.Version)
+	assert.Equal(t, fixed.UnixMilli(), response.CurrentTime)
+}
+
 func TestNewListResponse(t *testing.T) {
 	itemList := []string{"item1", "item2"}
 	references := NewEmptyReferences()

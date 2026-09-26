@@ -8,7 +8,7 @@ import (
 // FreshnessMiddleware injects the X-Data-Last-Updated header into the response.
 func (api *RestAPI) FreshnessMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if api.GtfsManager != nil {
+		if api.GtfsManager != nil && api.GtfsManager.GtfsDB != nil && api.GtfsManager.GtfsDB.Queries != nil {
 			lastUpdated := api.GtfsManager.GetStaticLastUpdated(r.Context())
 			if !lastUpdated.IsZero() {
 				// Format as RFC3339 for standard API time representation

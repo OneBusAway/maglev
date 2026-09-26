@@ -237,6 +237,26 @@ func TestSearchStopsByName(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	// SearchStopsByName only returns stops with revenue service (a stop time with
+	// unrestricted pickup or drop-off), so every stop needs one. PickupType/DropOffType are
+	// left unset, matching how a real feed's "0" (unrestricted) value is stored.
+	_, err := client.Queries.CreateCalendar(ctx, CreateCalendarParams{
+		ID: "service1", Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20230101", EndDate: "20251231",
+	})
+	require.NoError(t, err)
+	_, err = client.Queries.CreateRoute(ctx, CreateRouteParams{ID: "route1", AgencyID: "agency1", Type: 3})
+	require.NoError(t, err)
+	for _, s := range stops {
+		tripID := "trip_" + s.ID
+		_, err := client.Queries.CreateTrip(ctx, CreateTripParams{ID: tripID, RouteID: "route1", ServiceID: "service1"})
+		require.NoError(t, err)
+		_, err = client.Queries.CreateStopTime(ctx, CreateStopTimeParams{
+			TripID: tripID, StopID: s.ID, StopSequence: 1, ArrivalTime: 28800, DepartureTime: 28800,
+		})
+		require.NoError(t, err)
+	}
+
 	t.Run("matches by stop name", func(t *testing.T) {
 		results, err := client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{
 			SearchQuery: "Main",
@@ -254,8 +274,8 @@ func TestSearchStopsByName(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, results, 3)
 
-		// No route serves these stops, so none resolves an agency to build a combined ID
-		// from, and they fall through to the raw stop ID tiebreak (hub1 < s1 < s3).
+		// This test never builds the stop_agencies index, so no stop resolves an agency
+		// and they fall through to the raw stop ID tiebreak (hub1 < s1 < s3).
 		assert.Equal(t, "Main Street Hub", results[0].Name.String)
 		assert.Equal(t, "Main Street Station", results[1].Name.String)
 		assert.Equal(t, "Main Street Mall", results[2].Name.String)
@@ -381,7 +401,8 @@ func TestSearchStopsByNameOrdersByCombinedID(t *testing.T) {
 	stopServedByAgency(t, client, "999", "aaa", "Ordertest Alpha")
 	stopServedByAgency(t, client, "111", "zzz", "Ordertest Zulu")
 
-	// No route serves this stop, so it has no combined ID to sort by.
+	// No stop time serves this stop, so the revenue filter excludes it before
+	// ordering. It stays as a fixture to pin that exclusion.
 	_, err = client.Queries.CreateStop(ctx, CreateStopParams{
 		ID: "bbb", Name: nulls.String("Ordertest Bravo"), Lat: 40.0, Lon: -74.0,
 	})
@@ -394,14 +415,13 @@ func TestSearchStopsByNameOrdersByCombinedID(t *testing.T) {
 		Limit:       10,
 	})
 	require.NoError(t, err)
-	require.Len(t, results, 3)
+	require.Len(t, results, 2)
 
-	assert.Equal(t, []string{"zzz", "aaa", "bbb"}, []string{results[0].ID, results[1].ID, results[2].ID},
-		"stops must be ordered by combined ID, with agency-less stops last")
+	assert.Equal(t, []string{"zzz", "aaa"}, []string{results[0].ID, results[1].ID},
+		"stops must be ordered by combined ID")
 
 	assert.Equal(t, "111", results[0].AgencyID.String)
 	assert.Equal(t, "999", results[1].AgencyID.String)
-	assert.False(t, results[2].AgencyID.Valid, "a stop no route serves resolves no agency")
 
 	t.Run("limit keeps the lowest combined IDs", func(t *testing.T) {
 		capped, err := client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{

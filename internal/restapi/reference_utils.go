@@ -2,6 +2,8 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -197,6 +199,56 @@ func (api *RestAPI) routeReferenceForTrip(ctx context.Context, routeID string, s
 	}
 
 	return api.routeReferenceByID(ctx, routeID)
+}
+
+// scheduleLinkedTripIDs returns the combined IDs of the trips a schedule block
+// links to, skipping the ones it leaves empty.
+func scheduleLinkedTripIDs(schedule *models.Schedule) []string {
+	if schedule == nil {
+		return nil
+	}
+	linked := make([]string, 0, 2)
+	for _, id := range []string{schedule.NextTripID, schedule.PreviousTripID} {
+		if id != "" {
+			linked = append(linked, id)
+		}
+	}
+	return linked
+}
+
+// appendTripRouteReferences adds the route of every referenced trip whose routeId
+// is not already in references.routes, plus that route's agency when it is not
+// requestAgencyID. A route that no longer exists costs the reference, not the
+// response.
+func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *models.ReferencesModel, requestAgencyID string) error {
+	present := make(map[string]bool, len(references.Routes))
+	for _, route := range references.Routes {
+		present[route.ID] = true
+	}
+
+	for _, trip := range references.Trips {
+		if trip.RouteID == "" || present[trip.RouteID] {
+			continue
+		}
+		_, routeID, err := utils.ExtractAgencyIDAndCodeID(trip.RouteID)
+		if err != nil {
+			continue
+		}
+
+		route, err := api.routeReferenceByID(ctx, routeID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+
+		present[route.ID] = true
+		references.Routes = append(references.Routes, route)
+		api.appendRouteAgencyReference(ctx, references, route.AgencyID, requestAgencyID)
+	}
+
+	return nil
 }
 
 // appendRouteAgencyReference adds a route's own agency to references when it is not
@@ -523,7 +575,7 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 		Lon:                stop.Lon,
 		Code:               nulls.StringOrDefault(stop.Code, stop.ID),
 		Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
-		LocationType:       int(stop.LocationType.Int64),
+		LocationType:       int(nulls.Int64OrDefault(stop.LocationType, 0)),
 		WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		RouteIDs:           combinedRouteIDs,
 		StaticRouteIDs:     combinedRouteIDs,
