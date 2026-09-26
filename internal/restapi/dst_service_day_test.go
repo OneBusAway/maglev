@@ -104,12 +104,17 @@ func TestArrivalsEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 	}
 }
 
-// dstScheduleFiles adds a 10:00 Sunday trip without frequencies to dstFiles.
+// dstScheduleFiles adds a 10:00 Sunday trip without frequencies and a 12:00
+// exact_times=1 trip to dstFiles.
 func dstScheduleFiles() map[string]string {
 	files := dstFiles()
-	files["trips.txt"] += "dst-route,dst-svc,dst-trip-fixed,Headsign,0\n"
+	files["trips.txt"] += "dst-route,dst-svc,dst-trip-fixed,Headsign,0\n" +
+		"dst-route,dst-svc,dst-trip-exact,Headsign,0\n"
 	files["stop_times.txt"] += "dst-trip-fixed,10:00:00,10:00:00,dst-stop1,1\n" +
-		"dst-trip-fixed,10:30:00,10:30:00,dst-stop2,2\n"
+		"dst-trip-fixed,10:30:00,10:30:00,dst-stop2,2\n" +
+		"dst-trip-exact,12:00:00,12:00:00,dst-stop1,1\n" +
+		"dst-trip-exact,12:30:00,12:30:00,dst-stop2,2\n"
+	files["frequencies.txt"] += "dst-trip-exact,12:00:00,12:10:00,600,1\n"
 	return files
 }
 
@@ -161,6 +166,7 @@ func TestScheduleEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 				fmt.Sprintf("dst-schedule-%s.zip", tc.date), dstScheduleFiles())
 
 			wantFixedArrival := start.Add(10 * time.Hour).UnixMilli()
+			wantExactTimesArrival := start.Add(12 * time.Hour).UnixMilli()
 			wantFrequencyStart := start.Add(8 * time.Hour).UnixMilli()
 			wantServiceDate := tc.date.Midnight(losAngeles).UnixMilli()
 
@@ -171,8 +177,9 @@ func TestScheduleEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 				require.Len(t, stopSchedule.Data.Entry.StopRouteSchedules, 1, "date=%s", date)
 				directions := stopSchedule.Data.Entry.StopRouteSchedules[0].StopRouteDirectionSchedules
 				require.Len(t, directions, 1)
-				require.Len(t, directions[0].ScheduleStopTimes, 1)
+				require.Len(t, directions[0].ScheduleStopTimes, 2)
 				assert.Equal(t, wantFixedArrival, directions[0].ScheduleStopTimes[0].ArrivalTime, "date=%s", date)
+				assert.Equal(t, wantExactTimesArrival, directions[0].ScheduleStopTimes[1].ArrivalTime, "date=%s", date)
 				require.Len(t, directions[0].ScheduleFrequencies, 1)
 				assert.Equal(t, wantFrequencyStart, directions[0].ScheduleFrequencies[0].StartTime, "date=%s", date)
 				assert.Equal(t, wantServiceDate, directions[0].ScheduleFrequencies[0].ServiceDate, "date=%s", date)
