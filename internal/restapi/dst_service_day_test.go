@@ -192,3 +192,37 @@ func TestScheduleEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 		})
 	}
 }
+
+func TestArrivalForStop_PicksLoopVisitOnDSTServiceDays(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	files := dstFiles()
+	files["trips.txt"] += "dst-route,dst-svc,dst-loop,Loop,0\n"
+	files["stop_times.txt"] += "dst-loop,08:00:00,08:00:00,dst-stop1,1\n" +
+		"dst-loop,08:30:00,08:30:00,dst-stop2,2\n" +
+		"dst-loop,09:00:00,09:00:00,dst-stop1,3\n"
+
+	stopID := utils.FormCombinedID("dst-agency", "dst-stop1")
+	tripID := utils.FormCombinedID("dst-agency", "dst-loop")
+
+	for _, tc := range []struct {
+		name string
+		date servicedate.Date
+	}{
+		{name: "ordinary Sunday", date: servicedate.New(2026, time.November, 8)},
+		{name: "fall back", date: servicedate.New(2026, time.November, 1)},
+		{name: "spring forward", date: servicedate.New(2026, time.March, 8)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := tc.date.Start(losAngeles)
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(start.Add(8*time.Hour+50*time.Minute)),
+				fmt.Sprintf("dst-loop-%s.zip", tc.date), files)
+
+			resp, single := callAPIHandler[dstArrivalResponse](t, api, fmt.Sprintf(
+				"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d", stopID, tripID, start.UnixMilli()))
+			require.Equal(t, 200, resp.StatusCode)
+			assert.Equal(t, start.Add(9*time.Hour).UnixMilli(), single.Data.Entry.ScheduledArrivalTime, "08:50 is closest to the 09:00 visit")
+		})
+	}
+}

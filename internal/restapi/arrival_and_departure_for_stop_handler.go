@@ -253,7 +253,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
-	queryOffset := int64(currentTime.Sub(serviceMidnight))
+	queryOffset := int64(currentTime.Sub(serviceStart))
 
 	matchedStopTime, matchedIdx, found := findStopTimeForTripStop(orderedStopTimes, stopCode, params.StopSequence, queryOffset)
 	if !found {
@@ -742,7 +742,7 @@ func (api *RestAPI) getPredictedTimes(
 // If requestedIndex is nil, it mirrors Java's ArrivalAndDepartureServiceImpl
 // .getBlockStopTime (no-stopSequence branch): among all visits of stopCode
 // on this trip, pick the one whose arrival or departure time is closest to
-// queryOffset (nanoseconds since service midnight).
+// queryOffset (nanoseconds since the service day start).
 //
 // If requestedIndex is non-nil, it is treated as the 0-based position of the
 // stop within the trip's stop list (per the OBA API spec — NOT the raw GTFS
