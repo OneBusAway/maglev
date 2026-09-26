@@ -144,6 +144,15 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	defaults := TripParamDefaults{IncludeTrip: true, IncludeSchedule: true}
+
+	// Format errors do not need the agency timezone. Catch them before GetTrip so
+	// an unknown ID still returns a field error instead of 404. Localized parse
+	// stays after the lookup, where loc is available.
+	if _, fieldErrors := api.parseTripParams(r, defaults); len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
@@ -171,7 +180,6 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Parse query params with the agency's timezone so that serviceDate and time
 	// are localized at parse time, preventing UTC date-extraction bugs.
-	defaults := TripParamDefaults{IncludeTrip: true, IncludeSchedule: true}
 	params, fieldErrors := api.parseTripParams(r, defaults, loc)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
