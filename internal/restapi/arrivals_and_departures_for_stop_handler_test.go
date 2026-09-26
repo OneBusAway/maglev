@@ -455,6 +455,140 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 	assert.True(t, foundRoute, "references.routes should contain the correctly prefixed route")
 }
 
+func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *testing.T) {
+	locLA, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	_ = locLA
+
+	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(queryTimeUTC)
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyUTC  = "TzA"
+		agencyLA   = "TzB"
+		sharedStop = "SharedTzStop"
+		routeUTC   = "RouteUTC"
+		routeLA    = "RouteLA"
+		tripUTC    = "TripUTC"
+		tripLA     = "TripLA"
+		calID      = "service_tz"
+	)
+
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyUTC, Name: "UTC Agency", Url: "http://utc-agency.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyLA, Name: "LA Agency", Url: "http://la-agency.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: sharedStop, Name: nulls.String("Shared Timezone Stop"),
+		Lat: 47.6062, Lon: -122.3321,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: calID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20200101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+
+	// Route & Trip for UTC Agency: arrives at 15:10 UTC (offset: 15h10m)
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeUTC, AgencyID: agencyUTC,
+		ShortName: nulls.String("UTC-Line"),
+		LongName:  nulls.String("UTC Express"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripUTC, RouteID: routeUTC, ServiceID: calID,
+		TripHeadsign: nulls.String("Northbound"),
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripUTC, StopID: sharedStop, StopSequence: 1,
+		ArrivalTime:   int64(15*time.Hour + 10*time.Minute),
+		DepartureTime: int64(15*time.Hour + 12*time.Minute),
+	})
+	require.NoError(t, err)
+
+	// Route & Trip for LA Agency: arrives at 15:10 UTC, which is 07:10 PST (offset: 7h10m from LA midnight)
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeLA, AgencyID: agencyLA,
+		ShortName: nulls.String("LA-Line"),
+		LongName:  nulls.String("LA Express"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripLA, RouteID: routeLA, ServiceID: calID,
+		TripHeadsign: nulls.String("Southbound"),
+	})
+	require.NoError(t, err)
+
+	// On 2026-01-15, 15:10 UTC is 07:10 PST in America/Los_Angeles
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripLA, StopID: sharedStop, StopSequence: 1,
+		ArrivalTime:   int64(7*time.Hour + 10*time.Minute),
+		DepartureTime: int64(7*time.Hour + 12*time.Minute),
+	})
+	require.NoError(t, err)
+
+	queryURLWithPrefix := func(agencyPrefix string) string {
+		combinedID := utils.FormCombinedID(agencyPrefix, sharedStop)
+		return arrivalsAndDeparturesURL(combinedID, url.Values{
+			"minutesBefore": {"5"},
+			"minutesAfter":  {"30"},
+		})
+	}
+
+	expectedArrivalUTC := time.Date(2026, 1, 15, 15, 10, 0, 0, time.UTC)
+
+	// Query via UTC Agency prefix
+	{
+		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, queryURLWithPrefix(agencyUTC))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, http.StatusOK, model.Code)
+
+		tripIDs := make(map[string]models.ArrivalAndDeparture)
+		for _, ad := range model.Data.Entry.ArrivalsAndDepartures {
+			tripIDs[ad.TripID] = ad
+		}
+		require.Contains(t, tripIDs, utils.FormCombinedID(agencyUTC, tripUTC), "UTC query should include trip-utc")
+		require.Contains(t, tripIDs, utils.FormCombinedID(agencyLA, tripLA), "UTC query should include trip-la from another timezone")
+		assert.True(t, tripIDs[utils.FormCombinedID(agencyLA, tripLA)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
+		assert.True(t, tripIDs[utils.FormCombinedID(agencyUTC, tripUTC)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
+	}
+
+	// Query via LA Agency prefix
+	{
+		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, queryURLWithPrefix(agencyLA))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, http.StatusOK, model.Code)
+
+		tripIDs := make(map[string]models.ArrivalAndDeparture)
+		for _, ad := range model.Data.Entry.ArrivalsAndDepartures {
+			tripIDs[ad.TripID] = ad
+		}
+		require.Contains(t, tripIDs, utils.FormCombinedID(agencyUTC, tripUTC), "LA query should include trip-utc from another timezone")
+		require.Contains(t, tripIDs, utils.FormCombinedID(agencyLA, tripLA), "LA query should include trip-la")
+		assert.True(t, tripIDs[utils.FormCombinedID(agencyLA, tripLA)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
+		assert.True(t, tripIDs[utils.FormCombinedID(agencyUTC, tripUTC)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
+	}
+}
+
 func TestArrivalsAndDeparturesReturnsResultsNearMidnight(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2025, 6, 13, 11, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)

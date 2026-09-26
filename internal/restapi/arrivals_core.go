@@ -156,56 +156,106 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 }
 
 // activeStopTimesForWindow collects the stop_times falling inside the request
-// window across yesterday, today and tomorrow, so trips whose service day
-// started before midnight are not dropped.
+// window across yesterday, today and tomorrow, resolving each serving agency
+// in its own timezone so trips from agencies in other timezones are not dropped.
 func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrivalsInput) ([]activeStopTime, error) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	windowStart := in.QueryTime.Add(-in.Before)
 	windowEnd := in.QueryTime.Add(in.After)
 
-	var allActiveStopTimes []activeStopTime
+	// Discover routes and agencies serving this stop
+	routeAgencyMap := make(map[string]string)
+	agencyLocations := make(map[string]*time.Location)
 
-	for dayOffset := -1; dayOffset <= 1; dayOffset++ {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		dayStopTimes, err := api.stopTimesForServiceDay(ctx, in, dayOffset, windowStart, windowEnd)
-		if err != nil {
-			// dayOffset==0 is the user's actual service date — silently
-			// dropping it would emit a 200 with the most important day's
-			// arrivals missing. Fail loud for that case so clients can
-			// retry. ±1-day failures stay best-effort (window-spillover only).
-			if dayOffset == 0 {
-				return nil, err
+	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, in.StopCode)
+	if err != nil {
+		reqLogger.Warn("failed to fetch routes for stop", "stopID", in.StopCode, "error", err)
+	} else {
+		for _, r := range routes {
+			routeAgencyMap[r.ID] = r.AgencyID
+			if _, exists := agencyLocations[r.AgencyID]; !exists {
+				agencyLocations[r.AgencyID] = nil
 			}
-			reqLogger.Warn("failed to resolve services for window-spillover day, skipping",
-				slog.Int("day_offset", dayOffset),
-				slog.Any("error", err))
+		}
+	}
+
+	// Always ensure the stop's primary agency is represented with its known location
+	agencyLocations[in.AgencyID] = in.Location
+
+	// Resolve timezone locations for all other agencies serving this stop
+	for agencyID, loc := range agencyLocations {
+		if loc != nil {
 			continue
 		}
-		allActiveStopTimes = append(allActiveStopTimes, dayStopTimes...)
+		ag, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+		if err != nil {
+			reqLogger.Warn("failed to fetch agency for timezone resolution", "agencyID", agencyID, "error", err)
+			agencyLocations[agencyID] = in.Location
+			continue
+		}
+		agLoc, err := loadAgencyLocation(ag.ID, ag.Timezone)
+		if err != nil {
+			reqLogger.Warn("failed to load timezone for agency", "agencyID", agencyID, "timezone", ag.Timezone, "error", err)
+			agencyLocations[agencyID] = in.Location
+			continue
+		}
+		agencyLocations[agencyID] = agLoc
 	}
+
+	var allActiveStopTimes []activeStopTime
+
+	for agencyID, agencyLoc := range agencyLocations {
+		for dayOffset := -1; dayOffset <= 1; dayOffset++ {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+
+			dayStopTimes, err := api.stopTimesForAgencyServiceDay(ctx, in, agencyID, agencyLoc, len(agencyLocations) > 1, routeAgencyMap, dayOffset, windowStart, windowEnd)
+			if err != nil {
+				// dayOffset==0 is the primary service date: fail loud if it's the sole agency
+				if dayOffset == 0 && len(agencyLocations) == 1 {
+					return nil, err
+				}
+				reqLogger.Warn("failed to resolve services for window-spillover day, skipping",
+					slog.String("agencyID", agencyID),
+					slog.Int("day_offset", dayOffset),
+					slog.Any("error", err))
+				continue
+			}
+			allActiveStopTimes = append(allActiveStopTimes, dayStopTimes...)
+		}
+	}
+
+	slices.SortFunc(allActiveStopTimes, func(a, b activeStopTime) int {
+		timeA := a.ServiceDate.Add(time.Duration(a.ArrivalTime))
+		timeB := b.ServiceDate.Add(time.Duration(b.ArrivalTime))
+		if timeA.Before(timeB) {
+			return -1
+		}
+		if timeA.After(timeB) {
+			return 1
+		}
+		return 0
+	})
 
 	return allActiveStopTimes, nil
 }
 
-// stopTimesForServiceDay returns the stop_times of a single service day that
-// fall inside the window, keeping only those whose service is active that day.
-//
-// The two failure modes are deliberately different: not being able to resolve
-// the day's active services is returned to the caller, which decides whether
-// that day is essential, while an unreadable stop_times page is logged and
-// yields no rows.
-func (api *RestAPI) stopTimesForServiceDay(
+// stopTimesForAgencyServiceDay returns the stop_times of a single service day for a specific agency
+// that fall inside the window, keeping only those whose service is active that day.
+func (api *RestAPI) stopTimesForAgencyServiceDay(
 	ctx context.Context,
 	in stopArrivalsInput,
+	agencyID string,
+	agencyLoc *time.Location,
+	filterByAgency bool,
+	routeAgencyMap map[string]string,
 	dayOffset int,
 	windowStart, windowEnd time.Time,
 ) ([]activeStopTime, error) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
-	targetDate := in.QueryTime.AddDate(0, 0, dayOffset)
-	serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, in.Location)
+	targetDate := in.QueryTime.In(agencyLoc).AddDate(0, 0, dayOffset)
+	serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, agencyLoc)
 	serviceDateStr := targetDate.Format("20060102")
 
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
@@ -216,6 +266,7 @@ func (api *RestAPI) stopTimesForServiceDay(
 		return nil, nil
 	}
 
+	startOffset := windowStart.Sub(serviceMidnight)
 	endOffset := windowEnd.Sub(serviceMidnight)
 	if endOffset < 0 {
 		return nil, nil
@@ -223,7 +274,7 @@ func (api *RestAPI) stopTimesForServiceDay(
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForStopInWindow(ctx, gtfsdb.GetStopTimesForStopInWindowParams{
 		StopID:           in.StopCode,
-		WindowStartNanos: windowStart.Sub(serviceMidnight).Nanoseconds(),
+		WindowStartNanos: startOffset.Nanoseconds(),
 		WindowEndNanos:   endOffset.Nanoseconds(),
 	})
 	if err != nil {
@@ -240,6 +291,12 @@ func (api *RestAPI) stopTimesForServiceDay(
 
 	dayStopTimes := make([]activeStopTime, 0, len(stopTimes))
 	for _, st := range stopTimes {
+		if filterByAgency {
+			routeAgency, ok := routeAgencyMap[st.RouteID]
+			if ok && routeAgency != agencyID {
+				continue
+			}
+		}
 		if activeServiceIDSet[st.ServiceID] {
 			dayStopTimes = append(dayStopTimes, activeStopTime{
 				GetStopTimesForStopInWindowRow: st,

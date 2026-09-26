@@ -234,6 +234,24 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
+	// If the trip belongs to an agency with a different timezone than the stop's agency,
+	// localize serviceDate and time in the trip's agency timezone so scheduled times match.
+	if route.AgencyID != "" && route.AgencyID != stopAgency.ID {
+		if routeAgency, agencyErr := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID); agencyErr == nil {
+			if tripLoc, locErr := loadAgencyLocation(routeAgency.ID, routeAgency.Timezone); locErr == nil {
+				loc = tripLoc
+				if params.ServiceDate != nil {
+					localized := params.ServiceDate.In(loc)
+					params.ServiceDate = &localized
+				}
+				if params.Time != nil {
+					localized := params.Time.In(loc)
+					params.Time = &localized
+				}
+			}
+		}
+	}
+
 	// Set current time
 	var currentTime time.Time
 	if params.Time != nil {
