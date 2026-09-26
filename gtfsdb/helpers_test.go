@@ -139,14 +139,38 @@ type queryMetricCall struct {
 	hadErr    bool
 }
 
-type testQueryMetricsRecorder struct {
-	calls []queryMetricCall
+type queryDurationCall struct {
+	queryName string
+	op        string
+	duration  time.Duration
+	hadErr    bool
 }
 
-func (r *testQueryMetricsRecorder) RecordDBQuery(queryName, op string, err error) {
+type testQueryMetricsRecorder struct {
+	calls         []queryMetricCall
+	durationCalls []queryDurationCall
+}
+
+func (r *testQueryMetricsRecorder) RecordDBQuery(
+	queryName, op string,
+	err error,
+) {
 	r.calls = append(r.calls, queryMetricCall{
 		queryName: queryName,
 		op:        op,
+		hadErr:    err != nil,
+	})
+}
+
+func (r *testQueryMetricsRecorder) RecordDBQueryDuration(
+	queryName, op string,
+	duration time.Duration,
+	err error,
+) {
+	r.durationCalls = append(r.durationCalls, queryDurationCall{
+		queryName: queryName,
+		op:        op,
+		duration:  duration,
 		hadErr:    err != nil,
 	})
 }
@@ -156,13 +180,18 @@ func TestSlowQueryDB_RecordsQueryMetrics(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	ctx := context.Background()
 	recorder := &testQueryMetricsRecorder{}
-
 	wrapper := newMetricsWrapper(db)
 	wrapper.queryMetrics = recorder
 
+	ctx := context.Background()
+
 	_, err = wrapper.QueryContext(ctx, "-- name: ListAgencies :many\nSELECT 1")
+	require.NoError(t, err)
+
+	start := time.Now()
+	_, err = wrapper.ExecContext(ctx, "-- name: SlowExec :exec\nWITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x<1000000) SELECT sum(x) FROM cnt;")
+	wallDuration := time.Since(start)
 	require.NoError(t, err)
 
 	_, err = wrapper.ExecContext(ctx, "-- name: BrokenExec :exec\nTHIS IS INVALID SQL")
@@ -173,10 +202,36 @@ func TestSlowQueryDB_RecordsQueryMetrics(t *testing.T) {
 	require.NoError(t, row.Scan(&n))
 	assert.Equal(t, 1, n)
 
-	require.Len(t, recorder.calls, 3)
-	assert.Equal(t, queryMetricCall{queryName: "ListAgencies", op: "query", hadErr: false}, recorder.calls[0])
-	assert.Equal(t, queryMetricCall{queryName: "BrokenExec", op: "exec", hadErr: true}, recorder.calls[1])
-	assert.Equal(t, queryMetricCall{queryName: "unknown", op: "query_row", hadErr: false}, recorder.calls[2])
+	// We made 4 calls to RecordDBQuery
+	require.Len(t, recorder.calls, 4)
+
+	assert.Equal(t, "ListAgencies", recorder.calls[0].queryName)
+	assert.Equal(t, "query", recorder.calls[0].op)
+	assert.False(t, recorder.calls[0].hadErr)
+
+	assert.Equal(t, "SlowExec", recorder.calls[1].queryName)
+	assert.Equal(t, "exec", recorder.calls[1].op)
+	assert.False(t, recorder.calls[1].hadErr)
+
+	assert.Equal(t, "BrokenExec", recorder.calls[2].queryName)
+	assert.Equal(t, "exec", recorder.calls[2].op)
+	assert.True(t, recorder.calls[2].hadErr)
+
+	assert.Equal(t, "unknown", recorder.calls[3].queryName)
+	assert.Equal(t, "query_row", recorder.calls[3].op)
+	assert.False(t, recorder.calls[3].hadErr)
+
+	// We made 2 calls to RecordDBQueryDuration (only for ExecContext)
+	require.Len(t, recorder.durationCalls, 2)
+	assert.Equal(t, "SlowExec", recorder.durationCalls[0].queryName)
+	assert.Equal(t, "exec", recorder.durationCalls[0].op)
+	assert.Greater(t, recorder.durationCalls[0].duration, time.Duration(0), "duration should be > 0")
+	assert.LessOrEqual(t, recorder.durationCalls[0].duration, wallDuration, "duration should be bounded by wall duration")
+	assert.False(t, recorder.durationCalls[0].hadErr)
+
+	assert.Equal(t, "BrokenExec", recorder.durationCalls[1].queryName)
+	assert.Equal(t, "exec", recorder.durationCalls[1].op)
+	assert.True(t, recorder.durationCalls[1].hadErr)
 }
 
 func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
@@ -208,6 +263,7 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
         trip_id TEXT NOT NULL
     );
 `
+
 	t.Cleanup(func() {
 		ddl = originalDDL
 	})
@@ -230,7 +286,13 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
 	assert.Empty(t, agencies)
 
 	require.Len(t, recorder.calls, 1)
-	assert.Equal(t, queryMetricCall{queryName: "ListAgencies", op: "query", hadErr: false}, recorder.calls[0])
+
+	assert.Equal(t, "ListAgencies", recorder.calls[0].queryName)
+	assert.Equal(t, "query", recorder.calls[0].op)
+	assert.False(t, recorder.calls[0].hadErr)
+
+	// ListAgencies is a Query, so it should not record duration
+	require.Empty(t, recorder.durationCalls)
 }
 
 func TestExtractQueryName(t *testing.T) {

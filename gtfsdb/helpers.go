@@ -67,8 +67,18 @@ func newMetricsWrapper(db *sql.DB) *metricsWrapper {
 }
 
 func (s *metricsWrapper) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	start := time.Now()
+
 	res, err := s.db.ExecContext(ctx, query, args...)
-	s.recordQueryMetrics("exec", query, err)
+	duration := time.Since(start)
+
+	queryName := extractQueryName(query)
+	s.queryMetrics.RecordDBQuery(queryName, "exec", err)
+
+	if dr, ok := s.queryMetrics.(DBQueryDurationRecorder); ok {
+		dr.RecordDBQueryDuration(queryName, "exec", duration, err)
+	}
+
 	return res, err
 }
 
@@ -80,20 +90,20 @@ func (s *metricsWrapper) PrepareContext(ctx context.Context, query string) (*sql
 
 func (s *metricsWrapper) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
-	s.recordQueryMetrics("query", query, err)
+
+	s.queryMetrics.RecordDBQuery(extractQueryName(query), "query", err)
+
 	return rows, err
 }
 
 func (s *metricsWrapper) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
 	row := s.db.QueryRowContext(ctx, query, args...)
-	// Note: QueryRowContext defers errors to row.Scan(), so err is always nil here.
-	// query_row metrics always report status="ok". See PR description for follow-up plan.
-	s.recordQueryMetrics("query_row", query, nil)
-	return row
-}
 
-func (s *metricsWrapper) recordQueryMetrics(op, query string, err error) {
-	s.queryMetrics.RecordDBQuery(extractQueryName(query), op, err)
+	// QueryRowContext defers errors until Scan(), so the Scan error is not
+	// available here. This preserves the existing status behavior.
+	s.queryMetrics.RecordDBQuery(extractQueryName(query), "query_row", nil)
+
+	return row
 }
 
 func extractQueryName(query string) string {
