@@ -34,7 +34,7 @@ func PointInPolygon(lat, lon float64, polygons [][][][2]float64) bool {
 func pointInRing(lat, lon float64, ring [][2]float64) bool {
 	inside := false
 	for i := range ring {
-		start, end := ring[i], ring[(i+1)%len(ring)]
+		start, end := ring[i], nextRingVertex(ring, i)
 		if pointOnSegment(lon, lat, start, end) {
 			return true
 		}
@@ -48,6 +48,13 @@ func pointInRing(lat, lon float64, ring [][2]float64) bool {
 		}
 	}
 	return inside
+}
+
+// nextRingVertex returns the vertex after ring[i], wrapping to the first, so
+// every edge test also covers the closing edge of a ring the feed left unclosed.
+// On a closed ring the wrapped edge is a harmless zero-length segment.
+func nextRingVertex(ring [][2]float64, i int) [2]float64 {
+	return ring[(i+1)%len(ring)]
 }
 
 // pointOnSegment reports whether (x, y) lies on the closed segment [a, b].
@@ -70,8 +77,8 @@ func NearestPointOnBoundary(lat, lon float64, polygons [][][][2]float64) (distan
 
 	for _, polygon := range polygons {
 		for _, ring := range polygon {
-			for i := 0; i < len(ring)-1; i++ {
-				candidateLon, candidateLat := closestPointOnSegment(lon, lat, ring[i], ring[i+1], scaleX, scaleY)
+			for i := range ring {
+				candidateLon, candidateLat := closestPointOnSegment(lon, lat, ring[i], nextRingVertex(ring, i), scaleX, scaleY)
 				if d := Distance(lat, lon, candidateLat, candidateLon); d < distanceMeters {
 					distanceMeters, nearestLon, nearestLat = d, candidateLon, candidateLat
 				}
