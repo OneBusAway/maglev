@@ -352,6 +352,78 @@ func TestTripDetailsHandlerWithInvalidParams(t *testing.T) {
 	})
 }
 
+func TestTripDetailsHandlerParamValidationPrecedesLookup(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	trip := mustGetTrip(t, api)
+	knownTripID := utils.FormCombinedID(agency.ID, trip.ID)
+	unknownTripID := utils.FormCombinedID(agency.ID, "nonesuch")
+
+	tests := []struct {
+		name           string
+		tripID         string
+		query          string
+		expectedStatus int
+		expectFieldKey string
+	}{
+		{
+			name:           "unknown agency with an invalid serviceDate",
+			tripID:         "99_nonesuch",
+			query:          "serviceDate=invalid",
+			expectedStatus: http.StatusBadRequest,
+			expectFieldKey: "serviceDate",
+		},
+		{
+			name:           "unknown agency with an invalid time",
+			tripID:         "99_nonesuch",
+			query:          "time=invalid",
+			expectedStatus: http.StatusBadRequest,
+			expectFieldKey: "time",
+		},
+		{
+			name:           "known trip with an invalid serviceDate",
+			tripID:         knownTripID,
+			query:          "serviceDate=invalid",
+			expectedStatus: http.StatusBadRequest,
+			expectFieldKey: "serviceDate",
+		},
+		{
+			name:           "unknown agency with a valid serviceDate",
+			tripID:         "99_nonesuch",
+			query:          "serviceDate=2025-06-12",
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "unknown trip with a valid serviceDate",
+			tripID:         unknownTripID,
+			query:          "serviceDate=2025-06-12",
+			expectedStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := "/api/where/trip-details/" + tt.tripID + ".json?key=TEST"
+			if tt.query != "" {
+				u += "&" + tt.query
+			}
+			resp, model := callAPIHandler[TripDetailsResponse](t, api, u)
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			assert.Equal(t, tt.expectedStatus, model.Code)
+
+			if tt.expectFieldKey == "" {
+				return
+			}
+
+			assert.Contains(t, model.Data.FieldErrors, tt.expectFieldKey)
+			assert.NotEmpty(t, model.Data.FieldErrors[tt.expectFieldKey])
+		})
+	}
+}
+
 func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
