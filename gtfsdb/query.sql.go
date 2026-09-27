@@ -2265,6 +2265,8 @@ WITH BlockTrips AS (
     FROM trips
     WHERE block_id = ?2
       AND service_id IN (/*SLICE:service_ids*/?)
+      -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+      AND min_arrival_time IS NOT NULL
 )
 SELECT seq FROM BlockTrips WHERE id = ?1
 `
