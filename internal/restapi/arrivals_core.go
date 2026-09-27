@@ -172,93 +172,17 @@ type timezoneGroup struct {
 // Agencies are grouped by distinct timezone: a stop served by five agencies in
 // one timezone costs the same six service/window queries as a single agency.
 func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrivalsInput) ([]activeStopTime, error) {
-	reqLogger := logging.ForComponent(ctx, "http_server")
-	windowStart := in.QueryTime.Add(-in.Before)
-	windowEnd := in.QueryTime.Add(in.After)
-
-	// Discover routes and agencies serving this stop
-	routeAgencyMap := make(map[string]string)
-	agencyLocations := make(map[string]*time.Location)
-
-	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, in.StopCode)
-	if err != nil {
-		reqLogger.Warn("failed to fetch routes for stop", "stopID", in.StopCode, "error", err)
-	} else {
-		for _, r := range routes {
-			routeAgencyMap[r.ID] = r.AgencyID
-			if _, exists := agencyLocations[r.AgencyID]; !exists {
-				agencyLocations[r.AgencyID] = nil
-			}
-		}
-	}
-
-	// Always ensure the stop's primary agency is represented with its known location
-	agencyLocations[in.AgencyID] = in.Location
-
-	// Resolve timezone locations for all other agencies serving this stop
-	for agencyID, loc := range agencyLocations {
-		if loc != nil {
-			continue
-		}
-		ag, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
-		if err != nil {
-			reqLogger.Warn("failed to fetch agency for timezone resolution", "agencyID", agencyID, "error", err)
-			agencyLocations[agencyID] = in.Location
-			continue
-		}
-		agLoc, err := loadAgencyLocation(ag.ID, ag.Timezone)
-		if err != nil {
-			reqLogger.Warn("failed to load timezone for agency", "agencyID", agencyID, "timezone", ag.Timezone, "error", err)
-			agencyLocations[agencyID] = in.Location
-			continue
-		}
-		agencyLocations[agencyID] = agLoc
-	}
+	discovery := api.discoverStopAgencies(ctx, in)
+	groups, groupKeys := groupAgenciesByTimezone(discovery.locations)
+	primaryGroupKey := in.Location.String()
 
 	var allActiveStopTimes []activeStopTime
-
-	// Group agencies by distinct timezone. Group keys iterate in sorted order
-	// so the merged row order is deterministic across requests.
-	groups := make(map[string]*timezoneGroup)
-	agencyGroupKey := make(map[string]string, len(agencyLocations))
-	for agencyID, agencyLoc := range agencyLocations {
-		key := agencyLoc.String()
-		group, ok := groups[key]
-		if !ok {
-			group = &timezoneGroup{location: agencyLoc, agencies: make(map[string]struct{})}
-			groups[key] = group
+	for _, key := range groupKeys {
+		groupRows, err := api.collectGroupWindow(ctx, in, discovery.routeAgency, groups[key], key == primaryGroupKey)
+		if err != nil {
+			return nil, err
 		}
-		group.agencies[agencyID] = struct{}{}
-		agencyGroupKey[agencyID] = key
-	}
-	primaryGroupKey := agencyGroupKey[in.AgencyID]
-
-	for _, key := range slices.Sorted(maps.Keys(groups)) {
-		group := groups[key]
-		isPrimaryGroup := key == primaryGroupKey
-		for dayOffset := -1; dayOffset <= 1; dayOffset++ {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-
-			dayStopTimes, err := api.stopTimesForGroupServiceDay(ctx, in, group, isPrimaryGroup, routeAgencyMap, dayOffset, windowStart, windowEnd)
-			if err != nil {
-				// dayOffset==0 is the user's actual service date — silently
-				// dropping it would emit a 200 with the most important day's
-				// arrivals missing. Fail loud for the stop's primary agency
-				// group so clients can retry. Other groups and ±1-day
-				// failures stay best-effort (window-spillover only).
-				if dayOffset == 0 && isPrimaryGroup {
-					return nil, err
-				}
-				reqLogger.Warn("failed to resolve services for window-spillover day, skipping",
-					slog.String("timezone", key),
-					slog.Int("day_offset", dayOffset),
-					slog.Any("error", err))
-				continue
-			}
-			allActiveStopTimes = append(allActiveStopTimes, dayStopTimes...)
-		}
+		allActiveStopTimes = append(allActiveStopTimes, groupRows...)
 	}
 
 	// Stable sort over a deterministic input order: ties on scheduled arrival
@@ -282,6 +206,110 @@ func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrival
 	return allActiveStopTimes, nil
 }
 
+// stopAgencyDiscovery holds what activeStopTimesForWindow learns about a stop
+// before evaluating service days: which agency each route belongs to, and the
+// timezone location of every agency serving the stop.
+type stopAgencyDiscovery struct {
+	routeAgency map[string]string
+	locations   map[string]*time.Location
+}
+
+// discoverStopAgencies finds the routes and agencies serving a stop and resolves
+// each agency's timezone. Lookups that fail fall back to the stop's primary
+// agency timezone with a warning, so one bad agency row cannot sink the request.
+func (api *RestAPI) discoverStopAgencies(ctx context.Context, in stopArrivalsInput) stopAgencyDiscovery {
+	reqLogger := logging.ForComponent(ctx, "http_server")
+	discovery := stopAgencyDiscovery{
+		routeAgency: make(map[string]string),
+		locations:   make(map[string]*time.Location),
+	}
+
+	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, in.StopCode)
+	if err != nil {
+		reqLogger.Warn("failed to fetch routes for stop", "stopID", in.StopCode, "error", err)
+	} else {
+		for _, r := range routes {
+			discovery.routeAgency[r.ID] = r.AgencyID
+			if _, exists := discovery.locations[r.AgencyID]; !exists {
+				discovery.locations[r.AgencyID] = nil
+			}
+		}
+	}
+
+	// Always ensure the stop's primary agency is represented with its known location
+	discovery.locations[in.AgencyID] = in.Location
+
+	// Resolve timezone locations for all other agencies serving this stop
+	for agencyID, loc := range discovery.locations {
+		if loc != nil {
+			continue
+		}
+		discovery.locations[agencyID] = api.resolveAgencyLocation(ctx, agencyID, in.Location)
+	}
+	return discovery
+}
+
+// resolveAgencyLocation loads one agency's timezone, falling back to the stop's
+// primary agency location with a warning when the agency row or timezone is bad.
+func (api *RestAPI) resolveAgencyLocation(ctx context.Context, agencyID string, fallback *time.Location) *time.Location {
+	reqLogger := logging.ForComponent(ctx, "http_server")
+	ag, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+	if err != nil {
+		reqLogger.Warn("failed to fetch agency for timezone resolution", "agencyID", agencyID, "error", err)
+		return fallback
+	}
+	agLoc, err := loadAgencyLocation(ag.ID, ag.Timezone)
+	if err != nil {
+		reqLogger.Warn("failed to load timezone for agency", "agencyID", agencyID, "timezone", ag.Timezone, "error", err)
+		return fallback
+	}
+	return agLoc
+}
+
+// groupAgenciesByTimezone clusters agency IDs by distinct timezone and returns
+// the groups with their keys in sorted order, so callers iterate deterministically.
+func groupAgenciesByTimezone(locations map[string]*time.Location) (map[string]*timezoneGroup, []string) {
+	groups := make(map[string]*timezoneGroup)
+	for agencyID, agencyLoc := range locations {
+		key := agencyLoc.String()
+		group, ok := groups[key]
+		if !ok {
+			group = &timezoneGroup{location: agencyLoc, agencies: make(map[string]struct{})}
+			groups[key] = group
+		}
+		group.agencies[agencyID] = struct{}{}
+	}
+	return groups, slices.Sorted(maps.Keys(groups))
+}
+
+// collectGroupWindow gathers the stop_times of yesterday, today and tomorrow for
+// one timezone group that fall inside the request window. A day-0 failure in the
+// primary group is returned so the request fails loud instead of emitting a 200
+// with the most important day's arrivals missing; everything else is best-effort
+// window spillover and only logs.
+func (api *RestAPI) collectGroupWindow(ctx context.Context, in stopArrivalsInput, routeAgencyMap map[string]string, group *timezoneGroup, isPrimaryGroup bool) ([]activeStopTime, error) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
+	var groupRows []activeStopTime
+	for dayOffset := -1; dayOffset <= 1; dayOffset++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		dayStopTimes, err := api.stopTimesForGroupServiceDay(ctx, in, group, isPrimaryGroup, routeAgencyMap, dayOffset)
+		if err != nil {
+			if dayOffset == 0 && isPrimaryGroup {
+				return nil, err
+			}
+			reqLogger.Warn("failed to resolve services for window-spillover day, skipping",
+				slog.String("timezone", group.location.String()),
+				slog.Int("day_offset", dayOffset),
+				slog.Any("error", err))
+			continue
+		}
+		groupRows = append(groupRows, dayStopTimes...)
+	}
+	return groupRows, nil
+}
+
 // stopTimesForGroupServiceDay returns the stop_times of a single service day for one
 // timezone group that fall inside the window, keeping only those whose service is
 // active that day and whose route belongs to the group. Rows whose route has no
@@ -294,10 +322,11 @@ func (api *RestAPI) stopTimesForGroupServiceDay(
 	isPrimaryGroup bool,
 	routeAgencyMap map[string]string,
 	dayOffset int,
-	windowStart, windowEnd time.Time,
 ) ([]activeStopTime, error) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	agencyLoc := group.location
+	windowStart := in.QueryTime.Add(-in.Before)
+	windowEnd := in.QueryTime.Add(in.After)
 	targetDate := in.QueryTime.In(agencyLoc).AddDate(0, 0, dayOffset)
 	serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, agencyLoc)
 	serviceDateStr := targetDate.Format("20060102")
