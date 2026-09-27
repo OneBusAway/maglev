@@ -577,4 +577,6 @@ The official REST API documentation is available at: https://developer.onebusawa
 
 The Open API specification is located at https://github.com/OneBusAway/sdk-config/blob/main/stainless/openapi.yml
 
+`/api/ondemand` is not in the upstream spec: it is governed by `testdata/openapi-ondemand.yml` and the wiki GTFS-Flex page until it is proposed upstream. Every other endpoint follows the rule below.
+
 **All API endpoints MUST behave identically to what is defined in this OpenAPI spec.** This is the single source of truth for request parameters, response schemas, field names, types, and status codes. Always fetch the latest version of this spec before implementing new endpoints or modifying existing ones. If the codebase diverges from the spec, the spec wins.
