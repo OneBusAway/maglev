@@ -266,6 +266,35 @@ func TestScheduleForRouteHandler_WithReferences(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.StopTimes)
 }
 
+func TestScheduleForRouteHandler_StopRouteIDsResolve(t *testing.T) {
+	api := newScheduleForRouteAPI(t)
+	defer api.Shutdown()
+
+	routeID := testdata.Route1.ID
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025-06-12"))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	refs := model.Data.References
+	routes := make(map[string]bool, len(refs.Routes))
+	for _, rt := range refs.Routes {
+		routes[rt.ID] = true
+	}
+	agencies := make(map[string]bool, len(refs.Agencies))
+	for _, ag := range refs.Agencies {
+		agencies[ag.ID] = true
+	}
+
+	require.NotEmpty(t, refs.Stops)
+	for _, stop := range refs.Stops {
+		for _, rid := range stop.RouteIDs {
+			assert.True(t, routes[rid], "stop %s routeId %s missing from references.routes", stop.ID, rid)
+		}
+	}
+	for _, rt := range refs.Routes {
+		assert.True(t, agencies[rt.AgencyID], "route %s agency %s missing from references.agencies", rt.ID, rt.AgencyID)
+	}
+}
+
 func TestScheduleForRouteHandler_TripIDsSorted(t *testing.T) {
 	api := newScheduleForRouteAPI(t)
 	defer api.Shutdown()
