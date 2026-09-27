@@ -142,6 +142,20 @@ func TestSimplifyPolygons_MultiPolygonKeepsEveryPolygon(t *testing.T) {
 	assert.False(t, result.Changed)
 }
 
+func TestSimplifyPolygons_LargeRingDoesNotCollapseSmallExterior(t *testing.T) {
+	// Alexandria's ring needs 160 m to fit the bound; at 160 m a 100 m square's
+	// corners fall within tolerance of the diagonal chord.
+	largeZone := alexandriaZone(t)[0]
+	smallSquare := squareRing(-77.05, 38.8, 0.00045)
+	polygons := [][][][2]float64{largeZone, {smallSquare}}
+
+	result := SimplifyPolygons(polygons)
+
+	assert.Equal(t, 160.0, result.ToleranceMeters, "the largest per-ring tolerance is reported")
+	assert.LessOrEqual(t, len(result.Polygons[0][0]), SimplifyMaxRingPoints)
+	assert.Equal(t, smallSquare, result.Polygons[1][0], "the small ring keeps the initial tolerance")
+}
+
 func TestSimplifyPolygons_DoesNotMutateInput(t *testing.T) {
 	// Vertex 1 is the farthest from vertex 0, so the first half of the split
 	// ring is only two points long.
