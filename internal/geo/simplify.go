@@ -33,7 +33,8 @@ type SimplifiedPolygons struct {
 // SimplifyMaxRingPoints vertices; a per-ring search keeps a large ring from
 // collapsing a small one elsewhere in a MultiPolygon. ToleranceMeters reports
 // the largest tolerance used. Holes that collapse below four points are
-// dropped; the exterior ring is never dropped; vertex order (winding) is kept.
+// dropped. The exterior ring is never dropped or collapsed below four points
+// (see simplifyRingToFit); vertex order (winding) is kept.
 //
 // Termination for rings of coincident vertices comes from simplifyRing
 // collapsing them to a closed pair; simplifyMaxDoublings is only a backstop,
@@ -44,8 +45,8 @@ func SimplifyPolygons(polygons [][][][2]float64) SimplifiedPolygons {
 	for _, polygon := range polygons {
 		rings := make([][][2]float64, 0, len(polygon))
 		for ringIndex, ring := range polygon {
-			simplified, tolerance := simplifyRingToFit(ring)
 			isHole := ringIndex > 0
+			simplified, tolerance := simplifyRingToFit(ring, !isHole)
 			if isHole && len(simplified) < minClosedRingPoints {
 				// A hole that degenerates to a line would invert the map fill.
 				continue
@@ -64,16 +65,43 @@ func SimplifyPolygons(polygons [][][][2]float64) SimplifiedPolygons {
 
 // simplifyRingToFit doubles the tolerance for one ring until it fits
 // SimplifyMaxRingPoints, returning the ring and the tolerance that fit it.
-func simplifyRingToFit(ring [][2]float64) ([][2]float64, float64) {
+//
+// With keepArea, a pass that collapses the ring below four points (a zone
+// narrower than the tolerance) is replaced by sampleRing: a collapsed ring is
+// invalid GeoJSON with no area, so the zone would vanish from client maps.
+func simplifyRingToFit(ring [][2]float64, keepArea bool) ([][2]float64, float64) {
 	tolerance := SimplifyInitialToleranceMeters
 	for doublings := 0; ; doublings++ {
 		simplified := simplifyRing(ring, tolerance)
+		if keepArea && len(simplified) < minClosedRingPoints && len(ring) >= minClosedRingPoints {
+			return sampleRing(ring, SimplifyMaxRingPoints), tolerance
+		}
 		fitsBound := len(simplified) <= SimplifyMaxRingPoints
 		if fitsBound || doublings == simplifyMaxDoublings {
 			return simplified, tolerance
 		}
 		tolerance *= 2
 	}
+}
+
+// sampleRing returns the closed ring itself when it has at most maxPoints
+// vertices, and otherwise keeps evenly spaced vertices plus the closing one.
+// Every vertex of a ring that collapsed at some tolerance lies within that
+// tolerance of the collapsed chord, so sampling stays within it too.
+func sampleRing(ring [][2]float64, maxPoints int) [][2]float64 {
+	if len(ring) <= maxPoints {
+		return ring
+	}
+	open := ring
+	if ring[0] == ring[len(ring)-1] {
+		open = ring[:len(ring)-1]
+	}
+	keep := maxPoints - 1
+	sampled := make([][2]float64, 0, maxPoints)
+	for i := range keep {
+		sampled = append(sampled, open[i*len(open)/keep])
+	}
+	return append(sampled, sampled[0])
 }
 
 // ringsChanged reports whether any ring of the result has a different vertex
