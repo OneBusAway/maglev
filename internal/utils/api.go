@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -144,8 +145,9 @@ func ParseFloatParam(params url.Values, key string, fieldErrors map[string][]str
 	}
 
 	f, err := strconv.ParseFloat(val, 64)
-	if err != nil {
+	if err != nil || !isFinite(f) {
 		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
+		return 0, fieldErrors
 	}
 	return f, fieldErrors
 }
@@ -162,12 +164,19 @@ func ParseRequiredFloatParam(params url.Values, key string, fieldErrors map[stri
 	}
 
 	f, err := strconv.ParseFloat(val, 64)
-	if err != nil {
+	if err != nil || !isFinite(f) {
 		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
 		return 0, fieldErrors
 	}
 	return f, fieldErrors
 
+}
+
+// isFinite reports whether f is neither NaN nor infinite. strconv.ParseFloat
+// accepts "NaN" and "Inf", and NaN slips past range checks such as
+// lat < -90 || lat > 90 because every comparison with NaN is false.
+func isFinite(f float64) bool {
+	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }
 
 func ParseTimeParameter(timeParam string, currentLocation *time.Location, c clock.Clock) (string, time.Time, map[string][]string, bool) {
