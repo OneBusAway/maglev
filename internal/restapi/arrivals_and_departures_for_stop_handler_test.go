@@ -306,10 +306,17 @@ func TestArrivalsAndDeparturesForStopHandlerNoActiveServices(t *testing.T) {
 	assert.NotNil(t, model.Data.Entry.NearbyStopIDs)
 	assert.NotNil(t, model.Data.Entry.SituationIDs)
 	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
-	assert.Empty(t, model.Data.References.Routes)
 	assert.Empty(t, model.Data.References.Trips)
 	require.Len(t, model.Data.References.Stops, 1)
-	assert.Equal(t, arrivalsTestStopID, model.Data.References.Stops[0].ID)
+	stopRef := model.Data.References.Stops[0]
+	assert.Equal(t, arrivalsTestStopID, stopRef.ID)
+
+	require.NotEmpty(t, stopRef.RouteIDs)
+	referencedRouteIDs := make([]string, 0, len(model.Data.References.Routes))
+	for _, route := range model.Data.References.Routes {
+		referencedRouteIDs = append(referencedRouteIDs, route.ID)
+	}
+	assert.ElementsMatch(t, stopRef.RouteIDs, referencedRouteIDs, "every routeId on the stop reference resolves to a route reference")
 }
 
 // TestArrivalsAndDeparturesForStopHandler_FlexOnlyStopEmptyWindow covers a
