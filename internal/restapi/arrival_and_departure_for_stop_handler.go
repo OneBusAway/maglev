@@ -340,6 +340,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	var predictedArrivalTime, predictedDepartureTime time.Time
 	if status != nil {
+		startTripStatusAtServiceStart(status, freqMap, tripID, serviceStart, currentTime)
 		tripStatus = status
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
@@ -380,7 +381,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		trip.TripHeadsign.String,                       // tripHeadsign
 		stopID,                                         // stopID
 		vehicleID,                                      // vehicleID
-		serviceMidnight,                                // serviceDate
+		serviceStart,                                   // serviceDate
 		scheduledArrivalTime,                           // scheduledArrivalTime
 		scheduledDepartureTime,                         // scheduledDepartureTime
 		predictedArrivalTime,                           // predictedArrivalTime
