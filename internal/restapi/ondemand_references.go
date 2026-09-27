@@ -190,7 +190,7 @@ func (api *RestAPI) buildOnDemandServices(ctx context.Context, services []gtfsdb
 	if err != nil {
 		return nil, nil, err
 	}
-	calendarIDs, calendars, err := api.onDemandCalendars(ctx, ids.gtfsServices)
+	calendarIDs, calendars, err := api.onDemandCalendars(ctx, ids.gtfsServices, priorNoticeCalendarIDs(references.BookingRules))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -336,7 +336,9 @@ func bookingRuleReference(rule gtfsdb.BookingRule, agencyID string) models.Booki
 
 // onDemandCalendars compiles every referenced GTFS service into calendars and
 // returns, per scoped service, the combined calendar ids a rule should carry.
-func (api *RestAPI) onDemandCalendars(ctx context.Context, gtfsServices map[agencyScopedID]struct{}) (map[agencyScopedID][]string, []models.OnDemandCalendar, error) {
+// A prior-notice calendar id the compiled calendars do not cover gets a
+// no-active-days calendar (see noServiceDaysCalendar).
+func (api *RestAPI) onDemandCalendars(ctx context.Context, gtfsServices map[agencyScopedID]struct{}, priorNoticeIDs map[string]struct{}) (map[agencyScopedID][]string, []models.OnDemandCalendar, error) {
 	serviceIDs := bareIDs(gtfsServices)
 	calendarRows, err := queryInBatches(ctx, serviceIDs, api.GtfsManager.GtfsDB.Queries.GetCalendarsByIDs)
 	if err != nil {
@@ -369,14 +371,60 @@ func (api *RestAPI) onDemandCalendars(ctx context.Context, gtfsServices map[agen
 		}
 		calendarIDs[scoped] = ids
 		calendars = append(calendars, compiled...)
+
+		combinedID := utils.FormCombinedID(scoped.AgencyID, scoped.ID)
+		_, countsPriorNotice := priorNoticeIDs[combinedID]
+		if countsPriorNotice && !slices.Contains(ids, combinedID) {
+			if placeholder, ok := noServiceDaysCalendar(combinedID, base, datesByService[scoped.ID]); ok {
+				calendars = append(calendars, placeholder)
+			}
+		}
 	}
 	return calendarIDs, calendars, nil
 }
 
+// priorNoticeCalendarIDs is the set of calendar ids booking rules count
+// prior-notice days on.
+func priorNoticeCalendarIDs(bookingRules []models.BookingRule) map[string]struct{} {
+	ids := make(map[string]struct{})
+	for _, rule := range bookingRules {
+		if rule.PriorNoticeCalendarId != nil {
+			ids[*rule.PriorNoticeCalendarId] = struct{}{}
+		}
+	}
+	return ids
+}
+
+// noServiceDaysCalendar stands in for a prior-notice service with no base
+// weekday calendar (all flags 0, or days given only by calendar_dates). Its
+// empty days make clients evaluate the deadline as unknown (design §6.3);
+// dropping the id instead would make them count civil days, which yields a
+// later cutoff than a business-day calendar allows. The date range comes
+// from the base row, else the added dates; with neither there is nothing to
+// span and ok is false.
+func noServiceDaysCalendar(id string, base *gtfsdb.Calendar, exceptions []gtfsdb.CalendarDate) (models.OnDemandCalendar, bool) {
+	calendar := models.OnDemandCalendar{ID: id, Days: []string{}, ExceptedDates: []string{}}
+	if base != nil {
+		calendar.StartDate, calendar.EndDate = isoDate(base.StartDate), isoDate(base.EndDate)
+		return calendar, true
+	}
+	var addedDates []string
+	for _, exception := range exceptions {
+		if exception.ExceptionType == calendarDateAdded {
+			addedDates = append(addedDates, exception.Date)
+		}
+	}
+	if len(addedDates) == 0 {
+		return calendar, false
+	}
+	calendar.StartDate, calendar.EndDate = isoDate(slices.Min(addedDates)), isoDate(slices.Max(addedDates))
+	return calendar, true
+}
+
 // dropDanglingPriorNoticeCalendars nulls any priorNoticeCalendarId that names
-// no emitted calendar. The compiler emits no base calendar for a service with
-// no usable calendar row (for example one defined only by calendar_dates), and
-// every calendar id on the wire must resolve in references.calendars.
+// no emitted calendar: a prior_notice_service_id with no calendar or
+// calendar_dates rows at all. Every calendar id on the wire must resolve in
+// references.calendars.
 // buildFlexIndex logs these once per reload, so this stays silent.
 func dropDanglingPriorNoticeCalendars(bookingRules []models.BookingRule, calendars []models.OnDemandCalendar) {
 	emitted := make(map[string]struct{}, len(calendars))

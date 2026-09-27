@@ -1702,8 +1702,8 @@ ORDER BY r.service_id, r.gtfs_service_id;
 
 -- name: ListBookingRulesWithoutPriorNoticeCalendar :many
 -- Booking rules whose prior-notice service has no calendar row with a service
--- day, so no base calendar is emitted for it and the builder nulls
--- priorNoticeCalendarId.
+-- day, so their booking deadlines evaluate as unknown (or, with no rows at all,
+-- the builder nulls priorNoticeCalendarId).
 SELECT b.id, b.prior_notice_service_id
 FROM booking_rules b
 WHERE length(b.prior_notice_service_id) > 0

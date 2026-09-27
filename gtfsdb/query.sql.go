@@ -6169,8 +6169,8 @@ type ListBookingRulesWithoutPriorNoticeCalendarRow struct {
 }
 
 // Booking rules whose prior-notice service has no calendar row with a service
-// day, so no base calendar is emitted for it and the builder nulls
-// priorNoticeCalendarId.
+// day, so their booking deadlines evaluate as unknown (or, with no rows at all,
+// the builder nulls priorNoticeCalendarId).
 func (q *Queries) ListBookingRulesWithoutPriorNoticeCalendar(ctx context.Context) ([]ListBookingRulesWithoutPriorNoticeCalendarRow, error) {
 	rows, err := q.query(ctx, q.listBookingRulesWithoutPriorNoticeCalendarStmt, listBookingRulesWithoutPriorNoticeCalendar)
 	if err != nil {

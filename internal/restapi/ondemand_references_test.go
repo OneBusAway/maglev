@@ -420,7 +420,7 @@ func TestBuildOnDemandServices_PriorNoticeCalendarMustResolve(t *testing.T) {
 	files := twoAgencySharedZoneFiles()
 	files["booking_rules.txt"] = "booking_rule_id,booking_type,prior_notice_last_day,prior_notice_last_time,prior_notice_service_id\n" +
 		"br,2,1,17:00:00,holiday\nbr_svc,2,1,17:00:00,svc\n"
-	files["calendar_dates.txt"] = "service_id,date,exception_type\nholiday,20260704,1\n"
+	files["calendar_dates.txt"] = "service_id,date,exception_type\nholiday,20260704,1\nholiday,20260706,1\n"
 	files["stop_times.txt"] = strings.ReplaceAll(files["stop_times.txt"], "09:00:00,17:00:00,br,br", "09:00:00,17:00:00,br_svc,br_svc")
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "prior-notice-dates.zip", files)
 	ctx, logs := contextCapturingLogs()
@@ -428,9 +428,29 @@ func TestBuildOnDemandServices_PriorNoticeCalendarMustResolve(t *testing.T) {
 	_, refs := buildAllOnDemandServicesWithContext(t, ctx, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
 
 	require.Equal(t, []string{"a1_br", "a2_br_svc"}, ids(refs.BookingRules, func(b models.BookingRule) string { return b.ID }))
-	assert.NotContains(t, ids(refs.Calendars, func(c models.OnDemandCalendar) string { return c.ID }), "a1_holiday",
-		"a calendar_dates-only service has no base calendar")
-	assert.Nil(t, refs.BookingRules[0].PriorNoticeCalendarId, "an id with no emitted calendar is dropped")
+	require.NotNil(t, refs.BookingRules[0].PriorNoticeCalendarId,
+		"nulling the id would make clients count civil days, a later cutoff than business days allow")
+	assert.Equal(t, "a1_holiday", *refs.BookingRules[0].PriorNoticeCalendarId)
+	assert.Contains(t, refs.Calendars, models.OnDemandCalendar{
+		ID: "a1_holiday", Days: []string{}, StartDate: "2026-07-04", EndDate: "2026-07-06", ExceptedDates: []string{},
+	}, "a calendar_dates-only prior-notice service gets a no-active-days calendar, so deadlines are unknown")
 	assert.Equal(t, "a2_svc", *refs.BookingRules[1].PriorNoticeCalendarId, "an id that resolves is kept")
 	assert.Empty(t, logs.String(), "the dangling id is logged once per reload by buildFlexIndex, not per request")
+}
+
+func TestBuildOnDemandServices_PriorNoticeCalendarWithNoWeekdays(t *testing.T) {
+	files := twoAgencySharedZoneFiles()
+	files["booking_rules.txt"] = "booking_rule_id,booking_type,prior_notice_last_day,prior_notice_last_time,prior_notice_service_id\n" +
+		"br,2,1,17:00:00,biz\n"
+	files["calendar.txt"] += "biz,0,0,0,0,0,0,0,20260901,20261231\n"
+	files["calendar_dates.txt"] = "service_id,date,exception_type\nbiz,20260911,1\nbiz,20260914,1\n"
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "prior-notice-no-weekdays.zip", files)
+
+	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
+
+	require.NotNil(t, refs.BookingRules[0].PriorNoticeCalendarId)
+	assert.Equal(t, "a1_biz", *refs.BookingRules[0].PriorNoticeCalendarId)
+	assert.Contains(t, refs.Calendars, models.OnDemandCalendar{
+		ID: "a1_biz", Days: []string{}, StartDate: "2026-09-01", EndDate: "2026-12-31", ExceptedDates: []string{},
+	})
 }
