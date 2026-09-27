@@ -1582,28 +1582,28 @@ INSERT INTO ondemand_rules (
 INSERT OR IGNORE INTO ondemand_stop_services (stop_id, service_id) VALUES (?, ?);
 
 -- name: ClearOnDemandStopServices :exec
-DELETE FROM ondemand_stop_services;
+DELETE FROM ondemand_stop_services WHERE TRUE;
 
 -- name: ClearOnDemandRules :exec
-DELETE FROM ondemand_rules;
+DELETE FROM ondemand_rules WHERE TRUE;
 
 -- name: ClearOnDemandServices :exec
-DELETE FROM ondemand_services;
+DELETE FROM ondemand_services WHERE TRUE;
 
 -- name: ClearFlexStopTimes :exec
-DELETE FROM flex_stop_times;
+DELETE FROM flex_stop_times WHERE TRUE;
 
 -- name: ClearLocationGroupStops :exec
-DELETE FROM location_group_stops;
+DELETE FROM location_group_stops WHERE TRUE;
 
 -- name: ClearLocationGroups :exec
-DELETE FROM location_groups;
+DELETE FROM location_groups WHERE TRUE;
 
 -- name: ClearLocations :exec
-DELETE FROM locations;
+DELETE FROM locations WHERE TRUE;
 
 -- name: ClearBookingRules :exec
-DELETE FROM booking_rules;
+DELETE FROM booking_rules WHERE TRUE;
 
 -- name: GetOnDemandService :one
 SELECT * FROM ondemand_services WHERE id = ?;
