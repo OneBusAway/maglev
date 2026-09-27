@@ -64,7 +64,7 @@ imperative subject ≤50 chars and a body explaining why.
   and one Polygon with a clockwise interior ring (hole).
 - **Synthetic `flex-group-deviated`** fixture: one location-group route modelled on
   gtfs.org RufBus (group of 3 stops, group→group windows, `pickup_type`/`drop_off_type`
-  columns **omitted**) and one deviated route modelled on gtfs.org Hermann (timed stop,
+  2/1 then 1/2 as in the example) and one deviated route modelled on gtfs.org Hermann (timed stop,
   zone `pickup_type=1 drop_off_type=3`, timed stop, zone, timed stop), one MultiPolygon
   zone, and one **windowed stop-id record** (documents §9.1). Also used by go-gtfs parser
   tests in reduced form.
@@ -196,7 +196,10 @@ func (st ScheduledStopTime) IsFlex() bool      // windowed || Location != nil ||
     skipped. A location or group row without windows → `StopTimeInvalidWindow`,
     skipped. Windows together with a non-empty `arrival_time`/`departure_time` →
     `StopTimeInvalidWindow`, skipped (wiki §1.4.3; no feed in the corpus does this).
-    An unknown booking-rule id → `StopTimeInvalidReference`, skipped (wiki §1.4.5).
+    An unknown booking-rule id → `StopTimeInvalidReference`, but the row is **kept**
+    with a nil rule (deviation from wiki §1.4.5): booking rule ids also sit on timed
+    fixed-stop rows (Hermann Express has one on all 247), so skipping would let one bad
+    `booking_rules.txt` row delete fixed service.
   - Pickup/drop-off blank-cell default: **already fixed upstream** (go-gtfs 50d893a,
     `parsePickupDropOffPolicyOrYes`). Flex tests still assert it because rule
     compilation depends on it.
@@ -212,7 +215,10 @@ func (st ScheduledStopTime) IsFlex() bool      // windowed || Location != nil ||
 - New warning kinds in `warnings/`: `StopTimeInvalidReference{Reason string}`,
   `StopTimeInvalidWindow{Reason string}`, `LocationGroupUnknownStop{GroupID, StopID}`,
   `LocationInvalidGeometry{LocationID, Reason}`, `BookingRuleInvalid{BookingRuleID,
-  Reason}`. GeoJSON warnings are built by hand (no `*csv.File`).
+  Reason}`, `LocationsFileInvalid{Reason}`. GeoJSON warnings are built by hand (no
+  `*csv.File`). Each Feature is decoded on its own, so one malformed Feature is skipped
+  with `LocationInvalidGeometry`; a file that is not a FeatureCollection is ignored with
+  `LocationsFileInvalid` and treated as absent, never failing the whole feed.
 - `booking_rules.txt` tolerance: rows import even when conditionally-required fields are
   missing (real Michigan feeds omit `prior_notice_duration_min` on type 1 and
   `prior_notice_last_time` on type 2); an unparsable `booking_type` skips the row with a
@@ -222,7 +228,7 @@ func (st ScheduledStopTime) IsFlex() bool      // windowed || Location != nil ||
 ### 2.3 Tests (go-gtfs)
 
 Table cases in `static_test.go` plus a new `flex_test.go`: pure zone (Heartland-style),
-zone→zone, location group with `pickup_type` columns omitted (asserts `Yes`), deviated
+zone→zone, location group (RufBus types 2/1 and 1/2), deviated
 route with mixed records (asserts interpolation left the windowed rows alone and the
 timed rows got interpolated), stops.txt absent with locations present, header-only
 stops.txt, draft-era `safe_duration_*` on stop_times, MultiPolygon and hole geometry,
@@ -318,20 +324,25 @@ next `StoreGtfsData` succeeds and populates the flex tables.
 - `CompileOnDemand(static *gtfs.Static) CompiledOnDemand` is a pure function
   (`flex_compile.go`) implementing wiki §2.3: per flex-involved trip, records in
   `stop_sequence` order, capability tests, all later-pairs, side-split provenance,
-  timed-stop point windows, `endDropOffTime` nulled when equal to `endPickupTime`, safe
+  timed-stop point windows, pairs skipped when the drop-off side's window (or
+  arrival) ends before the pickup side opens (the spec's "time constraints … do not
+  forbid it"), `endDropOffTime` nulled when equal to `endPickupTime`, safe
   duration resolved per pair (`trip.SafeDuration*` first, then the pickup record, then
   the drop-off record), dedup by (from, to, windows, types, booking, safe, calendar)
   producing **one row per (tuple, gtfs_service_id)** with a representative `trip_id`,
   then `serviceKind` classification from records (a route with no flex record is never a
-  service). Output also includes the stop→service pointer set (rule-referenced stops
+  service; `zone` vs `zoneToZone` counts distinct zones per trip, so a dial-a-ride route
+  whose trips each stay inside one zone, like Heartland Express, is `zone`). Output also includes the stop→service pointer set (rule-referenced stops
   plus members of referenced groups) and route→service set. Unit-tested against every
   pattern in §1 with the §1.1 expectations.
-- Simplification (`internal/utils/simplify.go`): Douglas–Peucker per ring, run on the
+- Simplification (`internal/geo/simplify.go`): Douglas–Peucker per ring, run on the
   open ring split at the vertex farthest from vertex 0 and re-closed afterwards (standard
   DP degenerates when first == last). Tolerance starts at 10 m (converted to degrees at
-  the ring's mean latitude) and doubles until every ring has ≤256 points; the **≤256
-  bound wins** (Alexandria's ring needs ~160 m; see §9.6). Holes below four distinct
-  points are dropped; the exterior ring is never dropped; winding preserved;
+  the ring's mean latitude) and doubles, per ring, until that ring has ≤256 points; the
+  **≤256 bound wins** (Alexandria's ring needs ~160 m; see §9.6). Holes below four
+  distinct points are dropped; the exterior ring is never dropped, and a pass that would
+  collapse it below four points (a zone narrower than the tolerance) uses the original
+  ring instead, evenly sampled down to 256 points if larger; winding preserved;
   `geometry_simplified` NULL when no ring changed. Tests assert ≤256 points per ring,
   max vertex deviation ≤ final tolerance, exterior kept, holes kept when ≥4 points.
 
@@ -341,11 +352,15 @@ Built in `ReloadStatic` next to `computeRegionBounds`, stored under `staticMutex
 
 ```go
 type FlexIndex struct {
-    Areas           map[string]*FlexArea     // bare location id → parsed polygons, bbox, simplified JSON
+    Areas           map[string]*FlexArea     // bare location id → parsed polygons and bbox
+                    // (display geometry is read from the database when needed)
     StopServiceIDs  map[string][]string      // bare stop id → sorted COMBINED service ids
     RouteServiceIDs map[string][]string      // bare route id → sorted COMBINED service ids
     ServiceBounds   map[string]utils.CoordinateBounds // combined service id → union of its
                     // area bboxes and rule-referenced stop coordinates (incl. group members)
+    ServiceAreaIDs  map[string][]string      // combined service id → sorted bare location ids
+    ServiceStops    map[string][]FlexStopPoint // combined service id → rule-referenced stops
+    BareServiceIDs  map[string]string        // combined service id → bare service id
 }
 ```
 
@@ -364,7 +379,7 @@ Queries for rules, services, booking rules, groups and calendars go to sqlc. Zon
 group, booking-rule and calendar ids in a response are prefixed with the agencyId of the
 service whose rule references them.
 
-### 3.4 Geometry (`internal/utils/polygon.go`)
+### 3.4 Geometry (`internal/geo/polygon.go`)
 
 `PointInPolygon(lat, lon, polygons [][][][2]float64) bool` (ray casting, holes,
 MultiPolygon), `NearestPointOnBoundary(lat, lon, polygons) (distanceMeters float64, lon,
@@ -402,18 +417,24 @@ id; `description` = `route_desc`; `url` = `route_url`; empty strings → `null`.
 service). An added-date calendar is `{days: [that date's weekday], startDate = endDate =
 date, exceptedDates: []}`. A service with no `calendar` row emits only added-date
 calendars. Type-2 dates go into `exceptedDates` only when a base calendar exists. The
-same compilation serves `priorNoticeCalendarId`.
+same compilation serves `priorNoticeCalendarId`, except that a prior-notice service
+with no base weekday calendar (all weekday flags 0, or `calendar_dates` only) is
+emitted as `{id, days: [], startDate, endDate}` spanning its base row or added dates,
+so clients evaluate its deadlines as `unknown` (§6.3) rather than counting civil days.
+Only a prior-notice service with no rows at all has its id nulled.
 
 A rule whose merged `calendarIds` would be empty (its service has no calendar row with
 active days and no added dates) is dropped from the response — wiki §3.4 requires ≥1
 element — and logged once at index build.
 
-**Rule ordering (total order, wiki §3.4 clarification):** `rules` sort by
+**Rule ordering (stable order, wiki §3.4 clarification):** `rules` sort by
 `startPickupTime` (nulls first), `endPickupTime` (nulls first), `calendarIds[0]`,
 `fromIds` joined with `\u0000`, `toIds` likewise, `endDropOffTime` (nulls first),
 `pickupType`, `dropOffType`, `pickupBookingRuleId` (nulls first),
-`dropOffBookingRuleId` (nulls first). `calendarIds`, `fromIds` and `toIds` are each
-sorted ascending before rules are sorted.
+`dropOffBookingRuleId` (nulls first), then import order (the sort is stable over
+`ListOnDemandRules` rows; rules differing only in safe duration or in `calendarIds`
+after the first compare equal). `calendarIds`, `fromIds` and `toIds` are each sorted
+ascending before rules are sorted.
 
 **`services-for-location`:** parse via `parseLocationParams`; viewport mode iff
 `radius <= 0 && latSpan > 0 && lonSpan > 0` (exactly `BoundsFromParams`' predicate),
@@ -658,7 +679,8 @@ regression for old payloads.
 6. Simplification: the ≤256-points-per-ring bound wins over the ≤10 m deviation target
    (Alexandria's ring needs ~160 m tolerance to fit; the two wiki §5 assertions are
    jointly unsatisfiable on its own fixture).
-7. Rule ordering is extended to a total order (§4) so goldens are deterministic.
+7. Rule ordering is extended with further keys and a stable sort (§4) so goldens are
+   deterministic.
 8. Calendar merging: one stored row per (tuple, gtfs_service_id); `calendarIds` merged
    at the API layer; added-date calendars join the merged array rather than producing
    rule copies (§4).
