@@ -608,8 +608,8 @@ func (agencies stopAgencyIDs) rescope(stops map[agencyScopedID]struct{}) map[age
 }
 
 // appendOnDemandStopReferences builds standard stop references per agency and
-// pulls in the routes (and their agencies) serving those stops so every routeId
-// on a stop resolves within the block.
+// pulls in the routes serving those stops, plus the agencies of both, so every
+// stop and route id resolves within the block.
 // Extends agencyIDs, so the agency lookup must run after it.
 func (api *RestAPI) appendOnDemandStopReferences(ctx context.Context, references *models.OnDemandReferences, stops map[agencyScopedID]struct{}, agencyIDs map[string]struct{}) error {
 	stopIDsByAgency := make(map[string][]string)
@@ -627,6 +627,11 @@ func (api *RestAPI) appendOnDemandStopReferences(ctx context.Context, references
 			return err
 		}
 		references.Stops = append(references.Stops, stopModels...)
+		// A stop's /where agency can be one no service or route in this
+		// response belongs to (a flex-only stop shared across agencies).
+		if len(stopModels) > 0 {
+			agencyIDs[agencyID] = struct{}{}
+		}
 		for combinedRouteID, row := range routeRows {
 			if _, ok := seenRoutes[combinedRouteID]; ok {
 				continue
