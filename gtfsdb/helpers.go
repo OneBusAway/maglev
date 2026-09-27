@@ -652,68 +652,36 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 func (c *Client) clearAllGTFSDataWithQueries(ctx context.Context, q *Queries) error {
 	// Flex tables first: flex_stop_times references trips, location_group_stops
 	// references stops, and ondemand_rules references ondemand_services.
-	if err := q.ClearOnDemandStopServices(ctx); err != nil {
-		return fmt.Errorf("error clearing ondemand_stop_services: %w", err)
+	clearSteps := []struct {
+		table string
+		clear func(context.Context) error
+	}{
+		{"ondemand_stop_services", q.ClearOnDemandStopServices},
+		{"ondemand_rules", q.ClearOnDemandRules},
+		{"ondemand_services", q.ClearOnDemandServices},
+		{"flex_stop_times", q.ClearFlexStopTimes},
+		{"location_group_stops", q.ClearLocationGroupStops},
+		{"location_groups", q.ClearLocationGroups},
+		{"locations", q.ClearLocations},
+		{"booking_rules", q.ClearBookingRules},
+		{"stop_agencies", q.ClearStopAgencies},
+		{"block_layover", q.ClearBlockLayovers},
+		{"block_trip_entry", q.ClearBlockTripEntries},
+		{"block_trip_index", q.ClearBlockTripIndices},
+		{"frequencies", q.ClearFrequencies},
+		{"stop_times", q.ClearStopTimes},
+		{"shapes", q.ClearShapes},
+		{"trips", q.ClearTrips},
+		{"calendar dates", q.ClearCalendarDates},
+		{"calendar", q.ClearCalendar},
+		{"stops", q.ClearStops},
+		{"routes", q.ClearRoutes},
+		{"agencies", q.ClearAgencies},
 	}
-	if err := q.ClearOnDemandRules(ctx); err != nil {
-		return fmt.Errorf("error clearing ondemand_rules: %w", err)
-	}
-	if err := q.ClearOnDemandServices(ctx); err != nil {
-		return fmt.Errorf("error clearing ondemand_services: %w", err)
-	}
-	if err := q.ClearFlexStopTimes(ctx); err != nil {
-		return fmt.Errorf("error clearing flex_stop_times: %w", err)
-	}
-	if err := q.ClearLocationGroupStops(ctx); err != nil {
-		return fmt.Errorf("error clearing location_group_stops: %w", err)
-	}
-	if err := q.ClearLocationGroups(ctx); err != nil {
-		return fmt.Errorf("error clearing location_groups: %w", err)
-	}
-	if err := q.ClearLocations(ctx); err != nil {
-		return fmt.Errorf("error clearing locations: %w", err)
-	}
-	if err := q.ClearBookingRules(ctx); err != nil {
-		return fmt.Errorf("error clearing booking_rules: %w", err)
-	}
-	if err := q.ClearStopAgencies(ctx); err != nil {
-		return fmt.Errorf("error clearing stop_agencies: %w", err)
-	}
-	if err := q.ClearBlockLayovers(ctx); err != nil {
-		return fmt.Errorf("error clearing block_layover: %w", err)
-	}
-	if err := q.ClearBlockTripEntries(ctx); err != nil {
-		return fmt.Errorf("error clearing block_trip_entry: %w", err)
-	}
-	if err := q.ClearBlockTripIndices(ctx); err != nil {
-		return fmt.Errorf("error clearing block_trip_index: %w", err)
-	}
-	if err := q.ClearFrequencies(ctx); err != nil {
-		return fmt.Errorf("error clearing frequencies: %w", err)
-	}
-	if err := q.ClearStopTimes(ctx); err != nil {
-		return fmt.Errorf("error clearing stop_times: %w", err)
-	}
-	if err := q.ClearShapes(ctx); err != nil {
-		return fmt.Errorf("error clearing shapes: %w", err)
-	}
-	if err := q.ClearTrips(ctx); err != nil {
-		return fmt.Errorf("error clearing trips: %w", err)
-	}
-	if err := q.ClearCalendarDates(ctx); err != nil {
-		return fmt.Errorf("error clearing calendar dates: %w", err)
-	}
-	if err := q.ClearCalendar(ctx); err != nil {
-		return fmt.Errorf("error clearing calendar: %w", err)
-	}
-	if err := q.ClearStops(ctx); err != nil {
-		return fmt.Errorf("error clearing stops: %w", err)
-	}
-	if err := q.ClearRoutes(ctx); err != nil {
-		return fmt.Errorf("error clearing routes: %w", err)
-	}
-	if err := q.ClearAgencies(ctx); err != nil {
-		return fmt.Errorf("error clearing agencies: %w", err)
+	for _, step := range clearSteps {
+		if err := step.clear(ctx); err != nil {
+			return fmt.Errorf("error clearing %s: %w", step.table, err)
+		}
 	}
 	return nil
 }
