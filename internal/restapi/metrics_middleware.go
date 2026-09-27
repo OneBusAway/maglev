@@ -23,10 +23,7 @@ func MetricsHandler(m *metrics.Metrics) func(http.Handler) http.Handler {
 			start := time.Now()
 
 			// Wrap response writer to capture status code
-			wrapped := &metricsResponseWriter{
-				ResponseWriter: w,
-				statusCode:     http.StatusOK,
-			}
+			wrapped := newStatusCapturingWriter(w)
 
 			next.ServeHTTP(wrapped, r)
 
@@ -43,15 +40,4 @@ func MetricsHandler(m *metrics.Metrics) func(http.Handler) http.Handler {
 			m.HTTPRequestDuration.WithLabelValues(r.Method, path).Observe(duration)
 		})
 	}
-}
-
-// metricsResponseWriter wraps http.ResponseWriter to capture status code.
-type metricsResponseWriter struct {
-	http.ResponseWriter
-	statusCode int
-}
-
-func (w *metricsResponseWriter) WriteHeader(code int) {
-	w.statusCode = code
-	w.ResponseWriter.WriteHeader(code)
 }

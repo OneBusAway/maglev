@@ -16,6 +16,7 @@ import (
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 func TestStopsForLocationHandlerRequiresValidApiKey(t *testing.T) {
@@ -308,6 +309,108 @@ func TestStopsForLocationSortsByCombinedStopID(t *testing.T) {
 	require.NotEqual(t, -1, idxA, "SortA_9 should be returned")
 	require.NotEqual(t, -1, idxB, "SortB_2 should be returned")
 	assert.Less(t, idxA, idxB, "combined ID order puts SortA_9 before SortB_2")
+}
+
+// Platforms inside a station must report the station as their parent, and the
+// station must resolve in references.stops once, as it does for /stop/{id}.
+func TestStopsForLocationReturnsParentStation(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 12, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+	lat, lon := 40.585321, -122.426966 // inside the RABA coverage area
+	noon := 12 * 3600 * int64(time.Second)
+
+	const (
+		agencyID         = "LocParentAgency"
+		stationID        = "LocParentStation"
+		routeID          = "LocParentRoute"
+		stationRouteID   = "LocParentStationRoute"
+		serviceID        = "LocParentService"
+		pastServiceID    = "LocParentPastService"
+		tripID           = "LocParentTrip"
+		stationTripID    = "LocParentStationTrip"
+		stationTypeValue = 1
+	)
+	platformIDs := []string{"LocParentPlatformA", "LocParentPlatformB"}
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Location Parent Transit", Url: "http://example.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: stationID, Name: nulls.String("Central Station"), Lat: lat, Lon: lon,
+		LocationType: nulls.Int64(stationTypeValue),
+	})
+	require.NoError(t, err)
+
+	for _, service := range []struct{ id, start, end string }{
+		{serviceID, "20240101", "20241231"},
+		{pastServiceID, "20230101", "20231231"},
+	} {
+		_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+			ID: service.id, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+			StartDate: service.start, EndDate: service.end,
+		})
+		require.NoError(t, err)
+	}
+
+	for _, trip := range []struct{ routeID, tripID, serviceID string }{
+		{routeID, tripID, serviceID},
+		{stationRouteID, stationTripID, pastServiceID},
+	} {
+		_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+			ID: trip.routeID, AgencyID: agencyID, ShortName: nulls.String(trip.routeID), Type: 2,
+		})
+		require.NoError(t, err)
+		_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: trip.tripID, RouteID: trip.routeID, ServiceID: trip.serviceID})
+		require.NoError(t, err)
+	}
+
+	// The station's own route is out of service today, so the station itself
+	// is not listed, but its reference still names that route.
+	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: stationTripID, StopID: stationID, StopSequence: 1, ArrivalTime: noon, DepartureTime: noon,
+	})
+	require.NoError(t, err)
+
+	for i, platformID := range platformIDs {
+		_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+			ID: platformID, Name: nulls.String(platformID), Lat: lat, Lon: lon + float64(i+1)*0.0001,
+			ParentStation: nulls.String(stationID),
+		})
+		require.NoError(t, err)
+		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: tripID, StopID: platformID, StopSequence: int64(i + 1), ArrivalTime: noon, DepartureTime: noon,
+		})
+		require.NoError(t, err)
+	}
+
+	endpoint := fmt.Sprintf("/api/where/stops-for-location.json?key=TEST&lat=%f&lon=%f&radius=100", lat, lon)
+	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	expectedParentID := utils.FormCombinedID(agencyID, stationID)
+	for _, platformID := range platformIDs {
+		platformIdx := slices.IndexFunc(model.Data.List, func(s models.Stop) bool {
+			return s.ID == utils.FormCombinedID(agencyID, platformID)
+		})
+		require.NotEqual(t, -1, platformIdx, "%s should be returned", platformID)
+		assert.Equal(t, expectedParentID, model.Data.List[platformIdx].Parent)
+	}
+
+	require.Len(t, model.Data.References.Stops, 1, "the shared station should be referenced once")
+	station := model.Data.References.Stops[0]
+	assert.Equal(t, expectedParentID, station.ID)
+	assert.Equal(t, stationTypeValue, station.LocationType)
+
+	combinedStationRouteID := utils.FormCombinedID(agencyID, stationRouteID)
+	assert.Contains(t, station.RouteIDs, combinedStationRouteID)
+	assert.True(t, slices.ContainsFunc(model.Data.References.Routes, func(r models.Route) bool {
+		return r.ID == combinedStationRouteID
+	}), "the station's routes must resolve in references.routes")
 }
 
 func TestStopsForLocationHandlerValidatesMaxCount(t *testing.T) {

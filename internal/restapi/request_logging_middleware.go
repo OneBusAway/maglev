@@ -8,17 +8,6 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 )
 
-// responseWriter wraps http.ResponseWriter to capture status code
-type responseWriter struct {
-	http.ResponseWriter
-	statusCode int
-}
-
-func (rw *responseWriter) WriteHeader(code int) {
-	rw.statusCode = code
-	rw.ResponseWriter.WriteHeader(code)
-}
-
 // NewRequestLoggingMiddleware creates middleware that logs HTTP requests
 func NewRequestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -35,10 +24,7 @@ func NewRequestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Ha
 			r = r.WithContext(ctx)
 
 			// Wrap response writer to capture status code
-			wrapped := &responseWriter{
-				ResponseWriter: w,
-				statusCode:     http.StatusOK, // Default status
-			}
+			wrapped := newStatusCapturingWriter(w)
 
 			// Call next handler
 			next.ServeHTTP(wrapped, r)

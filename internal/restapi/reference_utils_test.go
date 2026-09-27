@@ -413,3 +413,102 @@ func TestBuildRouteReferences_MultiAgencyScopingAndCollision(t *testing.T) {
 		assert.Equal(t, "A1_r999", routes[0].ID)
 	})
 }
+
+func TestAppendTripRouteReferences(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"A1,Agency One,http://agency1.com,America/Los_Angeles\n" +
+			"A2,Agency Two,http://agency2.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"r100,A1,100-A1,Route 100 For Agency 1,3\n" +
+			"r300,A2,300-A2,Route 300 For Agency 2,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1,Stop 1,37.7749,-122.4194\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"r100,svc1,t1,Headsign,0\n" +
+			"r300,svc1,t2,Headsign,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,08:00:00,08:00:00,s1,1\n" +
+			"t2,09:00:00,09:00:00,s1,1\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "trip-route-references.zip", files)
+	ctx := context.Background()
+
+	t.Run("adds a same-agency route missing from references", func(t *testing.T) {
+		refs := &models.ReferencesModel{Trips: []models.Trip{{ID: "A1_t1", RouteID: "A1_r100"}}}
+
+		require.NoError(t, api.appendTripRouteReferences(ctx, refs, "A1"))
+
+		require.Len(t, refs.Routes, 1)
+		assert.Equal(t, "A1_r100", refs.Routes[0].ID)
+		assert.Empty(t, refs.Agencies)
+	})
+
+	t.Run("adds a cross-agency route together with its agency", func(t *testing.T) {
+		// buildReferencedTrips files a trip's routeId under the route's own agency,
+		// so a cross-agency trip carries A2_r300 rather than the request agency.
+		refs := &models.ReferencesModel{Trips: []models.Trip{{ID: "A1_t2", RouteID: "A2_r300"}}}
+
+		require.NoError(t, api.appendTripRouteReferences(ctx, refs, "A1"))
+
+		require.Len(t, refs.Routes, 1)
+		assert.Equal(t, refs.Trips[0].RouteID, refs.Routes[0].ID, "the trip's routeId must resolve in references.routes")
+		require.Len(t, refs.Agencies, 1)
+		assert.Equal(t, "A2", refs.Agencies[0].ID)
+	})
+
+	t.Run("skips present and unknown routes", func(t *testing.T) {
+		refs := &models.ReferencesModel{
+			Routes: []models.Route{{ID: "A1_r100"}},
+			Trips: []models.Trip{
+				{ID: "A1_t1", RouteID: "A1_r100"},
+				{ID: "A1_t9", RouteID: "A1_missing"},
+			},
+		}
+
+		require.NoError(t, api.appendTripRouteReferences(ctx, refs, "A1"))
+
+		assert.Len(t, refs.Routes, 1)
+		assert.Empty(t, refs.Agencies)
+	})
+}
+
+func TestBuildReferencedTrips_CrossAgencyRouteID(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"A1,Agency One,http://agency1.com,America/Los_Angeles\n" +
+			"A2,Agency Two,http://agency2.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"r100,A1,100-A1,Route 100 For Agency 1,3\n" +
+			"r300,A2,300-A2,Route 300 For Agency 2,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1,Stop 1,37.7749,-122.4194\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"r100,svc1,t1,Headsign,0\n" +
+			"r300,svc1,t2,Headsign,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,08:00:00,08:00:00,s1,1\n" +
+			"t2,09:00:00,09:00:00,s1,1\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "cross-agency-referenced-trips.zip", files)
+	ctx := context.Background()
+
+	trips, err := api.buildReferencedTrips(ctx, "A1", []string{"A1_t2"}, gtfsdb.Trip{ID: "t1"})
+	require.NoError(t, err)
+	require.Len(t, trips, 1)
+
+	// The linked trip runs on A2's route, so its routeId has to carry A2 for the
+	// reference to resolve, even though the request was scoped to A1.
+	assert.Equal(t, "A2_r300", trips[0].RouteID)
+
+	refs := &models.ReferencesModel{Trips: []models.Trip{*trips[0]}}
+	require.NoError(t, api.appendTripRouteReferences(ctx, refs, "A1"))
+	require.Len(t, refs.Routes, 1)
+	assert.Equal(t, trips[0].RouteID, refs.Routes[0].ID)
+}

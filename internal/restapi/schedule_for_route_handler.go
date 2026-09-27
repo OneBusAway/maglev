@@ -24,6 +24,16 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	dateParam := r.URL.Query().Get("date")
 	ctx := r.Context()
 
+	// An unparseable date is a field error even when the ID resolves to nothing, so it has
+	// to be caught before the route/agency lookup below. Resolving the date to a service date
+	// needs that agency's timezone, so the parse itself stays where it is.
+	if dateParam != "" {
+		if err := utils.ValidateServiceDate(dateParam); err != nil {
+			api.validationErrorResponse(w, r, map[string][]string{"date": {err.Error()}})
+			return
+		}
+	}
+
 	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -52,21 +62,8 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	var targetDate string
 	var scheduleDate int64
 	if dateParam != "" {
-		parsedDate, parseErr := time.ParseInLocation("2006-01-02", dateParam, loc)
-		if parseErr != nil {
-			epochMs, numErr := strconv.ParseInt(dateParam, 10, 64)
-			if numErr != nil {
-				api.validationErrorResponse(w, r, map[string][]string{
-					"date": {"Invalid date format. Use YYYY-MM-DD"},
-				})
-				return
-			}
-			t := time.UnixMilli(epochMs).In(loc)
-			y, m, d := t.Date()
-			parsedDate = time.Date(y, m, d, 0, 0, 0, 0, loc)
-		}
-		y, m, d := parsedDate.Date()
-		startOfDay := time.Date(y, m, d, 0, 0, 0, 0, loc)
+		// dateParam was already validated above; ParseDate cannot fail here.
+		startOfDay, _ := utils.ParseDate(dateParam, loc)
 		targetDate = startOfDay.Format("20060102")
 		scheduleDate = startOfDay.UnixMilli()
 	} else {

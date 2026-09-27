@@ -146,6 +146,64 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 	})
 }
 
+func TestScheduleForRouteHandlerDateValidationPrecedesLookup(t *testing.T) {
+	api := newScheduleForRouteAPI(t)
+	defer api.Shutdown()
+
+	knownRouteID := testdata.Route1.ID
+
+	tests := []struct {
+		name             string
+		routeID          string
+		date             string
+		expectedStatus   int
+		expectFieldError bool
+	}{
+		{
+			name:             "unknown agency with an invalid date",
+			routeID:          "99_1001",
+			date:             "garbage",
+			expectedStatus:   http.StatusBadRequest,
+			expectFieldError: true,
+		},
+		{
+			name:             "known route with an invalid date",
+			routeID:          knownRouteID,
+			date:             "garbage",
+			expectedStatus:   http.StatusBadRequest,
+			expectFieldError: true,
+		},
+		{
+			name:           "unknown agency with a valid date",
+			routeID:        "99_1001",
+			date:           "2025-06-12",
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "unknown route with a valid date",
+			routeID:        "25_9999999",
+			date:           "2025-06-12",
+			expectedStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(tt.routeID, tt.date))
+
+			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			assert.Equal(t, tt.expectedStatus, model.Code)
+
+			if !tt.expectFieldError {
+				return
+			}
+
+			assert.Contains(t, model.Data.FieldErrors, "date")
+			assert.NotEmpty(t, model.Data.FieldErrors["date"])
+		})
+	}
+}
+
 // Regression for #790: serviceIds must be derived from the route's actual
 // trips, not from the agency's active service IDs for the day. Route 25_1885
 // uses only c_868_b_79978_d_31, while several other services are active on

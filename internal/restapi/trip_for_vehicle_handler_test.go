@@ -624,3 +624,36 @@ func TestReferencedStopIDs_Unit(t *testing.T) {
 		})
 	}
 }
+
+func TestTripForVehicleHandler_ScheduleTripsResolve(t *testing.T) {
+	api, vehicleID := setupTestApiWithMockVehicle(t)
+
+	_, model := callAPIHandler[TripDetailsResponse](t, api,
+		tripForVehicleURL(vehicleID, url.Values{"includeSchedule": {"true"}}))
+
+	schedule := model.Data.Entry.Schedule
+	require.NotNil(t, schedule)
+
+	linked := []string{}
+	for _, id := range []string{schedule.NextTripID, schedule.PreviousTripID} {
+		if id != "" {
+			linked = append(linked, id)
+		}
+	}
+	require.NotEmpty(t, linked, "the fixture trip has a neighbour in its block")
+
+	tripRefs := map[string]string{}
+	for _, tr := range model.Data.References.Trips {
+		tripRefs[tr.ID] = tr.RouteID
+	}
+	routeRefs := map[string]bool{}
+	for _, r := range model.Data.References.Routes {
+		routeRefs[r.ID] = true
+	}
+	for _, id := range linked {
+		routeID, ok := tripRefs[id]
+		if assert.True(t, ok, "schedule trip %s is missing from references.trips", id) {
+			assert.True(t, routeRefs[routeID], "route %s of trip %s is missing from references.routes", routeID, id)
+		}
+	}
+}
