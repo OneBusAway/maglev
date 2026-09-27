@@ -111,7 +111,7 @@ func (q *Queries) ClearBlockTripIndices(ctx context.Context) error {
 }
 
 const clearBookingRules = `-- name: ClearBookingRules :exec
-DELETE FROM booking_rules
+DELETE FROM booking_rules WHERE TRUE
 `
 
 func (q *Queries) ClearBookingRules(ctx context.Context) error {
@@ -138,7 +138,7 @@ func (q *Queries) ClearCalendarDates(ctx context.Context) error {
 }
 
 const clearFlexStopTimes = `-- name: ClearFlexStopTimes :exec
-DELETE FROM flex_stop_times
+DELETE FROM flex_stop_times WHERE TRUE
 `
 
 func (q *Queries) ClearFlexStopTimes(ctx context.Context) error {
@@ -156,7 +156,7 @@ func (q *Queries) ClearFrequencies(ctx context.Context) error {
 }
 
 const clearLocationGroupStops = `-- name: ClearLocationGroupStops :exec
-DELETE FROM location_group_stops
+DELETE FROM location_group_stops WHERE TRUE
 `
 
 func (q *Queries) ClearLocationGroupStops(ctx context.Context) error {
@@ -165,7 +165,7 @@ func (q *Queries) ClearLocationGroupStops(ctx context.Context) error {
 }
 
 const clearLocationGroups = `-- name: ClearLocationGroups :exec
-DELETE FROM location_groups
+DELETE FROM location_groups WHERE TRUE
 `
 
 func (q *Queries) ClearLocationGroups(ctx context.Context) error {
@@ -174,7 +174,7 @@ func (q *Queries) ClearLocationGroups(ctx context.Context) error {
 }
 
 const clearLocations = `-- name: ClearLocations :exec
-DELETE FROM locations
+DELETE FROM locations WHERE TRUE
 `
 
 func (q *Queries) ClearLocations(ctx context.Context) error {
@@ -183,7 +183,7 @@ func (q *Queries) ClearLocations(ctx context.Context) error {
 }
 
 const clearOnDemandRules = `-- name: ClearOnDemandRules :exec
-DELETE FROM ondemand_rules
+DELETE FROM ondemand_rules WHERE TRUE
 `
 
 func (q *Queries) ClearOnDemandRules(ctx context.Context) error {
@@ -192,7 +192,7 @@ func (q *Queries) ClearOnDemandRules(ctx context.Context) error {
 }
 
 const clearOnDemandServices = `-- name: ClearOnDemandServices :exec
-DELETE FROM ondemand_services
+DELETE FROM ondemand_services WHERE TRUE
 `
 
 func (q *Queries) ClearOnDemandServices(ctx context.Context) error {
@@ -201,7 +201,7 @@ func (q *Queries) ClearOnDemandServices(ctx context.Context) error {
 }
 
 const clearOnDemandStopServices = `-- name: ClearOnDemandStopServices :exec
-DELETE FROM ondemand_stop_services
+DELETE FROM ondemand_stop_services WHERE TRUE
 `
 
 func (q *Queries) ClearOnDemandStopServices(ctx context.Context) error {
