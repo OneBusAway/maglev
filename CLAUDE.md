@@ -648,4 +648,6 @@ The OpenAPI spec (`testdata/openapi.yml`, synced from [OneBusAway/sdk-config](ht
 
 When the wiki and openapi.yml disagree, follow the wiki and raise the discrepancy on OneBusAway/sdk-config. Don't change Maglev's behavior to match openapi.yml. An endpoint outside the SDK (such as `/api/where/metrics.json`) needs no openapi.yml entry, but the PR description must say why.
 
+`/api/ondemand` is not in the upstream spec: it is governed by `testdata/openapi-ondemand.yml` and the wiki GTFS-Flex page until it is proposed upstream.
+
 The legacy API documentation is at https://developer.onebusaway.org/api/where/methods.
