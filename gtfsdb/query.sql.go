@@ -6154,7 +6154,7 @@ func (q *Queries) ListAgencyIds(ctx context.Context) ([]string, error) {
 const listBookingRulesWithoutPriorNoticeCalendar = `-- name: ListBookingRulesWithoutPriorNoticeCalendar :many
 SELECT b.id, b.prior_notice_service_id
 FROM booking_rules b
-WHERE b.prior_notice_service_id IS NOT NULL AND b.prior_notice_service_id != ''
+WHERE length(b.prior_notice_service_id) > 0
 AND NOT EXISTS (
     SELECT 1 FROM calendar c
     WHERE c.id = b.prior_notice_service_id

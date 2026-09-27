@@ -1706,7 +1706,7 @@ ORDER BY r.service_id, r.gtfs_service_id;
 -- priorNoticeCalendarId.
 SELECT b.id, b.prior_notice_service_id
 FROM booking_rules b
-WHERE b.prior_notice_service_id IS NOT NULL AND b.prior_notice_service_id != ''
+WHERE length(b.prior_notice_service_id) > 0
 AND NOT EXISTS (
     SELECT 1 FROM calendar c
     WHERE c.id = b.prior_notice_service_id
