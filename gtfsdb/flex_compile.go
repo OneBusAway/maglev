@@ -277,10 +277,13 @@ func compileTripRules(trip *gtfs.ScheduledTrip, ordered []gtfs.ScheduledStopTime
 
 // isOnDemandPair reports whether a later record can end a trip begun at the
 // pickup record. Timed→timed pairs are ordinary fixed-route travel, not
-// on-demand rules.
+// on-demand rules, and a drop-off that closes before pickup opens is a ride
+// the windows forbid.
 func isOnDemandPair(pickupRecord, dropOffRecord gtfs.ScheduledStopTime) bool {
 	bothTimed := !pickupRecord.IsWindowed() && !dropOffRecord.IsWindowed()
-	return dropOffCapable(dropOffRecord) && !bothTimed
+	startPickup, _ := pickupWindow(pickupRecord)
+	windowsAllowTravel := dropOffEnd(dropOffRecord) >= *startPickup
+	return dropOffCapable(dropOffRecord) && !bothTimed && windowsAllowTravel
 }
 
 // pickupCapable: windowed records need pickup_type 2 (1 = no pickup; 0 and 3
@@ -366,13 +369,19 @@ func pickupWindow(st gtfs.ScheduledStopTime) (start, end *int64) {
 	return int64Of(st.DepartureTime), int64Of(st.DepartureTime)
 }
 
-// dropOffEndUnlessEqual is the window end, or the arrival time for a timed
-// fixed stop; nil when it adds nothing beyond the pickup window's end.
-func dropOffEndUnlessEqual(st gtfs.ScheduledStopTime, endPickup int64) *int64 {
-	end := int64(st.ArrivalTime)
+// dropOffEnd is the record's window end, or the arrival time for a timed
+// fixed stop.
+func dropOffEnd(st gtfs.ScheduledStopTime) int64 {
 	if st.IsWindowed() {
-		end = int64(*st.EndPickupDropOffWindow)
+		return int64(*st.EndPickupDropOffWindow)
 	}
+	return int64(st.ArrivalTime)
+}
+
+// dropOffEndUnlessEqual is dropOffEnd, or nil when it adds nothing beyond the
+// pickup window's end.
+func dropOffEndUnlessEqual(st gtfs.ScheduledStopTime, endPickup int64) *int64 {
+	end := dropOffEnd(st)
 	if end == endPickup {
 		return nil
 	}

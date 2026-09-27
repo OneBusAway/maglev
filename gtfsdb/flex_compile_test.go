@@ -109,6 +109,13 @@ func TestCompileOnDemand_Patterns(t *testing.T) {
 			wantKind: ServiceKindZoneToZone, wantRules: 1, wantStops: map[string][]string{}, wantServices: 1,
 		},
 		{
+			name: "drop-off window closing before pickup opens yields no rule",
+			static: compileStatic(trip("t1", &weekdaySvc,
+				zoneRecord(&zoneA, 1, pickup, noPick, 15*time.Hour, sixPM),
+				zoneRecord(&zoneB, 2, noPick, pickup, fiveAM, 8*time.Hour))),
+			wantKind: ServiceKindZoneToZone, wantRules: 0, wantStops: map[string][]string{}, wantServices: 1,
+		},
+		{
 			name: "location group",
 			static: compileStatic(trip("t1", &weekdaySvc,
 				groupRecord(&group, 1, pickup, noPick, nineAM, ninePM),
