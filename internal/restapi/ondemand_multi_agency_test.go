@@ -64,3 +64,29 @@ func TestOnDemand_StopReferencedAcrossAgenciesKeepsItsWhereID(t *testing.T) {
 		assert.Equal(t, []string{"bb_grp_bb"}, model.Data.Entry.Rules[0].ToIds)
 	})
 }
+
+// A flex-only stop that two agencies' services reference carries the lower
+// agency id on the wire, so that agency must be in references.agencies even
+// when the response holds only the other agency's service.
+func TestOnDemand_StopAgencyResolvesInReferences(t *testing.T) {
+	files := flexfixtures.TwoAgencyFiles()
+	files["agency.txt"] += "a0,Zero Flex,http://example.com/a0,UTC\n"
+	files["routes.txt"] += "flexa0,a0,0,Zero Flex,3\n"
+	files["trips.txt"] += "flexa0,svc,a0-trip\n"
+	files["stop_times.txt"] += "a0-trip,,,Y,,1,2,1,08:00:00,10:00:00\n" +
+		"a0-trip,,,Y,,2,1,2,08:00:00,10:00:00\n"
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "flex-shared-flex-stop.zip", files)
+
+	resp, model := callAPIHandler[onDemandEntryResponse](t, api, "/api/ondemand/service/bb_flexbb.json?key=TEST&geometryDetail=none")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	references := model.Data.References
+	require.Len(t, references.LocationGroups, 1)
+	assert.Contains(t, references.LocationGroups[0].StopIds, "a0_Y")
+
+	agencyIDs := make([]string, 0, len(references.Agencies))
+	for _, agency := range references.Agencies {
+		agencyIDs = append(agencyIDs, agency.ID)
+	}
+	assert.Contains(t, agencyIDs, "a0")
+}
