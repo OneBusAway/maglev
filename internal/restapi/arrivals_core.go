@@ -358,7 +358,6 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 	st := in.stopTime
 	route := in.route
 	serviceStart := in.serviceDate.Start(in.location)
-	serviceMidnight := in.serviceDate.Midnight(in.location)
 
 	scheduledArrivalTime := serviceStart.Add(time.Duration(st.ArrivalTime))
 	scheduledDepartureTime := serviceStart.Add(time.Duration(st.DepartureTime))
@@ -413,7 +412,7 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 		st.TripHeadsign.String,                          // tripHeadsign
 		in.stopID,                                       // stopID
 		vehicleID,                                       // vehicleID
-		serviceMidnight,                                 // serviceDate
+		serviceStart,                                    // serviceDate
 		scheduledArrivalTime,                            // scheduledArrivalTime
 		scheduledDepartureTime,                          // scheduledDepartureTime
 		predictedArrivalTime,                            // predictedArrivalTime
@@ -450,6 +449,23 @@ func applyFrequency(arrival *models.ArrivalAndDeparture, freqs []gtfsdb.Frequenc
 	}
 	converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqs, serviceStart, queryTime), serviceStart)
 	arrival.Frequency = &converted
+}
+
+// startTripStatusAtServiceStart reports the trip status's serviceDate and frequency from serviceStart.
+func startTripStatusAtServiceStart(status *models.TripStatus, freqMap map[string][]gtfsdb.Frequency, tripID string, serviceStart, queryTime time.Time) {
+	status.ServiceDate = models.NewModelTime(serviceStart)
+	if status.Frequency == nil {
+		return
+	}
+	freqs := freqMap[tripID]
+	if _, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID); err == nil && len(freqMap[activeTripID]) > 0 {
+		freqs = freqMap[activeTripID]
+	}
+	if len(freqs) == 0 {
+		return
+	}
+	converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqs, serviceStart, queryTime), serviceStart)
+	status.Frequency = &converted
 }
 
 // combinedVehicleID renders a vehicle's ID in the combined {agency}_{id} form
@@ -493,6 +509,7 @@ func (api *RestAPI) tripStatusForArrival(
 	if status == nil {
 		return nil, 0, 0, situations
 	}
+	startTripStatusAtServiceStart(status, in.freqMap, st.TripID, in.serviceDate.Start(in.location), in.queryTime)
 
 	api.recordTripStatusReferences(ctx, status, st.TripID, acc)
 

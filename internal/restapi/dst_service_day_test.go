@@ -36,12 +36,32 @@ func dstFiles() map[string]string {
 	}
 }
 
+type dstFrequency struct {
+	StartTime int64 `json:"startTime"`
+}
+
 type dstArrival struct {
-	ServiceDate          int64 `json:"serviceDate"`
-	ScheduledArrivalTime int64 `json:"scheduledArrivalTime"`
-	Frequency            *struct {
-		StartTime int64 `json:"startTime"`
-	} `json:"frequency"`
+	ServiceDate          int64         `json:"serviceDate"`
+	ScheduledArrivalTime int64         `json:"scheduledArrivalTime"`
+	Frequency            *dstFrequency `json:"frequency"`
+	TripStatus           *struct {
+		ServiceDate int64         `json:"serviceDate"`
+		Frequency   *dstFrequency `json:"frequency"`
+	} `json:"tripStatus"`
+}
+
+func assertDSTArrival(t *testing.T, a dstArrival, start time.Time) {
+	t.Helper()
+	wantArrival := start.Add(8 * time.Hour).UnixMilli()
+	assert.Equal(t, wantArrival, a.ScheduledArrivalTime)
+	assert.Equal(t, start.UnixMilli(), a.ServiceDate)
+	assert.Equal(t, (8 * time.Hour).Milliseconds(), a.ScheduledArrivalTime-a.ServiceDate)
+	require.NotNil(t, a.Frequency)
+	assert.Equal(t, wantArrival, a.Frequency.StartTime, "the 08:00 frequency window starts at 08:00 local")
+	require.NotNil(t, a.TripStatus)
+	assert.Equal(t, start.UnixMilli(), a.TripStatus.ServiceDate)
+	require.NotNil(t, a.TripStatus.Frequency)
+	assert.Equal(t, wantArrival, a.TripStatus.Frequency.StartTime)
 }
 
 type dstArrivalsResponse struct {
@@ -79,26 +99,17 @@ func TestArrivalsEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now),
 				fmt.Sprintf("dst-%s.zip", tc.date), dstFiles())
 
-			wantArrival := start.Add(8 * time.Hour).UnixMilli()
-			wantServiceDate := tc.date.Midnight(losAngeles).UnixMilli()
-
 			_, plural := callAPIHandler[dstArrivalsResponse](t, api, fmt.Sprintf(
 				"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=5&minutesAfter=30", stopID))
 			arrivals := plural.Data.Entry.ArrivalsAndDepartures
 			require.Len(t, arrivals, 1, "the 08:00 Sunday trip is in the 07:45 to 08:20 window")
-			assert.Equal(t, wantArrival, arrivals[0].ScheduledArrivalTime)
-			assert.Equal(t, wantServiceDate, arrivals[0].ServiceDate)
-			require.NotNil(t, arrivals[0].Frequency)
-			assert.Equal(t, wantArrival, arrivals[0].Frequency.StartTime, "the 08:00 frequency window starts at 08:00 local")
+			assertDSTArrival(t, arrivals[0], start)
 
-			for _, serviceDate := range []int64{arrivals[0].ServiceDate, start.UnixMilli()} {
+			for _, serviceDate := range []int64{arrivals[0].ServiceDate, tc.date.Midnight(losAngeles).UnixMilli()} {
 				resp, single := callAPIHandler[dstArrivalResponse](t, api, fmt.Sprintf(
 					"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d", stopID, tripID, serviceDate))
 				require.Equal(t, 200, resp.StatusCode)
-				assert.Equal(t, wantArrival, single.Data.Entry.ScheduledArrivalTime)
-				assert.Equal(t, wantServiceDate, single.Data.Entry.ServiceDate)
-				require.NotNil(t, single.Data.Entry.Frequency)
-				assert.Equal(t, wantArrival, single.Data.Entry.Frequency.StartTime)
+				assertDSTArrival(t, single.Data.Entry, start)
 			}
 		})
 	}

@@ -417,6 +417,36 @@ func TestParseFloatParam(t *testing.T) {
 			expectedValue: 150.0,
 			expectError:   false,
 		},
+		{
+			name: "NaN",
+			params: url.Values{
+				"lat": []string{"NaN"},
+			},
+			key:           "lat",
+			initialErrors: nil,
+			expectedValue: 0,
+			expectError:   true,
+		},
+		{
+			name: "Infinity",
+			params: url.Values{
+				"radius": []string{"Inf"},
+			},
+			key:           "radius",
+			initialErrors: nil,
+			expectedValue: 0,
+			expectError:   true,
+		},
+		{
+			name: "Overflow to infinity",
+			params: url.Values{
+				"radius": []string{"1e400"},
+			},
+			key:           "radius",
+			initialErrors: nil,
+			expectedValue: 0,
+			expectError:   true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1065,6 +1095,14 @@ func TestParseRequiredFloatParam(t *testing.T) {
 		val, fieldErrors := ParseRequiredFloatParam(params, "lat", nil)
 		assert.Equal(t, float64(0), val)
 		assert.Empty(t, fieldErrors)
+	})
+	t.Run("NaN and infinite values add parse error", func(t *testing.T) {
+		for _, value := range []string{"NaN", "Inf", "-Inf"} {
+			params := url.Values{"lat": []string{value}}
+			val, fieldErrors := ParseRequiredFloatParam(params, "lat", nil)
+			assert.Equal(t, float64(0), val, value)
+			assert.Contains(t, fieldErrors["lat"][0], "Invalid field value", value)
+		}
 	})
 	t.Run("existing fieldErrors are preserved", func(t *testing.T) {
 		params := url.Values{}
