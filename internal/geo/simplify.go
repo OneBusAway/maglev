@@ -4,7 +4,7 @@ import "math"
 
 const (
 	// SimplifyInitialToleranceMeters is the first Douglas–Peucker tolerance tried
-	// for display geometry; it doubles until every ring fits SimplifyMaxRingPoints.
+	// for display geometry; it doubles per ring until that ring fits SimplifyMaxRingPoints.
 	SimplifyInitialToleranceMeters = 10.0
 	// SimplifyMaxRingPoints bounds the vertices per ring of display geometry. The
 	// bound wins over the tolerance target: Alexandria's zone needs ~160 m.
@@ -28,50 +28,52 @@ type SimplifiedPolygons struct {
 }
 
 // SimplifyPolygons produces display geometry: Douglas–Peucker per ring, run on
-// the open ring split at the vertex farthest from vertex 0 and re-closed after,
-// starting at 10 m and doubling until every ring has at most
-// SimplifyMaxRingPoints vertices. Holes that collapse below four points are
+// the open ring split at the vertex farthest from vertex 0 and re-closed after.
+// Each ring's tolerance starts at 10 m and doubles until that ring has at most
+// SimplifyMaxRingPoints vertices; a per-ring search keeps a large ring from
+// collapsing a small one elsewhere in a MultiPolygon. ToleranceMeters reports
+// the largest tolerance used. Holes that collapse below four points are
 // dropped; the exterior ring is never dropped; vertex order (winding) is kept.
 //
 // Termination for rings of coincident vertices comes from simplifyRing
 // collapsing them to a closed pair; simplifyMaxDoublings is only a backstop,
 // and the last pass is returned if it is ever reached.
 func SimplifyPolygons(polygons [][][][2]float64) SimplifiedPolygons {
-	tolerance := SimplifyInitialToleranceMeters
-	for doublings := 0; ; doublings++ {
-		simplified, largestRing := simplifyAtTolerance(polygons, tolerance)
-		fitsBound := largestRing <= SimplifyMaxRingPoints
-		if fitsBound || doublings == simplifyMaxDoublings {
-			return SimplifiedPolygons{
-				Polygons:        simplified,
-				ToleranceMeters: tolerance,
-				Changed:         ringsChanged(polygons, simplified),
-			}
-		}
-		tolerance *= 2
-	}
-}
-
-// simplifyAtTolerance simplifies every ring at one tolerance and reports the
-// largest resulting ring size.
-func simplifyAtTolerance(polygons [][][][2]float64, toleranceMeters float64) ([][][][2]float64, int) {
-	largest := 0
+	largestTolerance := SimplifyInitialToleranceMeters
 	result := make([][][][2]float64, 0, len(polygons))
 	for _, polygon := range polygons {
 		rings := make([][][2]float64, 0, len(polygon))
 		for ringIndex, ring := range polygon {
-			simplified := simplifyRing(ring, toleranceMeters)
+			simplified, tolerance := simplifyRingToFit(ring)
 			isHole := ringIndex > 0
 			if isHole && len(simplified) < minClosedRingPoints {
 				// A hole that degenerates to a line would invert the map fill.
 				continue
 			}
 			rings = append(rings, simplified)
-			largest = max(largest, len(simplified))
+			largestTolerance = max(largestTolerance, tolerance)
 		}
 		result = append(result, rings)
 	}
-	return result, largest
+	return SimplifiedPolygons{
+		Polygons:        result,
+		ToleranceMeters: largestTolerance,
+		Changed:         ringsChanged(polygons, result),
+	}
+}
+
+// simplifyRingToFit doubles the tolerance for one ring until it fits
+// SimplifyMaxRingPoints, returning the ring and the tolerance that fit it.
+func simplifyRingToFit(ring [][2]float64) ([][2]float64, float64) {
+	tolerance := SimplifyInitialToleranceMeters
+	for doublings := 0; ; doublings++ {
+		simplified := simplifyRing(ring, tolerance)
+		fitsBound := len(simplified) <= SimplifyMaxRingPoints
+		if fitsBound || doublings == simplifyMaxDoublings {
+			return simplified, tolerance
+		}
+		tolerance *= 2
+	}
 }
 
 // ringsChanged reports whether any ring of the result has a different vertex
