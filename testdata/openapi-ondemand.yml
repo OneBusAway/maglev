@@ -122,7 +122,10 @@ components:
       name: geometryDetail
       in: query
       required: false
-      description: none omits geometry, simplified embeds display geometry, full embeds the feed geometry.
+      description: >-
+        none omits geometry, simplified embeds display geometry, full embeds the feed
+        geometry. Defaults to full for service/{id} and to simplified for
+        services-for-agency and services-for-location.
       schema:
         type: string
         enum: [none, simplified, full]
@@ -317,6 +320,7 @@ components:
           nullable: true
         bbox:
           type: array
+          description: '[minLon, minLat, maxLon, maxLat] of the full geometry.'
           minItems: 4
           maxItems: 4
           items:
@@ -337,6 +341,7 @@ components:
           nullable: true
         nearestPointOnBoundary:
           type: array
+          description: '[lon, lat] of the closest boundary point; null when inside or not in point mode.'
           nullable: true
           minItems: 2
           maxItems: 2
