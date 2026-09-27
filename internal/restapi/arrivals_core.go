@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -155,9 +156,21 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 	return result, nil
 }
 
+// timezoneGroup gathers the agencies serving a stop that share one
+// *time.Location. Service days and query windows depend only on the timezone,
+// so one pass per group keeps the query count flat no matter how many agencies
+// share that timezone.
+type timezoneGroup struct {
+	location *time.Location
+	agencies map[string]struct{}
+}
+
 // activeStopTimesForWindow collects the stop_times falling inside the request
 // window across yesterday, today and tomorrow, resolving each serving agency
 // in its own timezone so trips from agencies in other timezones are not dropped.
+//
+// Agencies are grouped by distinct timezone: a stop served by five agencies in
+// one timezone costs the same six service/window queries as a single agency.
 func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrivalsInput) ([]activeStopTime, error) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	windowStart := in.QueryTime.Add(-in.Before)
@@ -204,20 +217,42 @@ func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrival
 
 	var allActiveStopTimes []activeStopTime
 
+	// Group agencies by distinct timezone. Group keys iterate in sorted order
+	// so the merged row order is deterministic across requests.
+	groups := make(map[string]*timezoneGroup)
+	agencyGroupKey := make(map[string]string, len(agencyLocations))
 	for agencyID, agencyLoc := range agencyLocations {
+		key := agencyLoc.String()
+		group, ok := groups[key]
+		if !ok {
+			group = &timezoneGroup{location: agencyLoc, agencies: make(map[string]struct{})}
+			groups[key] = group
+		}
+		group.agencies[agencyID] = struct{}{}
+		agencyGroupKey[agencyID] = key
+	}
+	primaryGroupKey := agencyGroupKey[in.AgencyID]
+
+	for _, key := range slices.Sorted(maps.Keys(groups)) {
+		group := groups[key]
+		isPrimaryGroup := key == primaryGroupKey
 		for dayOffset := -1; dayOffset <= 1; dayOffset++ {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
 
-			dayStopTimes, err := api.stopTimesForAgencyServiceDay(ctx, in, agencyID, agencyLoc, len(agencyLocations) > 1, routeAgencyMap, dayOffset, windowStart, windowEnd)
+			dayStopTimes, err := api.stopTimesForGroupServiceDay(ctx, in, group, isPrimaryGroup, routeAgencyMap, dayOffset, windowStart, windowEnd)
 			if err != nil {
-				// dayOffset==0 is the primary service date: fail loud if it's the sole agency
-				if dayOffset == 0 && len(agencyLocations) == 1 {
+				// dayOffset==0 is the user's actual service date — silently
+				// dropping it would emit a 200 with the most important day's
+				// arrivals missing. Fail loud for the stop's primary agency
+				// group so clients can retry. Other groups and ±1-day
+				// failures stay best-effort (window-spillover only).
+				if dayOffset == 0 && isPrimaryGroup {
 					return nil, err
 				}
 				reqLogger.Warn("failed to resolve services for window-spillover day, skipping",
-					slog.String("agencyID", agencyID),
+					slog.String("timezone", key),
 					slog.Int("day_offset", dayOffset),
 					slog.Any("error", err))
 				continue
@@ -226,7 +261,10 @@ func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrival
 		}
 	}
 
-	slices.SortFunc(allActiveStopTimes, func(a, b activeStopTime) int {
+	// Stable sort over a deterministic input order: ties on scheduled arrival
+	// (e.g. two agencies' trips due the same minute) keep a fixed order
+	// instead of varying per request with the map iteration order.
+	slices.SortStableFunc(allActiveStopTimes, func(a, b activeStopTime) int {
 		timeA := a.ServiceDate.Add(time.Duration(a.ArrivalTime))
 		timeB := b.ServiceDate.Add(time.Duration(b.ArrivalTime))
 		if timeA.Before(timeB) {
@@ -235,25 +273,31 @@ func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrival
 		if timeA.After(timeB) {
 			return 1
 		}
-		return 0
+		if c := cmp.Compare(a.TripID, b.TripID); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.StopSequence, b.StopSequence)
 	})
 
 	return allActiveStopTimes, nil
 }
 
-// stopTimesForAgencyServiceDay returns the stop_times of a single service day for a specific agency
-// that fall inside the window, keeping only those whose service is active that day.
-func (api *RestAPI) stopTimesForAgencyServiceDay(
+// stopTimesForGroupServiceDay returns the stop_times of a single service day for one
+// timezone group that fall inside the window, keeping only those whose service is
+// active that day and whose route belongs to the group. Rows whose route has no
+// known agency are attributed to the primary group only, so they are neither
+// dropped nor duplicated.
+func (api *RestAPI) stopTimesForGroupServiceDay(
 	ctx context.Context,
 	in stopArrivalsInput,
-	agencyID string,
-	agencyLoc *time.Location,
-	filterByAgency bool,
+	group *timezoneGroup,
+	isPrimaryGroup bool,
 	routeAgencyMap map[string]string,
 	dayOffset int,
 	windowStart, windowEnd time.Time,
 ) ([]activeStopTime, error) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
+	agencyLoc := group.location
 	targetDate := in.QueryTime.In(agencyLoc).AddDate(0, 0, dayOffset)
 	serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, agencyLoc)
 	serviceDateStr := targetDate.Format("20060102")
@@ -291,11 +335,12 @@ func (api *RestAPI) stopTimesForAgencyServiceDay(
 
 	dayStopTimes := make([]activeStopTime, 0, len(stopTimes))
 	for _, st := range stopTimes {
-		if filterByAgency {
-			routeAgency, ok := routeAgencyMap[st.RouteID]
-			if ok && routeAgency != agencyID {
+		if routeAgency, ok := routeAgencyMap[st.RouteID]; ok {
+			if _, inGroup := group.agencies[routeAgency]; !inGroup {
 				continue
 			}
+		} else if !isPrimaryGroup {
+			continue
 		}
 		if activeServiceIDSet[st.ServiceID] {
 			dayStopTimes = append(dayStopTimes, activeStopTime{

@@ -458,7 +458,6 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *testing.T) {
 	locLA, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
-	_ = locLA
 
 	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
 	mockClock := clock.NewMockClock(queryTimeUTC)
@@ -555,6 +554,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *t
 	}
 
 	expectedArrivalUTC := time.Date(2026, 1, 15, 15, 10, 0, 0, time.UTC)
+	expectedMidnightLA := time.Date(2026, 1, 15, 0, 0, 0, 0, locLA)
 
 	// Query via UTC Agency prefix
 	{
@@ -563,13 +563,27 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *t
 		require.Equal(t, http.StatusOK, model.Code)
 
 		tripIDs := make(map[string]models.ArrivalAndDeparture)
+		order := make([]string, 0, len(model.Data.Entry.ArrivalsAndDepartures))
 		for _, ad := range model.Data.Entry.ArrivalsAndDepartures {
 			tripIDs[ad.TripID] = ad
+			order = append(order, ad.TripID)
 		}
 		require.Contains(t, tripIDs, utils.FormCombinedID(agencyUTC, tripUTC), "UTC query should include trip-utc")
 		require.Contains(t, tripIDs, utils.FormCombinedID(agencyLA, tripLA), "UTC query should include trip-la from another timezone")
 		assert.True(t, tripIDs[utils.FormCombinedID(agencyLA, tripLA)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
 		assert.True(t, tripIDs[utils.FormCombinedID(agencyUTC, tripUTC)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
+		assert.True(t, tripIDs[utils.FormCombinedID(agencyLA, tripLA)].ServiceDate.In(locLA).Equal(expectedMidnightLA),
+			"LA trip service date must be midnight in its own timezone")
+
+		// Same query again: row order must be identical (map iteration order
+		// must not leak into the response).
+		resp2, model2 := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, queryURLWithPrefix(agencyUTC))
+		require.Equal(t, http.StatusOK, resp2.StatusCode)
+		order2 := make([]string, 0, len(model2.Data.Entry.ArrivalsAndDepartures))
+		for _, ad := range model2.Data.Entry.ArrivalsAndDepartures {
+			order2 = append(order2, ad.TripID)
+		}
+		assert.Equal(t, order, order2, "arrival order must be deterministic across requests")
 	}
 
 	// Query via LA Agency prefix
@@ -586,6 +600,8 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *t
 		require.Contains(t, tripIDs, utils.FormCombinedID(agencyLA, tripLA), "LA query should include trip-la")
 		assert.True(t, tripIDs[utils.FormCombinedID(agencyLA, tripLA)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
 		assert.True(t, tripIDs[utils.FormCombinedID(agencyUTC, tripUTC)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
+		assert.True(t, tripIDs[utils.FormCombinedID(agencyLA, tripLA)].ServiceDate.In(locLA).Equal(expectedMidnightLA),
+			"LA trip service date must be midnight in its own timezone")
 	}
 }
 
