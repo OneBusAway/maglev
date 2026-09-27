@@ -155,6 +155,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 			}
 			return
 		}
+		// The stop reference lists its routeIds, so those routes must be in
+		// references too.
+		api.appendRouteReferences(ctx, references, map[string]bool{agency.ID: true}, acc)
 		situationIDs := api.addStopSituations(ctx, references, acc, stopCode, stopAgencyID)
 		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nearbyStopIDs, situationIDs, stopID, api.Clock)
 		api.sendResponse(w, r, response)
