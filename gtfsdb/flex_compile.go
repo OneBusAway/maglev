@@ -113,8 +113,7 @@ func (c *onDemandCompiler) recordsForRoute(route *gtfs.Route) *routeFlexRecords 
 	records, ok := c.routeRecords[route.Id]
 	if !ok {
 		records = &routeFlexRecords{
-			agencyID:    pickFirstAvailable(route.Agency.Id, c.singleAgencyID),
-			locationIDs: make(map[string]struct{}),
+			agencyID: pickFirstAvailable(route.Agency.Id, c.singleAgencyID),
 		}
 		c.routeRecords[route.Id] = records
 	}
@@ -190,19 +189,24 @@ func (c *onDemandCompiler) sortedStopServices() map[string][]string {
 type routeFlexRecords struct {
 	agencyID          string
 	hasGroup          bool
-	locationIDs       map[string]struct{}
+	hasZone           bool
+	crossesZones      bool // some trip's records reference two or more zones
 	mixesTimedAndFlex bool // some trip has both timed-stop and location/group records
 }
 
+// add folds in one trip's records. Zones are counted per trip: a dial-a-ride
+// route whose trips each stay inside one zone (Heartland Express runs New Ulm
+// and Brown County as separate trips) is still single-zone service.
 func (r *routeFlexRecords) add(records []gtfs.ScheduledStopTime) {
 	hasTimed, hasZoneOrGroup := false, false
+	tripZoneIDs := make(map[string]struct{})
 	for _, st := range records {
 		switch {
 		case st.LocationGroup != nil:
 			r.hasGroup = true
 			hasZoneOrGroup = true
 		case st.Location != nil:
-			r.locationIDs[st.Location.Id] = struct{}{}
+			tripZoneIDs[st.Location.Id] = struct{}{}
 			hasZoneOrGroup = true
 		case !st.IsWindowed():
 			hasTimed = true
@@ -211,6 +215,8 @@ func (r *routeFlexRecords) add(records []gtfs.ScheduledStopTime) {
 	if hasTimed && hasZoneOrGroup {
 		r.mixesTimedAndFlex = true
 	}
+	r.hasZone = r.hasZone || len(tripZoneIDs) > 0
+	r.crossesZones = r.crossesZones || len(tripZoneIDs) >= 2
 }
 
 // kind applies the wiki §2.3 classification, first match wins.
@@ -220,9 +226,9 @@ func (r *routeFlexRecords) kind() string {
 		return ServiceKindDeviatedRoute
 	case r.hasGroup:
 		return ServiceKindStopGroup
-	case len(r.locationIDs) >= 2:
+	case r.crossesZones:
 		return ServiceKindZoneToZone
-	case len(r.locationIDs) == 1:
+	case r.hasZone:
 		return ServiceKindZone
 	default:
 		return ServiceKindUnknown

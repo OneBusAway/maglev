@@ -91,6 +91,17 @@ func TestCompileOnDemand_Patterns(t *testing.T) {
 			wantKind: ServiceKindZone, wantRules: 1, wantStops: map[string][]string{}, wantServices: 1,
 		},
 		{
+			name: "trips each inside a different single zone are still zone service",
+			static: compileStatic(
+				trip("t1", &weekdaySvc,
+					zoneRecord(&zoneA, 1, pickup, noPick, fiveAM, sixPM),
+					zoneRecord(&zoneA, 2, noPick, pickup, fiveAM, sixPM)),
+				trip("t2", &weekdaySvc,
+					zoneRecord(&zoneB, 1, pickup, noPick, fiveAM, sixPM),
+					zoneRecord(&zoneB, 2, noPick, pickup, fiveAM, sixPM))),
+			wantKind: ServiceKindZone, wantRules: 2, wantStops: map[string][]string{}, wantServices: 1,
+		},
+		{
 			name: "zone to zone",
 			static: compileStatic(trip("t1", &weekdaySvc,
 				zoneRecord(&zoneA, 1, pickup, noPick, fiveAM, sixPM),
