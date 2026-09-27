@@ -1525,6 +1525,8 @@ WITH BlockTrips AS (
     FROM trips
     WHERE block_id = @block_id
       AND service_id IN (sqlc.slice('service_ids'))
+      -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+      AND min_arrival_time IS NOT NULL
 )
 SELECT seq FROM BlockTrips WHERE id = @trip_id;
 
