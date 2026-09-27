@@ -79,3 +79,17 @@ func TestPolygonIntersectsBounds(t *testing.T) {
 		})
 	}
 }
+
+// openSquare is unitSquare(false) without its closing vertex; ParseGeoJSONPolygons
+// accepts such rings, and distances must still see the closing edge.
+func openSquare() [][][][2]float64 {
+	return [][][][2]float64{{{{0, 0}, {0.01, 0}, {0.01, 0.01}, {0, 0.01}}}}
+}
+
+func TestNearestPointOnBoundaryUnclosedRing(t *testing.T) {
+	// West of the closing edge (lon 0, from lat 0.01 back to 0): 0.001° ≈ 111.2 m.
+	distance, lon, lat := NearestPointOnBoundary(0.005, -0.001, openSquare())
+	assert.InDelta(t, 111.2, distance, 0.5)
+	assert.InDelta(t, 0, lon, 1e-9)
+	assert.InDelta(t, 0.005, lat, 1e-9)
+}
