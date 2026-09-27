@@ -25,6 +25,11 @@ func TestValidateID(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "valid ID with spaces",
+			id:      "25_Route 15 Southbound",
+			wantErr: false,
+		},
+		{
 			name:    "empty ID",
 			id:      "",
 			wantErr: true,
