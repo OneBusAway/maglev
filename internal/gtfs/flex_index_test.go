@@ -129,17 +129,28 @@ func TestFlexIndex_CorruptGeometryIsSkippedOnReload(t *testing.T) {
 	assert.ElementsMatch(t, []string{"charlevoix_county", "petoskey"}, idx.ServiceAreaIDs["CC_CC2_med"])
 }
 
-func TestFlexIndex_BuildFailurePublishesEmptyIndex(t *testing.T) {
+func TestFlexIndex_BuildFailureOnUnchangedDataKeepsIndex(t *testing.T) {
 	manager := newFlexTestManager(t, "charlevoix-flex.zip")
 	ctx := context.Background()
-	require.False(t, manager.FlexIndex().IsFlexEmpty())
+	before := manager.FlexIndex()
+	require.False(t, before.IsFlexEmpty())
 	_, err := manager.GtfsDB.DB.ExecContext(ctx, "DROP TABLE ondemand_stop_services")
 	require.NoError(t, err)
 
-	_, err = manager.ReloadStatic(ctx)
+	changed, err := manager.ReloadStatic(ctx)
 	require.NoError(t, err, "an on-demand index failure must not fail the reload")
+	require.False(t, changed)
 
-	assert.True(t, manager.FlexIndex().IsFlexEmpty())
+	assert.Same(t, before, manager.FlexIndex())
+}
+
+func TestFlexIndex_BuildFailureAfterDataChangePublishesEmptyIndex(t *testing.T) {
+	manager := newFlexTestManager(t, "charlevoix-flex.zip")
+	ctx := context.Background()
+	_, err := manager.GtfsDB.DB.ExecContext(ctx, "DROP TABLE ondemand_stop_services")
+	require.NoError(t, err)
+
+	assert.True(t, manager.nextFlexIndex(ctx, true, slog.Default()).IsFlexEmpty())
 }
 
 func TestFlexIndex_UnsetManagerIndexIsEmpty(t *testing.T) {
