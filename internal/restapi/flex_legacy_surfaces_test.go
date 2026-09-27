@@ -3,6 +3,7 @@ package restapi
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -153,6 +154,15 @@ func TestFlexOnlyTripInTimedBlock_StaysOffBlockSurfaces(t *testing.T) {
 			}
 		}
 		assert.Equal(t, []string{"gd_her-trip", "gd_her-trip-2"}, tripIDs)
+	})
+
+	t.Run("block trip sequence counts only timed trips", func(t *testing.T) {
+		serviceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
+		for tripID, wantSeq := range map[string]int{"her-trip": 0, "her-trip-2": 1} {
+			seq, ok := api.blockTripSequence(t.Context(), tripID, serviceDate)
+			require.True(t, ok, tripID)
+			assert.Equal(t, wantSeq, seq, tripID)
+		}
 	})
 
 	t.Run("block trip index skips the flex-only trip", func(t *testing.T) {
