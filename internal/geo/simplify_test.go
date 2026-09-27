@@ -77,6 +77,15 @@ func TestSimplifyPolygons_Rings(t *testing.T) {
 	for i := range coincidentRing {
 		coincidentRing[i] = [2]float64{0.001, 0.001}
 	}
+	// 200 m × 5 m: narrower than the 10 m starting tolerance.
+	corridorRing := [][2]float64{{-94, 45}, {-94 + 200/78850.0, 45}, {-94 + 200/78850.0, 45 + 5/111320.0}, {-94, 45 + 5/111320.0}, {-94, 45}}
+	// An 8 m-radius circle with more vertices than the bound.
+	tinyDenseCircle := make([][2]float64, 0, 1001)
+	for i := range 1000 {
+		angle := 2 * math.Pi * float64(i) / 1000
+		tinyDenseCircle = append(tinyDenseCircle, [2]float64{-94 + 8*math.Cos(angle)/78850.0, 45 + 8*math.Sin(angle)/111320.0})
+	}
+	tinyDenseCircle = append(tinyDenseCircle, tinyDenseCircle[0])
 
 	tests := []struct {
 		name        string
@@ -103,16 +112,28 @@ func TestSimplifyPolygons_Rings(t *testing.T) {
 			wantRings:   []int{5, 4},
 		},
 		{
-			name:        "exterior ring is never dropped even when degenerate",
+			name:        "exterior ring that would collapse keeps its original vertices",
 			polygons:    [][][][2]float64{{collinearHole}},
-			wantChanged: true,
-			wantRings:   []int{3},
+			wantChanged: false,
+			wantRings:   []int{5},
 		},
 		{
-			name:        "exterior ring of coincident vertices collapses to a closed pair",
+			name:        "narrow corridor zone keeps its area",
+			polygons:    [][][][2]float64{{corridorRing}},
+			wantChanged: false,
+			wantRings:   []int{5},
+		},
+		{
+			name:        "dense tiny zone is sampled to the bound instead of collapsing",
+			polygons:    [][][][2]float64{{tinyDenseCircle}},
+			wantChanged: true,
+			wantRings:   []int{SimplifyMaxRingPoints},
+		},
+		{
+			name:        "exterior ring of coincident vertices is sampled to the bound",
 			polygons:    [][][][2]float64{{coincidentRing}},
 			wantChanged: true,
-			wantRings:   []int{2},
+			wantRings:   []int{SimplifyMaxRingPoints},
 		},
 		{
 			name:        "hole of coincident vertices is dropped",
