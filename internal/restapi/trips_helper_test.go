@@ -2259,3 +2259,10 @@ func TestSelectFrequency(t *testing.T) {
 	assert.Equal(t, &freqs[0], selectFrequency(freqs, serviceDate, serviceDate.Add(3*time.Hour)),
 		"a time before all windows falls back to the first row")
 }
+
+func TestIsFlexOnlyTrip(t *testing.T) {
+	timed := gtfsdb.Trip{ID: "timed", MinArrivalTime: sql.NullInt64{Int64: int64(8 * time.Hour), Valid: true}}
+	flexOnly := gtfsdb.Trip{ID: "flex"}
+	assert.False(t, isFlexOnlyTrip(&timed))
+	assert.True(t, isFlexOnlyTrip(&flexOnly))
+}

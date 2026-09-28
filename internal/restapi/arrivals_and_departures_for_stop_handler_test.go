@@ -306,8 +306,39 @@ func TestArrivalsAndDeparturesForStopHandlerNoActiveServices(t *testing.T) {
 	assert.NotNil(t, model.Data.Entry.NearbyStopIDs)
 	assert.NotNil(t, model.Data.Entry.SituationIDs)
 	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
-	assert.Empty(t, model.Data.References.Routes)
 	assert.Empty(t, model.Data.References.Trips)
+	require.Len(t, model.Data.References.Stops, 1)
+	stopRef := model.Data.References.Stops[0]
+	assert.Equal(t, arrivalsTestStopID, stopRef.ID)
+
+	require.NotEmpty(t, stopRef.RouteIDs)
+	referencedRouteIDs := make([]string, 0, len(model.Data.References.Routes))
+	for _, route := range model.Data.References.Routes {
+		referencedRouteIDs = append(referencedRouteIDs, route.ID)
+	}
+	assert.ElementsMatch(t, stopRef.RouteIDs, referencedRouteIDs, "every routeId on the stop reference resolves to a route reference")
+}
+
+// TestArrivalsAndDeparturesForStopHandler_FlexOnlyStopEmptyWindow covers a
+// GTFS-Flex stop no fixed route serves: it never has scheduled stop_times, so
+// this endpoint always takes the unmatched path. Before this fix that path
+// omitted the queried stop from references entirely, so the stop's
+// onDemandServiceIds pointer — the only way a client learns which on-demand
+// service covers it — never reached the client.
+func TestArrivalsAndDeparturesForStopHandler_FlexOnlyStopEmptyWindow(t *testing.T) {
+	api := createTestApiWithFeed(t, models.GetFixturePath(t, "charlevoix-flex.zip"))
+
+	const flexOnlyStopID = "CC_CC_Ironton_Ferry_East"
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(flexOnlyStopID))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Empty(t, model.Data.Entry.ArrivalsAndDepartures)
+
+	require.Len(t, model.Data.References.Stops, 1)
+	stop := model.Data.References.Stops[0]
+	assert.Equal(t, flexOnlyStopID, stop.ID)
+	assert.Equal(t, []string{"CC_CC3"}, stop.OnDemandServiceIDs)
 }
 
 func TestParseArrivalsAndDeparturesParams_AllParameters(t *testing.T) {

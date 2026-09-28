@@ -112,34 +112,21 @@ func sortAvailabilityRules(rules []models.AvailabilityRule) {
 	slices.SortStableFunc(rules, compareAvailabilityRules)
 }
 
+// compareAvailabilityRules is the sortAvailabilityRules order. "HH:MM:SS"
+// strings with two-digit hours compare the same as their numeric value.
 func compareAvailabilityRules(a, b models.AvailabilityRule) int {
 	return cmp.Or(
-		compareNullableString(a.StartPickupTime, b.StartPickupTime),
-		compareNullableString(a.EndPickupTime, b.EndPickupTime),
+		gtfsdb.ComparePtr(a.StartPickupTime, b.StartPickupTime),
+		gtfsdb.ComparePtr(a.EndPickupTime, b.EndPickupTime),
 		cmp.Compare(firstOrEmpty(a.CalendarIds), firstOrEmpty(b.CalendarIds)),
 		cmp.Compare(strings.Join(a.FromIds, "\x00"), strings.Join(b.FromIds, "\x00")),
 		cmp.Compare(strings.Join(a.ToIds, "\x00"), strings.Join(b.ToIds, "\x00")),
-		compareNullableString(a.EndDropOffTime, b.EndDropOffTime),
+		gtfsdb.ComparePtr(a.EndDropOffTime, b.EndDropOffTime),
 		cmp.Compare(a.PickupType, b.PickupType),
 		cmp.Compare(a.DropOffType, b.DropOffType),
-		compareNullableString(a.PickupBookingRuleId, b.PickupBookingRuleId),
-		compareNullableString(a.DropOffBookingRuleId, b.DropOffBookingRuleId),
+		gtfsdb.ComparePtr(a.PickupBookingRuleId, b.PickupBookingRuleId),
+		gtfsdb.ComparePtr(a.DropOffBookingRuleId, b.DropOffBookingRuleId),
 	)
-}
-
-// compareNullableString orders nil before any value. "HH:MM:SS" strings with
-// two-digit hours compare the same as their numeric value.
-func compareNullableString(a, b *string) int {
-	switch {
-	case a == nil && b == nil:
-		return 0
-	case a == nil:
-		return -1
-	case b == nil:
-		return 1
-	default:
-		return cmp.Compare(*a, *b)
-	}
 }
 
 func firstOrEmpty(values []string) string {

@@ -486,9 +486,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listOnDemandServicesStmt, err = db.PrepareContext(ctx, listOnDemandServices); err != nil {
 		return nil, fmt.Errorf("error preparing query ListOnDemandServices: %w", err)
 	}
-	if q.listOnDemandStopServicesStmt, err = db.PrepareContext(ctx, listOnDemandStopServices); err != nil {
-		return nil, fmt.Errorf("error preparing query ListOnDemandStopServices: %w", err)
-	}
 	if q.listRoutesStmt, err = db.PrepareContext(ctx, listRoutes); err != nil {
 		return nil, fmt.Errorf("error preparing query ListRoutes: %w", err)
 	}
@@ -1294,11 +1291,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listOnDemandServicesStmt: %w", cerr)
 		}
 	}
-	if q.listOnDemandStopServicesStmt != nil {
-		if cerr := q.listOnDemandStopServicesStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing listOnDemandStopServicesStmt: %w", cerr)
-		}
-	}
 	if q.listRoutesStmt != nil {
 		if cerr := q.listRoutesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listRoutesStmt: %w", cerr)
@@ -1542,7 +1534,6 @@ type Queries struct {
 	listOnDemandServiceLocationIDsStmt             *sql.Stmt
 	listOnDemandServiceStopPointsStmt              *sql.Stmt
 	listOnDemandServicesStmt                       *sql.Stmt
-	listOnDemandStopServicesStmt                   *sql.Stmt
 	listRoutesStmt                                 *sql.Stmt
 	listStopsStmt                                  *sql.Stmt
 	listTripsStmt                                  *sql.Stmt
@@ -1713,7 +1704,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listOnDemandServiceLocationIDsStmt:             q.listOnDemandServiceLocationIDsStmt,
 		listOnDemandServiceStopPointsStmt:              q.listOnDemandServiceStopPointsStmt,
 		listOnDemandServicesStmt:                       q.listOnDemandServicesStmt,
-		listOnDemandStopServicesStmt:                   q.listOnDemandStopServicesStmt,
 		listRoutesStmt:                                 q.listRoutesStmt,
 		listStopsStmt:                                  q.listStopsStmt,
 		listTripsStmt:                                  q.listTripsStmt,
