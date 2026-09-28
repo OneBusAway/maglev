@@ -979,6 +979,9 @@ func applyTripStatusPrediction(arrival *models.ArrivalAndDeparture, tripStatus *
 	predictedArrival, predictedDeparture, ok := predictedTimesFromScheduleDeviation(scheduleDeviationFallback{
 		status:             tripStatus,
 		extras:             statusExtras,
+		stopSequence:       int64(in.stopTime.StopSequence),
+		serviceMidnight:    in.serviceDate.Midnight(in.location),
+		currentTime:        in.queryTime,
 		scheduledArrival:   serviceStart.Add(time.Duration(in.stopTime.ArrivalTime)),
 		scheduledDeparture: serviceStart.Add(time.Duration(in.stopTime.DepartureTime)),
 	})
