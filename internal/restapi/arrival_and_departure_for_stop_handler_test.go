@@ -855,6 +855,144 @@ func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 
 func ptrDuration(d time.Duration) *time.Duration { return &d }
 
+// Feeds that model dwell report a different Arrival and Departure deviation for
+// the same stop. Both sides must reach the response as the feed gave them --
+// regardless of the scheduled dwell, and regardless of what earlier stops the
+// same TripUpdate carries.
+func TestGetPredictedTimes_UnequalArrivalAndDepartureDeviation(t *testing.T) {
+	targetStopID := "target_stop"
+	priorStopID := "prior_stop"
+	targetSeq := uint32(5)
+	priorSeq := uint32(1)
+
+	scheduledArrival := time.Date(2025, 3, 14, 12, 0, 0, 0, time.UTC)
+
+	targetUpdate := func(arrivalDelay, departureDelay time.Duration) gtfs.StopTimeUpdate {
+		return gtfs.StopTimeUpdate{
+			StopID:       &targetStopID,
+			StopSequence: &targetSeq,
+			Arrival:      &gtfs.StopTimeEvent{Delay: ptrDuration(arrivalDelay)},
+			Departure:    &gtfs.StopTimeEvent{Delay: ptrDuration(departureDelay)},
+		}
+	}
+
+	priorUpdate := func(delay time.Duration) gtfs.StopTimeUpdate {
+		return gtfs.StopTimeUpdate{
+			StopID:       &priorStopID,
+			StopSequence: &priorSeq,
+			Departure:    &gtfs.StopTimeEvent{Delay: ptrDuration(delay)},
+		}
+	}
+
+	cases := []struct {
+		name               string
+		tripID             string
+		scheduledDwell     time.Duration
+		stopTimeUpdates    []gtfs.StopTimeUpdate
+		expectedArrivalOff time.Duration
+		expectedDepartOff  time.Duration
+	}{
+		{
+			name:               "on-time arrival, late departure, no earlier stops",
+			tripID:             "dwell_no_prior",
+			stopTimeUpdates:    []gtfs.StopTimeUpdate{targetUpdate(0, 5*time.Minute)},
+			expectedArrivalOff: 0,
+			expectedDepartOff:  5 * time.Minute,
+		},
+		{
+			// The earlier stop's delay is deliberately equal to the target's
+			// departure delay: that collision used to suppress the departure side.
+			name:               "earlier stop shares the target's departure delay",
+			tripID:             "dwell_colliding_prior",
+			stopTimeUpdates:    []gtfs.StopTimeUpdate{priorUpdate(5 * time.Minute), targetUpdate(0, 5*time.Minute)},
+			expectedArrivalOff: 0,
+			expectedDepartOff:  5 * time.Minute,
+		},
+		{
+			name:               "earlier stop delay unrelated to either side",
+			tripID:             "dwell_unrelated_prior",
+			stopTimeUpdates:    []gtfs.StopTimeUpdate{priorUpdate(90 * time.Second), targetUpdate(time.Minute, 4*time.Minute)},
+			expectedArrivalOff: time.Minute,
+			expectedDepartOff:  4 * time.Minute,
+		},
+		{
+			name:               "late arrival, recovered departure",
+			tripID:             "dwell_recovering",
+			stopTimeUpdates:    []gtfs.StopTimeUpdate{targetUpdate(6*time.Minute, 30*time.Second)},
+			expectedArrivalOff: 6 * time.Minute,
+			expectedDepartOff:  30 * time.Second,
+		},
+		{
+			name:               "scheduled dwell keeps each side independent",
+			tripID:             "dwell_scheduled_slack",
+			scheduledDwell:     2 * time.Minute,
+			stopTimeUpdates:    []gtfs.StopTimeUpdate{targetUpdate(0, 5*time.Minute)},
+			expectedArrivalOff: 0,
+			expectedDepartOff:  5 * time.Minute,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+				ID:              gtfs.TripID{ID: tc.tripID},
+				StopTimeUpdates: tc.stopTimeUpdates,
+			}})
+
+			scheduledDeparture := scheduledArrival.Add(tc.scheduledDwell)
+			predArrival, predDeparture, predicted := api.getPredictedTimes(
+				context.Background(),
+				tc.tripID, targetStopID, int64(targetSeq), scheduledArrival, scheduledDeparture,
+			)
+
+			assert.True(t, predicted, "predicted flag must be true")
+			assert.Equal(t, scheduledArrival.Add(tc.expectedArrivalOff), predArrival,
+				"arrival must use the feed's Arrival.Delay")
+			assert.Equal(t, scheduledDeparture.Add(tc.expectedDepartOff), predDeparture,
+				"departure must use the feed's Departure.Delay")
+		})
+	}
+}
+
+// An absolute Arrival.Time and Departure.Time pair goes down the same path as
+// delays, so the two sides must stay independent there too.
+func TestGetPredictedTimes_UnequalAbsoluteTimes(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	stopID := "absolute_target_stop"
+	seq := uint32(4)
+	tripID := "absolute_times_trip"
+
+	scheduledArrival := time.Date(2025, 3, 14, 8, 30, 0, 0, time.UTC)
+	scheduledDeparture := scheduledArrival
+
+	predictedArrival := scheduledArrival
+	predictedDeparture := scheduledDeparture.Add(3 * time.Minute)
+
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+		ID: gtfs.TripID{ID: tripID},
+		StopTimeUpdates: []gtfs.StopTimeUpdate{{
+			StopID:       &stopID,
+			StopSequence: &seq,
+			Arrival:      &gtfs.StopTimeEvent{Time: &predictedArrival},
+			Departure:    &gtfs.StopTimeEvent{Time: &predictedDeparture},
+		}},
+	}})
+
+	arrival, departure, predicted := api.getPredictedTimes(
+		context.Background(),
+		tripID, stopID, int64(seq), scheduledArrival, scheduledDeparture,
+	)
+
+	assert.True(t, predicted, "predicted flag must be true")
+	assert.Equal(t, predictedArrival, arrival, "arrival must match the feed's Arrival.Time")
+	assert.Equal(t, predictedDeparture, departure, "departure must match the feed's Departure.Time")
+}
+
 func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
