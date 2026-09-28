@@ -189,6 +189,24 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 	}
 }
 
+// nextFlexIndex never fails the reload: the database has already been
+// swapped, so the rest of the in-memory state must still follow it. When the
+// build fails on unchanged data the current index still matches the database
+// and is kept; after a data change it would not, so on-demand lookups go dark
+// until the next successful reload.
+func (manager *Manager) nextFlexIndex(ctx context.Context, dataChanged bool, logger *slog.Logger) *FlexIndex {
+	flexIndex, err := buildFlexIndex(ctx, manager.GtfsDB, logger)
+	if err == nil {
+		return flexIndex
+	}
+	if !dataChanged {
+		logging.LogError(logger, "Error building on-demand index; keeping the current one", err)
+		return manager.FlexIndex()
+	}
+	logging.LogError(logger, "Error building on-demand index; serving none", err)
+	return NewEmptyFlexIndex()
+}
+
 // ReloadStatic is the single code path for importing GTFS static data into
 // manager.GtfsDB. It is called from both startup (InitGTFSManager) and the
 // periodic refresh. Returns (changed, err). Caller is responsible
@@ -221,11 +239,13 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	}
 
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
+	newFlexIndex := manager.nextFlexIndex(ctx, changed, logger)
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 
 	manager.regionBounds = newRegionBounds
+	manager.flexIndex = newFlexIndex
 
 	// Clear the direction calculator's cached results so stale entries from the
 	// pre-reload dataset aren't served

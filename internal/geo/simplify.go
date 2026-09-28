@@ -11,7 +11,7 @@ const (
 	SimplifyMaxRingPoints = 256
 	// minClosedRingPoints is three distinct vertices plus the closing vertex.
 	minClosedRingPoints = 4
-	// metersPerDegreeLatitude is the local planar scale used by the simplifier.
+	// metersPerDegreeLatitude is the local planar scale for Y (and, cosine-scaled, X).
 	metersPerDegreeLatitude = 111320.0
 	// simplifyMaxDoublings caps the tolerance search. 10 m × 2^40 far exceeds
 	// Earth's circumference, so real data never reaches it; it only guards
