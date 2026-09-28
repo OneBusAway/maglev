@@ -949,7 +949,7 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 // empty. BuildTripStatus already resolved this trip's situations; those are
 // reused so the arrival does not repeat the alert lookup.
 func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.ArrivalAndDeparture, in arrivalInput, vehicle *gtfs.Vehicle, acc *arrivalsAccumulator) {
-	tripStatus, distanceFromStop, numberOfStopsAway, situationRefs := api.tripStatusForArrival(ctx, in, vehicle, acc)
+	tripStatus, statusExtras, distanceFromStop, numberOfStopsAway := api.tripStatusForArrival(ctx, in, vehicle, acc)
 
 	// BuildTripStatus (via calculateBlockTripSequence) already computed
 	// this and set it on the status; reuse rather than redoing the block
@@ -959,27 +959,29 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 		blockTripSequence = tripStatus.BlockTripSequence
 	}
 
-	applyTripStatusPrediction(arrival, tripStatus, in)
+	applyTripStatusPrediction(arrival, tripStatus, statusExtras, in)
 
 	arrival.TripStatus = tripStatus
 	arrival.DistanceFromStop = distanceFromStop
 	arrival.NumberOfStopsAway = numberOfStopsAway
 	arrival.BlockTripSequence = blockTripSequence
-	arrival.SituationIDs = acc.situations.addRefs(situationRefs)
+	arrival.SituationIDs = acc.situations.addRefs(statusExtras.situations)
 }
 
 // applyTripStatusPrediction fills an unpredicted arrival's predicted times
-// from its trip status when getPredictedTimes found no per-stop prediction.
-func applyTripStatusPrediction(arrival *models.ArrivalAndDeparture, tripStatus *models.TripStatus, in arrivalInput) {
+// from its trip status's schedule deviation when getPredictedTimes found no
+// per-stop prediction.
+func applyTripStatusPrediction(arrival *models.ArrivalAndDeparture, tripStatus *models.TripStatus, statusExtras *tripStatusExtras, in arrivalInput) {
 	if arrival.Predicted {
 		return
 	}
 	serviceStart := in.serviceDate.Start(in.location)
-	predictedArrival, predictedDeparture, ok := predictedTimesFromTripStatus(
-		tripStatus,
-		serviceStart.Add(time.Duration(in.stopTime.ArrivalTime)),
-		serviceStart.Add(time.Duration(in.stopTime.DepartureTime)),
-	)
+	predictedArrival, predictedDeparture, ok := predictedTimesFromScheduleDeviation(scheduleDeviationFallback{
+		status:             tripStatus,
+		extras:             statusExtras,
+		scheduledArrival:   serviceStart.Add(time.Duration(in.stopTime.ArrivalTime)),
+		scheduledDeparture: serviceStart.Add(time.Duration(in.stopTime.DepartureTime)),
+	})
 	if !ok {
 		return
 	}
@@ -1032,7 +1034,8 @@ func (api *RestAPI) combinedVehicleID(ctx context.Context, vehicle *gtfs.Vehicle
 }
 
 // tripStatusForArrival builds the trip status attached to every arrival, along
-// with the per-stop block metrics and situations resolved alongside it.
+// with the per-stop block metrics and the extras resolved alongside it. The
+// returned extras is never nil.
 //
 // Java attaches a BlockLocation — real-time or scheduled — to every arrival, so
 // a status is expected here rather than being an optional extra.
@@ -1041,7 +1044,7 @@ func (api *RestAPI) tripStatusForArrival(
 	in arrivalInput,
 	vehicle *gtfs.Vehicle,
 	acc *arrivalsAccumulator,
-) (status *models.TripStatus, distanceFromStop float64, numberOfStopsAway int, situations []situationRef) {
+) (status *models.TripStatus, extras *tripStatusExtras, distanceFromStop float64, numberOfStopsAway int) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	st := in.stopTime
 
@@ -1052,11 +1055,11 @@ func (api *RestAPI) tripStatusForArrival(
 		reqLogger.Warn("BuildTripStatus failed for arrival",
 			"tripID", st.TripID, "error", err)
 	}
-	if extras != nil {
-		situations = extras.situations
+	if extras == nil {
+		extras = &tripStatusExtras{}
 	}
 	if status == nil {
-		return nil, 0, 0, situations
+		return nil, extras, 0, 0
 	}
 	startTripStatusAtServiceStart(status, in.freqMap, st.TripID, in.serviceDate.Start(in.location), in.queryTime)
 
@@ -1067,14 +1070,14 @@ func (api *RestAPI) tripStatusForArrival(
 	// so recomputing here just to run metricsForStop was doubling every
 	// per-arrival snapshot cost — a real problem on the plural handler
 	// where minutesBefore/minutesAfter can be 24h in each direction.
-	if extras != nil && extras.snapshot != nil {
+	if extras.snapshot != nil {
 		if d, n, ok := extras.snapshot.metricsForStop(st.TripID, int(st.StopSequence)); ok {
 			distanceFromStop = d
 			numberOfStopsAway = n
 		}
 	}
 
-	return status, distanceFromStop, numberOfStopsAway, situations
+	return status, extras, distanceFromStop, numberOfStopsAway
 }
 
 // recordTripStatusReferences pulls the stops and the reassigned active trip that

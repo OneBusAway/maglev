@@ -103,6 +103,14 @@ func (api *RestAPI) collectBlockTripUpdates(tripIDs []string) []tripUpdateForTri
 	return out
 }
 
+// blockHasStopTimeUpdates reports whether any TripUpdate for the block's
+// trips carries per-stop updates.
+func (api *RestAPI) blockHasStopTimeUpdates(tripIDs []string) bool {
+	return slices.ContainsFunc(api.collectBlockTripUpdates(tripIDs), func(t tripUpdateForTrip) bool {
+		return len(t.tu.StopTimeUpdates) > 0
+	})
+}
+
 // pickTripLevelDeviation implements Java's unconditional overwrite: LAST
 // trip-level delay across the block wins. Return values:
 //
