@@ -385,6 +385,9 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 		predictedArrivalTime, predictedDepartureTime, predicted = predictedTimesFromScheduleDeviation(scheduleDeviationFallback{
 			status:             tripStatus,
 			extras:             statusExtras,
+			stopSequence:       int64(st.StopSequence),
+			serviceMidnight:    in.serviceDate.Midnight(in.location),
+			currentTime:        in.queryTime,
 			scheduledArrival:   scheduledArrivalTime,
 			scheduledDeparture: scheduledDepartureTime,
 		})

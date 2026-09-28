@@ -35,6 +35,7 @@ type tripStatusExtras struct {
 	// blockHasStopTimeUpdates reports that some trip in the block carries
 	// per-stop updates, which Java turns into per-stop deviation samples.
 	blockHasStopTimeUpdates bool
+	stopTimes               []gtfsdb.StopTime
 }
 
 // BuildTripStatus builds a TripStatus for the given trip.
@@ -174,6 +175,11 @@ func (api *RestAPI) BuildTripStatus(
 		slog.Warn("buildTripStatusCore: failed to get stop times",
 			slog.String("trip_id", dbTripID),
 			slog.String("error", err.Error()))
+	}
+	// Slack absorption measures dwell along the queried trip, which is only
+	// this schedule when the vehicle has not been reassigned to another trip.
+	if dbTripID == tripID {
+		extras.stopTimes = stopTimes
 	}
 
 	if err == nil && len(stopTimes) > 0 {
@@ -641,6 +647,9 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 type scheduleDeviationFallback struct {
 	status             *models.TripStatus
 	extras             *tripStatusExtras
+	stopSequence       int64
+	serviceMidnight    time.Time
+	currentTime        time.Time
 	scheduledArrival   time.Time
 	scheduledDeparture time.Time
 }
@@ -656,7 +665,8 @@ type scheduleDeviationFallback struct {
 //   - When the block carries StopTimeUpdates, getBestScheduleDeviation
 //     interpolates over them and refuses to propagate upstream, so a stop
 //     before every update is predicted but gets no predicted times.
-//   - Otherwise the block-level deviation is applied.
+//   - Otherwise the block-level deviation is applied, less any scheduled
+//     slack the vehicle can absorb before reaching the stop.
 func predictedTimesFromScheduleDeviation(in scheduleDeviationFallback) (predictedArrival, predictedDeparture time.Time, predicted bool) {
 	hasUsableDeviation := in.status != nil &&
 		in.extras != nil &&
@@ -669,8 +679,56 @@ func predictedTimesFromScheduleDeviation(in scheduleDeviationFallback) (predicte
 		return time.Time{}, time.Time{}, true
 	}
 
-	deviation := time.Duration(in.status.ScheduleDeviation) * time.Second
-	return in.scheduledArrival.Add(deviation), in.scheduledDeparture.Add(deviation), true
+	deviation := in.status.ScheduleDeviation
+	effectiveScheduleSeconds := utils.CalculateSecondsSinceServiceDate(in.currentTime, in.serviceMidnight) - int64(deviation)
+	arrivalDeviation, departureDeviation := absorbSlack(in.extras.stopTimes, in.stopSequence, effectiveScheduleSeconds, deviation)
+	return in.scheduledArrival.Add(time.Duration(arrivalDeviation) * time.Second),
+		in.scheduledDeparture.Add(time.Duration(departureDeviation) * time.Second),
+		true
+}
+
+// absorbSlack mirrors Java's calculateArrivalDeviation and
+// calculateDepartureDeviation (ArrivalAndDepartureServiceImpl.java:855-910).
+// A late vehicle can make up time by cutting the scheduled dwell between its
+// next stop and the target stop, and before departing it can also cut the
+// target stop's own dwell. Early vehicles are left alone.
+func absorbSlack(stopTimes []gtfsdb.StopTime, targetSequence, effectiveScheduleSeconds int64, deviation int) (arrivalDeviation, departureDeviation int) {
+	if deviation <= 0 {
+		return deviation, deviation
+	}
+	targetIndex := slices.IndexFunc(stopTimes, func(st gtfsdb.StopTime) bool {
+		return st.StopSequence == targetSequence
+	})
+	nextIndex := slices.IndexFunc(stopTimes, func(st gtfsdb.StopTime) bool {
+		return utils.NanosToSeconds(st.DepartureTime) >= effectiveScheduleSeconds
+	})
+	// Java applies the raw deviation when the vehicle's next stop is past the
+	// target stop.
+	if targetIndex == -1 || nextIndex == -1 || nextIndex > targetIndex {
+		return deviation, deviation
+	}
+
+	var slack int64
+	for _, st := range stopTimes[nextIndex:targetIndex] {
+		slack += dwellSeconds(st)
+	}
+	// Dwell already spent at the next stop can no longer be cut.
+	if nextArrival := utils.NanosToSeconds(stopTimes[nextIndex].ArrivalTime); nextArrival <= effectiveScheduleSeconds {
+		slack -= effectiveScheduleSeconds - nextArrival
+	}
+	departureSlack := slack + dwellSeconds(stopTimes[targetIndex])
+	return reduceBySlack(deviation, slack), reduceBySlack(deviation, departureSlack)
+}
+
+func dwellSeconds(st gtfsdb.StopTime) int64 {
+	return utils.NanosToSeconds(st.DepartureTime - st.ArrivalTime)
+}
+
+func reduceBySlack(deviation int, slack int64) int {
+	if slack <= 0 {
+		return deviation
+	}
+	return deviation - int(min(int64(deviation), slack))
 }
 
 // delayedStopTimeSeconds returns the scheduled stop-time in seconds since

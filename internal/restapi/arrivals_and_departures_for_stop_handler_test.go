@@ -986,7 +986,11 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 			wantPredicted: false,
 		},
 		{
-			name: "trip-level delay elsewhere in the block is applied",
+			// The stop is scheduled 08:00 arrive / 08:05 depart and the block
+			// runs 174s late. Java's calculateDepartureDeviation lets the bus
+			// absorb the delay in the stop's 5-minute dwell, so only the
+			// arrival is shifted.
+			name: "block trip-level delay absorbs dwell before departure",
 			setup: func(t *testing.T, api *RestAPI, now time.Time, tripID string) {
 				earlierTripID := addEarlierBlockTrip(t, api)
 				delay := 174 * time.Second
@@ -994,7 +998,7 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 			},
 			wantPredicted:       true,
 			wantArrivalOffset:   174 * time.Second,
-			wantDepartureOffset: 174 * time.Second,
+			wantDepartureOffset: 0,
 		},
 	}
 
