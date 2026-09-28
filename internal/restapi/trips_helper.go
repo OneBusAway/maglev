@@ -28,6 +28,13 @@ import (
 type tripStatusExtras struct {
 	snapshot   *scheduledBlockSnapshot
 	situations []situationRef
+	// deviationResolved reports that status.ScheduleDeviation came from a
+	// TripUpdate inside Java's blockNotActive window, rather than defaulting
+	// to 0.
+	deviationResolved bool
+	// blockHasStopTimeUpdates reports that some trip in the block carries
+	// per-stop updates, which Java turns into per-stop deviation samples.
+	blockHasStopTimeUpdates bool
 }
 
 // BuildTripStatus builds a TripStatus for the given trip.
@@ -156,6 +163,8 @@ func (api *RestAPI) BuildTripStatus(
 	if hasRealtimeTripUpdate {
 		status.ScheduleDeviation = scheduleDeviation
 	}
+	extras.deviationResolved = hasRealtimeTripUpdate
+	extras.blockHasStopTimeUpdates = api.blockHasStopTimeUpdates(blockTripIDs)
 
 	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
 	status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
@@ -627,18 +636,41 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 	}
 }
 
-// predictedTimesFromTripStatus is the arrival-level fallback used when the
-// per-stop prediction path returns nothing: mirrors Java's
-// setPredictedTimesFromScheduleDeviation (ArrivalAndDepartureServiceImpl.java:772).
-func predictedTimesFromTripStatus(
-	tripStatus *models.TripStatus,
-	scheduledArrival, scheduledDeparture time.Time,
-) (predictedArrival, predictedDeparture time.Time, predicted bool) {
-	if tripStatus == nil || !tripStatus.Predicted {
+// scheduleDeviationFallback carries what predictedTimesFromScheduleDeviation
+// needs for one arrival. Grouped because several fields share a type.
+type scheduleDeviationFallback struct {
+	status             *models.TripStatus
+	extras             *tripStatusExtras
+	scheduledArrival   time.Time
+	scheduledDeparture time.Time
+}
+
+// predictedTimesFromScheduleDeviation is the arrival-level fallback for when
+// getPredictedTimes finds no per-stop prediction. It mirrors Java's
+// applyBlockLocationToInstance (ArrivalAndDepartureServiceImpl.java:585-608)
+// and applyBlockLocationToBean:
+//
+//   - Canceled trips are never predicted.
+//   - Without a resolved deviation there is nothing to apply: either no
+//     TripUpdate exists, or Java's blockNotActive guard discarded it.
+//   - When the block carries StopTimeUpdates, getBestScheduleDeviation
+//     interpolates over them and refuses to propagate upstream, so a stop
+//     before every update is predicted but gets no predicted times.
+//   - Otherwise the block-level deviation is applied.
+func predictedTimesFromScheduleDeviation(in scheduleDeviationFallback) (predictedArrival, predictedDeparture time.Time, predicted bool) {
+	hasUsableDeviation := in.status != nil &&
+		in.extras != nil &&
+		in.status.Status != "CANCELED" &&
+		in.extras.deviationResolved
+	if !hasUsableDeviation {
 		return time.Time{}, time.Time{}, false
 	}
-	deviation := time.Duration(tripStatus.ScheduleDeviation) * time.Second
-	return scheduledArrival.Add(deviation), scheduledDeparture.Add(deviation), true
+	if in.extras.blockHasStopTimeUpdates {
+		return time.Time{}, time.Time{}, true
+	}
+
+	deviation := time.Duration(in.status.ScheduleDeviation) * time.Second
+	return in.scheduledArrival.Add(deviation), in.scheduledDeparture.Add(deviation), true
 }
 
 // delayedStopTimeSeconds returns the scheduled stop-time in seconds since
