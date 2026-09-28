@@ -49,7 +49,8 @@ func TestShouldIncludeReferences(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
-			actual := ShouldIncludeReferences(req)
+			actual, errors := ShouldIncludeReferences(req, nil)
+			assert.Equal(t, strings.Contains(tt.url, "banana"), len(errors) > 0)
 			assert.Equal(t, tt.expected, actual)
 		})
 	}

@@ -76,9 +76,8 @@ func TestReportProblemWithStopSanitization(t *testing.T) {
 		"userLon": {"not_a_number"},
 	}))
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "Should handle invalid userLat/userLon gracefully without 500 error")
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Equal(t, "OK", model.Text)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
 
 	longComment := strings.Repeat("a", 1000)
 	respLong, modelLong := callAPIHandler[EmptyResponse](t, api, reportProblemWithStopURL("1_75403", url.Values{

@@ -404,6 +404,10 @@ func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
 
 			resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
 
+			if tt.statusParam == "includeStatus=1" || tt.statusParam == "includeStatus=invalid_value" {
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				return
+			}
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 			require.NotEmpty(t, model.Data.List, "expected at least one trip in the response to verify status behavior")
 
@@ -471,7 +475,7 @@ func TestTripsForLocationHandler_ParseAndValidateRequest(t *testing.T) {
 			expectedIncludeTrip: true,
 		},
 		{
-			name:                "includeTrip=invalid_value safely defaults to false",
+			name:                "includeTrip=invalid_value returns field error",
 			queryString:         "lat=40.5865&lon=-122.3917&latSpan=0.1&lonSpan=0.1&includeTrip=invalid_value",
 			expectedIncludeTrip: false,
 		},
@@ -483,8 +487,12 @@ func TestTripsForLocationHandler_ParseAndValidateRequest(t *testing.T) {
 
 			parsedReq, fieldErrors, err := api.parseAndValidateRequest(req)
 
-			assert.Empty(t, fieldErrors)
 			assert.NoError(t, err)
+			if strings.Contains(tt.queryString, "invalid_value") {
+				assert.NotEmpty(t, fieldErrors["includeTrip"])
+				return
+			}
+			require.Empty(t, fieldErrors)
 			assert.Equal(t, tt.expectedIncludeTrip, parsedReq.IncludeTrip)
 		})
 	}
@@ -516,6 +524,10 @@ func TestTripsForLocationHandler_TripInclusion(t *testing.T) {
 
 			resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
 
+			if tt.includeParam == "includeTrip=invalid_value" {
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				return
+			}
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 			if tt.expected {
 				assert.NotEmpty(t, model.Data.References.Trips, "trips should be present in references when includeTrip is true or omitted")

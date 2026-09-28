@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -21,13 +22,14 @@ import (
 // stopsForLocationHandler returns stops near a geographic location, specified by
 // lat/lon coordinates with an optional radius or latSpan/lonSpan bounding box.
 func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+
 	queryParams := r.URL.Query()
 
-	var fieldErrors map[string][]string
+	fieldErrors := referenceErrors
 	loc, fieldErrors := api.parseLocationParams(r, fieldErrors)
 	maxCount, fieldErrors := utils.ParseMaxCountClamped(queryParams, models.DefaultMaxCountForStops, fieldErrors)
 	query := queryParams.Get("query")
-	includeReferences := ShouldIncludeReferences(r)
 
 	var routeTypes []int
 	if routeTypeStr := queryParams.Get("routeType"); routeTypeStr != "" {
@@ -46,24 +48,26 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			for _, rtStr := range routeTypeStrs {
 				rtStr = strings.TrimSpace(rtStr)
 				if rtStr != "" {
-					var rt int
-					if _, err := fmt.Sscanf(rtStr, "%d", &rt); err != nil {
+					rt, errors := utils.ParseOptionalInt64Param(url.Values{"routeType": {rtStr}}, "routeType", 0, fieldErrors)
+					fieldErrors = errors
+					if rt < int64(-int(^uint(0)>>1)-1) || rt > int64(int(^uint(0)>>1)) {
 						if fieldErrors == nil {
 							fieldErrors = make(map[string][]string)
 						}
-						if _, exists := fieldErrors["routeType"]; !exists {
-							fieldErrors["routeType"] = []string{
-								`Invalid field value for field "routeType".`,
-							}
-						}
-					} else {
-						routeTypes = append(routeTypes, rt)
+						fieldErrors["routeType"] = append(fieldErrors["routeType"], `Invalid field value for field "routeType".`)
+					} else if len(fieldErrors["routeType"]) == 0 {
+						routeTypes = append(routeTypes, int(rt))
 					}
 				}
 			}
 		}
 	}
 
+	_, _, timeErrors, _ := utils.ParseTimeParameter(queryParams.Get("time"), time.UTC, api.Clock)
+	fieldErrors = mergeFieldErrors(fieldErrors, timeErrors)
+	if len(fieldErrors["routeType"]) > 1 {
+		fieldErrors["routeType"] = fieldErrors["routeType"][:1]
+	}
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -134,7 +138,16 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	currentDate := api.queryTimeForStops(ctx, queryParams.Get("time"), allAgencies).Format("20060102")
+	queryTime, timeErrors, err := api.queryTimeForStops(ctx, queryParams.Get("time"), allAgencies)
+	if len(timeErrors) > 0 {
+		api.validationErrorResponse(w, r, timeErrors)
+		return
+	}
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	currentDate := queryTime.Format("20060102")
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, currentDate)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -315,29 +328,18 @@ func collectRouteReferenceIDs(combinedRouteIDs []string, routeIDs, agencyIDs map
 	}
 }
 
-// queryTimeForStops resolves the time that selects which service date's routes are
-// considered active. A service date is a local calendar date, so both an explicit
-// time parameter and the current-time fallback are read in the agency's timezone,
-// as in trips-for-location. A value that does not parse falls back to the current
-// time rather than failing the request, which is what legacy does with one.
-func (api *RestAPI) queryTimeForStops(ctx context.Context, timeParam string, agencies []gtfsdb.Agency) time.Time {
-	if len(agencies) == 0 {
-		return api.Clock.Now()
+// queryTimeForStops resolves the request time in the first agency's timezone.
+func (api *RestAPI) queryTimeForStops(ctx context.Context, timeParam string, agencies []gtfsdb.Agency) (time.Time, map[string][]string, error) {
+	location := time.UTC
+	if len(agencies) > 0 {
+		var err error
+		location, err = loadAgencyLocation(agencies[0].ID, agencies[0].Timezone)
+		if err != nil {
+			return time.Time{}, nil, err
+		}
 	}
-
-	reqLogger := logging.ForComponent(ctx, "http_server")
-	location, err := loadAgencyLocation(agencies[0].ID, agencies[0].Timezone)
-	if err != nil {
-		reqLogger.Warn("failed to load agency timezone for time parameter",
-			"agencyID", agencies[0].ID, "error", err)
-		return api.Clock.Now()
-	}
-
-	_, parsedTime, _, ok := utils.ParseTimeParameter(timeParam, location, api.Clock)
-	if !ok {
-		return api.Clock.Now().In(location)
-	}
-	return parsedTime
+	_, parsedTime, errors, _ := utils.ParseTimeParameter(timeParam, location, api.Clock)
+	return parsedTime, errors, nil
 }
 
 // routeIDsByStop maps each stop to the routes serving it. Stop-code queries report every

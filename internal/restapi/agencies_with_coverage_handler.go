@@ -9,6 +9,8 @@ import (
 
 // agenciesWithCoverageHandler returns all transit agencies along with their geographic coverage areas.
 func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+
 	ctx := r.Context()
 
 	// Check if context is already cancelled
@@ -24,7 +26,12 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 	}
 
 	// Apply pagination
-	offset, limit := utils.ParsePaginationParams(r)
+	offset, limit, fieldErrors := utils.ParsePaginationParams(r)
+	fieldErrors = mergeFieldErrors(fieldErrors, referenceErrors)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 	agencies, limitExceeded := utils.PaginateSlice(agencies, offset, limit)
 
 	boundsMap := api.GtfsManager.GetRegionBounds()
@@ -39,8 +46,6 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 	}
 
 	references := models.NewEmptyReferences()
-
-	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
 		references.Agencies = buildAgencyReferences(agencies)

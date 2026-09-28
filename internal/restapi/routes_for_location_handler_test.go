@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	gogtfs "github.com/OneBusAway/go-gtfs"
@@ -46,7 +47,7 @@ func TestRoutesForLocationHandlerIncludeReferences(t *testing.T) {
 		{"includeReferences=false suppresses references", "&includeReferences=false", false},
 		{"includeReferences=true populates references", "&includeReferences=true", true},
 		{"includeReferences absent defaults to populated", "", true},
-		{"includeReferences unparseable defaults to populated", "&includeReferences=notabool", true},
+		{"includeReferences unparseable returns 400", "&includeReferences=notabool", true},
 	}
 
 	for _, tt := range tests {
@@ -55,6 +56,10 @@ func TestRoutesForLocationHandlerIncludeReferences(t *testing.T) {
 
 			resp, model := callAPIHandler[RoutesResponse](t, api, baseURL+tt.params)
 
+			if strings.Contains(tt.params, "notabool") {
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				return
+			}
 			require.Equal(t, http.StatusOK, resp.StatusCode)
 			assert.ElementsMatch(t, []models.Route{testdata.Route19}, model.Data.List, "list must be unaffected by includeReferences")
 

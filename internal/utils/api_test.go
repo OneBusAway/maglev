@@ -3,7 +3,9 @@ package utils
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -875,7 +877,7 @@ func TestParsePaginationParams(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req, _ := http.NewRequest("GET", "/test"+tt.urlParams, nil)
-			offset, limit := ParsePaginationParams(req)
+			offset, limit, _ := ParsePaginationParams(req)
 
 			assert.Equal(t, tt.expectedOffset, offset)
 			assert.Equal(t, tt.expectedLimit, limit)
@@ -1375,5 +1377,59 @@ func TestParseBoolParamStrictGrammar(t *testing.T) {
 				assert.Equal(t, []string{"untouched"}, errors["other"])
 			})
 		}
+	}
+}
+
+func TestStrictPaginationValidation(t *testing.T) {
+	tests := []struct {
+		query         string
+		offset, limit int
+		fields        []string
+	}{
+		{"", 0, -1, nil}, {"offset=&maxCount=&limit=", 0, -1, nil},
+		{"offset=0&limit=2&maxCount=1", 0, 1, nil},
+		{"offset=9223372036854775807&maxCount=9223372036854775807", int(^uint(0) >> 1), 1000, nil},
+		{"maxCount=1&limit=bad", 0, 1, []string{"limit"}},
+		{"offset=-1&maxCount=0&limit=-1", 0, -1, []string{"offset", "maxCount", "limit"}},
+		{"offset=1x&maxCount=9223372036854775808&limit=bad", 0, -1, []string{"offset", "maxCount", "limit"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/?"+tt.query, nil)
+			offset, limit, errors := ParsePaginationParams(req)
+			// The int64 maximum offset is only representable on 64-bit platforms.
+			if strconv.IntSize == 32 && strings.Contains(tt.query, "offset=9223372036854775807") {
+				require.NotEmpty(t, errors["offset"])
+				return
+			}
+			assert.Equal(t, tt.offset, offset)
+			assert.Equal(t, tt.limit, limit)
+			assert.Len(t, errors, len(tt.fields))
+			for _, field := range tt.fields {
+				assert.NotEmpty(t, errors[field])
+			}
+		})
+	}
+}
+
+func TestStrictTimeParameterPrecision(t *testing.T) {
+	loc := time.FixedZone("east", 9*3600)
+	for _, raw := range []string{"-1", "bad", "12x", "9223372036854775808"} {
+		_, _, errors, ok := ParseTimeParameter(raw, loc, clock.NewMockClock(time.UnixMilli(0)))
+		assert.False(t, ok)
+		assert.NotEmpty(t, errors["time"])
+	}
+	date, parsed, errors, ok := ParseTimeParameter("1749855600123", loc, clock.NewMockClock(time.UnixMilli(0)))
+	require.True(t, ok)
+	require.Empty(t, errors)
+	assert.Equal(t, int64(1749855600123), parsed.UnixMilli())
+	assert.Equal(t, parsed.In(loc).Format("20060102"), date)
+	assert.Equal(t, loc, parsed.Location())
+	for _, raw := range []string{"2025-06-14", "2025-06-14_00-00-00"} {
+		date, parsed, errors, ok := ParseTimeParameter(raw, loc, clock.NewMockClock(time.UnixMilli(0)))
+		require.True(t, ok)
+		require.Empty(t, errors)
+		assert.Equal(t, "20250614", date)
+		assert.Equal(t, loc, parsed.Location())
 	}
 }

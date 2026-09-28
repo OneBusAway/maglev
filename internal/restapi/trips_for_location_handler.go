@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
@@ -21,6 +20,8 @@ import (
 // tripsForLocationHandler returns active trips near a geographic location, specified by
 // lat/lon coordinates with latSpan/lonSpan bounds, including real-time status and schedule data.
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, _ := ShouldIncludeReferences(r, nil)
+
 	ctx := r.Context()
 
 	parsedReq, fieldErrors, err := api.parseAndValidateRequest(r)
@@ -140,8 +141,6 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	references := *models.NewEmptyReferences()
 
-	includeReferences := ShouldIncludeReferences(r)
-
 	if includeReferences {
 		tripSchedulesAndStatuses := make([]tripScheduleAndStatus, 0, len(result))
 
@@ -190,11 +189,10 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 
 	queryParams := r.URL.Query()
 
-	includeTrip := parseIncludeTrip(queryParams)
-	includeSchedule, _ := strconv.ParseBool(queryParams.Get("includeSchedule"))
-	// Intentionally defaulting includeStatus to false to align with includeSchedule
-	// behavior for this endpoint, even though trips-for-route defaults to true.
-	includeStatus, _ := strconv.ParseBool(queryParams.Get("includeStatus"))
+	includeTrip, fieldErrors := utils.ParseBoolParam(queryParams, "includeTrip", true, fieldErrors)
+	includeSchedule, fieldErrors := utils.ParseBoolParam(queryParams, "includeSchedule", false, fieldErrors)
+	includeStatus, fieldErrors := utils.ParseBoolParam(queryParams, "includeStatus", false, fieldErrors)
+	_, fieldErrors = ShouldIncludeReferences(r, fieldErrors)
 
 	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
 
@@ -232,16 +230,6 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 		AgencyLocations: agencyLocations,
 	}
 	return parsedReq, nil, nil
-}
-
-// parseIncludeTrip parses the includeTrip query parameter, defaulting to true when omitted
-// and to false when present but not a valid boolean.
-func parseIncludeTrip(queryParams url.Values) bool {
-	if !queryParams.Has("includeTrip") {
-		return true
-	}
-	includeTrip, _ := strconv.ParseBool(queryParams.Get("includeTrip"))
-	return includeTrip
 }
 
 // resolveCurrentTime resolves the query time: the explicit time parameter if supplied,

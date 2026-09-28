@@ -131,16 +131,7 @@ func TestSearchStopsHandlerEdgeCaseParams(t *testing.T) {
 				assert.False(t, stopsResp.Data.LimitExceeded)
 			},
 		},
-		{
-			name:           "invalid includeReferences falls back to true",
-			params:         url.Values{"input": {"Buenaventura"}, "includeReferences": {"maybe"}},
-			expectedStatus: http.StatusOK,
-			check: func(t *testing.T, stopsResp StopsResponse) {
-				assert.NotEmpty(t, stopsResp.Data.List)
-				assert.NotEmpty(t, stopsResp.Data.References.Agencies)
-				assert.NotEmpty(t, stopsResp.Data.References.Routes)
-			},
-		},
+		{name: "invalid includeReferences returns 400", params: url.Values{"input": {"Buenaventura"}, "includeReferences": {"maybe"}}, expectedStatus: http.StatusBadRequest},
 		{
 			name:           "agencyId is ignored and searches all agencies",
 			params:         url.Values{"input": {"Buenaventura"}, "agencyId": {"99"}},
@@ -158,7 +149,9 @@ func TestSearchStopsHandlerEdgeCaseParams(t *testing.T) {
 
 			resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(tt.params))
 			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
-			tt.check(t, stopsResp)
+			if tt.check != nil {
+				tt.check(t, stopsResp)
+			}
 		})
 	}
 }

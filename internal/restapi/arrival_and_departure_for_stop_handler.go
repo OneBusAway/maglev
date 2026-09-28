@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -43,72 +44,31 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 	const maxMinutesAfter = 24 * 60
 	const maxMinutesBefore = 24 * 60
 
-	// Validate minutesAfter
-	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
-		if minutesAfter, err := strconv.Atoi(minutesAfterStr); err == nil {
-			if minutesAfter < 0 {
-				fieldErrors["minutesAfter"] = []string{"must be a non-negative integer"}
-			} else if minutesAfter > maxMinutesAfter {
-				params.MinutesAfter = maxMinutesAfter
-			} else {
-				params.MinutesAfter = minutesAfter
-			}
-		} else {
-			fieldErrors["minutesAfter"] = []string{"must be a valid integer"}
-		}
-	}
-
-	// Validate minutesBefore
-	if minutesBeforeStr := r.URL.Query().Get("minutesBefore"); minutesBeforeStr != "" {
-		if minutesBefore, err := strconv.Atoi(minutesBeforeStr); err == nil {
-			if minutesBefore < 0 {
-				fieldErrors["minutesBefore"] = []string{"must be a non-negative integer"}
-			} else if minutesBefore > maxMinutesBefore {
-				params.MinutesBefore = maxMinutesBefore
-			} else {
-				params.MinutesBefore = minutesBefore
-			}
-		} else {
-			fieldErrors["minutesBefore"] = []string{"must be a valid integer"}
-		}
-	}
-
-	// Validate time
-	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
-		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
-			timeParam := time.Unix(timeMs/1000, 0)
-			params.Time = &timeParam
-		} else {
-			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
-		}
-	}
+	query := r.URL.Query()
+	params.MinutesAfter, fieldErrors = parseMinuteWindow(query, "minutesAfter", params.MinutesAfter, maxMinutesAfter, fieldErrors)
+	params.MinutesBefore, fieldErrors = parseMinuteWindow(query, "minutesBefore", params.MinutesBefore, maxMinutesBefore, fieldErrors)
+	params.Time, fieldErrors = parseArrivalEpoch(query, "time", nil, fieldErrors)
 
 	// Check TripID (Assignment only, required check is in handler)
 	if tripIDStr := r.URL.Query().Get("tripId"); tripIDStr != "" {
 		params.TripID = tripIDStr
 	}
 
-	// Validate serviceDate
-	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
-		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
-			serviceDate := time.Unix(serviceDateMs/1000, 0)
-			params.ServiceDate = &serviceDate
-		} else {
-			fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds"}
-		}
-	}
+	params.ServiceDate, fieldErrors = parseArrivalEpoch(query, "serviceDate", nil, fieldErrors)
 
 	// Optional vehicleId parameter
 	if vehicleIDStr := r.URL.Query().Get("vehicleId"); vehicleIDStr != "" {
 		params.VehicleID = vehicleIDStr
 	}
 
-	// Validate stopSequence
-	if stopSequenceStr := r.URL.Query().Get("stopSequence"); stopSequenceStr != "" {
-		if stopSequence, err := strconv.Atoi(stopSequenceStr); err == nil {
-			params.StopSequence = &stopSequence
-		} else {
-			fieldErrors["stopSequence"] = []string{"must be a valid integer"}
+	if query.Get("stopSequence") != "" {
+		sequence, errors := utils.ParseOptionalInt64Param(query, "stopSequence", 0, fieldErrors)
+		fieldErrors = errors
+		if sequence < int64(-int(^uint(0)>>1)-1) || sequence > int64(int(^uint(0)>>1)) {
+			fieldErrors["stopSequence"] = append(fieldErrors["stopSequence"], "must be a valid integer")
+		} else if len(fieldErrors["stopSequence"]) == 0 {
+			value := int(sequence)
+			params.StopSequence = &value
 		}
 	}
 
@@ -830,4 +790,28 @@ func findStopTimeByPosition(stopTimes []gtfsdb.StopTime, stopCode string, reques
 		return gtfsdb.StopTime{}, 0, false
 	}
 	return stopTimes[bestIdx], bestIdx, true
+}
+
+// parseMinuteWindow clamps before conversion or duration multiplication.
+func parseMinuteWindow(query url.Values, key string, fallback, ceiling int, errors map[string][]string) (int, map[string][]string) {
+	value, errors := utils.ParseOptionalInt64Param(query, key, int64(fallback), errors)
+	if len(errors[key]) > 0 {
+		errors[key] = []string{"must be a valid integer"}
+		return fallback, errors
+	}
+	if value < 0 {
+		if errors == nil {
+			errors = make(map[string][]string)
+		}
+		errors[key] = append(errors[key], "must be a non-negative integer")
+		return fallback, errors
+	}
+	return int(min(value, int64(ceiling))), errors
+}
+func parseArrivalEpoch(query url.Values, key string, fallback *time.Time, errors map[string][]string) (*time.Time, map[string][]string) {
+	value, errors := utils.ParseOptionalEpochMillisParam(query, key, fallback, errors)
+	if len(errors[key]) > 0 {
+		errors[key] = []string{"must be a valid Unix timestamp in milliseconds"}
+	}
+	return value, errors
 }

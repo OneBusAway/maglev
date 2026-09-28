@@ -13,6 +13,12 @@ import (
 
 // stopHandler returns details for a single stop, including its location and the routes that serve it.
 func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+	if len(referenceErrors) > 0 {
+		api.validationErrorResponse(w, r, referenceErrors)
+		return
+	}
+
 	agencyID, stopID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
@@ -90,7 +96,6 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	references := models.NewEmptyReferences()
 
 	// Only populate references if the query parameter is absent or true
-	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
 		uniqueRouteIDs := make(map[string]bool)

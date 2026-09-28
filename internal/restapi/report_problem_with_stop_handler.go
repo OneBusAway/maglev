@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"database/sql"
 	"net/http"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -31,9 +32,14 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	query := r.URL.Query()
 	code := query.Get("code")
 	userComment := utils.TruncateComment(query.Get("userComment"))
-	userLatStr := utils.ValidateNumericParam(query.Get("userLat"))
-	userLonStr := utils.ValidateNumericParam(query.Get("userLon"))
-	userLocationAccuracy := utils.ValidateNumericParam(query.Get("userLocationAccuracy"))
+	var fieldErrors map[string][]string
+	userLat, fieldErrors := utils.ParseOptionalFloatParam(query, "userLat", nil, fieldErrors)
+	userLon, fieldErrors := utils.ParseOptionalFloatParam(query, "userLon", nil, fieldErrors)
+	userLocationAccuracy, fieldErrors := utils.ParseOptionalFloatParam(query, "userLocationAccuracy", nil, fieldErrors)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 
 	// Log the problem report for observability
 	reqLogger.Info("problem_report_received_for_stop",
@@ -47,9 +53,9 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 		StopID:               stopID,
 		Code:                 nulls.String(code),
 		UserComment:          nulls.String(userComment),
-		UserLat:              gtfsdb.ParseNullFloat(userLatStr),
-		UserLon:              gtfsdb.ParseNullFloat(userLonStr),
-		UserLocationAccuracy: gtfsdb.ParseNullFloat(userLocationAccuracy),
+		UserLat:              nullableReportFloat(userLat),
+		UserLon:              nullableReportFloat(userLon),
+		UserLocationAccuracy: nullableReportFloat(userLocationAccuracy),
 		CreatedAt:            now,
 		SubmittedAt:          now,
 	}
@@ -63,4 +69,11 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	}
 
 	api.sendResponse(w, r, models.NewOKResponse(struct{}{}, api.Clock))
+}
+
+func nullableReportFloat(value *float64) sql.NullFloat64 {
+	if value == nil {
+		return sql.NullFloat64{}
+	}
+	return sql.NullFloat64{Float64: *value, Valid: true}
 }

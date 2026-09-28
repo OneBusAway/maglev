@@ -599,9 +599,8 @@ func TestVehiclesForAgencyHandler_AgeInSecondsZeroFiltersStrictly(t *testing.T) 
 		"ageInSeconds=0 must apply a strict cutoff and exclude stale vehicles")
 }
 
-// TestVehiclesForAgencyHandler_AgeInSecondsNegativeNoFilter verifies that a
-// negative ageInSeconds disables the staleness filter.
-func TestVehiclesForAgencyHandler_AgeInSecondsNegativeNoFilter(t *testing.T) {
+// Negative ageInSeconds is rejected.
+func TestVehiclesForAgencyHandler_AgeInSecondsNegativeRejected(t *testing.T) {
 	api := createTestApiWithClock(t, clock.NewMockClock(ageFilterClock))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
@@ -613,10 +612,9 @@ func TestVehiclesForAgencyHandler_AgeInSecondsNegativeNoFilter(t *testing.T) {
 	})
 
 	params := url.Values{"ageInSeconds": {"-5"}}
-	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
-
-	assert.True(t, vehiclesForAgencyContainsID(model.Data.List, "v_stale_neg"),
-		"negative ageInSeconds must disable the filter and return all vehicles")
+	resp, model := callAPIHandler[strictValidationResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.NotEmpty(t, model.Data.FieldErrors["ageInSeconds"])
 }
 
 // TestVehiclesForAgencyHandler_AgeInSecondsAbsentNoFilter verifies that omitting

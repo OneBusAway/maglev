@@ -218,9 +218,9 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location, c cloc
 	validFormat := false
 
 	// Check if it's epoch timestamp
-	if epochTime, err := strconv.ParseInt(timeParam, 10, 64); err == nil {
+	if epochTime, errors := ParseOptionalEpochMillisParam(url.Values{"time": {timeParam}}, "time", nil, nil); len(errors) == 0 {
 		// Convert epoch to time
-		parsedTime = time.Unix(epochTime/1000, 0).In(currentLocation)
+		parsedTime = epochTime.In(currentLocation)
 		validFormat = true
 	} else if strings.Contains(timeParam, "-") {
 		// Try yyyy-MM-dd_HH-mm-ss first (e.g. "2024-03-15_12-00-00")
@@ -302,36 +302,35 @@ func parseMaxCount(queryParams url.Values, defaultCount int, overflow maxCountOv
 // maxCount is the primary parameter for limit, falling back to limit.
 // If neither is present, limit is -1 (return all).
 // Default offset is 0.
-func ParsePaginationParams(r *http.Request) (offset int, limit int) {
-	queryParams := r.URL.Query()
-
-	offset = 0
-	if val := queryParams.Get("offset"); val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil && parsed >= 0 {
-			offset = parsed
+func ParsePaginationParams(r *http.Request) (offset int, limit int, fieldErrors map[string][]string) {
+	query := r.URL.Query()
+	parsedOffset, fieldErrors := ParseOptionalInt64Param(query, "offset", 0, nil)
+	if parsedOffset < 0 || parsedOffset > int64(int(^uint(0)>>1)) {
+		if fieldErrors == nil {
+			fieldErrors = make(map[string][]string)
+		}
+		fieldErrors["offset"] = append(fieldErrors["offset"], "must be a non-negative integer within platform bounds")
+	} else {
+		offset = int(parsedOffset)
+	}
+	limit = -1
+	for _, key := range []string{"limit", "maxCount"} {
+		value, errors := ParseOptionalInt64Param(query, key, -1, fieldErrors)
+		fieldErrors = errors
+		if query.Get(key) == "" {
+			continue
+		}
+		if value <= 0 && len(fieldErrors[key]) == 0 {
+			if fieldErrors == nil {
+				fieldErrors = make(map[string][]string)
+			}
+			fieldErrors[key] = append(fieldErrors[key], "must be greater than zero")
+		}
+		if len(fieldErrors[key]) == 0 {
+			limit = int(min(value, int64(1000)))
 		}
 	}
-
-	limit = -1 // Default to no limit
-
-	// Check maxCount first (OBA convention)
-	if val := queryParams.Get("maxCount"); val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	} else if val := queryParams.Get("limit"); val != "" {
-		// Fallback to limit
-		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	}
-
-	// Cap limit at 1000 if it's set
-	if limit > 1000 {
-		limit = 1000
-	}
-
-	return offset, limit
+	return offset, limit, fieldErrors
 }
 
 // PaginateSlice slices a slice based on offset and limit.

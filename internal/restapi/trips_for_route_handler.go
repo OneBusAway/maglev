@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,6 +27,8 @@ type tripsForRouteServiceDay struct {
 // tripsForRouteHandler returns all active trips for a route, including their real-time
 // status, schedule, and vehicle positions when available.
 func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+
 	ctx := r.Context()
 
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
@@ -38,10 +39,15 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	query := r.URL.Query()
-	includeSchedule := parseBoolQueryParam(query, "includeSchedule")
-	includeStatus := parseBoolQueryParam(query, "includeStatus")
-	includeTrip := parseIncludeTrip(query)
-	includeReferences := ShouldIncludeReferences(r)
+	includeSchedule, fieldErrors := utils.ParseBoolParam(query, "includeSchedule", true, referenceErrors)
+	includeStatus, fieldErrors := utils.ParseBoolParam(query, "includeStatus", true, fieldErrors)
+	includeTrip, fieldErrors := utils.ParseBoolParam(query, "includeTrip", true, fieldErrors)
+	_, _, timeErrors, _ := utils.ParseTimeParameter(query.Get("time"), time.UTC, api.Clock)
+	fieldErrors = mergeFieldErrors(fieldErrors, timeErrors)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
@@ -1225,14 +1231,4 @@ func stripNumericSuffix(tripID string) string {
 		}
 	}
 	return tripID[:idx]
-}
-
-// parseBoolQueryParam parses a boolean query parameter, defaulting to true when
-// the parameter is omitted and to false when present but not a valid boolean.
-func parseBoolQueryParam(query url.Values, name string) bool {
-	if !query.Has(name) {
-		return true
-	}
-	val, err := strconv.ParseBool(query.Get(name))
-	return err == nil && val
 }
