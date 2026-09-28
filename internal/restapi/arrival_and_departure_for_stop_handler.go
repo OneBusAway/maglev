@@ -356,12 +356,13 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			predictedArrivalTime = predictedArrival
 			predictedDepartureTime = predictedDeparture
 			predicted = true
-		} else if arr, dep, ok := predictedTimesFromTripStatus(status, scheduledArrivalTime, scheduledDepartureTime); ok {
-			predictedArrivalTime = arr
-			predictedDepartureTime = dep
-			predicted = true
 		} else {
-			predicted = false
+			predictedArrivalTime, predictedDepartureTime, predicted = predictedTimesFromScheduleDeviation(scheduleDeviationFallback{
+				status:             status,
+				extras:             statusExtras,
+				scheduledArrival:   scheduledArrivalTime,
+				scheduledDeparture: scheduledDepartureTime,
+			})
 		}
 
 		// Reuse the snapshot BuildTripStatus already computed for this trip.

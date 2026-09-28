@@ -456,13 +456,17 @@ func TestArrivalAndDepartureForStop_NoRealTimeDataUsesZeroPredictionTimes(t *tes
 	assert.True(t, entry.LastUpdateTime.IsZero())
 }
 
-func TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictsFromDeviation(t *testing.T) {
+// TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictedWithoutTimes
+// verifies that a StopTimeUpdate only for a later stop marks the arrival
+// predicted without propagating its deviation upstream, matching Java's
+// getBestScheduleDeviation.
+func TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictedWithoutTimes(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 1)
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
 	addDownstreamSTU(t, api, tripID, 174*time.Second)
 
 	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -480,8 +484,9 @@ func TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictsFromDeviation(t *te
 	require.NotNil(t, entry.TripStatus)
 	assert.True(t, entry.TripStatus.Predicted)
 	assert.Equal(t, 174, entry.TripStatus.ScheduleDeviation)
-	assert.True(t, entry.Predicted, "arrival should be predicted when tripStatus is predicted")
-	assert.Equal(t, scheduledArrivalMs+174_000, entry.PredictedArrivalTime.UnixMilli())
+	assert.True(t, entry.Predicted, "arrival.predicted should agree with tripStatus.predicted")
+	assert.True(t, entry.PredictedArrivalTime.IsZero(), "deviation must not propagate upstream")
+	assert.True(t, entry.PredictedDepartureTime.IsZero(), "deviation must not propagate upstream")
 }
 
 func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
