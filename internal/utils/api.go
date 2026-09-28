@@ -126,50 +126,78 @@ func MapWheelchairBoarding(wheelchairBoarding gtfs.WheelchairBoarding) string {
 	}
 }
 
-// ParseFloatParam retrieves a float64 value from the provided URL query parameters.
-// If the key is not present or the value is invalid, it returns 0 and updates the fieldErrors map.
-// - params: URL query parameters.
-// - key: The key to look for in the query parameters.
-// - fieldErrors: A map to collect validation errors for fields.
-// Returns:
-// - The parsed float64 value (or 0 if invalid).
-// - The updated fieldErrors map containing any validation errors.
+// ParseFloatParam retrieves an optional finite float64, defaulting to zero.
 func ParseFloatParam(params url.Values, key string, fieldErrors map[string][]string) (float64, map[string][]string) {
+	fallback := 0.0
+	value, fieldErrors := ParseOptionalFloatParam(params, key, &fallback, fieldErrors)
+	return *value, fieldErrors
+}
+
+// ParseOptionalFloatParam retrieves a finite float64, preserving fallback for
+// absent, empty, or invalid values. A nil fallback represents an omitted field.
+func ParseOptionalFloatParam(params url.Values, key string, fallback *float64, fieldErrors map[string][]string) (*float64, map[string][]string) {
 	if fieldErrors == nil {
 		fieldErrors = make(map[string][]string)
 	}
-
 	val := params.Get(key)
 	if val == "" {
-		return 0, fieldErrors
+		return fallback, fieldErrors
 	}
-
 	f, err := strconv.ParseFloat(val, 64)
 	if err != nil || !isFinite(f) {
 		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
-		return 0, fieldErrors
+		return fallback, fieldErrors
 	}
-	return f, fieldErrors
+	return &f, fieldErrors
 }
 
+// ParseRequiredFloatParam retrieves a required finite float64.
 func ParseRequiredFloatParam(params url.Values, key string, fieldErrors map[string][]string) (float64, map[string][]string) {
-	if fieldErrors == nil {
-		fieldErrors = make(map[string][]string)
-	}
-
-	val := params.Get(key)
-	if val == "" {
+	if params.Get(key) == "" {
+		if fieldErrors == nil {
+			fieldErrors = make(map[string][]string)
+		}
 		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Missing required field %q.", key))
 		return 0, fieldErrors
 	}
+	return ParseFloatParam(params, key, fieldErrors)
+}
 
-	f, err := strconv.ParseFloat(val, 64)
-	if err != nil || !isFinite(f) {
-		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
-		return 0, fieldErrors
+// ParseOptionalInt64Param retrieves a base-10 int64, preserving fallback for
+// absent, empty, or invalid values. Domain restrictions belong to the caller.
+func ParseOptionalInt64Param(params url.Values, key string, fallback int64, fieldErrors map[string][]string) (int64, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
 	}
-	return f, fieldErrors
+	val := params.Get(key)
+	if val == "" {
+		return fallback, fieldErrors
+	}
+	value, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
+		return fallback, fieldErrors
+	}
+	return value, fieldErrors
+}
 
+// ParseOptionalEpochMillisParam retrieves a non-negative Unix millisecond epoch
+// in UTC, preserving fallback for absent, empty, or invalid values.
+func ParseOptionalEpochMillisParam(params url.Values, key string, fallback *time.Time, fieldErrors map[string][]string) (*time.Time, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+	val := params.Get(key)
+	if val == "" {
+		return fallback, fieldErrors
+	}
+	millis, err := strconv.ParseInt(val, 10, 64)
+	if err != nil || millis < 0 {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
+		return fallback, fieldErrors
+	}
+	value := time.UnixMilli(millis).UTC()
+	return &value, fieldErrors
 }
 
 // isFinite reports whether f is neither NaN nor infinite. strconv.ParseFloat
@@ -398,8 +426,8 @@ func ParseRequiredStringParam(params url.Values, key string, fieldErrors map[str
 }
 
 // ParseBoolParam retrieves a boolean value from the provided URL query parameters,
-// falling back to fallback when the key is absent. A value that is not a boolean
-// records a field error and leaves the fallback in place.
+// accepting only case-insensitive true/false. Absent, empty, or invalid values
+// retain fallback; invalid non-empty values append a field error.
 func ParseBoolParam(params url.Values, key string, fallback bool, fieldErrors map[string][]string) (bool, map[string][]string) {
 	if fieldErrors == nil {
 		fieldErrors = make(map[string][]string)
@@ -410,13 +438,15 @@ func ParseBoolParam(params url.Values, key string, fallback bool, fieldErrors ma
 		return fallback, fieldErrors
 	}
 
-	parsed, err := strconv.ParseBool(val)
-	if err != nil {
+	switch {
+	case strings.EqualFold(val, "true"):
+		return true, fieldErrors
+	case strings.EqualFold(val, "false"):
+		return false, fieldErrors
+	default:
 		fieldErrors[key] = append(fieldErrors[key], "must be a boolean value (true/false)")
 		return fallback, fieldErrors
 	}
-
-	return parsed, fieldErrors
 }
 
 // ClampRadius restricts a radius value to MaxSearchRadiusInMeters
