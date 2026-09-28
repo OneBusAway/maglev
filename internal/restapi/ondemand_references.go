@@ -212,6 +212,7 @@ func (api *RestAPI) buildOnDemandServices(ctx context.Context, services []gtfsdb
 	if err := api.fillOnDemandReferences(ctx, references, services, routes, ids, opts); err != nil {
 		return nil, nil, err
 	}
+	api.attachOnDemandPointersToReferences(&references.ReferencesModel)
 	sortOnDemandReferences(references)
 	return serviceModels, references, nil
 }

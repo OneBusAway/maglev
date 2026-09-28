@@ -86,6 +86,7 @@ func TestOnDemandServiceHandler_AlexandriaMatchesWorkedExample(t *testing.T) {
 	require.Len(t, refs.Routes, 1)
 	assert.Equal(t, "5088_77652", refs.Routes[0].ID)
 	assert.Equal(t, "DOT Paratransit", refs.Routes[0].LongName)
+	assert.Equal(t, []string{"5088_77652"}, refs.Routes[0].OnDemandServiceIDs, "references reuse models.Route, so the pointer falls out of the type system")
 	assert.Empty(t, refs.Stops)
 	assert.Empty(t, refs.Situations)
 	assert.Empty(t, refs.StopTimes)

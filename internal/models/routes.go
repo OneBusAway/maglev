@@ -16,6 +16,9 @@ type Route struct {
 	TextColor         string    `json:"textColor"`
 	Type              RouteType `json:"type"`
 	URL               string    `json:"url"`
+	// OnDemandServiceIDs points at the on-demand services built from this route.
+	// Omitted when empty so non-flex feeds serialize byte-identically.
+	OnDemandServiceIDs []string `json:"onDemandServiceIds,omitempty"`
 }
 
 func NewRoute(id, agencyID, shortName, longName, description string, routeType RouteType, url, color, textColor string) Route {

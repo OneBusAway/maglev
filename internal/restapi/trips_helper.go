@@ -444,6 +444,15 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 		return nil, err
 	}
 
+	// A flex-only trip has no timed records: no stops to project, no block
+	// neighbours to resolve. Return the empty schedule the wiki specifies.
+	if len(stopTimes) == 0 {
+		return &models.Schedule{
+			StopTimes: []models.StopTime{},
+			TimeZone:  loc.String(),
+		}, nil
+	}
+
 	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, trip.ID)
 	var shapePoints []gtfs.ShapePoint
 	if err == nil && len(shapeRows) > 0 {
