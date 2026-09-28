@@ -1,3 +1,8 @@
+---
+name: oba-workspace
+description: Resolve local checkout paths for wayfinder, js-sdk, onebusaway-ios, onebusaway-android, and maglev.wiki, and flag stale or dirty checkouts. Normally invoked by oba-api-review and its sub-skills; use directly with status to inspect the workspace.
+---
+
 # OBA Workspace
 
 Resolves local checkout paths for the OBA companion repos (`wayfinder`, `js-sdk`, `onebusaway-ios`, `onebusaway-android`, `maglev.wiki`) and checks their state. `oba-api-review`, `oba-api-client-impact`, `oba-api-spec-check`, and `oba-api-verify` all resolve repos through this skill rather than calling `.claude/skills/lib/resolve-oba-repo.sh` directly, so resolution and anomaly handling live in one place instead of being repeated in each.
