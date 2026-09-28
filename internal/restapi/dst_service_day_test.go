@@ -5,9 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -113,12 +115,31 @@ func TestArrivalsEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 	}
 }
 
+type dstTripDetails struct {
+	ServiceDate int64         `json:"serviceDate"`
+	Frequency   *dstFrequency `json:"frequency"`
+	Status      *struct {
+		ServiceDate int64         `json:"serviceDate"`
+		Frequency   *dstFrequency `json:"frequency"`
+	} `json:"status"`
+}
+
 type dstTripDetailsResponse struct {
 	Data struct {
-		Entry struct {
-			ServiceDate int64 `json:"serviceDate"`
-		} `json:"entry"`
+		Entry dstTripDetails `json:"entry"`
 	} `json:"data"`
+}
+
+func assertDSTTripDetails(t *testing.T, entry dstTripDetails, start time.Time) {
+	t.Helper()
+	wantFrequencyStart := start.Add(8 * time.Hour).UnixMilli()
+	assert.Equal(t, start.UnixMilli(), entry.ServiceDate)
+	require.NotNil(t, entry.Frequency)
+	assert.Equal(t, wantFrequencyStart, entry.Frequency.StartTime, "the 08:00 frequency window starts at 08:00 local")
+	require.NotNil(t, entry.Status)
+	assert.Equal(t, start.UnixMilli(), entry.Status.ServiceDate)
+	require.NotNil(t, entry.Status.Frequency)
+	assert.Equal(t, wantFrequencyStart, entry.Status.Frequency.StartTime)
 }
 
 func TestTripDetails_AcceptsTheArrivalsServiceDateOnDSTServiceDays(t *testing.T) {
@@ -189,6 +210,46 @@ func TestArrivalAndDepartureForStop_PicksTheClosestLoopVisitOnDSTServiceDays(t *
 				"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d", stopID, tripID, start.UnixMilli()))
 			require.Equal(t, 200, resp.StatusCode)
 			assert.Equal(t, start.Add(tc.visit).UnixMilli(), single.Data.Entry.ScheduledArrivalTime)
+		})
+	}
+}
+
+func TestTripEndpoints_ReportServiceDayStartOnDSTServiceDays(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	tripID := utils.FormCombinedID("dst-agency", "dst-trip")
+	vehicleID := utils.FormCombinedID("dst-agency", "dst-vehicle")
+
+	for _, tc := range []struct {
+		name string
+		date servicedate.Date
+	}{
+		{name: "ordinary Sunday", date: servicedate.New(2026, time.November, 8)},
+		{name: "fall back", date: servicedate.New(2026, time.November, 1)},
+		{name: "spring forward", date: servicedate.New(2026, time.March, 8)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := tc.date.Start(losAngeles)
+			now := start.Add(8*time.Hour + 10*time.Minute)
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now), fmt.Sprintf("dst-trip-%s.zip", tc.date), dstFiles())
+			lat, lon := float32(37.78), float32(-122.41)
+			api.GtfsManager.MockAddVehicleWithOptions("dst-vehicle", "dst-trip", "dst-route", internalgtfs.MockVehicleOptions{
+				Timestamp: &now,
+				Position:  &gtfs.Position{Latitude: &lat, Longitude: &lon},
+			})
+
+			for _, serviceDate := range []int64{start.UnixMilli(), tc.date.Midnight(losAngeles).UnixMilli()} {
+				resp, details := callAPIHandler[dstTripDetailsResponse](t, api, fmt.Sprintf(
+					"/api/where/trip-details/%s.json?key=TEST&serviceDate=%d&vehicleId=%s", tripID, serviceDate, vehicleID))
+				require.Equal(t, 200, resp.StatusCode)
+				assertDSTTripDetails(t, details.Data.Entry, start)
+			}
+
+			resp, forVehicle := callAPIHandler[dstTripDetailsResponse](t, api, fmt.Sprintf(
+				"/api/where/trip-for-vehicle/%s.json?key=TEST", vehicleID))
+			require.Equal(t, 200, resp.StatusCode)
+			assertDSTTripDetails(t, forVehicle.Data.Entry, start)
 		})
 	}
 }
