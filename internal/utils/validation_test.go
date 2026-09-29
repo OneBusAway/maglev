@@ -30,6 +30,18 @@ func TestValidateID(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "ID with tab",
+			id:      "25_Route\t15",
+			wantErr: true,
+			errMsg:  "id contains invalid characters",
+		},
+		{
+			name:    "ID with newline",
+			id:      "25_Route\n15",
+			wantErr: true,
+			errMsg:  "id contains invalid characters",
+		},
+		{
 			name:    "empty ID",
 			id:      "",
 			wantErr: true,
