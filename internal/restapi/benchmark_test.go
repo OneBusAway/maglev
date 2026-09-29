@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -111,6 +112,53 @@ func BenchmarkTripDetails(b *testing.B) {
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		b.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+	}
+}
+
+// tripsForRouteBenchmarkRouteID is RABA's route 25_154, the route serving the stop
+// the arrivals tests use, so it has trips active during arrivalsTestClock.
+const tripsForRouteBenchmarkRouteID = "25_154"
+
+// Benchmark trips-for-route with status, which calls BuildTripStatus once per
+// trip in the response. Issue #1379 names this endpoint and trips-for-location as
+// the least protected against that per-row cost, and neither had a benchmark.
+//
+// The clock is pinned inside the RABA service window because on the real clock the
+// fixture's calendar has expired, the response comes back empty, and the per-trip
+// loop never runs.
+func BenchmarkTripsForRouteWithStatus(b *testing.B) {
+	api, cleanup := createTestApiWithRealTimeData(b, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/where/trips-for-route/"+tripsForRouteBenchmarkRouteID+
+			".json?key=TEST&includeStatus=true&includeSchedule=true", nil)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		b.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var warmup struct {
+		Data struct {
+			List []json.RawMessage `json:"list"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &warmup); err != nil {
+		b.Fatalf("decode warmup response: %v", err)
+	}
+	if len(warmup.Data.List) == 0 {
+		b.Fatal("no trips in the benchmark window")
 	}
 
 	b.ReportAllocs()
