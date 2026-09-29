@@ -56,9 +56,9 @@ func TestAgenciesWithCoverageHandlerPagination(t *testing.T) {
 	assert.Len(t, model.Data.List, 1)
 	assert.False(t, model.Data.LimitExceeded)
 
-	resp, invalid := callAPIHandler[strictValidationResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&limit=0")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.NotEmpty(t, invalid.Data.FieldErrors["limit"])
+	_, model = callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&limit=0")
+	assert.Len(t, model.Data.List, 1)
+	assert.False(t, model.Data.LimitExceeded)
 
 	_, model = callAPIHandler[CoverageResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&offset=1")
 	assert.Len(t, model.Data.List, 0)

@@ -5,7 +5,6 @@ import (
 	"context"
 	"net/http"
 	"slices"
-	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
@@ -19,8 +18,6 @@ import (
 func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request) {
 	includeReferences, fieldErrors := ShouldIncludeReferences(r, nil)
 	includePolylines, fieldErrors := utils.ParseBoolParam(r.URL.Query(), "includePolylines", true, fieldErrors)
-	_, _, timeErrors, _ := utils.ParseTimeParameter(r.URL.Query().Get("time"), time.UTC, api.Clock)
-	fieldErrors = mergeFieldErrors(fieldErrors, timeErrors)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return

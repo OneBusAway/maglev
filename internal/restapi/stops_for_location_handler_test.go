@@ -766,11 +766,7 @@ func TestStopsForLocationAcceptsDocumentedTimeFormats(t *testing.T) {
 			}
 			resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
 
-			if tt.name == "malformed" {
-				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-				return
-			}
-			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Equal(t, http.StatusOK, resp.StatusCode, "an unparseable time is served, not rejected")
 
 			stopIDs := make([]string, 0, len(model.Data.List))
 			for _, stop := range model.Data.List {
@@ -816,12 +812,13 @@ func TestStopsForLocationUsesAgencyDateForCurrentTime(t *testing.T) {
 		return stopIDs
 	}
 
-	// Omitted time uses the agency's date.
+	// Both routes to the fallback have to land on the agency's date.
 	tests := []struct {
 		name      string
 		timeParam string
 	}{
 		{name: "absent", timeParam: ""},
+		{name: "malformed", timeParam: "garbage"},
 	}
 
 	for _, tt := range tests {

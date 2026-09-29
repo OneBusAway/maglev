@@ -5,13 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"maglev.onebusaway.org/internal/clock"
 )
 
 type strictValidationResponse struct {
@@ -117,85 +115,34 @@ func TestStrictProblemReports(t *testing.T) {
 	assert.Len(t, model.Data.FieldErrors, 4)
 }
 
-func TestStrictEndpointParameters(t *testing.T) {
+func TestStrictBooleanFlags(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
-	tests := []struct{ endpoint, field, value string }{
-		{"stops-for-location", "routeType", "3junk"}, {"stops-for-location", "routeType", "9223372036854775808"},
-		{"stops-for-route/1_any", "includePolylines", "1"},
-	}
-	for _, field := range []string{"offset", "maxCount", "limit"} {
-		for _, value := range []string{"bad", "12x", "9223372036854775808", "-1"} {
-			tests = append(tests, struct{ endpoint, field, value string }{"agencies-with-coverage", field, value})
+	for _, tc := range []struct{ endpoint, flag string }{
+		{"trips-for-location", "includeTrip"},
+		{"trips-for-location", "includeSchedule"},
+		{"trips-for-location", "includeStatus"},
+		{"trips-for-route/1_any", "includeTrip"},
+		{"trips-for-route/1_any", "includeSchedule"},
+		{"trips-for-route/1_any", "includeStatus"},
+		{"stops-for-route/1_any", "includePolylines"},
+	} {
+		for _, raw := range []string{"1", "t", "abc"} {
+			t.Run(tc.endpoint+"/"+tc.flag+"/"+raw, func(t *testing.T) {
+				endpoint := "/api/where/" + tc.endpoint + ".json?key=TEST&lat=0&lon=0&" + tc.flag + "=" + raw
+				resp, model := callAPIHandler[strictValidationResponse](t, api, endpoint)
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				assert.NotEmpty(t, model.Data.FieldErrors[tc.flag])
+			})
 		}
 	}
-	for _, value := range []string{"bad", "12x", "-1", "9223372036854775808", "9223372037"} {
-		tests = append(tests, struct{ endpoint, field, value string }{"vehicles-for-agency/unknown", "ageInSeconds", value})
-	}
-	for _, endpoint := range []string{"trips-for-location", "trips-for-route/1_any"} {
-		for _, field := range []string{"includeTrip", "includeSchedule", "includeStatus"} {
-			tests = append(tests, struct{ endpoint, field, value string }{endpoint, field, "t"})
-		}
-	}
-	for _, endpoint := range []string{"stops-for-location", "trips-for-location", "trips-for-route/1_any", "vehicles-for-agency/unknown", "stops-for-route/1_any", "trip-details/1_any", "arrivals-and-departures-for-stop/1_any", "arrival-and-departure-for-stop/1_any"} {
-		for _, value := range []string{"bad", "-1", "9223372036854775808"} {
-			tests = append(tests, struct{ endpoint, field, value string }{endpoint, "time", value})
-		}
-	}
-	for _, tt := range tests {
-		t.Run(tt.endpoint+"/"+tt.field+"/"+tt.value, func(t *testing.T) {
-			resp, model := callAPIHandler[strictValidationResponse](t, api, "/api/where/"+tt.endpoint+".json?key=TEST&lat=0&lon=0&"+tt.field+"="+url.QueryEscape(tt.value))
-			require.Equal(t, 400, resp.StatusCode)
-			assert.NotEmpty(t, model.Data.FieldErrors[tt.field])
-		})
-	}
-	resp, model := callAPIHandler[strictValidationResponse](t, api, "/api/where/agencies-with-coverage.json?key=TEST&maxCount=1&limit=bad&offset=-1&includeReferences=t")
-	require.Equal(t, 400, resp.StatusCode)
-	assert.Len(t, model.Data.FieldErrors, 3)
-	resp, model = callAPIHandler[strictValidationResponse](t, api, "/api/where/trips-for-location.json?key=TEST&lat=0&lon=0&includeTrip=t&includeSchedule=1&includeStatus=bad&includeReferences=f&time=-1")
-	require.Equal(t, 400, resp.StatusCode)
-	assert.Len(t, model.Data.FieldErrors, 5)
-	for _, endpoint := range []string{"search/route", "search/stop", "routes-for-location"} {
-		resp, model := callAPIHandler[strictValidationResponse](t, api, "/api/where/"+endpoint+".json?key=TEST&lat=0&lon=0&input=test&maxCount=bad&includeReferences=t")
-		require.Equal(t, 400, resp.StatusCode)
-		assert.Len(t, model.Data.FieldErrors, 2)
-	}
-
-}
-
-func TestStrictArrivalParsers(t *testing.T) {
-	api := createTestApiWithClock(t, clock.NewMockClock(time.UnixMilli(123)))
-	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
-	for _, raw := range []string{"bad", "12x", "9223372036854775808", "-1"} {
-		req := httptest.NewRequest("GET", "/?minutesAfter="+raw+"&minutesBefore="+raw+"&time=-1&serviceDate=-1&stopSequence=12x", nil)
-		_, errors := parseArrivalAndDepartureParams(req)
-		assert.Len(t, errors, 5)
-		_, errors = api.parseArrivalsAndDeparturesParams(req)
-		assert.Len(t, errors, 3)
-	}
-	loc := time.FixedZone("east", 9*3600)
-	req := httptest.NewRequest("GET", "/?minutesAfter=9223372036854775807&minutesBefore=9223372036854775807&time=1749855600123&serviceDate=1749855600123&stopSequence=0", nil)
-	singular, errors := parseArrivalAndDepartureParams(req, loc)
-	require.Empty(t, errors)
-	assert.Equal(t, 1440, singular.MinutesAfter)
-	assert.Equal(t, 1440, singular.MinutesBefore)
-	assert.Equal(t, int64(1749855600123), singular.Time.UnixMilli())
-	assert.Equal(t, loc, singular.ServiceDate.Location())
-	assert.Equal(t, 0, *singular.StopSequence)
-	plural, errors := api.parseArrivalsAndDeparturesParams(req)
-	require.Empty(t, errors)
-	assert.Equal(t, 24*time.Hour, plural.After)
-	assert.Equal(t, 24*time.Hour, plural.Before)
-	assert.Equal(t, int64(1749855600123), plural.Time.UnixMilli())
 }
 
 func TestTripsForLocationStrictDefaults(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
-	for _, suffix := range []string{"", "&includeTrip=&includeSchedule=&includeStatus=", "&includeTrip=TrUe&includeSchedule=FaLsE&includeStatus=FaLsE"} {
+	for _, suffix := range []string{"", "&includeTrip=TrUe&includeSchedule=FaLsE&includeStatus=FaLsE"} {
 		req := httptest.NewRequest("GET", "/?lat=0&lon=0"+suffix, nil)
 		params, errors, err := api.parseAndValidateRequest(req)
 		require.NoError(t, err)
@@ -204,27 +151,25 @@ func TestTripsForLocationStrictDefaults(t *testing.T) {
 		assert.False(t, params.IncludeSchedule)
 		assert.False(t, params.IncludeStatus)
 	}
+	req := httptest.NewRequest("GET", "/?lat=0&lon=0&includeTrip=&includeSchedule=&includeStatus=", nil)
+	params, errors, err := api.parseAndValidateRequest(req)
+	require.NoError(t, err)
+	require.Empty(t, errors)
+	assert.False(t, params.IncludeTrip)
+	assert.False(t, params.IncludeSchedule)
+	assert.False(t, params.IncludeStatus)
 }
 
-func TestStrictTripDates(t *testing.T) {
+func TestNegativeEpochsRejected(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
-	for _, endpoint := range []string{"trip-details/1_any", "arrival-and-departure-for-stop/1_any"} {
-		for _, raw := range []string{"-1", "bad", "12x", "9223372036854775808"} {
-			resp, model := callAPIHandler[strictValidationResponse](t, api, "/api/where/"+endpoint+".json?key=TEST&serviceDate="+raw)
-			require.Equal(t, 400, resp.StatusCode)
-			assert.NotEmpty(t, model.Data.FieldErrors["serviceDate"])
-		}
-	}
-	loc := time.FixedZone("east", 9*3600)
-	for _, query := range []string{"serviceDate=2025-06-14&time=2025-06-14_00-00-00", "serviceDate=1749826800123&time=1749826800123"} {
-		params, errors := api.parseTripParams(httptest.NewRequest("GET", "/?"+query, nil), TripParamDefaults{}, loc)
-		require.Empty(t, errors)
-		assert.Equal(t, "20250614", params.ServiceDate.Format("20060102"))
-		assert.Equal(t, loc, params.Time.Location())
-		if strings.HasPrefix(query, "serviceDate=1749826800123") {
-			assert.Equal(t, int64(1749826800123), params.Time.UnixMilli())
-		}
+	for _, key := range []string{"time", "serviceDate"} {
+		req := httptest.NewRequest("GET", "/?"+key+"=-5", nil)
+		_, errors := api.parseTripParams(req, TripParamDefaults{})
+		assert.NotEmpty(t, errors[key])
+		resp, model := callAPIHandler[strictValidationResponse](t, api, "/api/where/trip-details/1_any.json?key=TEST&"+key+"=-5")
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.NotEmpty(t, model.Data.FieldErrors[key])
 	}
 }

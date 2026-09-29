@@ -126,78 +126,50 @@ func MapWheelchairBoarding(wheelchairBoarding gtfs.WheelchairBoarding) string {
 	}
 }
 
-// ParseFloatParam retrieves an optional finite float64, defaulting to zero.
+// ParseFloatParam retrieves a float64 value from the provided URL query parameters.
+// If the key is not present or the value is invalid, it returns 0 and updates the fieldErrors map.
+// - params: URL query parameters.
+// - key: The key to look for in the query parameters.
+// - fieldErrors: A map to collect validation errors for fields.
+// Returns:
+// - The parsed float64 value (or 0 if invalid).
+// - The updated fieldErrors map containing any validation errors.
 func ParseFloatParam(params url.Values, key string, fieldErrors map[string][]string) (float64, map[string][]string) {
-	fallback := 0.0
-	value, fieldErrors := ParseOptionalFloatParam(params, key, &fallback, fieldErrors)
-	return *value, fieldErrors
-}
-
-// ParseOptionalFloatParam retrieves a finite float64, preserving fallback for
-// absent, empty, or invalid values. A nil fallback represents an omitted field.
-func ParseOptionalFloatParam(params url.Values, key string, fallback *float64, fieldErrors map[string][]string) (*float64, map[string][]string) {
 	if fieldErrors == nil {
 		fieldErrors = make(map[string][]string)
 	}
+
 	val := params.Get(key)
 	if val == "" {
-		return fallback, fieldErrors
+		return 0, fieldErrors
 	}
+
 	f, err := strconv.ParseFloat(val, 64)
 	if err != nil || !isFinite(f) {
 		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
-		return fallback, fieldErrors
+		return 0, fieldErrors
 	}
-	return &f, fieldErrors
+	return f, fieldErrors
 }
 
-// ParseRequiredFloatParam retrieves a required finite float64.
 func ParseRequiredFloatParam(params url.Values, key string, fieldErrors map[string][]string) (float64, map[string][]string) {
-	if params.Get(key) == "" {
-		if fieldErrors == nil {
-			fieldErrors = make(map[string][]string)
-		}
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	val := params.Get(key)
+	if val == "" {
 		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Missing required field %q.", key))
 		return 0, fieldErrors
 	}
-	return ParseFloatParam(params, key, fieldErrors)
-}
 
-// ParseOptionalInt64Param retrieves a base-10 int64, preserving fallback for
-// absent, empty, or invalid values. Domain restrictions belong to the caller.
-func ParseOptionalInt64Param(params url.Values, key string, fallback int64, fieldErrors map[string][]string) (int64, map[string][]string) {
-	if fieldErrors == nil {
-		fieldErrors = make(map[string][]string)
-	}
-	val := params.Get(key)
-	if val == "" {
-		return fallback, fieldErrors
-	}
-	value, err := strconv.ParseInt(val, 10, 64)
-	if err != nil {
+	f, err := strconv.ParseFloat(val, 64)
+	if err != nil || !isFinite(f) {
 		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
-		return fallback, fieldErrors
+		return 0, fieldErrors
 	}
-	return value, fieldErrors
-}
+	return f, fieldErrors
 
-// ParseOptionalEpochMillisParam retrieves a non-negative Unix millisecond epoch
-// in UTC, preserving fallback for absent, empty, or invalid values.
-func ParseOptionalEpochMillisParam(params url.Values, key string, fallback *time.Time, fieldErrors map[string][]string) (*time.Time, map[string][]string) {
-	if fieldErrors == nil {
-		fieldErrors = make(map[string][]string)
-	}
-	val := params.Get(key)
-	if val == "" {
-		return fallback, fieldErrors
-	}
-	millis, err := strconv.ParseInt(val, 10, 64)
-	if err != nil || millis < 0 {
-		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
-		return fallback, fieldErrors
-	}
-	value := time.UnixMilli(millis).UTC()
-	return &value, fieldErrors
 }
 
 // isFinite reports whether f is neither NaN nor infinite. strconv.ParseFloat
@@ -218,9 +190,9 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location, c cloc
 	validFormat := false
 
 	// Check if it's epoch timestamp
-	if epochTime, errors := ParseOptionalEpochMillisParam(url.Values{"time": {timeParam}}, "time", nil, nil); len(errors) == 0 {
+	if epochTime, err := strconv.ParseInt(timeParam, 10, 64); err == nil {
 		// Convert epoch to time
-		parsedTime = epochTime.In(currentLocation)
+		parsedTime = time.Unix(epochTime/1000, 0).In(currentLocation)
 		validFormat = true
 	} else if strings.Contains(timeParam, "-") {
 		// Try yyyy-MM-dd_HH-mm-ss first (e.g. "2024-03-15_12-00-00")
@@ -302,35 +274,36 @@ func parseMaxCount(queryParams url.Values, defaultCount int, overflow maxCountOv
 // maxCount is the primary parameter for limit, falling back to limit.
 // If neither is present, limit is -1 (return all).
 // Default offset is 0.
-func ParsePaginationParams(r *http.Request) (offset int, limit int, fieldErrors map[string][]string) {
-	query := r.URL.Query()
-	parsedOffset, fieldErrors := ParseOptionalInt64Param(query, "offset", 0, nil)
-	if parsedOffset < 0 || parsedOffset > int64(int(^uint(0)>>1)) {
-		if fieldErrors == nil {
-			fieldErrors = make(map[string][]string)
-		}
-		fieldErrors["offset"] = append(fieldErrors["offset"], "must be a non-negative integer within platform bounds")
-	} else {
-		offset = int(parsedOffset)
-	}
-	limit = -1
-	for _, key := range []string{"limit", "maxCount"} {
-		value, errors := ParseOptionalInt64Param(query, key, -1, fieldErrors)
-		fieldErrors = errors
-		if query.Get(key) == "" {
-			continue
-		}
-		if value <= 0 && len(fieldErrors[key]) == 0 {
-			if fieldErrors == nil {
-				fieldErrors = make(map[string][]string)
-			}
-			fieldErrors[key] = append(fieldErrors[key], "must be greater than zero")
-		}
-		if len(fieldErrors[key]) == 0 {
-			limit = int(min(value, int64(1000)))
+func ParsePaginationParams(r *http.Request) (offset int, limit int) {
+	queryParams := r.URL.Query()
+
+	offset = 0
+	if val := queryParams.Get("offset"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed >= 0 {
+			offset = parsed
 		}
 	}
-	return offset, limit, fieldErrors
+
+	limit = -1 // Default to no limit
+
+	// Check maxCount first (OBA convention)
+	if val := queryParams.Get("maxCount"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	} else if val := queryParams.Get("limit"); val != "" {
+		// Fallback to limit
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	// Cap limit at 1000 if it's set
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	return offset, limit
 }
 
 // PaginateSlice slices a slice based on offset and limit.
@@ -364,17 +337,6 @@ func TruncateComment(s string) string {
 	runes := []rune(s)
 	if len(runes) > MaxCommentLength {
 		return string(runes[:MaxCommentLength])
-	}
-	return s
-}
-
-// ValidateNumericParam returns the string if it's a valid float, empty string otherwise.
-func ValidateNumericParam(s string) string {
-	if s == "" {
-		return ""
-	}
-	if _, err := strconv.ParseFloat(s, 64); err != nil {
-		return ""
 	}
 	return s
 }
@@ -425,8 +387,8 @@ func ParseRequiredStringParam(params url.Values, key string, fieldErrors map[str
 }
 
 // ParseBoolParam retrieves a boolean value from the provided URL query parameters,
-// accepting only case-insensitive true/false. Absent, empty, or invalid values
-// retain fallback; invalid non-empty values append a field error.
+// accepting only case-insensitive true/false. An absent or empty value uses
+// fallback; other supplied values append a field error.
 func ParseBoolParam(params url.Values, key string, fallback bool, fieldErrors map[string][]string) (bool, map[string][]string) {
 	if fieldErrors == nil {
 		fieldErrors = make(map[string][]string)

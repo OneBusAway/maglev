@@ -53,8 +53,9 @@ func parseEpochOrLayoutTime(value, layout string, loc *time.Location) (parsed *t
 		return nil, true
 	}
 
-	if fromEpoch, errors := utils.ParseOptionalEpochMillisParam(url.Values{"value": {value}}, "value", nil, nil); len(errors) == 0 {
-		return fromEpoch, true
+	if epochMillis, err := strconv.ParseInt(value, 10, 64); err == nil && epochMillis >= 0 {
+		fromEpoch := time.UnixMilli(epochMillis)
+		return &fromEpoch, true
 	}
 
 	fromLayout, err := time.ParseInLocation(layout, value, loc)
@@ -120,7 +121,6 @@ func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults,
 	params.ServiceDate = parseTimeField(query, "serviceDate", serviceDateLayout, errInvalidServiceDate, parseLoc, fieldErrors)
 	params.Time = parseTimeField(query, "time", tripTimeLayout, errInvalidTime, parseLoc, fieldErrors)
 
-	_, fieldErrors = ShouldIncludeReferences(r, fieldErrors)
 	params.IncludeTrip, fieldErrors = utils.ParseBoolParam(query, "includeTrip", params.IncludeTrip, fieldErrors)
 	params.IncludeSchedule, fieldErrors = utils.ParseBoolParam(query, "includeSchedule", params.IncludeSchedule, fieldErrors)
 	params.IncludeStatus, fieldErrors = utils.ParseBoolParam(query, "includeStatus", params.IncludeStatus, fieldErrors)
@@ -137,7 +137,7 @@ func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults,
 // tripDetailsHandler returns extended information for a trip, including its schedule,
 // real-time status, and optionally the full stop time sequence.
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
-	includeReferences, _ := ShouldIncludeReferences(r, nil)
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
 
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
@@ -151,7 +151,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	// Format errors do not need the agency timezone. Catch them before GetTrip so
 	// an unknown ID still returns a field error instead of 404. Localized parse
 	// stays after the lookup, where loc is available.
-	if _, fieldErrors := api.parseTripParams(r, defaults); len(fieldErrors) > 0 {
+	if _, fieldErrors := api.parseTripParams(r, defaults); len(fieldErrors) > 0 || len(referenceErrors) > 0 {
+		fieldErrors = mergeFieldErrors(fieldErrors, referenceErrors)
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}

@@ -3,9 +3,7 @@ package utils
 import (
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -877,7 +875,7 @@ func TestParsePaginationParams(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req, _ := http.NewRequest("GET", "/test"+tt.urlParams, nil)
-			offset, limit, _ := ParsePaginationParams(req)
+			offset, limit := ParsePaginationParams(req)
 
 			assert.Equal(t, tt.expectedOffset, offset)
 			assert.Equal(t, tt.expectedLimit, limit)
@@ -1028,47 +1026,6 @@ func TestTruncateComment(t *testing.T) {
 			result := TruncateComment(tt.input)
 			assert.Equal(t, tt.expected, result)
 			assert.True(t, len([]rune(result)) <= MaxCommentLength)
-		})
-	}
-}
-
-func TestValidateNumericParam(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "Empty string",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "Valid float",
-			input:    "47.6097",
-			expected: "47.6097",
-		},
-		{
-			name:     "Valid negative float",
-			input:    "-122.3331",
-			expected: "-122.3331",
-		},
-		{
-			name:     "Invalid text",
-			input:    "invalid-coord",
-			expected: "",
-		},
-		{
-			name:     "Mixed text and numbers",
-			input:    "12abc",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ValidateNumericParam(tt.input)
-			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -1253,183 +1210,21 @@ func TestParseBoolParam(t *testing.T) {
 	}
 }
 
-func TestStrictOptionalNumericParams(t *testing.T) {
-	floatFallback := 42.5
-	timeFallback := time.Date(2026, 9, 28, 12, 0, 0, 0, time.FixedZone("fallback", 3600))
-	tests := []struct {
-		name    string
-		parse   func(url.Values, map[string][]string) (any, map[string][]string)
-		valid   map[string]any
-		invalid []string
-	}{
-		{
-			name: "integer",
-			parse: func(params url.Values, errors map[string][]string) (any, map[string][]string) {
-				return ParseOptionalInt64Param(params, "count", 42, errors)
-			},
-			valid:   map[string]any{"0": int64(0), "-1": int64(-1), "+42": int64(42), "0010": int64(10), "9223372036854775807": int64(9223372036854775807), "-9223372036854775808": int64(-9223372036854775808)},
-			invalid: []string{"bad", "1x", "1.0", "1e2", "0x10", "1_000", " 1", "1 ", "9223372036854775808", "-9223372036854775809"},
-		},
-		{
-			name: "float",
-			parse: func(params url.Values, errors map[string][]string) (any, map[string][]string) {
-				return ParseOptionalFloatParam(params, "count", &floatFallback, errors)
-			},
-			valid:   map[string]any{"0": float64(0), "-1.5": -1.5, "+42.5": 42.5, "1.25e2": float64(125), "0x1p2": float64(4), "1.7976931348623157e308": 1.7976931348623157e308, "5e-324": 5e-324},
-			invalid: []string{"bad", "1x", " 1", "1 ", "1e309", "-1e309", "NaN", "+NaN", "-NaN", "Inf", "+Inf", "-Inf", "Infinity", "+Infinity", "-Infinity"},
-		},
-		{
-			name: "epoch",
-			parse: func(params url.Values, errors map[string][]string) (any, map[string][]string) {
-				return ParseOptionalEpochMillisParam(params, "count", &timeFallback, errors)
-			},
-			valid:   map[string]any{"0": time.UnixMilli(0).UTC(), "1700000000123": time.UnixMilli(1700000000123).UTC(), "9223372036854775807": time.UnixMilli(9223372036854775807).UTC()},
-			invalid: []string{"-1", "-9223372036854775808", "bad", "1x", "1.0", "1e2", " 1", "1 ", "9223372036854775808", "-9223372036854775809"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fallback, _ := tt.parse(nil, nil)
-			for raw, want := range tt.valid {
-				t.Run(raw, func(t *testing.T) {
-					got, errors := tt.parse(url.Values{"count": {raw}}, nil)
-					switch value := got.(type) {
-					case *float64:
-						assert.Equal(t, want, *value)
-					case *time.Time:
-						assert.Equal(t, want, *value)
-						assert.Same(t, time.UTC, value.Location())
-					default:
-						assert.Equal(t, want, got)
-					}
-					assert.Empty(t, errors)
-				})
-			}
-			for _, raw := range tt.invalid {
-				t.Run(raw, func(t *testing.T) {
-					existing := map[string][]string{"count": {"prior"}, "other": {"untouched"}}
-					got, errors := tt.parse(url.Values{"count": {raw}}, existing)
-					assert.Equal(t, fallback, got)
-					assert.Equal(t, map[string][]string{"count": {"prior", `Invalid field value for field "count".`}, "other": {"untouched"}}, errors)
-					_, errors = tt.parse(url.Values{"count": {raw}}, nil)
-					assert.Equal(t, map[string][]string{"count": {`Invalid field value for field "count".`}}, errors)
-				})
-			}
-		})
-	}
-}
-
-func TestOptionalParamDefaults(t *testing.T) {
-	floatFallback := 42.5
-	timeFallback := time.Now()
-	for _, params := range []url.Values{nil, {}, {"value": {""}}} {
-		for _, fallback := range []int64{0, 42} {
-			got, errors := ParseOptionalInt64Param(params, "value", fallback, nil)
-			assert.Equal(t, fallback, got)
-			assert.Empty(t, errors)
-		}
-		for _, fallback := range []*float64{nil, &floatFallback} {
-			got, errors := ParseOptionalFloatParam(params, "value", fallback, nil)
-			assert.Same(t, fallback, got)
-			assert.Empty(t, errors)
-		}
-		for _, fallback := range []*time.Time{nil, &timeFallback} {
-			got, errors := ParseOptionalEpochMillisParam(params, "value", fallback, nil)
-			assert.Same(t, fallback, got)
-			assert.Empty(t, errors)
-		}
-		for _, fallback := range []bool{false, true} {
-			got, errors := ParseBoolParam(params, "value", fallback, nil)
-			assert.Equal(t, fallback, got)
-			assert.Empty(t, errors)
-		}
-	}
-	// Invalid supplied values must remain errors even with a nil fallback.
-	value, errors := ParseOptionalFloatParam(url.Values{"value": {"bad"}}, "value", nil, nil)
-	assert.Nil(t, value)
-	assert.Equal(t, []string{`Invalid field value for field "value".`}, errors["value"])
-	epoch, errors := ParseOptionalEpochMillisParam(url.Values{"value": {"-1"}}, "value", nil, nil)
-	assert.Nil(t, epoch)
-	assert.Equal(t, []string{`Invalid field value for field "value".`}, errors["value"])
-	// Explicit zero must be distinguishable from an omitted field.
-	value, errors = ParseOptionalFloatParam(url.Values{"value": {"0"}}, "value", nil, nil)
-	require.NotNil(t, value)
-	assert.Zero(t, *value)
-	assert.Empty(t, errors)
-}
-
 func TestParseBoolParamStrictGrammar(t *testing.T) {
-	for _, fallback := range []bool{false, true} {
-		for _, raw := range []string{"true", "TRUE", "TrUe", "false", "FALSE", "FaLsE", "1", "0", "t", "T", "f", "F", " true", "false ", "\ttrue", "false\n", "maybe", " "} {
-			t.Run(fmt.Sprintf("%s/fallback=%t", raw, fallback), func(t *testing.T) {
-				existing := map[string][]string{"flag": {"prior"}, "other": {"untouched"}}
-				got, errors := ParseBoolParam(url.Values{"flag": {raw}}, "flag", fallback, existing)
-				switch strings.ToLower(raw) {
-				case "true", "false":
-					assert.Equal(t, strings.EqualFold(raw, "true"), got)
-					assert.Equal(t, []string{"prior"}, errors["flag"])
-				default:
-					assert.Equal(t, fallback, got)
-					assert.Equal(t, []string{"prior", "must be a boolean value (true/false)"}, errors["flag"])
-					_, freshErrors := ParseBoolParam(url.Values{"flag": {raw}}, "flag", fallback, nil)
-					assert.Equal(t, map[string][]string{"flag": {"must be a boolean value (true/false)"}}, freshErrors)
-				}
-				assert.Equal(t, []string{"untouched"}, errors["other"])
-			})
-		}
+	for _, raw := range []string{"true", "TRUE", "TrUe", "false", "FALSE", "FaLsE"} {
+		value, errors := ParseBoolParam(url.Values{"flag": {raw}}, "flag", false, nil)
+		assert.Equal(t, strings.EqualFold(raw, "true"), value)
+		assert.Empty(t, errors)
+	}
+	for _, raw := range []string{"1", "0", "t", "f", " true ", "garbage"} {
+		value, errors := ParseBoolParam(url.Values{"flag": {raw}}, "flag", true, nil)
+		assert.True(t, value)
+		assert.NotEmpty(t, errors["flag"])
 	}
 }
 
-func TestStrictPaginationValidation(t *testing.T) {
-	tests := []struct {
-		query         string
-		offset, limit int
-		fields        []string
-	}{
-		{"", 0, -1, nil}, {"offset=&maxCount=&limit=", 0, -1, nil},
-		{"offset=0&limit=2&maxCount=1", 0, 1, nil},
-		{"offset=9223372036854775807&maxCount=9223372036854775807", int(^uint(0) >> 1), 1000, nil},
-		{"maxCount=1&limit=bad", 0, 1, []string{"limit"}},
-		{"offset=-1&maxCount=0&limit=-1", 0, -1, []string{"offset", "maxCount", "limit"}},
-		{"offset=1x&maxCount=9223372036854775808&limit=bad", 0, -1, []string{"offset", "maxCount", "limit"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.query, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/?"+tt.query, nil)
-			offset, limit, errors := ParsePaginationParams(req)
-			// The int64 maximum offset is only representable on 64-bit platforms.
-			if strconv.IntSize == 32 && strings.Contains(tt.query, "offset=9223372036854775807") {
-				require.NotEmpty(t, errors["offset"])
-				return
-			}
-			assert.Equal(t, tt.offset, offset)
-			assert.Equal(t, tt.limit, limit)
-			assert.Len(t, errors, len(tt.fields))
-			for _, field := range tt.fields {
-				assert.NotEmpty(t, errors[field])
-			}
-		})
-	}
-}
-
-func TestStrictTimeParameterPrecision(t *testing.T) {
-	loc := time.FixedZone("east", 9*3600)
-	for _, raw := range []string{"-1", "bad", "12x", "9223372036854775808"} {
-		_, _, errors, ok := ParseTimeParameter(raw, loc, clock.NewMockClock(time.UnixMilli(0)))
-		assert.False(t, ok)
-		assert.NotEmpty(t, errors["time"])
-	}
-	date, parsed, errors, ok := ParseTimeParameter("1749855600123", loc, clock.NewMockClock(time.UnixMilli(0)))
-	require.True(t, ok)
-	require.Empty(t, errors)
-	assert.Equal(t, int64(1749855600123), parsed.UnixMilli())
-	assert.Equal(t, parsed.In(loc).Format("20060102"), date)
-	assert.Equal(t, loc, parsed.Location())
-	for _, raw := range []string{"2025-06-14", "2025-06-14_00-00-00"} {
-		date, parsed, errors, ok := ParseTimeParameter(raw, loc, clock.NewMockClock(time.UnixMilli(0)))
-		require.True(t, ok)
-		require.Empty(t, errors)
-		assert.Equal(t, "20250614", date)
-		assert.Equal(t, loc, parsed.Location())
-	}
+func TestParseTimeParameterRejectsNegativeEpoch(t *testing.T) {
+	_, _, errors, ok := ParseTimeParameter("-5", time.UTC, clock.NewMockClock(time.Unix(0, 0)))
+	assert.False(t, ok)
+	assert.NotEmpty(t, errors["time"])
 }

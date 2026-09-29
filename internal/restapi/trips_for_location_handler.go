@@ -20,8 +20,6 @@ import (
 // tripsForLocationHandler returns active trips near a geographic location, specified by
 // lat/lon coordinates with latSpan/lonSpan bounds, including real-time status and schedule data.
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
-	includeReferences, _ := ShouldIncludeReferences(r, nil)
-
 	ctx := r.Context()
 
 	parsedReq, fieldErrors, err := api.parseAndValidateRequest(r)
@@ -141,7 +139,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	references := *models.NewEmptyReferences()
 
-	if includeReferences {
+	if parsedReq.IncludeReferences {
 		tripSchedulesAndStatuses := make([]tripScheduleAndStatus, 0, len(result))
 
 		for _, trip := range result {
@@ -176,12 +174,13 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 // tripsForLocationRequest holds the parsed and validated query parameters for
 // the trips-for-location endpoint.
 type tripsForLocationRequest struct {
-	LocationParams  *internalgtfs.LocationParams
-	IncludeTrip     bool
-	IncludeSchedule bool
-	IncludeStatus   bool
-	CurrentTime     time.Time
-	AgencyLocations map[string]*time.Location
+	LocationParams    *internalgtfs.LocationParams
+	IncludeTrip       bool
+	IncludeSchedule   bool
+	IncludeStatus     bool
+	IncludeReferences bool
+	CurrentTime       time.Time
+	AgencyLocations   map[string]*time.Location
 }
 
 func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationRequest, map[string][]string, error) {
@@ -189,10 +188,12 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 
 	queryParams := r.URL.Query()
 
-	includeTrip, fieldErrors := utils.ParseBoolParam(queryParams, "includeTrip", true, fieldErrors)
+	// A supplied empty includeTrip previously meant false; omission defaults true.
+	includeTripDefault := !queryParams.Has("includeTrip") || queryParams.Get("includeTrip") != ""
+	includeTrip, fieldErrors := utils.ParseBoolParam(queryParams, "includeTrip", includeTripDefault, fieldErrors)
 	includeSchedule, fieldErrors := utils.ParseBoolParam(queryParams, "includeSchedule", false, fieldErrors)
 	includeStatus, fieldErrors := utils.ParseBoolParam(queryParams, "includeStatus", false, fieldErrors)
-	_, fieldErrors = ShouldIncludeReferences(r, fieldErrors)
+	includeReferences, fieldErrors := ShouldIncludeReferences(r, fieldErrors)
 
 	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
 
@@ -222,12 +223,13 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 	}
 
 	parsedReq := &tripsForLocationRequest{
-		LocationParams:  loc,
-		IncludeTrip:     includeTrip,
-		IncludeSchedule: includeSchedule,
-		IncludeStatus:   includeStatus,
-		CurrentTime:     currentTime,
-		AgencyLocations: agencyLocations,
+		LocationParams:    loc,
+		IncludeTrip:       includeTrip,
+		IncludeSchedule:   includeSchedule,
+		IncludeStatus:     includeStatus,
+		IncludeReferences: includeReferences,
+		CurrentTime:       currentTime,
+		AgencyLocations:   agencyLocations,
 	}
 	return parsedReq, nil, nil
 }

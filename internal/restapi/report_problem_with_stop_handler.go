@@ -33,9 +33,9 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	code := query.Get("code")
 	userComment := utils.TruncateComment(query.Get("userComment"))
 	var fieldErrors map[string][]string
-	userLat, fieldErrors := utils.ParseOptionalFloatParam(query, "userLat", nil, fieldErrors)
-	userLon, fieldErrors := utils.ParseOptionalFloatParam(query, "userLon", nil, fieldErrors)
-	userLocationAccuracy, fieldErrors := utils.ParseOptionalFloatParam(query, "userLocationAccuracy", nil, fieldErrors)
+	userLat, fieldErrors := utils.ParseFloatParam(query, "userLat", fieldErrors)
+	userLon, fieldErrors := utils.ParseFloatParam(query, "userLon", fieldErrors)
+	userLocationAccuracy, fieldErrors := utils.ParseFloatParam(query, "userLocationAccuracy", fieldErrors)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -53,9 +53,9 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 		StopID:               stopID,
 		Code:                 nulls.String(code),
 		UserComment:          nulls.String(userComment),
-		UserLat:              nullableReportFloat(userLat),
-		UserLon:              nullableReportFloat(userLon),
-		UserLocationAccuracy: nullableReportFloat(userLocationAccuracy),
+		UserLat:              nullableReportFloat(userLat, query.Get("userLat")),
+		UserLon:              nullableReportFloat(userLon, query.Get("userLon")),
+		UserLocationAccuracy: nullableReportFloat(userLocationAccuracy, query.Get("userLocationAccuracy")),
 		CreatedAt:            now,
 		SubmittedAt:          now,
 	}
@@ -71,9 +71,6 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	api.sendResponse(w, r, models.NewOKResponse(struct{}{}, api.Clock))
 }
 
-func nullableReportFloat(value *float64) sql.NullFloat64 {
-	if value == nil {
-		return sql.NullFloat64{}
-	}
-	return sql.NullFloat64{Float64: *value, Valid: true}
+func nullableReportFloat(value float64, raw string) sql.NullFloat64 {
+	return sql.NullFloat64{Float64: value, Valid: raw != ""}
 }

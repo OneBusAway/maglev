@@ -26,12 +26,11 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 	}
 
 	// Apply pagination
-	offset, limit, fieldErrors := utils.ParsePaginationParams(r)
-	fieldErrors = mergeFieldErrors(fieldErrors, referenceErrors)
-	if len(fieldErrors) > 0 {
-		api.validationErrorResponse(w, r, fieldErrors)
+	if len(referenceErrors) > 0 {
+		api.validationErrorResponse(w, r, referenceErrors)
 		return
 	}
+	offset, limit := utils.ParsePaginationParams(r)
 	agencies, limitExceeded := utils.PaginateSlice(agencies, offset, limit)
 
 	boundsMap := api.GtfsManager.GetRegionBounds()

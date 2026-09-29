@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -13,22 +14,11 @@ import (
 
 // vehiclesForAgencyHandler returns real-time vehicle positions for all vehicles operated by a given agency.
 func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
-	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
-	const maxAgeInSeconds = int64((1<<63 - 1) / int64(time.Second))
-	ageInSeconds, ageErrors := utils.ParseOptionalInt64Param(r.URL.Query(), "ageInSeconds", 0, referenceErrors)
-	if ageInSeconds < 0 || ageInSeconds > maxAgeInSeconds {
-		if ageErrors == nil {
-			ageErrors = make(map[string][]string)
-		}
-		ageErrors["ageInSeconds"] = append(ageErrors["ageInSeconds"], "must be a non-negative integer within the supported duration range")
-	}
-	_, _, timeErrors, _ := utils.ParseTimeParameter(r.URL.Query().Get("time"), time.UTC, api.Clock)
-	ageErrors = mergeFieldErrors(ageErrors, timeErrors)
-	if len(ageErrors) > 0 {
-		api.validationErrorResponse(w, r, ageErrors)
+	includeReferences, fieldErrors := ShouldIncludeReferences(r, nil)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
-
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	id, ok := api.extractAndValidateID(w, r)
 	if !ok {
@@ -75,15 +65,18 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// ageInSeconds: absent = no filter; any value >= 0 applies a strict cutoff.
-	if r.URL.Query().Get("ageInSeconds") != "" {
-		cutoff := referenceTime.Add(-time.Duration(ageInSeconds) * time.Second)
-		filtered := vehiclesForAgency[:0]
-		for _, vehicle := range vehiclesForAgency {
-			if !api.GtfsManager.GetVehicleLastUpdateTime(&vehicle).Before(cutoff) {
-				filtered = append(filtered, vehicle)
+	const maxAgeInSeconds = int64((1<<63 - 1) / int64(time.Second))
+	if val := r.URL.Query().Get("ageInSeconds"); val != "" {
+		if ageInSeconds, err := strconv.ParseInt(val, 10, 64); err == nil && ageInSeconds >= 0 && ageInSeconds <= maxAgeInSeconds {
+			cutoff := referenceTime.Add(-time.Duration(ageInSeconds) * time.Second)
+			filtered := vehiclesForAgency[:0]
+			for _, vehicle := range vehiclesForAgency {
+				if !api.GtfsManager.GetVehicleLastUpdateTime(&vehicle).Before(cutoff) {
+					filtered = append(filtered, vehicle)
+				}
 			}
+			vehiclesForAgency = filtered
 		}
-		vehiclesForAgency = filtered
 	}
 
 	vehiclesList := make([]models.VehicleStatus, 0, len(vehiclesForAgency))

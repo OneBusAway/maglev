@@ -38,9 +38,9 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	userComment := utils.TruncateComment(query.Get("userComment"))
 	userVehicleNumber := query.Get("userVehicleNumber")
 	var fieldErrors map[string][]string
-	userLat, fieldErrors := utils.ParseOptionalFloatParam(query, "userLat", nil, fieldErrors)
-	userLon, fieldErrors := utils.ParseOptionalFloatParam(query, "userLon", nil, fieldErrors)
-	userLocationAccuracy, fieldErrors := utils.ParseOptionalFloatParam(query, "userLocationAccuracy", nil, fieldErrors)
+	userLat, fieldErrors := utils.ParseFloatParam(query, "userLat", fieldErrors)
+	userLon, fieldErrors := utils.ParseFloatParam(query, "userLon", fieldErrors)
+	userLocationAccuracy, fieldErrors := utils.ParseFloatParam(query, "userLocationAccuracy", fieldErrors)
 	userOnVehicle, fieldErrors := utils.ParseBoolParam(query, "userOnVehicle", false, fieldErrors)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
@@ -70,9 +70,9 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 		StopID:               nulls.String(stopID),
 		Code:                 nulls.String(code),
 		UserComment:          nulls.String(userComment),
-		UserLat:              nullableReportFloat(userLat),
-		UserLon:              nullableReportFloat(userLon),
-		UserLocationAccuracy: nullableReportFloat(userLocationAccuracy),
+		UserLat:              nullableReportFloat(userLat, query.Get("userLat")),
+		UserLon:              nullableReportFloat(userLon, query.Get("userLon")),
+		UserLocationAccuracy: nullableReportFloat(userLocationAccuracy, query.Get("userLocationAccuracy")),
 		UserOnVehicle:        sql.NullInt64{Int64: onVehicleValue, Valid: query.Get("userOnVehicle") != ""},
 		UserVehicleNumber:    nulls.String(userVehicleNumber),
 		CreatedAt:            now,
