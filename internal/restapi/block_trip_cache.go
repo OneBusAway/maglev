@@ -61,6 +61,12 @@ func (c *blockTripDataCache) put(generation uint64, tripID string, data blockTri
 	// cache sits at generation 0, and without this the first put at a non-zero
 	// generation would be thrown away by the next reset.
 	c.reset(generation)
+	// A request that read an older generation can still be in flight when a reload
+	// lands. What it loaded describes a dataset we have already dropped, so storing
+	// it would only spend a slot on something get will refuse.
+	if generation < c.generation.Load() {
+		return
+	}
 	if c.count.Load() >= maxBlockTripCacheEntries {
 		return
 	}
@@ -73,16 +79,24 @@ func (c *blockTripDataCache) put(generation uint64, tripID string, data blockTri
 // reset drops everything when the static dataset has been replaced. get already
 // refuses entries from an older generation, so this is only about releasing the
 // memory the previous dataset's entries still hold.
+//
+// The generation only ever moves forward. A request that read an older generation
+// can still call in after a reload, and letting it move the cache back would clear
+// entries that describe the current dataset and leave the next request to clear
+// again.
 func (c *blockTripDataCache) reset(generation uint64) {
-	previous := c.generation.Load()
-	if previous == generation {
-		return
-	}
-	// Whichever caller wins the swap does the clearing, so a burst of concurrent
-	// requests after a reload does not clear repeatedly.
-	if c.generation.CompareAndSwap(previous, generation) {
-		c.entries.Clear()
-		c.count.Store(0)
+	for {
+		previous := c.generation.Load()
+		if generation <= previous {
+			return
+		}
+		// Whichever caller wins the swap does the clearing, so a burst of concurrent
+		// requests after a reload does not clear repeatedly.
+		if c.generation.CompareAndSwap(previous, generation) {
+			c.entries.Clear()
+			c.count.Store(0)
+			return
+		}
 	}
 }
 

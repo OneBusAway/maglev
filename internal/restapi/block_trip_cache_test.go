@@ -38,6 +38,33 @@ func TestBlockTripDataCache_ResetClearsEntries(t *testing.T) {
 	assert.Zero(t, cache.count.Load(), "count should be zeroed so the cache can refill")
 }
 
+// A request that read the old generation can still be in flight when a reload
+// lands. It must not drag the cache back to that generation, or it would clear
+// entries built for the current dataset and leave the next request to clear again.
+func TestBlockTripDataCache_GenerationOnlyMovesForward(t *testing.T) {
+	var cache blockTripDataCache
+
+	// A request reads generation 1 and warms the cache.
+	cache.reset(1)
+	cache.put(1, "trip-1", blockTripData{id: "trip-1"})
+
+	// A reload lands and a newer request moves the cache on.
+	cache.reset(2)
+	cache.put(2, "trip-2", blockTripData{id: "trip-2"})
+	_, ok := cache.get(2, "trip-2")
+	require.True(t, ok, "entry for the current dataset should be held")
+
+	// The first request finally finishes and writes what it loaded from
+	// generation 1.
+	cache.put(1, "trip-1", blockTripData{id: "trip-1"})
+
+	assert.EqualValues(t, 2, cache.generation.Load(), "generation must not move backward")
+	_, ok = cache.get(2, "trip-2")
+	assert.True(t, ok, "the late write must not clear the current dataset's entries")
+	_, ok = cache.get(1, "trip-1")
+	assert.False(t, ok, "data from the replaced dataset must not be stored")
+}
+
 func TestBlockTripDataCache_StopsInsertingAtCap(t *testing.T) {
 	var cache blockTripDataCache
 	for i := 0; i < maxBlockTripCacheEntries; i++ {
