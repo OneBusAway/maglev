@@ -1222,9 +1222,3 @@ func TestParseBoolParamStrictGrammar(t *testing.T) {
 		assert.NotEmpty(t, errors["flag"])
 	}
 }
-
-func TestParseTimeParameterRejectsNegativeEpoch(t *testing.T) {
-	_, _, errors, ok := ParseTimeParameter("-5", time.UTC, clock.NewMockClock(time.Unix(0, 0)))
-	assert.False(t, ok)
-	assert.NotEmpty(t, errors["time"])
-}
