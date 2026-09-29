@@ -56,6 +56,9 @@ type Manager struct {
 
 	staticMutex  sync.RWMutex
 	regionBounds map[string]*RegionBounds
+	// staticGeneration counts the static reloads that actually replaced the
+	// data. See StaticGeneration.
+	staticGeneration atomic.Uint64
 
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
@@ -830,6 +833,14 @@ func (manager *Manager) GetSystemETag(ctx context.Context) string {
 	}
 
 	return metadata.FileHash
+}
+
+// StaticGeneration returns a counter that increases every time a static GTFS
+// reload replaces the dataset. A cache holding data derived from static GTFS can
+// store the generation next to each entry and treat a mismatch as a miss, which
+// avoids needing the reload path to know about the cache.
+func (manager *Manager) StaticGeneration() uint64 {
+	return manager.staticGeneration.Load()
 }
 
 // FeedExpiresAt reads the feed expiry time from the database.

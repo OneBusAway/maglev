@@ -229,8 +229,13 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 
 	// Clear the direction calculator's cached results so stale entries from the
 	// pre-reload dataset aren't served
-	if changed && manager.DirectionCalculator != nil {
-		manager.DirectionCalculator.ClearCache()
+	if changed {
+		if manager.DirectionCalculator != nil {
+			manager.DirectionCalculator.ClearCache()
+		}
+		// Caches keyed on StaticGeneration stop matching their entries here, so
+		// they drop anything derived from the dataset we just replaced.
+		manager.staticGeneration.Add(1)
 	}
 
 	if eTag := manager.GetSystemETag(ctx); eTag != "" {
