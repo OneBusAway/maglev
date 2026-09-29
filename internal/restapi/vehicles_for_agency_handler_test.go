@@ -1260,3 +1260,119 @@ func TestAddRouteReference(t *testing.T) {
 	assert.Equal(t, "FF0000", ref.Color)
 	assert.Equal(t, "", ref.TextColor, "unset nullable fields map to empty string")
 }
+
+// firstStopOnTripWithShape returns a trip that has both a shape and stop times,
+// together with the coordinates of its first stop, so a mock vehicle can be placed
+// somewhere the shape projection has real work to do.
+func firstStopOnTripWithShape(t testing.TB, api *RestAPI) (tripID string, lat, lon float64) {
+	t.Helper()
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(context.Background(),
+		`SELECT t.id, s.lat, s.lon
+		   FROM trips t
+		   JOIN stop_times st ON st.trip_id = t.id
+		   JOIN stops s ON s.id = st.stop_id
+		  WHERE t.shape_id IS NOT NULL AND t.shape_id != ''
+		  ORDER BY t.id, st.stop_sequence
+		  LIMIT 1`,
+	).Scan(&tripID, &lat, &lon)
+	require.NoError(t, err, "RABA fixture should contain a trip with a shape and stop times")
+	return tripID, lat, lon
+}
+
+// The spec defines these tripStatus fields and this handler left every one of them
+// at its zero value, because it built tripStatus inline instead of going through
+// the builder the other real-time endpoints use (#1195).
+func TestVehiclesForAgencyHandler_TripStatusSpecFields(t *testing.T) {
+	// A Monday inside the RABA service period, so the trip is actually running.
+	now := time.Date(2024, 11, 4, 12, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	tripID, lat, lon := firstStopOnTripWithShape(t, api)
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(context.Background(), tripID)
+	require.NoError(t, err)
+
+	const vehicleID = "v_spec_fields"
+	vehicleLat, vehicleLon := float32(lat), float32(lon)
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, tripID, trip.RouteID, gtfs.MockVehicleOptions{
+		Position: &gogtfs.Position{Latitude: &vehicleLat, Longitude: &vehicleLon},
+		// Matching the clock keeps the vehicle fresh, so the real-time branch runs
+		// and predicted comes back true.
+		Timestamp: &now,
+	})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	status := entry.TripStatus
+
+	assert.NotEmpty(t, status.ClosestStop, "closestStop must be resolved")
+	assert.NotEmpty(t, status.NextStop, "nextStop must be resolved")
+	assert.Greater(t, status.TotalDistanceAlongTrip, 0.0, "totalDistanceAlongTrip comes from the shape")
+	assert.True(t, status.Predicted, "a fresh vehicle is real-time tracked")
+	assert.False(t, status.Scheduled, "scheduled must stay the inverse of predicted")
+
+	// The stop-relative fields are useless to a client if the IDs they name are not
+	// dereferenceable, which is why #1195 asks for them in references.stops.
+	referencedStops := make(map[string]struct{}, len(model.Data.References.Stops))
+	for _, stop := range model.Data.References.Stops {
+		referencedStops[stop.ID] = struct{}{}
+	}
+	assert.Contains(t, referencedStops, status.ClosestStop, "closestStop must appear in references.stops")
+	assert.Contains(t, referencedStops, status.NextStop, "nextStop must appear in references.stops")
+
+	// A stop reference lists the routes serving it, so those must resolve too.
+	referencedRoutes := make(map[string]struct{}, len(model.Data.References.Routes))
+	for _, route := range model.Data.References.Routes {
+		referencedRoutes[route.ID] = struct{}{}
+	}
+	for _, stop := range model.Data.References.Stops {
+		for _, routeID := range stop.RouteIDs {
+			assert.Contains(t, referencedRoutes, routeID,
+				"route %s named by stop %s must appear in references.routes", routeID, stop.ID)
+		}
+	}
+}
+
+// The fields this endpoint resolves for itself must keep their existing values.
+// A stale vehicle is the case that catches it: the shared builder returns early for
+// one, so taking position from it would emit (0, 0) next to a real location at the
+// top level.
+func TestVehiclesForAgencyHandler_KeepsEndpointOwnedStatusFields(t *testing.T) {
+	now := time.Date(2024, 11, 4, 12, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	tripID, lat, lon := firstStopOnTripWithShape(t, api)
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(context.Background(), tripID)
+	require.NoError(t, err)
+
+	const vehicleID = "v_stale_position"
+	vehicleLat, vehicleLon := float32(lat), float32(lon)
+	// Well outside the staleness window, so the builder treats it as untracked.
+	staleTimestamp := now.Add(-2 * time.Hour)
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, tripID, trip.RouteID, gtfs.MockVehicleOptions{
+		Position:  &gogtfs.Position{Latitude: &vehicleLat, Longitude: &vehicleLon},
+		Timestamp: &staleTimestamp,
+	})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	status := entry.TripStatus
+
+	assert.InDelta(t, lat, status.Position.Lat, 0.0001, "tripStatus.position must stay the reported GPS position")
+	assert.InDelta(t, lon, status.Position.Lon, 0.0001, "tripStatus.position must stay the reported GPS position")
+	require.NotNil(t, entry.Location)
+	assert.InDelta(t, entry.Location.Lat, status.Position.Lat, 0.0001,
+		"tripStatus.position must agree with the entry's own location")
+
+	assert.Equal(t, entry.Status, status.Status, "status is mirrored from the entry")
+	assert.Equal(t, entry.Phase, status.Phase, "phase is mirrored from the entry")
+	assert.Equal(t, staleTimestamp.UnixMilli(), status.LastUpdateTime.Time.UnixMilli(),
+		"lastUpdateTime comes from the vehicle timestamp")
+}
