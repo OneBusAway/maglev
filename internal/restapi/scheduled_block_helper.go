@@ -547,15 +547,65 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 // haversine (haversineStopDistances) so shapeless trips still contribute
 // a real length to the block cursor. Trip is still appended so
 // block_sequence stays consistent.
+// loadBlockTripData returns the static per-trip data for tripIDs, serving whatever
+// the cross-request cache already holds and querying only the rest.
+//
+// The returned slice is always freshly allocated, because the caller sorts it in
+// place and the cached entries are shared with concurrent readers. The entries
+// themselves are treated as read-only.
 func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []blockTripData {
 	if len(tripIDs) == 0 {
 		return nil
+	}
+
+	generation := api.staticGeneration()
+	api.blockTripCache.reset(generation)
+
+	cached := make(map[string]blockTripData, len(tripIDs))
+	missing := make([]string, 0, len(tripIDs))
+	for _, id := range tripIDs {
+		if data, ok := api.blockTripCache.get(generation, id); ok {
+			cached[id] = data
+			continue
+		}
+		missing = append(missing, id)
+	}
+
+	loaded, shapesComplete := api.loadBlockTripDataFromDB(ctx, missing)
+
+	out := make([]blockTripData, 0, len(tripIDs))
+	for _, id := range tripIDs {
+		data, ok := cached[id]
+		if !ok {
+			data, ok = loaded[id]
+			if !ok {
+				continue
+			}
+			// A failed shape query leaves the trip on the haversine fallback.
+			// Caching that would let one transient DB error outlive the request
+			// that hit it, so only a complete load is stored.
+			if shapesComplete {
+				api.blockTripCache.put(generation, id, data)
+			}
+		}
+		out = append(out, data)
+	}
+	return out
+}
+
+// loadBlockTripDataFromDB loads tripIDs straight from the database, keyed by trip
+// ID. The second return reports whether the shape query succeeded; when it did
+// not, every trip in the result is on the haversine fallback and the caller
+// should not cache it.
+func (api *RestAPI) loadBlockTripDataFromDB(ctx context.Context, tripIDs []string) (map[string]blockTripData, bool) {
+	if len(tripIDs) == 0 {
+		return nil, true
 	}
 	q := api.GtfsManager.GtfsDB.Queries
 
 	stopTimeRows, err := q.GetStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripIDs))
 	for _, st := range stopTimeRows {
@@ -567,8 +617,8 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 	// the fallback, still correct just less precise. Log real DB errors
 	// so an operator sees the degradation instead of silently losing
 	// shape-based precision across every block trip.
-	shapeRows, err := q.GetShapePointsByTripIDs(ctx, tripIDs)
-	warnIfRealDBError(err, "loadBlockTripData: GetShapePointsByTripIDs failed, degrading every trip to haversine fallback",
+	shapeRows, shapeErr := q.GetShapePointsByTripIDs(ctx, tripIDs)
+	warnIfRealDBError(shapeErr, "loadBlockTripData: GetShapePointsByTripIDs failed, degrading every trip to haversine fallback",
 		slog.Int("trip_count", len(tripIDs)))
 	shapePointsByTrip := make(map[string][]gtfs.ShapePoint, len(tripIDs))
 	for _, sr := range shapeRows {
@@ -576,7 +626,7 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 			gtfs.ShapePoint{Latitude: sr.Lat, Longitude: sr.Lon})
 	}
 
-	out := make([]blockTripData, 0, len(tripIDs))
+	out := make(map[string]blockTripData, len(tripIDs))
 	for _, id := range tripIDs {
 		stopTimes := stopTimesByTrip[id]
 		if len(stopTimes) == 0 {
@@ -589,7 +639,7 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 			cumDistances = preCalculateCumulativeDistances(shapePoints)
 			totalDist = cumDistances[len(cumDistances)-1]
 		}
-		out = append(out, blockTripData{
+		out[id] = blockTripData{
 			id:           id,
 			stopTimes:    stopTimes,
 			shapePoints:  shapePoints,
@@ -600,9 +650,9 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 				stopTimes[len(stopTimes)-1].ArrivalTime,
 				stopTimes[len(stopTimes)-1].DepartureTime,
 			),
-		})
+		}
 	}
-	return out
+	return out, shapeErr == nil
 }
 
 // fetchStopCoordsForStopTimes fetches the unique stops in stopTimes, batching
