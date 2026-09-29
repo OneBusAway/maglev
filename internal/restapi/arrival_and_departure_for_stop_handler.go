@@ -722,10 +722,8 @@ func (api *RestAPI) getPredictedTimes(
 	// through. Block-level scheduleDeviation may still be gated upstream
 	// by GetScheduleDeviationForBlock — that's the appropriate location.
 
-	// Apply each side's deviation to its own scheduled time. Collapsing both
-	// onto a single offset when arrival == departure used propagatedDelay as a
-	// sentinel, so an unrelated earlier stop's delay decided whether the feed's
-	// Arrival.Delay or its Departure.Delay survived.
+	// Arrival and departure each take their own offset, matching Java's
+	// setPredictedTimesFromTimepointPredictionRecords.
 	predictedArrival := scheduledArrivalTime.Add(*arrivalOffset)
 	predictedDeparture := scheduledDepartureTime.Add(*departureOffset)
 

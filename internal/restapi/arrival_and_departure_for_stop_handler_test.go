@@ -916,8 +916,21 @@ func TestGetPredictedTimes_UnequalArrivalAndDepartureDeviation(t *testing.T) {
 			expectedDepartOff:  4 * time.Minute,
 		},
 		{
-			name:               "late arrival, recovered departure",
+			name:               "late arrival, partially recovered departure",
 			tripID:             "dwell_recovering",
+			scheduledDwell:     3 * time.Minute,
+			stopTimeUpdates:    []gtfs.StopTimeUpdate{targetUpdate(6*time.Minute, 4*time.Minute)},
+			expectedArrivalOff: 6 * time.Minute,
+			expectedDepartOff:  4 * time.Minute,
+		},
+		{
+			// The feed contradicts itself here: departure lands before arrival.
+			// We serve it as given, which is what Java does. It only floors
+			// departure on the synthesized path (arrival + slack, slack >= 0)
+			// and passes both sides through untouched when the feed supplies
+			// them. See ArrivalAndDepartureServiceImpl.java:726-741.
+			name:               "contradictory feed passes through unchanged",
+			tripID:             "dwell_contradictory",
 			stopTimeUpdates:    []gtfs.StopTimeUpdate{targetUpdate(6*time.Minute, 30*time.Second)},
 			expectedArrivalOff: 6 * time.Minute,
 			expectedDepartOff:  30 * time.Second,
