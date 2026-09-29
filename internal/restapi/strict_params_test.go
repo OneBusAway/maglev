@@ -159,17 +159,3 @@ func TestTripsForLocationStrictDefaults(t *testing.T) {
 	assert.False(t, params.IncludeSchedule)
 	assert.False(t, params.IncludeStatus)
 }
-
-func TestNegativeEpochsRejected(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
-	for _, key := range []string{"time", "serviceDate"} {
-		req := httptest.NewRequest("GET", "/?"+key+"=-5", nil)
-		_, errors := api.parseTripParams(req, TripParamDefaults{})
-		assert.NotEmpty(t, errors[key])
-		resp, model := callAPIHandler[strictValidationResponse](t, api, "/api/where/trip-details/1_any.json?key=TEST&"+key+"=-5")
-		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-		assert.NotEmpty(t, model.Data.FieldErrors[key])
-	}
-}
