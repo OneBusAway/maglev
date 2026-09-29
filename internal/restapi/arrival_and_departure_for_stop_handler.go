@@ -722,20 +722,8 @@ func (api *RestAPI) getPredictedTimes(
 	// through. Block-level scheduleDeviation may still be gated upstream
 	// by GetScheduleDeviationForBlock — that's the appropriate location.
 
-	// Rule 1: arrival == departure (Simplified Logic)
-	if scheduledArrivalTime.Equal(scheduledDepartureTime) {
-		offset := *arrivalOffset
-
-		if *departureOffset != propagatedDelay && *departureOffset != *arrivalOffset {
-			offset = *departureOffset
-		}
-
-		predictedArrival := scheduledArrivalTime.Add(offset)
-		predictedDeparture := scheduledDepartureTime.Add(offset)
-		return predictedArrival, predictedDeparture, true
-	}
-
-	// Rule 2: arrival < departure
+	// Arrival and departure each take their own offset, matching Java's
+	// setPredictedTimesFromTimepointPredictionRecords.
 	predictedArrival := scheduledArrivalTime.Add(*arrivalOffset)
 	predictedDeparture := scheduledDepartureTime.Add(*departureOffset)
 
