@@ -65,7 +65,11 @@ func TestBlockTripDataCache_GenerationOnlyMovesForward(t *testing.T) {
 	assert.False(t, ok, "data from the replaced dataset must not be stored")
 }
 
-func TestBlockTripDataCache_StopsInsertingAtCap(t *testing.T) {
+// Filling up must not freeze the cached set. A refresh that fetches an identical
+// feed leaves the generation alone, so a cache that stopped admitting once full
+// would keep whatever the first requests after startup warmed and never take a
+// trip again, however long the process runs.
+func TestBlockTripDataCache_StartsOverWhenFull(t *testing.T) {
 	var cache blockTripDataCache
 	for i := 0; i < maxBlockTripCacheEntries; i++ {
 		id := fmt.Sprintf("trip-%d", i)
@@ -73,14 +77,13 @@ func TestBlockTripDataCache_StopsInsertingAtCap(t *testing.T) {
 	}
 	require.EqualValues(t, maxBlockTripCacheEntries, cache.count.Load())
 
-	cache.put(1, "one-too-many", blockTripData{id: "one-too-many"})
-	_, ok := cache.get(1, "one-too-many")
-	assert.False(t, ok, "insert past the cap should be dropped")
-	assert.EqualValues(t, maxBlockTripCacheEntries, cache.count.Load(), "count must not grow past the cap")
+	cache.put(1, "arrived-late", blockTripData{id: "arrived-late"})
 
-	// Entries already held stay readable.
-	_, ok = cache.get(1, "trip-0")
-	assert.True(t, ok, "existing entries should still be served when full")
+	_, ok := cache.get(1, "arrived-late")
+	assert.True(t, ok, "a trip requested after the cache filled must still be cacheable")
+	assert.LessOrEqual(t, cache.count.Load(), int64(maxBlockTripCacheEntries),
+		"count must stay within the cap")
+	assert.EqualValues(t, 1, cache.count.Load(), "filling up should start a fresh set")
 }
 
 // TestBlockTripDataCache_ConcurrentAccess exists mainly to give CI's race

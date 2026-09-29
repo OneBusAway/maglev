@@ -67,8 +67,14 @@ func (c *blockTripDataCache) put(generation uint64, tripID string, data blockTri
 	if generation < c.generation.Load() {
 		return
 	}
+	// Full, so start over rather than stop admitting. A refresh that fetches an
+	// identical feed leaves the generation alone, so without this the cached set
+	// would stay whatever the first requests after startup happened to warm and
+	// would never take another trip. On a feed with more trips than the cap that
+	// gets worse through the service day, as demand moves to trips the cache has
+	// no room for.
 	if c.count.Load() >= maxBlockTripCacheEntries {
-		return
+		c.clear()
 	}
 	entry := blockTripCacheEntry{generation: generation, data: data}
 	if _, replaced := c.entries.Swap(tripID, entry); !replaced {
@@ -93,11 +99,17 @@ func (c *blockTripDataCache) reset(generation uint64) {
 		// Whichever caller wins the swap does the clearing, so a burst of concurrent
 		// requests after a reload does not clear repeatedly.
 		if c.generation.CompareAndSwap(previous, generation) {
-			c.entries.Clear()
-			c.count.Store(0)
+			c.clear()
 			return
 		}
 	}
+}
+
+// clear empties the cache. Two callers racing here both clear, which costs a
+// little repeated work and nothing else.
+func (c *blockTripDataCache) clear() {
+	c.entries.Clear()
+	c.count.Store(0)
 }
 
 // staticGeneration reads the manager's static generation, tolerating the nil
