@@ -1,3 +1,8 @@
+---
+name: oba-api-spec-check
+description: Check a Maglev API change against the maglev.wiki spec and whether deviations from Java are recorded in Implementation Decisions. Normally invoked by oba-api-review; use directly to isolate spec alignment.
+---
+
 # OBA API Spec Check
 
 Assess whether a change is consistent with the relevant `maglev.wiki` spec, and verify that any deviation from legacy behaviour is recorded in the spec's Implementation Decisions section.
