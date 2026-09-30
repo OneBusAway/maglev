@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,6 +30,20 @@ func TestTripHandlerRequiresValidApiKey(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	assert.Equal(t, http.StatusUnauthorized, model.Code)
 	assert.Equal(t, "permission denied", model.Text)
+}
+
+// GTFS IDs are free text. RABA has trips such as "Route 15 Southbound",
+// and Maglev returns those IDs from other endpoints (schedule-for-route),
+// so /trip must accept them back.
+func TestTripHandlerAcceptsTripIDWithSpaces(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := utils.FormCombinedID(testdata.Raba.ID, "Route 15 Southbound")
+	resp, model := callAPIHandler[TripEntryResponse](t, api, tripURL(url.PathEscape(tripID)))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode, model.Text)
+	assert.Equal(t, tripID, model.Data.Entry.ID)
 }
 
 func TestTripHandlerEndToEnd(t *testing.T) {

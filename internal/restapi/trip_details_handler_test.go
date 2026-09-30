@@ -3,6 +3,7 @@ package restapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -701,4 +703,16 @@ func TestTripDetailsHandler_ReferencesResolveWithoutSchedule(t *testing.T) {
 	for _, tr := range model.Data.References.Trips {
 		assert.True(t, routeRefs[tr.RouteID], "route %s of trip %s is missing from references.routes", tr.RouteID, tr.ID)
 	}
+}
+
+func TestTripDetailsHandlerAcceptsTripIDWithSpaces(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := utils.FormCombinedID(testdata.Raba.ID, "Route 15 Southbound")
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+url.PathEscape(tripID)+".json?key=TEST")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode, model.Text)
+	assert.Equal(t, tripID, model.Data.Entry.TripID)
 }
