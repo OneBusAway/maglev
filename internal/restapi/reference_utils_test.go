@@ -251,14 +251,61 @@ func TestStopReferences(t *testing.T) {
 	assert.Empty(t, refs[1].RouteIDs)
 	assert.NotNil(t, refs[1].RouteIDs, "an unresolved route list is empty, not null")
 	assert.Equal(t, refs[1].RouteIDs, refs[1].StaticRouteIDs)
-	// No stop_times and no shape, so nothing supports a direction.
-	assert.Equal(t, models.UnknownValue, refs[1].Direction)
+	// No stop_times and no shape, so nothing supports a direction. Java copies
+	// the empty narrative direction, so this must be "" and not "UNKNOWN".
+	assert.Equal(t, "", refs[1].Direction)
 
 	assert.Equal(t, 0, refs[2].LocationType)
 	assert.Empty(t, refs[2].Parent)
 
 	assert.Equal(t, 0, refs[3].LocationType)
 	assert.Empty(t, refs[3].Parent)
+}
+
+func TestStopReferences_DirectionAndCodeMatchBuildStopModel(t *testing.T) {
+	api := createTestApi(t)
+	ctx := context.Background()
+
+	const referringAgencyID = "agency"
+
+	tests := []struct {
+		name          string
+		stop          gtfsdb.Stop
+		wantDirection string
+		wantCode      string
+	}{
+		{
+			name:          "no direction and no stop_code",
+			stop:          gtfsdb.Stop{ID: "no-code-stop", Lat: 40.5, Lon: -122.3},
+			wantDirection: "",
+			wantCode:      "no-code-stop",
+		},
+		{
+			name:          "stop_code is kept when present",
+			stop:          gtfsdb.Stop{ID: "coded-stop", Code: nulls.String("C03"), Lat: 40.6, Lon: -122.4},
+			wantDirection: "",
+			wantCode:      "C03",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			referringIDs := map[string][]string{
+				tt.stop.ID: {utils.FormCombinedID(referringAgencyID, tt.stop.ID)},
+			}
+
+			refs, _ := api.stopReferences(ctx, []gtfsdb.Stop{tt.stop}, referringIDs)
+			require.Len(t, refs, 1)
+
+			assert.Equal(t, tt.wantDirection, refs[0].Direction)
+			assert.Equal(t, tt.wantCode, refs[0].Code)
+
+			// The reference must agree with the canonical stop builder.
+			canonical := api.buildStopModel(ctx, referringAgencyID, tt.stop, []string{})
+			assert.Equal(t, canonical.Direction, refs[0].Direction)
+			assert.Equal(t, canonical.Code, refs[0].Code)
+		})
+	}
 }
 
 func TestBuildStopReferencesAndRouteIDsForStops_DeduplicatesStopIDs(t *testing.T) {
