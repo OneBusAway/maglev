@@ -387,22 +387,22 @@ func ParseRequiredStringParam(params url.Values, key string, fieldErrors map[str
 }
 
 // ParseBoolParam retrieves a boolean value from the provided URL query parameters,
-// accepting only case-insensitive true/false. An absent or empty value uses
-// fallback; other supplied values append a field error.
+// accepting only case-insensitive true/false. An absent value uses fallback;
+// a present empty value is false, matching Java. Other values append a field error.
 func ParseBoolParam(params url.Values, key string, fallback bool, fieldErrors map[string][]string) (bool, map[string][]string) {
 	if fieldErrors == nil {
 		fieldErrors = make(map[string][]string)
 	}
 
-	val := params.Get(key)
-	if val == "" {
+	if !params.Has(key) {
 		return fallback, fieldErrors
 	}
 
+	val := params.Get(key)
 	switch {
 	case strings.EqualFold(val, "true"):
 		return true, fieldErrors
-	case strings.EqualFold(val, "false"):
+	case val == "" || strings.EqualFold(val, "false"):
 		return false, fieldErrors
 	default:
 		fieldErrors[key] = append(fieldErrors[key], "must be a boolean value (true/false)")

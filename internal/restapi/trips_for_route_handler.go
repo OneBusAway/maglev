@@ -39,14 +39,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	query := r.URL.Query()
-	// These flags default true when omitted but retain their prior false value
-	// when explicitly supplied empty.
-	includeScheduleDefault := !query.Has("includeSchedule") || query.Get("includeSchedule") != ""
-	includeStatusDefault := !query.Has("includeStatus") || query.Get("includeStatus") != ""
-	includeTripDefault := !query.Has("includeTrip") || query.Get("includeTrip") != ""
-	includeSchedule, fieldErrors := utils.ParseBoolParam(query, "includeSchedule", includeScheduleDefault, referenceErrors)
-	includeStatus, fieldErrors := utils.ParseBoolParam(query, "includeStatus", includeStatusDefault, fieldErrors)
-	includeTrip, fieldErrors := utils.ParseBoolParam(query, "includeTrip", includeTripDefault, fieldErrors)
+	includeSchedule, fieldErrors := utils.ParseBoolParam(query, "includeSchedule", true, referenceErrors)
+	includeStatus, fieldErrors := utils.ParseBoolParam(query, "includeStatus", true, fieldErrors)
+	includeTrip, fieldErrors := utils.ParseBoolParam(query, "includeTrip", true, fieldErrors)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return

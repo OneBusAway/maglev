@@ -1182,10 +1182,22 @@ func TestParseBoolParam(t *testing.T) {
 			expectedValue: true,
 		},
 		{
-			name:          "Empty value takes the fallback",
+			name:          "Empty value is false despite true fallback",
 			params:        url.Values{"includeTrip": []string{""}},
 			fallback:      true,
-			expectedValue: true,
+			expectedValue: false,
+		},
+		{
+			name:          "Empty value with false fallback",
+			params:        url.Values{"includeTrip": []string{""}},
+			fallback:      false,
+			expectedValue: false,
+		},
+		{
+			name:          "Missing parameter with false fallback",
+			params:        url.Values{},
+			fallback:      false,
+			expectedValue: false,
 		},
 		{
 			name:          "Non-boolean value errors and keeps the fallback",
