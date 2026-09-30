@@ -81,6 +81,13 @@ func localizeTripTimes(params *TripParams, loc *time.Location) {
 	}
 }
 
+func (api *RestAPI) resolveTripQueryTime(queryTime *time.Time, loc *time.Location) time.Time {
+	if queryTime != nil {
+		return *queryTime
+	}
+	return api.Clock.Now().In(loc)
+}
+
 // resolveLocation returns the caller-supplied timezone, or UTC when absent.
 func resolveLocation(loc ...*time.Location) *time.Location {
 	if len(loc) > 0 && loc[0] != nil {
@@ -189,12 +196,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var currentTime time.Time
-	if params.Time != nil {
-		currentTime = *params.Time
-	} else {
-		currentTime = api.Clock.Now().In(loc)
-	}
+	currentTime := api.resolveTripQueryTime(params.Time, loc)
 
 	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 

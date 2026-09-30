@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
@@ -55,12 +54,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var currentTime time.Time
-	if params.Time != nil {
-		currentTime = *params.Time
-	} else {
-		currentTime = api.Clock.Now().In(loc)
-	}
+	currentTime := api.resolveTripQueryTime(params.Time, loc)
 
 	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
