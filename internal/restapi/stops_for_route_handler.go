@@ -147,9 +147,9 @@ func (api *RestAPI) loadRouteStopSequences(ctx context.Context, trips []gtfsdb.T
 	for i, trip := range trips {
 		tripIDs[i] = trip.ID
 	}
-	// Rows arrive ordered by trip then stop_sequence, so appending preserves
-	// each trip's travel order.
-	stopTimes, err := queryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs)
+	// Only the trip and stop IDs are needed. Rows arrive ordered by trip then
+	// stop_sequence, so appending preserves each trip's travel order.
+	stopTimes, err := queryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetStopIDsForTripIDs)
 	if err != nil {
 		return routeStopSequences{}, nil, err
 	}

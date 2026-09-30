@@ -1320,6 +1320,11 @@ SELECT * FROM stop_times
 WHERE trip_id IN (sqlc.slice('trip_ids'))
 ORDER BY trip_id, stop_sequence;
 
+-- name: GetStopIDsForTripIDs :many
+SELECT trip_id, stop_id FROM stop_times
+WHERE trip_id IN (sqlc.slice('trip_ids'))
+ORDER BY trip_id, stop_sequence;
+
 -- name: GetTripsByBlockIDs :many
 SELECT
     t.id,

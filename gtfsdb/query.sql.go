@@ -3923,6 +3923,50 @@ func (q *Queries) GetStopIDsForTrip(ctx context.Context, tripID string) ([]strin
 	return items, nil
 }
 
+const getStopIDsForTripIDs = `-- name: GetStopIDsForTripIDs :many
+SELECT trip_id, stop_id FROM stop_times
+WHERE trip_id IN (/*SLICE:trip_ids*/?)
+ORDER BY trip_id, stop_sequence
+`
+
+type GetStopIDsForTripIDsRow struct {
+	TripID string
+	StopID string
+}
+
+func (q *Queries) GetStopIDsForTripIDs(ctx context.Context, tripIds []string) ([]GetStopIDsForTripIDsRow, error) {
+	query := getStopIDsForTripIDs
+	var queryParams []interface{}
+	if len(tripIds) > 0 {
+		for _, v := range tripIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", strings.Repeat(",?", len(tripIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetStopIDsForTripIDsRow
+	for rows.Next() {
+		var i GetStopIDsForTripIDsRow
+		if err := rows.Scan(&i.TripID, &i.StopID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getStopTimesForStopInWindow = `-- name: GetStopTimesForStopInWindow :many
 SELECT
     st.trip_id,
