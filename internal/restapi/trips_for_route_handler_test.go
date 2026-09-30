@@ -1172,41 +1172,48 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 		includeTrip     string
 		includeSchedule string
 		wantTripsLen    int
+		wantStatus      int
 	}{
 		{
 			name:            "Include Trip (default)",
 			includeTrip:     "",
 			includeSchedule: "true",
+			wantStatus:      http.StatusOK,
 			wantTripsLen:    1,
 		},
 		{
 			name:            "Include Trip Explicit",
 			includeTrip:     "true",
 			includeSchedule: "true",
+			wantStatus:      http.StatusOK,
 			wantTripsLen:    1,
 		},
 		{
 			name:            "Exclude Trip",
 			includeTrip:     "false",
 			includeSchedule: "true",
+			wantStatus:      http.StatusOK,
 			wantTripsLen:    0,
 		},
 		{
 			name:            "No Schedule But Still Include Trip",
 			includeTrip:     "",
 			includeSchedule: "false",
+			wantStatus:      http.StatusOK,
 			wantTripsLen:    1,
 		},
 		{
 			name:            "Exclude Trip (Uppercase FALSE)",
 			includeTrip:     "FALSE",
 			includeSchedule: "true",
+			wantStatus:      http.StatusOK,
 			wantTripsLen:    0,
 		},
 		{
-			name:            "Exclude Trip (Numeric 0)",
+			name:            "Reject Trip (Numeric 0)",
 			includeTrip:     "0",
 			includeSchedule: "true",
+			wantStatus:      http.StatusBadRequest,
 			wantTripsLen:    0,
 		},
 	}
@@ -1223,11 +1230,10 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 
 			resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
 
-			if tt.includeTrip == "0" {
-				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			require.Equal(t, tt.wantStatus, resp.StatusCode)
+			if tt.wantStatus != http.StatusOK {
 				return
 			}
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
 			require.NotEmpty(t, model.Data.List,
 				"fixture guarantees a trip at the pinned clock")
 			assert.Equal(t, tt.wantTripsLen, len(model.Data.References.Trips),
@@ -1420,15 +1426,16 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 	timeMs := tripsForRouteTestClock.UnixMilli()
 
 	values := []struct {
-		name  string
-		query string
-		want  bool
+		name       string
+		query      string
+		want       bool
+		wantStatus int
 	}{
-		{name: "omitted defaults to true", query: "", want: true},
-		{name: "explicit true", query: "=true", want: true},
-		{name: "explicit false", query: "=false", want: false},
-		{name: "empty value", query: "=", want: false},
-		{name: "junk value", query: "=abc", want: false},
+		{name: "omitted defaults to true", query: "", want: true, wantStatus: http.StatusOK},
+		{name: "explicit true", query: "=true", want: true, wantStatus: http.StatusOK},
+		{name: "explicit false", query: "=false", want: false, wantStatus: http.StatusOK},
+		{name: "empty value", query: "=", want: false, wantStatus: http.StatusOK},
+		{name: "junk value", query: "=abc", want: false, wantStatus: http.StatusBadRequest},
 	}
 
 	assertFlag := func(t *testing.T, model *TripsForRouteResponse, flag string, want bool) {
@@ -1494,11 +1501,10 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 
 				resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
 
-				if tt.name == "junk value" {
-					require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				require.Equal(t, tt.wantStatus, resp.StatusCode)
+				if tt.wantStatus != http.StatusOK {
 					return
 				}
-				assert.Equal(t, http.StatusOK, resp.StatusCode)
 				assertFlag(t, &model, flag, want)
 			})
 		}
