@@ -479,6 +479,31 @@ func TestStopsForRouteIncludesCrossAgencyRouteOwner(t *testing.T) {
 	}
 }
 
+// TestStopsForRouteKeepsStopsOfTripsWithoutDirection guards against dropping
+// stops that only trips with a NULL direction_id serve. Those trips are grouped
+// under direction "0", so their stops must appear in that group. On RABA,
+// route 15 stop 1504 is only served by such trips.
+func TestStopsForRouteKeepsStopsOfTripsWithoutDirection(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/25_15.json?key=TEST")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	assert.Contains(t, entry.StopIds, "25_1504")
+
+	require.Len(t, entry.StopGroupings, 1)
+	var direction0 []string
+	for _, group := range entry.StopGroupings[0].StopGroups {
+		if group.ID == "0" {
+			direction0 = group.StopIds
+		}
+	}
+	require.NotNil(t, direction0, "expected a direction 0 stop group")
+	assert.Contains(t, direction0, "25_1504")
+}
+
 // TestStopsForRouteOrdersStopsAcrossTripVariants guards the canonical stop
 // order of a direction group when trip variants number stop_sequence
 // differently. The full trip runs A→E numbered 1–5; the short-turn variant
