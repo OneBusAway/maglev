@@ -2,6 +2,7 @@ package utils
 
 import (
 	"slices"
+	"strings"
 
 	"maglev.onebusaway.org/internal/models"
 )
@@ -18,14 +19,30 @@ import (
 // zero-length edges.
 func OrderStopsAlongRoute(sequences [][]string, coordinates map[string]models.Location) []string {
 	graph := stopGraph{outbound: make(map[string][]string)}
+	// Most trips repeat one of a few stop patterns. Like Java, which iterates
+	// distinct StopSequences, each pattern is added once.
+	seen := make(map[string]bool, len(sequences))
 	for _, sequence := range sequences {
+		key := strings.Join(sequence, "\x00")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		for i, stopID := range sequence {
 			graph.addNode(stopID)
+			if i == 0 {
+				continue
+			}
+			prev := sequence[i-1]
+			// An existing edge cannot close a cycle, so skip the walk.
+			if slices.Contains(graph.outbound[prev], stopID) {
+				continue
+			}
 			// A path back from this stop to the previous one means the edge
 			// would form a cycle (a loop returning to its terminal, or variants
 			// that disagree on order), so it is dropped.
-			if i > 0 && !graph.reaches(stopID, sequence[i-1], map[string]bool{}) {
-				graph.addEdge(sequence[i-1], stopID)
+			if !graph.reaches(stopID, prev, map[string]bool{}) {
+				graph.addEdge(prev, stopID)
 			}
 		}
 	}

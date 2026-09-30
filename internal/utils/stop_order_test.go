@@ -1,6 +1,7 @@
 package utils_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -54,11 +55,35 @@ func TestOrderStopsAlongRoute(t *testing.T) {
 			coordinates: stopsOnMeridian("A", "B", "C", "D"),
 			want:        []string{"A", "B", "C", "D"},
 		},
+		{
+			name: "repeated patterns give the same order as one copy",
+			sequences: [][]string{
+				{"A", "B", "C", "A"}, {"B", "C", "D"}, {"A", "B", "C", "A"}, {"B", "C", "D"},
+			},
+			coordinates: stopsOnMeridian("A", "B", "C", "D"),
+			want:        []string{"A", "B", "C", "D"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, utils.OrderStopsAlongRoute(tt.sequences, tt.coordinates))
 		})
+	}
+}
+
+func BenchmarkOrderStopsAlongRouteRepeatedTrips(b *testing.B) {
+	pattern := make([]string, 80)
+	for i := range pattern {
+		pattern[i] = fmt.Sprintf("S%02d", i)
+	}
+	sequences := make([][]string, 300)
+	for i := range sequences {
+		sequences[i] = pattern
+	}
+	coordinates := stopsOnMeridian(pattern...)
+	b.ResetTimer()
+	for range b.N {
+		utils.OrderStopsAlongRoute(sequences, coordinates)
 	}
 }
