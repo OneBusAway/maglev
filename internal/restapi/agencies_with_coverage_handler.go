@@ -10,6 +10,10 @@ import (
 // agenciesWithCoverageHandler returns all transit agencies along with their geographic coverage areas.
 func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.Request) {
 	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+	if len(referenceErrors) > 0 {
+		api.validationErrorResponse(w, r, referenceErrors)
+		return
+	}
 
 	ctx := r.Context()
 
@@ -26,10 +30,6 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 	}
 
 	// Apply pagination
-	if len(referenceErrors) > 0 {
-		api.validationErrorResponse(w, r, referenceErrors)
-		return
-	}
 	offset, limit := utils.ParsePaginationParams(r)
 	agencies, limitExceeded := utils.PaginateSlice(agencies, offset, limit)
 

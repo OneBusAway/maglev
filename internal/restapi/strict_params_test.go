@@ -46,73 +46,134 @@ func TestStrictIncludeReferencesAcrossHandlers(t *testing.T) {
 	}
 }
 
-func TestStrictProblemReports(t *testing.T) {
+func TestStrictProblemReportsWithStop(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
-	for _, kind := range []string{"stop", "trip"} {
-		table := "problem_reports_" + kind
-		filter := " WHERE " + kind + "_id = 'strict-validation'"
-		t.Cleanup(func() {
-			_, err := api.GtfsManager.GtfsDB.DB.Exec("DELETE FROM " + table + filter)
-			assert.NoError(t, err)
+	const filter = " WHERE stop_id = 'strict-validation'"
+	const endpoint = "/api/where/report-problem-with-stop/1_strict-validation.json?key=TEST"
+	t.Cleanup(func() {
+		_, err := api.GtfsManager.GtfsDB.DB.Exec("DELETE FROM problem_reports_stop" + filter)
+		assert.NoError(t, err)
+	})
+
+	for _, field := range []string{"userLat", "userLon", "userLocationAccuracy"} {
+		for _, raw := range []string{"garbage", "12x", "NaN", "Inf", "-Inf", "1e999"} {
+			t.Run(field+"/"+raw, func(t *testing.T) {
+				resp, model := callAPIHandler[strictValidationResponse](t, api, endpoint+"&"+field+"="+url.QueryEscape(raw))
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				assert.NotEmpty(t, model.Data.FieldErrors[field])
+			})
+		}
+	}
+	var count int
+	require.NoError(t, api.GtfsManager.GtfsDB.DB.QueryRow("SELECT count(*) FROM problem_reports_stop"+filter).Scan(&count))
+	require.Zero(t, count, "rejected reports must not be stored")
+
+	tests := []struct {
+		name         string
+		params       string
+		wantLat      sql.NullFloat64
+		wantLon      sql.NullFloat64
+		wantAccuracy sql.NullFloat64
+	}{
+		{name: "omitted optional fields"},
+		{name: "empty optional fields", params: "&userLat=&userLon=&userLocationAccuracy="},
+		{
+			name:         "explicit zero values",
+			params:       "&userLat=0&userLon=0&userLocationAccuracy=0",
+			wantLat:      sql.NullFloat64{Float64: 0, Valid: true},
+			wantLon:      sql.NullFloat64{Float64: 0, Valid: true},
+			wantAccuracy: sql.NullFloat64{Float64: 0, Valid: true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, _ := callAPIHandler[EmptyResponse](t, api, endpoint+tt.params)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var lat, lon, accuracy sql.NullFloat64
+			err := api.GtfsManager.GtfsDB.DB.QueryRow("SELECT user_lat, user_lon, user_location_accuracy FROM problem_reports_stop"+filter+" ORDER BY id DESC LIMIT 1").Scan(&lat, &lon, &accuracy)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantLat, lat)
+			assert.Equal(t, tt.wantLon, lon)
+			assert.Equal(t, tt.wantAccuracy, accuracy)
 		})
-		endpoint := "/api/where/report-problem-with-" + kind + "/1_strict-validation.json?key=TEST"
-		for _, field := range []string{"userLat", "userLon", "userLocationAccuracy"} {
-			for _, raw := range []string{"garbage", "12x", "NaN", "Inf", "-Inf", "1e999"} {
-				t.Run(kind+"/"+field+"/"+raw, func(t *testing.T) {
-					resp, model := callAPIHandler[strictValidationResponse](t, api, endpoint+"&"+field+"="+url.QueryEscape(raw))
-					require.Equal(t, 400, resp.StatusCode)
-					assert.NotEmpty(t, model.Data.FieldErrors[field])
-				})
-			}
+	}
+	require.NoError(t, api.GtfsManager.GtfsDB.DB.QueryRow("SELECT count(*) FROM problem_reports_stop"+filter).Scan(&count))
+	assert.Equal(t, len(tests), count)
+}
+
+func TestStrictProblemReportsWithTrip(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+	const filter = " WHERE trip_id = 'strict-validation'"
+	const endpoint = "/api/where/report-problem-with-trip/1_strict-validation.json?key=TEST"
+	t.Cleanup(func() {
+		_, err := api.GtfsManager.GtfsDB.DB.Exec("DELETE FROM problem_reports_trip" + filter)
+		assert.NoError(t, err)
+	})
+
+	for _, field := range []string{"userLat", "userLon", "userLocationAccuracy"} {
+		for _, raw := range []string{"garbage", "12x", "NaN", "Inf", "-Inf", "1e999"} {
+			t.Run(field+"/"+raw, func(t *testing.T) {
+				resp, model := callAPIHandler[strictValidationResponse](t, api, endpoint+"&"+field+"="+url.QueryEscape(raw))
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				assert.NotEmpty(t, model.Data.FieldErrors[field])
+			})
 		}
-		if kind == "trip" {
-			for _, raw := range []string{"1", "0", "t", "f", "bad"} {
-				resp, model := callAPIHandler[strictValidationResponse](t, api, endpoint+"&userOnVehicle="+raw)
-				require.Equal(t, 400, resp.StatusCode)
-				assert.NotEmpty(t, model.Data.FieldErrors["userOnVehicle"])
-			}
-		}
-		var count int
-		require.NoError(t, api.GtfsManager.GtfsDB.DB.QueryRow("SELECT count(*) FROM "+table+filter).Scan(&count))
-		require.Zero(t, count, "rejected reports must not be stored")
-		for _, params := range []string{"", "&userLat=&userLon=&userLocationAccuracy=&userOnVehicle=", "&userLat=0&userLon=0&userLocationAccuracy=0&userOnVehicle=FaLsE"} {
-			resp, _ := callAPIHandler[EmptyResponse](t, api, endpoint+params)
-			require.Equal(t, 200, resp.StatusCode)
-		}
-		columns := "user_lat, user_lon, user_location_accuracy"
-		if kind == "trip" {
-			columns += ", user_on_vehicle"
-		}
-		rows, err := api.GtfsManager.GtfsDB.DB.Query("SELECT " + columns + " FROM " + table + filter + " ORDER BY id")
-		require.NoError(t, err)
-		index := 0
-		for rows.Next() {
+	}
+	for _, raw := range []string{"1", "0", "t", "f", "bad"} {
+		t.Run("userOnVehicle/"+raw, func(t *testing.T) {
+			resp, model := callAPIHandler[strictValidationResponse](t, api, endpoint+"&userOnVehicle="+raw)
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.NotEmpty(t, model.Data.FieldErrors["userOnVehicle"])
+		})
+	}
+	resp, model := callAPIHandler[strictValidationResponse](t, api, endpoint+"&userLat=NaN&userLon=bad&userLocationAccuracy=Inf&userOnVehicle=1")
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Len(t, model.Data.FieldErrors, 4)
+	var count int
+	require.NoError(t, api.GtfsManager.GtfsDB.DB.QueryRow("SELECT count(*) FROM problem_reports_trip"+filter).Scan(&count))
+	require.Zero(t, count, "rejected reports must not be stored")
+
+	tests := []struct {
+		name          string
+		params        string
+		wantLat       sql.NullFloat64
+		wantLon       sql.NullFloat64
+		wantAccuracy  sql.NullFloat64
+		wantOnVehicle sql.NullInt64
+	}{
+		{name: "omitted optional fields"},
+		{name: "empty optional fields", params: "&userLat=&userLon=&userLocationAccuracy=&userOnVehicle="},
+		{
+			name:          "explicit zero/false values",
+			params:        "&userLat=0&userLon=0&userLocationAccuracy=0&userOnVehicle=FaLsE",
+			wantLat:       sql.NullFloat64{Float64: 0, Valid: true},
+			wantLon:       sql.NullFloat64{Float64: 0, Valid: true},
+			wantAccuracy:  sql.NullFloat64{Float64: 0, Valid: true},
+			wantOnVehicle: sql.NullInt64{Int64: 0, Valid: true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, _ := callAPIHandler[EmptyResponse](t, api, endpoint+tt.params)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
 			var lat, lon, accuracy sql.NullFloat64
 			var onVehicle sql.NullInt64
-			dest := []any{&lat, &lon, &accuracy}
-			if kind == "trip" {
-				dest = append(dest, &onVehicle)
-			}
-			require.NoError(t, rows.Scan(dest...))
-			for _, value := range []sql.NullFloat64{lat, lon, accuracy} {
-				assert.Equal(t, index == 2, value.Valid)
-				assert.Zero(t, value.Float64)
-			}
-			if kind == "trip" {
-				assert.Equal(t, index == 2, onVehicle.Valid)
-				assert.Zero(t, onVehicle.Int64)
-			}
-			index++
-		}
-		require.NoError(t, rows.Err())
-		require.NoError(t, rows.Close())
-		require.Equal(t, 3, index)
+			err := api.GtfsManager.GtfsDB.DB.QueryRow("SELECT user_lat, user_lon, user_location_accuracy, user_on_vehicle FROM problem_reports_trip"+filter+" ORDER BY id DESC LIMIT 1").Scan(&lat, &lon, &accuracy, &onVehicle)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantLat, lat)
+			assert.Equal(t, tt.wantLon, lon)
+			assert.Equal(t, tt.wantAccuracy, accuracy)
+			assert.Equal(t, tt.wantOnVehicle, onVehicle)
+		})
 	}
-	resp, model := callAPIHandler[strictValidationResponse](t, api, "/api/where/report-problem-with-trip/1_any.json?key=TEST&userLat=NaN&userLon=bad&userLocationAccuracy=Inf&userOnVehicle=1")
-	require.Equal(t, 400, resp.StatusCode)
-	assert.Len(t, model.Data.FieldErrors, 4)
+	require.NoError(t, api.GtfsManager.GtfsDB.DB.QueryRow("SELECT count(*) FROM problem_reports_trip"+filter).Scan(&count))
+	assert.Equal(t, len(tests), count)
 }
 
 func TestStrictBooleanFlags(t *testing.T) {

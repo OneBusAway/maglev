@@ -137,8 +137,6 @@ func (api *RestAPI) parseTripParams(r *http.Request, defaults TripParamDefaults,
 // tripDetailsHandler returns extended information for a trip, including its schedule,
 // real-time status, and optionally the full stop time sequence.
 func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
-	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
-
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -151,8 +149,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	// Format errors do not need the agency timezone. Catch them before GetTrip so
 	// an unknown ID still returns a field error instead of 404. Localized parse
 	// stays after the lookup, where loc is available.
-	if _, fieldErrors := api.parseTripParams(r, defaults); len(fieldErrors) > 0 || len(referenceErrors) > 0 {
-		fieldErrors = mergeFieldErrors(fieldErrors, referenceErrors)
+	_, fieldErrors := api.parseTripParams(r, defaults)
+	includeReferences, fieldErrors := ShouldIncludeReferences(r, fieldErrors)
+	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}

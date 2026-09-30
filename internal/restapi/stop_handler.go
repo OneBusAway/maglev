@@ -95,8 +95,6 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	// Initialize empty references struct
 	references := models.NewEmptyReferences()
 
-	// Only populate references if the query parameter is absent or true
-
 	if includeReferences {
 		uniqueRouteIDs := make(map[string]bool)
 
