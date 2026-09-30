@@ -478,3 +478,53 @@ func TestStopsForRouteIncludesCrossAgencyRouteOwner(t *testing.T) {
 			"route %s has agencyId %s which is not present in references.agencies", route.ID, route.AgencyID)
 	}
 }
+
+// TestStopsForRouteOrdersStopsAcrossTripVariants guards the canonical stop
+// order of a direction group when trip variants number stop_sequence
+// differently. The full trip runs A→E numbered 1–5; the short-turn variant
+// starts at C, is numbered from 1 again, and continues past E to F. Ordering
+// by the largest stop_sequence seen per stop puts F (4) before E (5) even
+// though every trip that serves both reaches E first. The order must instead
+// follow the stop adjacency of the trips themselves.
+func TestStopsForRouteOrdersStopsAcrossTripVariants(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"A1,Agency One,http://agency1.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"r1,A1,1,Route One,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"sA,Stop A,37.7000,-122.4000\n" +
+			"sB,Stop B,37.7100,-122.4000\n" +
+			"sC,Stop C,37.7200,-122.4000\n" +
+			"sD,Stop D,37.7300,-122.4000\n" +
+			"sE,Stop E,37.7400,-122.4000\n" +
+			"sF,Stop F,37.7500,-122.4000\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"r1,svc1,full,Downtown,0\n" +
+			"r1,svc1,short,Downtown,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"full,08:00:00,08:00:00,sA,1\n" +
+			"full,08:05:00,08:05:00,sB,2\n" +
+			"full,08:10:00,08:10:00,sC,3\n" +
+			"full,08:15:00,08:15:00,sD,4\n" +
+			"full,08:20:00,08:20:00,sE,5\n" +
+			"short,09:00:00,09:00:00,sC,1\n" +
+			"short,09:05:00,09:05:00,sD,2\n" +
+			"short,09:10:00,09:10:00,sE,3\n" +
+			"short,09:15:00,09:15:00,sF,4\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "stop-order-variants.zip", files)
+
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/A1_r1.json?key=TEST")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.Entry.StopGroupings, 1)
+	require.Len(t, model.Data.Entry.StopGroupings[0].StopGroups, 1)
+
+	wantOrder := []string{"A1_sA", "A1_sB", "A1_sC", "A1_sD", "A1_sE", "A1_sF"}
+	assert.Equal(t, wantOrder, model.Data.Entry.StopGroupings[0].StopGroups[0].StopIds)
+	assert.Equal(t, wantOrder, model.Data.Entry.StopIds, "flat stopIds sort lexicographically")
+}
