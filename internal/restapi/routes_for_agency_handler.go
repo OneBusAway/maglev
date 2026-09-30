@@ -10,6 +10,12 @@ import (
 
 // routesForAgencyHandler returns all routes operated by a given agency.
 func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+	if len(referenceErrors) > 0 {
+		api.validationErrorResponse(w, r, referenceErrors)
+		return
+	}
+
 	id, ok := api.extractAndValidateID(w, r)
 	if !ok {
 		return
@@ -49,7 +55,7 @@ func (api *RestAPI) routesForAgencyHandler(w http.ResponseWriter, r *http.Reques
 
 	references := models.NewEmptyReferences()
 	// When includeReferences=false the references block is present but empty.
-	if ShouldIncludeReferences(r) {
+	if includeReferences {
 		references.Agencies = []models.AgencyReference{
 			models.AgencyReferenceFromDatabase(agency),
 		}

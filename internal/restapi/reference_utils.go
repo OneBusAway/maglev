@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -465,19 +464,9 @@ func mapAlertEffectToSeverity(effect gtfs.AlertEffect) string {
 }
 
 // ShouldIncludeReferences parses the "includeReferences" query parameter from the request.
-// It defaults to true if the parameter is absent or if it fails to parse as a boolean.
-func ShouldIncludeReferences(r *http.Request) bool {
-	val := r.URL.Query().Get("includeReferences")
-	if val == "" {
-		return true
-	}
-
-	parsed, err := strconv.ParseBool(val)
-	if err != nil {
-		return true
-	}
-
-	return parsed
+// Absent or empty values default to true; invalid values append a field error.
+func ShouldIncludeReferences(r *http.Request, fieldErrors map[string][]string) (bool, map[string][]string) {
+	return utils.ParseBoolParam(r.URL.Query(), "includeReferences", true, fieldErrors)
 }
 
 // BuildStopReferencesAndRouteIDsForStops builds full stop references and collects unique routes for the given stop IDs.

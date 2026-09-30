@@ -16,6 +16,13 @@ import (
 // stopsForRouteHandler returns all stops served by a route, grouped by direction
 // with optional encoded polyline shapes.
 func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, fieldErrors := ShouldIncludeReferences(r, nil)
+	includePolylines, fieldErrors := utils.ParseBoolParam(r.URL.Query(), "includePolylines", true, fieldErrors)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
+
 	ctx := r.Context()
 
 	// Check if context is already cancelled
@@ -67,16 +74,13 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// includePolylines defaults to true; only an explicit "false" disables it.
-	includePolylines := r.URL.Query().Get("includePolylines") != "false"
-
 	result, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, filterByDate, includePolylines)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
 
-	api.buildAndSendResponse(w, r, ctx, result, stopsList, currentAgency)
+	api.buildAndSendResponse(w, r, ctx, result, stopsList, currentAgency, includeReferences)
 }
 
 func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, routeID string, serviceIDs []string, filterByDate bool, includePolylines bool) (models.RouteEntry, []models.Stop, error) {
@@ -185,11 +189,12 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops
 	return stopsList, nil
 }
 
-func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, result models.RouteEntry, stopsList []models.Stop, currentAgency gtfsdb.Agency) {
+func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, result models.RouteEntry, stopsList []models.Stop, currentAgency gtfsdb.Agency, includeReferences bool) {
+
 	references := models.NewEmptyReferences()
 
 	// When includeReferences=false the references block is present but empty.
-	if ShouldIncludeReferences(r) {
+	if includeReferences {
 		agencyRef := models.AgencyReferenceFromDatabase(&currentAgency)
 
 		routes, err := api.BuildRouteReferences(ctx, currentAgency.ID, stopsList)

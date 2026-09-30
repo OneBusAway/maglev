@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
@@ -16,6 +15,12 @@ import (
 
 // tripForVehicleHandler returns trip details for the trip currently being served by a given vehicle.
 func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+	if len(referenceErrors) > 0 {
+		api.validationErrorResponse(w, r, referenceErrors)
+		return
+	}
+
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	agencyID, vehicleID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
@@ -49,12 +54,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var currentTime time.Time
-	if params.Time != nil {
-		currentTime = *params.Time
-	} else {
-		currentTime = api.Clock.Now().In(loc)
-	}
+	currentTime := api.resolveTripQueryTime(params.Time, loc)
 
 	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
 
@@ -116,7 +116,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	references := models.NewEmptyReferences()
 	// When includeReferences=false the references block is present but empty.
-	if ShouldIncludeReferences(r) {
+	if includeReferences {
 		references, err = api.buildTripForVehicleReferences(ctx, agencyID, agency, trip, status, schedule, params.IncludeTrip)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)

@@ -11,6 +11,12 @@ import (
 
 // routeHandler returns details for a single transit route identified by its combined agency_routeID.
 func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+	if len(referenceErrors) > 0 {
+		api.validationErrorResponse(w, r, referenceErrors)
+		return
+	}
+
 	agencyID, routeID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
@@ -45,8 +51,6 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 
 	// This response has no situationIds, so situation references remain empty.
 	references := models.NewEmptyReferences()
-
-	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
 		agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
