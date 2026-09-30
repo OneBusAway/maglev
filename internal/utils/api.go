@@ -341,12 +341,12 @@ func TruncateComment(s string) string {
 	return s
 }
 
-// ValidateNumericParam returns the string if it's a valid float, empty string otherwise.
+// ValidateNumericParam returns the string if it's a valid finite float, empty string otherwise.
 func ValidateNumericParam(s string) string {
 	if s == "" {
 		return ""
 	}
-	if _, err := strconv.ParseFloat(s, 64); err != nil {
+	if v, err := strconv.ParseFloat(s, 64); err != nil || !isFinite(v) {
 		return ""
 	}
 	return s

@@ -1061,6 +1061,26 @@ func TestValidateNumericParam(t *testing.T) {
 			input:    "12abc",
 			expected: "",
 		},
+		{
+			name:     "NaN is rejected",
+			input:    "NaN",
+			expected: "",
+		},
+		{
+			name:     "Positive infinity is rejected",
+			input:    "Inf",
+			expected: "",
+		},
+		{
+			name:     "Negative infinity is rejected",
+			input:    "-Infinity",
+			expected: "",
+		},
+		{
+			name:     "Overflow to infinity is rejected",
+			input:    "1e400",
+			expected: "",
+		},
 	}
 
 	for _, tt := range tests {
