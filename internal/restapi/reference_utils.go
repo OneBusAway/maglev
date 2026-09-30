@@ -609,8 +609,7 @@ func queryInBatches[T any](ctx context.Context, ids []string, query func(context
 // active service IDs on one day, say) would still overflow; batch that
 // dimension too if a feed ever gets there.
 func queryInBatchesReserving[T any](ctx context.Context, ids []string, reserved int,
-	query func(context.Context, []string) ([]T, error),
-) ([]T, error) {
+	query func(context.Context, []string) ([]T, error)) ([]T, error) {
 	batchSize := max(1, idsPerBatchedQuery-reserved)
 	results := make([]T, 0, len(ids))
 	for start := 0; start < len(ids); start += batchSize {
