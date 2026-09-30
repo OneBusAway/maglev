@@ -609,7 +609,8 @@ func queryInBatches[T any](ctx context.Context, ids []string, query func(context
 // active service IDs on one day, say) would still overflow; batch that
 // dimension too if a feed ever gets there.
 func queryInBatchesReserving[T any](ctx context.Context, ids []string, reserved int,
-	query func(context.Context, []string) ([]T, error)) ([]T, error) {
+	query func(context.Context, []string) ([]T, error),
+) ([]T, error) {
 	batchSize := max(1, idsPerBatchedQuery-reserved)
 	results := make([]T, 0, len(ids))
 	for start := 0; start < len(ids); start += batchSize {
@@ -642,27 +643,11 @@ func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, ids
 			routeIDs = []string{}
 		}
 
-		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
-		if direction == "" {
-			direction = models.UnknownValue
-		}
-
-		// compute stop-specific info once here; the agency-specifc info
-		// (ID, Parent) are computed in the following loop for each agencyID_stopID
-		// referencing the same stop.
-		stopInfo := models.Stop{
-			Code:               nulls.StringOrEmpty(stop.Code),
-			Direction:          direction,
-			ID:                 "",
-			Lat:                stop.Lat,
-			Lon:                stop.Lon,
-			LocationType:       int(nulls.Int64OrDefault(stop.LocationType, 0)),
-			Name:               nulls.StringOrEmpty(stop.Name),
-			Parent:             "",
-			RouteIDs:           routeIDs,
-			StaticRouteIDs:     routeIDs,
-			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-		}
+		// Build the stop-specific fields once through buildStopModel so direction
+		// and code follow the same rules as every other stop builder. The agency
+		// argument only feeds ID, which the loop below overwrites with each
+		// referring combined ID, so it is left empty here.
+		stopInfo := api.buildStopModel(ctx, "", stop, routeIDs)
 
 		for _, combinedID := range idsByBareID[stop.ID] {
 			agencyStop := stopInfo
