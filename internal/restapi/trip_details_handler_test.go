@@ -3,6 +3,7 @@ package restapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"testing"
 	"time"
@@ -10,9 +11,34 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
+
+func TestResolveTripQueryTime(t *testing.T) {
+	now := time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC)
+	loc := time.FixedZone("agency", -7*60*60)
+	explicitTime := now.Add(-time.Hour)
+	api := &RestAPI{Application: &app.Application{Clock: clock.NewMockClock(now)}}
+
+	tests := []struct {
+		name      string
+		queryTime *time.Time
+		want      time.Time
+	}{
+		{name: "omitted uses clock in agency timezone", want: now.In(loc)},
+		{name: "explicit time is preserved", queryTime: &explicitTime, want: explicitTime},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := api.resolveTripQueryTime(tt.queryTime, loc)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
 
 func TestTripDetailsHandlerRequiresValidApiKey(t *testing.T) {
 	_, resp, model := serveAndRetrieveEndpoint(t, "/api/where/trip-details/invalid.json?key=invalid")
@@ -701,4 +727,16 @@ func TestTripDetailsHandler_ReferencesResolveWithoutSchedule(t *testing.T) {
 	for _, tr := range model.Data.References.Trips {
 		assert.True(t, routeRefs[tr.RouteID], "route %s of trip %s is missing from references.routes", tr.RouteID, tr.ID)
 	}
+}
+
+func TestTripDetailsHandlerAcceptsTripIDWithSpaces(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	tripID := utils.FormCombinedID(testdata.Raba.ID, "Route 15 Southbound")
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+url.PathEscape(tripID)+".json?key=TEST")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode, model.Text)
+	assert.Equal(t, tripID, model.Data.Entry.TripID)
 }

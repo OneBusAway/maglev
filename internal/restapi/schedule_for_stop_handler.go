@@ -21,6 +21,12 @@ import (
 // scheduleForStopHandler returns the full schedule for a stop on a given date,
 // including arrival and departure times grouped by route.
 func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+	if len(referenceErrors) > 0 {
+		api.validationErrorResponse(w, r, referenceErrors)
+		return
+	}
+
 	agencyID, stopID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
@@ -246,7 +252,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	entry := models.NewScheduleForStopEntry(combinedStopID, responseDate, routeSchedules)
 
 	references := models.NewEmptyReferences()
-	if ShouldIncludeReferences(r) {
+	if includeReferences {
 		references, err = api.buildScheduleForStopReferences(ctx, agencyID, stop, routesForStop, routeIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)

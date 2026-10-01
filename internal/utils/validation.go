@@ -9,8 +9,10 @@ import (
 
 // Compiled regular expressions for validation
 var (
-	// Allow alphanumeric, underscore, hyphen, dot, colon - common in transit IDs
-	validIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.:-]+$`)
+	// Allow alphanumeric, underscore, hyphen, dot, colon and space - common in
+	// transit IDs. GTFS IDs are free text, and feeds use spaces in them (the
+	// RABA test feed has trips such as "Route 15 Southbound").
+	validIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.: -]+$`)
 
 	// Detect potentially dangerous characters - more focused on injection patterns
 	dangerousPattern = regexp.MustCompile(`[<>]|--|\/\*|\*\/|;.*--`)

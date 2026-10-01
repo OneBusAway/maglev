@@ -9,6 +9,12 @@ import (
 
 // agenciesWithCoverageHandler returns all transit agencies along with their geographic coverage areas.
 func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+	if len(referenceErrors) > 0 {
+		api.validationErrorResponse(w, r, referenceErrors)
+		return
+	}
+
 	ctx := r.Context()
 
 	// Check if context is already cancelled
@@ -39,8 +45,6 @@ func (api *RestAPI) agenciesWithCoverageHandler(w http.ResponseWriter, r *http.R
 	}
 
 	references := models.NewEmptyReferences()
-
-	includeReferences := ShouldIncludeReferences(r)
 
 	if includeReferences {
 		references.Agencies = buildAgencyReferences(agencies)

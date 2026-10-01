@@ -21,13 +21,12 @@ import (
 // stopsForLocationHandler returns stops near a geographic location, specified by
 // lat/lon coordinates with an optional radius or latSpan/lonSpan bounding box.
 func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, fieldErrors := ShouldIncludeReferences(r, nil)
 	queryParams := r.URL.Query()
 
-	var fieldErrors map[string][]string
 	loc, fieldErrors := api.parseLocationParams(r, fieldErrors)
 	maxCount, fieldErrors := utils.ParseMaxCountClamped(queryParams, models.DefaultMaxCountForStops, fieldErrors)
 	query := queryParams.Get("query")
-	includeReferences := ShouldIncludeReferences(r)
 
 	var routeTypes []int
 	if routeTypeStr := queryParams.Get("routeType"); routeTypeStr != "" {
