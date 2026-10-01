@@ -367,23 +367,35 @@ func TestGetMetrics_UnmatchedStops(t *testing.T) {
 
 // TestGetMetrics_FilteredFeedReportsUnattributableTrips runs trip updates
 // through real feed ingestion, where the `agency-ids` filter runs before
-// anything is stored. A trip whose route is missing or unknown can't be
-// attributed to any agency, so the filter keeps it out of the served data;
-// metrics must still report it under the feed's configured agencies. A trip
-// that resolves to another agency stays excluded from both.
+// anything is stored. A trip that resolves to no agency, by route ID or by
+// trip ID, is kept out of the served data, but metrics must still report it
+// under the feed's configured agencies. A trip that resolves to another
+// agency, even only through its static trip because GTFS-RT route_id is
+// optional, stays excluded from both.
 func TestGetMetrics_FilteredFeedReportsUnattributableTrips(t *testing.T) {
 	tests := []struct {
 		name               string
+		tripID             string
 		routeID            string
+		stopID             string
+		wantServed         bool
 		wantRecordsForA    int
+		wantMatchedStops   int
 		wantUnmatchedTrips []string
 		wantUnmatchedStops []string
 	}{
-		{name: "missing route ID", routeID: "", wantRecordsForA: 1,
-			wantUnmatchedTrips: []string{"GHOST"}, wantUnmatchedStops: []string{"GHOST_STOP"}},
-		{name: "unknown route ID", routeID: "NOPE", wantRecordsForA: 1,
-			wantUnmatchedTrips: []string{"GHOST"}, wantUnmatchedStops: []string{"GHOST_STOP"}},
-		{name: "route of another agency", routeID: "RB", wantRecordsForA: 0,
+		{name: "unknown trip, missing route ID", tripID: "GHOST", routeID: "", stopID: "GHOST_STOP",
+			wantRecordsForA: 1, wantUnmatchedTrips: []string{"GHOST"}, wantUnmatchedStops: []string{"GHOST_STOP"}},
+		{name: "unknown trip, unknown route ID", tripID: "GHOST", routeID: "NOPE", stopID: "GHOST_STOP",
+			wantRecordsForA: 1, wantUnmatchedTrips: []string{"GHOST"}, wantUnmatchedStops: []string{"GHOST_STOP"}},
+		{name: "unknown trip, route of another agency", tripID: "GHOST", routeID: "RB", stopID: "GHOST_STOP",
+			wantUnmatchedTrips: []string{}, wantUnmatchedStops: []string{}},
+		{name: "other agency's trip, missing route ID", tripID: "TB", routeID: "", stopID: "SB",
+			wantUnmatchedTrips: []string{}, wantUnmatchedStops: []string{}},
+		{name: "other agency's trip, unknown route ID", tripID: "TB", routeID: "NOPE", stopID: "SB",
+			wantUnmatchedTrips: []string{}, wantUnmatchedStops: []string{}},
+		{name: "own agency's trip, missing route ID", tripID: "TA", routeID: "", stopID: "SA",
+			wantServed: true, wantRecordsForA: 1, wantMatchedStops: 1,
 			wantUnmatchedTrips: []string{}, wantUnmatchedStops: []string{}},
 	}
 
@@ -394,9 +406,13 @@ func TestGetMetrics_FilteredFeedReportsUnattributableTrips(t *testing.T) {
 				"RB": {Id: "RB", Agency: &gtfs.Agency{Id: "B"}},
 			}
 			manager := newTestManagerWithRoutes(routes)
+			mustCreateTrip(t, manager, "TA", "RA")
+			mustCreateTrip(t, manager, "TB", "RB")
+			mustCreateStop(t, manager, "SA")
+			mustCreateStop(t, manager, "SB")
 			manager.feedAgencyFilter["feed-1"] = map[string]bool{"A": true}
 
-			payload := encodeTripUpdateFeed(time.Now(), "GHOST", tt.routeID, "GHOST_STOP")
+			payload := encodeTripUpdateFeed(time.Now(), tt.tripID, tt.routeID, tt.stopID)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/x-protobuf")
 				_, _ = w.Write(payload)
@@ -410,12 +426,14 @@ func TestGetMetrics_FilteredFeedReportsUnattributableTrips(t *testing.T) {
 				RefreshInterval: 30,
 				Enabled:         true,
 			}))
-			assert.Empty(t, manager.GetRealTimeTrips(), "the agency filter must keep the trip out of served data")
+			assert.Equal(t, tt.wantServed, len(manager.GetRealTimeTrips()) == 1,
+				"only a trip resolved to agency A is served")
 
 			snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
 			require.NoError(t, err)
 
 			assert.Equal(t, tt.wantRecordsForA, snapshot.RealtimeRecordsTotal["A"])
+			assert.Equal(t, tt.wantMatchedStops, snapshot.StopIDsMatchedCount["A"])
 			assert.Equal(t, tt.wantUnmatchedTrips, snapshot.RealtimeTripIDsUnmatched["A"])
 			assert.Equal(t, tt.wantUnmatchedStops, snapshot.StopIDsUnmatched["A"])
 			assert.Equal(t, 0, snapshot.RealtimeRecordsTotal["B"], "a feed filtered to A never reports for B")
