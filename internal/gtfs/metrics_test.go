@@ -3,12 +3,16 @@ package gtfs
 import (
 	"context"
 	"database/sql"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/nulls"
 )
@@ -361,27 +365,89 @@ func TestGetMetrics_UnmatchedStops(t *testing.T) {
 	assert.Equal(t, []string{"GHOST_STOP"}, snapshot.StopIDsUnmatched["A"])
 }
 
-func TestGetMetrics_FeedAgencyFilterFallback(t *testing.T) {
-	routes := map[string]*gtfs.Route{
-		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+// TestGetMetrics_FilteredFeedReportsUnattributableTrips runs trip updates
+// through real feed ingestion, where the `agency-ids` filter runs before
+// anything is stored. A trip whose route is missing or unknown can't be
+// attributed to any agency, so the filter keeps it out of the served data;
+// metrics must still report it under the feed's configured agencies. A trip
+// that resolves to another agency stays excluded from both.
+func TestGetMetrics_FilteredFeedReportsUnattributableTrips(t *testing.T) {
+	tests := []struct {
+		name               string
+		routeID            string
+		wantRecordsForA    int
+		wantUnmatchedTrips []string
+		wantUnmatchedStops []string
+	}{
+		{name: "missing route ID", routeID: "", wantRecordsForA: 1,
+			wantUnmatchedTrips: []string{"GHOST"}, wantUnmatchedStops: []string{"GHOST_STOP"}},
+		{name: "unknown route ID", routeID: "NOPE", wantRecordsForA: 1,
+			wantUnmatchedTrips: []string{"GHOST"}, wantUnmatchedStops: []string{"GHOST_STOP"}},
+		{name: "route of another agency", routeID: "RB", wantRecordsForA: 0,
+			wantUnmatchedTrips: []string{}, wantUnmatchedStops: []string{}},
 	}
-	manager := newTestManagerWithRoutes(routes)
-	mustCreateTrip(t, manager, "T1", "R1")
 
-	// The trip ID is unmatched and its route ID doesn't resolve statically
-	// either, so agency attribution can only happen via the feed's
-	// configured `agency-ids` filter.
-	manager.feedTrips["feed-1"] = []gtfs.Trip{
-		{ID: gtfs.TripID{ID: "GHOST", RouteID: ""}},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			routes := map[string]*gtfs.Route{
+				"RA": {Id: "RA", Agency: &gtfs.Agency{Id: "A"}},
+				"RB": {Id: "RB", Agency: &gtfs.Agency{Id: "B"}},
+			}
+			manager := newTestManagerWithRoutes(routes)
+			manager.feedAgencyFilter["feed-1"] = map[string]bool{"A": true}
+
+			payload := encodeTripUpdateFeed(time.Now(), "GHOST", tt.routeID, "GHOST_STOP")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/x-protobuf")
+				_, _ = w.Write(payload)
+			}))
+			defer server.Close()
+
+			require.True(t, manager.updateFeedRealtime(context.Background(), RTFeedConfig{
+				ID:              "feed-1",
+				AgencyIDs:       []string{"A"},
+				TripUpdatesURL:  server.URL,
+				RefreshInterval: 30,
+				Enabled:         true,
+			}))
+			assert.Empty(t, manager.GetRealTimeTrips(), "the agency filter must keep the trip out of served data")
+
+			snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.wantRecordsForA, snapshot.RealtimeRecordsTotal["A"])
+			assert.Equal(t, tt.wantUnmatchedTrips, snapshot.RealtimeTripIDsUnmatched["A"])
+			assert.Equal(t, tt.wantUnmatchedStops, snapshot.StopIDsUnmatched["A"])
+			assert.Equal(t, 0, snapshot.RealtimeRecordsTotal["B"], "a feed filtered to A never reports for B")
+		})
 	}
-	manager.feedAgencyFilter["feed-1"] = map[string]bool{"A": true}
+}
 
-	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
-	require.NoError(t, err)
-
-	assert.Equal(t, 1, snapshot.RealtimeRecordsTotal["A"])
-	assert.Equal(t, 1, snapshot.RealtimeTripCountsUnmatched["A"])
-	assert.Equal(t, []string{"GHOST"}, snapshot.RealtimeTripIDsUnmatched["A"])
+// encodeTripUpdateFeed builds a GTFS-RT trip updates feed with a single trip
+// update referencing one stop.
+func encodeTripUpdateFeed(createdAt time.Time, tripID, routeID, stopID string) []byte {
+	trip := &gtfsrt.TripDescriptor{TripId: proto.String(tripID)}
+	if routeID != "" {
+		trip.RouteId = proto.String(routeID)
+	}
+	feed := &gtfsrt.FeedMessage{
+		Header: &gtfsrt.FeedHeader{
+			GtfsRealtimeVersion: proto.String("2.0"),
+			Timestamp:           proto.Uint64(uint64(createdAt.Unix())),
+		},
+		Entity: []*gtfsrt.FeedEntity{{
+			Id: proto.String("e0"),
+			TripUpdate: &gtfsrt.TripUpdate{
+				Trip:           trip,
+				StopTimeUpdate: []*gtfsrt.TripUpdate_StopTimeUpdate{{StopId: proto.String(stopID)}},
+			},
+		}},
+	}
+	b, err := proto.Marshal(feed)
+	if err != nil {
+		panic("failed to marshal trip updates feed: " + err.Error())
+	}
+	return b
 }
 
 // TestGetMetrics_UnfilteredFeedCoversAllAgencies guards the classic outage
@@ -592,6 +658,31 @@ func TestGetMetrics_MatchedTripsSplitByTripAgency(t *testing.T) {
 	assert.Equal(t, 1, snapshot.RealtimeTripCountsMatched["B"])
 	assert.Equal(t, 3, snapshot.RealtimeRecordsTotal["A"], "records stay attributed to every covered agency")
 	assert.Equal(t, 3, snapshot.RealtimeRecordsTotal["B"], "records stay attributed to every covered agency")
+}
+
+// TestGetMetrics_MatchedTripsStayWithinCoveredAgencies covers a trip the
+// agency filter couldn't attribute (no route ID) whose trip ID still resolves
+// statically to an agency the feed doesn't cover: it's one of the feed's
+// records, but must not count as a matched trip for that other agency.
+func TestGetMetrics_MatchedTripsStayWithinCoveredAgencies(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"RA": {Id: "RA", Agency: &gtfs.Agency{Id: "A"}},
+		"RB": {Id: "RB", Agency: &gtfs.Agency{Id: "B"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+	mustCreateTrip(t, manager, "TB1", "RB")
+
+	manager.feedUnattributedTrips = map[string][]gtfs.Trip{
+		"feed-1": {{ID: gtfs.TripID{ID: "TB1"}, StopTimeUpdates: activeStopTimeUpdates()}},
+	}
+	manager.feedAgencyFilter["feed-1"] = map[string]bool{"A": true}
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, snapshot.RealtimeRecordsTotal["A"])
+	assert.Equal(t, 0, snapshot.RealtimeTripCountsMatched["A"])
+	assert.Equal(t, 0, snapshot.RealtimeTripCountsMatched["B"], "a feed filtered to A never reports for B")
 }
 
 // TestGetMetrics_ScheduledTripsCountOnlyCountsActiveTrips guards the fix for

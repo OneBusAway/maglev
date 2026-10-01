@@ -3,6 +3,7 @@ package gtfs
 import (
 	"context"
 	"maps"
+	"slices"
 	"sort"
 	"time"
 
@@ -181,7 +182,8 @@ func (manager *Manager) countActiveBlocksAt(ctx context.Context, agencyID string
 	return len(activeBlockIDs), nil
 }
 
-// realtimeFeedState is a snapshot of a single feed's real-time trips, its
+// realtimeFeedState is a snapshot of a single feed's real-time trips
+// (including those its agency filter couldn't attribute to any agency), its
 // configured agency filter, and its last successful update time, copied out
 // from under realTimeMutex so subsequent DB lookups don't hold the lock.
 type realtimeFeedState struct {
@@ -226,7 +228,7 @@ func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 		lastUpdate, hasUpdate := manager.feedLastUpdate[feedID]
 		states = append(states, realtimeFeedState{
 			feedID:       feedID,
-			trips:        manager.feedTrips[feedID],
+			trips:        slices.Concat(manager.feedTrips[feedID], manager.feedUnattributedTrips[feedID]),
 			agencyFilter: manager.feedAgencyFilter[feedID],
 			lastUpdate:   lastUpdate,
 			hasUpdate:    hasUpdate,
@@ -239,8 +241,8 @@ func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 // each feed and attributes them to the agencies that feed covers: its
 // configured `agency-ids` filter if set, otherwise every static agency,
 // matching GtfsRealtimeSource#start. Matched trip counts are the exception:
-// they go to each matched trip's own agency, matching
-// MetricsBeanServiceImpl#getValidRealtimeTripIds.
+// they go to each matched trip's own agency, among those the feed covers,
+// matching MetricsBeanServiceImpl#getValidRealtimeTripIds.
 //
 // Trip activity is judged against scheduleReferenceTime, but staleness is
 // measured against the real wall clock: feedLastUpdate is always stamped
@@ -293,7 +295,7 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 		}
 
 		for agencyID, matched := range metrics.tripsMatchedByAgency {
-			if allAgencies[agencyID] {
+			if coveredAgencies[agencyID] {
 				snapshot.RealtimeTripCountsMatched[agencyID] += matched
 			}
 		}

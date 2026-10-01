@@ -377,9 +377,10 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	// Apply agency-based filtering if configured for this feed.
 	// This runs before acquiring realTimeMutex to keep the critical section short.
 	agencyFilter := manager.feedAgencyFilter[feedID]
+	var unattributedTrips []gtfs.Trip
 	if len(agencyFilter) > 0 {
 		if tripData != nil && tripErr == nil {
-			tripData.Trips = manager.filterTripsByAgency(tripData.Trips, agencyFilter)
+			tripData.Trips, unattributedTrips = manager.filterTripsByAgency(tripData.Trips, agencyFilter)
 		}
 		if vehicleData != nil && vehicleErr == nil {
 			vehicleData.Vehicles = manager.filterVehiclesByAgency(vehicleData.Vehicles, agencyFilter)
@@ -394,6 +395,10 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	if tripData != nil && tripErr == nil {
 		manager.feedTrips[feedID] = tripData.Trips
+		if manager.feedUnattributedTrips == nil {
+			manager.feedUnattributedTrips = make(map[string][]gtfs.Trip)
+		}
+		manager.feedUnattributedTrips[feedID] = unattributedTrips
 	}
 
 	if vehicleData != nil && vehicleErr == nil {
@@ -588,23 +593,29 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	return hasNewData
 }
 
-// filterTripsByAgency returns only the trips whose route belongs to one of the
-// allowed agencies. Trips with an unresolvable route are dropped.
-func (manager *Manager) filterTripsByAgency(trips []gtfs.Trip, allowed map[string]bool) []gtfs.Trip {
+// filterTripsByAgency returns the trips whose route belongs to one of the
+// allowed agencies, plus, separately, the trips whose route can't be resolved
+// to any agency (missing or unknown route ID). Trips of other agencies are
+// dropped from both.
+func (manager *Manager) filterTripsByAgency(trips []gtfs.Trip, allowed map[string]bool) (filtered, unattributed []gtfs.Trip) {
 	ctx := context.TODO()
 
-	filtered := make([]gtfs.Trip, 0, len(trips))
+	filtered = make([]gtfs.Trip, 0, len(trips))
 	for _, trip := range trips {
 		if trip.ID.RouteID == "" {
+			unattributed = append(unattributed, trip)
 			continue
 		}
-		if route, err := manager.GtfsDB.Queries.GetRoute(ctx, trip.ID.RouteID); err == nil {
-			if allowed[route.AgencyID] {
-				filtered = append(filtered, trip)
-			}
+		route, err := manager.GtfsDB.Queries.GetRoute(ctx, trip.ID.RouteID)
+		if err != nil {
+			unattributed = append(unattributed, trip)
+			continue
+		}
+		if allowed[route.AgencyID] {
+			filtered = append(filtered, trip)
 		}
 	}
-	return filtered
+	return filtered, unattributed
 }
 
 // filterVehiclesByAgency returns only the vehicles whose trip's route belongs to

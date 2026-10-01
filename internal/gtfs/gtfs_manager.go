@@ -60,6 +60,10 @@ type Manager struct {
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
 	feedAlerts   map[string][]gtfs.Alert
+	// Per-feed trips the agency filter dropped because their route couldn't
+	// be resolved to any agency. Kept out of the merged view, but the metrics
+	// endpoint reports them as that feed's unmatched records.
+	feedUnattributedTrips map[string][]gtfs.Trip
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
 	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
 	// No lock is required for reads.
@@ -86,6 +90,7 @@ func (manager *Manager) clearFeedData(feedID string) {
 	defer manager.realTimeMutex.Unlock()
 
 	manager.feedTrips[feedID] = nil
+	delete(manager.feedUnattributedTrips, feedID)
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
 
