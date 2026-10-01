@@ -593,29 +593,43 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	return hasNewData
 }
 
-// filterTripsByAgency returns the trips whose route belongs to one of the
-// allowed agencies, plus, separately, the trips whose route can't be resolved
-// to any agency (missing or unknown route ID). Trips of other agencies are
-// dropped from both.
+// filterTripsByAgency returns the trips that belong to one of the allowed
+// agencies, plus, separately, the trips that can't be resolved to any agency
+// (neither their route ID nor their trip ID is known). Trips of other
+// agencies are dropped from both.
 func (manager *Manager) filterTripsByAgency(trips []gtfs.Trip, allowed map[string]bool) (filtered, unattributed []gtfs.Trip) {
 	ctx := context.TODO()
 
 	filtered = make([]gtfs.Trip, 0, len(trips))
 	for _, trip := range trips {
-		if trip.ID.RouteID == "" {
+		agencyID, resolved := manager.resolveTripAgencyID(ctx, trip.ID)
+		if !resolved {
 			unattributed = append(unattributed, trip)
 			continue
 		}
-		route, err := manager.GtfsDB.Queries.GetRoute(ctx, trip.ID.RouteID)
-		if err != nil {
-			unattributed = append(unattributed, trip)
-			continue
-		}
-		if allowed[route.AgencyID] {
+		if allowed[agencyID] {
 			filtered = append(filtered, trip)
 		}
 	}
 	return filtered, unattributed
+}
+
+// resolveTripAgencyID returns the agency of the trip's route. GTFS-RT
+// route_id is optional, so when it's missing or unknown this falls back to
+// the route of the static trip with the same trip ID.
+func (manager *Manager) resolveTripAgencyID(ctx context.Context, tripID gtfs.TripID) (string, bool) {
+	if route, err := manager.GtfsDB.Queries.GetRoute(ctx, tripID.RouteID); err == nil {
+		return route.AgencyID, true
+	}
+	staticTrip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID.ID)
+	if err != nil {
+		return "", false
+	}
+	route, err := manager.GtfsDB.Queries.GetRoute(ctx, staticTrip.RouteID)
+	if err != nil {
+		return "", false
+	}
+	return route.AgencyID, true
 }
 
 // filterVehiclesByAgency returns only the vehicles whose trip's route belongs to
