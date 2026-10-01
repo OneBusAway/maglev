@@ -94,6 +94,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	// tripServiceDay records the service-day midnight each active trip was found under.
 	tripServiceDay := make(map[string]time.Time)
+	// tripRouteDay records the route service day each active trip's block was selected on.
+	tripRouteDay := make(map[string]time.Time)
 
 	dayBlockIDs := make([][]string, len(routeServiceDays))
 	var nullBlockTrips []string
@@ -149,6 +151,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				continue
 			}
 			tripServiceDay[tripID] = serviceDayMidnight
+			tripRouteDay[tripID] = routeServiceDays[dayIndex].midnight
 			activeTrips = append(activeTrips, tripID)
 		}
 	}
@@ -294,7 +297,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		entryLocation := locationOrDefault(agencyLocations, entryAgencyID, currentLocation)
 		activeLocation := locationOrDefault(agencyLocations, activeAgencyID, currentLocation)
 		if entryLocation.String() != activeLocation.String() {
-			entryServiceDate = serviceDatesByZone[entryLocation.String()].Resolve(tripsByID[entryTripID])
+			entryServiceDate = tripRouteDay[tripID]
 		}
 
 		var schedule *models.TripsSchedule

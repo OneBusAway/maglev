@@ -2904,3 +2904,25 @@ func TestTripsForRouteHandler_InterlinedEntryKeepsTheBlocksServiceDay(t *testing
 	assert.Equal(t, yesterday, entry.Status.ServiceDate.UnixMilli())
 	assert.Equal(t, yesterday, entry.ServiceDate)
 }
+
+func TestTripsForRouteHandler_CrossZoneEntryKeepsTheBlocksServiceDay(t *testing.T) {
+	files := crossZonePreviousDayFiles()
+	files["trips.txt"] += tripsForRouteRouteID + ",tfr-svc-a,tfr-ya-early,Headsign A,0,tfr-zblock\n"
+	files["stop_times.txt"] += "tfr-ya-early,18:00:00,18:00:00," + tripsForRouteStop1ID + ",1\n" +
+		"tfr-ya-early,18:30:00,18:30:00," + tripsForRouteStop2ID + ",2\n"
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-cross-zone-entry.zip", files)
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
+		combinedRouteID, afterMidnightClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1)
+	entry := model.Data.List[0]
+	require.NotNil(t, entry.Status)
+	assert.Contains(t, entry.Status.ActiveTripID, "tfr-lb")
+	require.Contains(t, entry.TripId, "tfr-ya-early")
+	assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC).UnixMilli(), entry.ServiceDate)
+}
