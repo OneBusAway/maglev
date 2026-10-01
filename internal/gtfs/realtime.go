@@ -400,6 +400,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	// Apply agency-based filtering if configured for this feed.
 	// This runs before acquiring realTimeMutex to keep the critical section short.
 	agencyFilter := manager.feedAgencyFilter[feedID]
+	var unattributedTrips []gtfs.Trip
 	if len(agencyFilter) > 0 {
 		routeIDs := collectRealtimeRouteIDs(tripData, tripErr, vehicleData, vehicleErr, alertData, alertErr)
 		routeAgencyMap, err := manager.buildRouteAgencyMap(ctx, routeIDs)
@@ -409,7 +410,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			return false
 		}
 		if tripData != nil && tripErr == nil {
-			tripData.Trips = filterTripsByAgency(tripData.Trips, agencyFilter, routeAgencyMap)
+			tripData.Trips, unattributedTrips = filterTripsByAgency(tripData.Trips, agencyFilter, routeAgencyMap)
 		}
 		if vehicleData != nil && vehicleErr == nil {
 			vehicleData.Vehicles = filterVehiclesByAgency(vehicleData.Vehicles, agencyFilter, routeAgencyMap)
@@ -424,6 +425,10 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	if tripData != nil && tripErr == nil {
 		manager.feedTrips[feedID] = tripData.Trips
+		if manager.feedUnattributedTrips == nil {
+			manager.feedUnattributedTrips = make(map[string][]gtfs.Trip)
+		}
+		manager.feedUnattributedTrips[feedID] = unattributedTrips
 	}
 
 	if vehicleData != nil && vehicleErr == nil {
@@ -700,19 +705,27 @@ func (manager *Manager) buildRouteAgencyMap(ctx context.Context, routeIDSet map[
 	return routeAgencyMap, nil
 }
 
-// filterTripsByAgency returns only the trips whose route belongs to one of the
-// allowed agencies. Trips with an unresolvable route are dropped.
-func filterTripsByAgency(trips []gtfs.Trip, allowed map[string]bool, routeAgencyMap map[string]string) []gtfs.Trip {
-	filtered := make([]gtfs.Trip, 0, len(trips))
+// filterTripsByAgency returns the trips whose route belongs to one of the
+// allowed agencies, plus, separately, the trips whose route can't be resolved
+// to any agency (missing or unknown route ID). Trips of other agencies are
+// dropped from both.
+func filterTripsByAgency(trips []gtfs.Trip, allowed map[string]bool, routeAgencyMap map[string]string) (filtered, unattributed []gtfs.Trip) {
+	filtered = make([]gtfs.Trip, 0, len(trips))
 	for _, trip := range trips {
 		if trip.ID.RouteID == "" {
+			unattributed = append(unattributed, trip)
 			continue
 		}
-		if agencyID, ok := routeAgencyMap[trip.ID.RouteID]; ok && allowed[agencyID] {
+		agencyID, ok := routeAgencyMap[trip.ID.RouteID]
+		if !ok {
+			unattributed = append(unattributed, trip)
+			continue
+		}
+		if allowed[agencyID] {
 			filtered = append(filtered, trip)
 		}
 	}
-	return filtered
+	return filtered, unattributed
 }
 
 // filterVehiclesByAgency returns only the vehicles whose trip's route belongs to

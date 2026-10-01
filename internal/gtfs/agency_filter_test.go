@@ -98,11 +98,13 @@ func TestFilterTripsByAgency(t *testing.T) {
 
 	allowed := map[string]bool{"agency-A": true}
 	routeAgencyMap := routeAgencyMapFor(t, manager, []string{"R1", "R2", "R3", "R999"})
-	filtered := filterTripsByAgency(trips, allowed, routeAgencyMap)
+	filtered, unattributed := filterTripsByAgency(trips, allowed, routeAgencyMap)
 
 	assert.Len(t, filtered, 2, "should keep only agency-A trips")
 	assert.Equal(t, "T1", filtered[0].ID.ID)
 	assert.Equal(t, "T3", filtered[1].ID.ID)
+	require.Len(t, unattributed, 1, "only the unknown-route trip is unattributable; T2 belongs to agency-B")
+	assert.Equal(t, "T4", unattributed[0].ID.ID)
 }
 
 func TestFilterVehiclesByAgency(t *testing.T) {
@@ -318,8 +320,8 @@ func TestAgencyFilterMultipleFeedsIntegration(t *testing.T) {
 	}
 
 	routeAgencyMap := routeAgencyMapFor(t, manager, []string{"R1", "R2", "R3"})
-	filteredA := filterTripsByAgency(tripsA, manager.feedAgencyFilter["feed-a"], routeAgencyMap)
-	filteredB := filterTripsByAgency(tripsB, manager.feedAgencyFilter["feed-b"], routeAgencyMap)
+	filteredA, _ := filterTripsByAgency(tripsA, manager.feedAgencyFilter["feed-a"], routeAgencyMap)
+	filteredB, _ := filterTripsByAgency(tripsB, manager.feedAgencyFilter["feed-b"], routeAgencyMap)
 
 	manager.realTimeMutex.Lock()
 	manager.feedTrips["feed-a"] = filteredA
