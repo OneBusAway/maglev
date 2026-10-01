@@ -3926,7 +3926,7 @@ func (q *Queries) GetStopIDsForTrip(ctx context.Context, tripID string) ([]strin
 const getStopIDsForTripIDs = `-- name: GetStopIDsForTripIDs :many
 SELECT trip_id, stop_id FROM stop_times
 WHERE trip_id IN (/*SLICE:trip_ids*/?)
-ORDER BY trip_id, stop_sequence
+ORDER BY trip_id ASC, stop_sequence ASC
 `
 
 type GetStopIDsForTripIDsRow struct {
