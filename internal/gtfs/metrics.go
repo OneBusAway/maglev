@@ -251,68 +251,104 @@ func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 // produce a meaningless delta whenever that time isn't close to the real one.
 func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *MetricsSnapshot, scheduleReferenceTime time.Time) error {
 	wallClockNow := time.Now()
-
 	allAgencies := make(map[string]bool, len(snapshot.AgencyIDs))
 	for _, agencyID := range snapshot.AgencyIDs {
 		allAgencies[agencyID] = true
 	}
-
-	unmatchedTripIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
-	matchedStopIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
-	unmatchedStopIDsByAgency := make(map[string]map[string]bool, len(snapshot.AgencyIDs))
+	idSets := newAgencyIDSets(len(snapshot.AgencyIDs))
 
 	for _, feed := range manager.snapshotRealtimeFeedState() {
 		metrics, err := manager.computeFeedMetrics(ctx, feed.trips, scheduleReferenceTime)
 		if err != nil {
 			return err
 		}
-
-		// A feed that has never successfully updated is the worst possible
-		// staleness: use realtimeUpdateUnknown so it propagates correctly
-		// through the max-staleness-wins comparison even when a sibling feed
-		// covering the same agency is healthy.
-		staleness := realtimeUpdateUnknown
-		if feed.hasUpdate {
-			staleness = int64(wallClockNow.Sub(feed.lastUpdate).Seconds())
-		}
-
-		coveredAgencies := feed.agencyFilter
-		if len(coveredAgencies) == 0 {
-			coveredAgencies = allAgencies
-		}
-
-		for agencyID := range coveredAgencies {
-			if !allAgencies[agencyID] {
-				// Skip agencies absent from static GTFS — a stale or
-				// misspelled agency-ids entry must not create orphan keys.
-				continue
-			}
-			snapshot.RealtimeRecordsTotal[agencyID] += metrics.recordsTotal
-			updateStaleness(snapshot, agencyID, staleness)
-			addToAgencySet(unmatchedTripIDsByAgency, agencyID, metrics.tripIDsUnmatched)
-			addToAgencySet(matchedStopIDsByAgency, agencyID, metrics.stopIDsMatched)
-			addToAgencySet(unmatchedStopIDsByAgency, agencyID, metrics.stopIDsUnmatched)
-		}
-
-		for agencyID, matched := range metrics.tripsMatchedByAgency {
-			if coveredAgencies[agencyID] {
-				snapshot.RealtimeTripCountsMatched[agencyID] += matched
-			}
-		}
+		attributeFeedMetrics(snapshot, idSets, metrics, feedAttribution{
+			coveredAgencies: coveredAgencies(feed, allAgencies),
+			staleness:       feedStaleness(feed, wallClockNow),
+		})
 	}
 
+	finalizeRealtimeMetrics(snapshot, idSets)
+	return nil
+}
+
+// agencyIDSets accumulates, per agency, the trip and stop IDs reported across
+// every feed covering it, so an ID reported by more than one such feed is
+// only counted once.
+type agencyIDSets struct {
+	unmatchedTripIDs map[string]map[string]bool
+	matchedStopIDs   map[string]map[string]bool
+	unmatchedStopIDs map[string]map[string]bool
+}
+
+func newAgencyIDSets(agencyCount int) agencyIDSets {
+	return agencyIDSets{
+		unmatchedTripIDs: make(map[string]map[string]bool, agencyCount),
+		matchedStopIDs:   make(map[string]map[string]bool, agencyCount),
+		unmatchedStopIDs: make(map[string]map[string]bool, agencyCount),
+	}
+}
+
+// feedAttribution is which agencies a feed's metrics are reported under, and
+// how stale that feed is.
+type feedAttribution struct {
+	coveredAgencies map[string]bool
+	staleness       int64
+}
+
+// coveredAgencies returns the static agencies a feed reports for: its
+// configured agency filter, or every agency when it has none. Filter entries
+// absent from static GTFS are left out, so a stale or misspelled agency-ids
+// entry doesn't create orphan keys.
+func coveredAgencies(feed realtimeFeedState, allAgencies map[string]bool) map[string]bool {
+	if len(feed.agencyFilter) == 0 {
+		return allAgencies
+	}
+	covered := make(map[string]bool, len(feed.agencyFilter))
+	for agencyID := range feed.agencyFilter {
+		if allAgencies[agencyID] {
+			covered[agencyID] = true
+		}
+	}
+	return covered
+}
+
+// feedStaleness returns seconds since the feed last updated. A feed that has
+// never successfully updated is the worst possible staleness:
+// realtimeUpdateUnknown propagates through the max-staleness-wins comparison
+// even when a sibling feed covering the same agency is healthy.
+func feedStaleness(feed realtimeFeedState, wallClockNow time.Time) int64 {
+	if !feed.hasUpdate {
+		return realtimeUpdateUnknown
+	}
+	return int64(wallClockNow.Sub(feed.lastUpdate).Seconds())
+}
+
+// attributeFeedMetrics adds one feed's metrics to every agency it covers.
+func attributeFeedMetrics(snapshot *MetricsSnapshot, idSets agencyIDSets, metrics feedMetrics, attribution feedAttribution) {
+	for agencyID := range attribution.coveredAgencies {
+		snapshot.RealtimeRecordsTotal[agencyID] += metrics.recordsTotal
+		snapshot.RealtimeTripCountsMatched[agencyID] += metrics.tripsMatchedByAgency[agencyID]
+		updateStaleness(snapshot, agencyID, attribution.staleness)
+		addToAgencySet(idSets.unmatchedTripIDs, agencyID, metrics.tripIDsUnmatched)
+		addToAgencySet(idSets.matchedStopIDs, agencyID, metrics.stopIDsMatched)
+		addToAgencySet(idSets.unmatchedStopIDs, agencyID, metrics.stopIDsUnmatched)
+	}
+}
+
+// finalizeRealtimeMetrics writes the accumulated ID sets into the snapshot
+// and backfills 0 freshness for agencies no feed covers.
+func finalizeRealtimeMetrics(snapshot *MetricsSnapshot, idSets agencyIDSets) {
 	for _, agencyID := range snapshot.AgencyIDs {
 		if _, tracked := snapshot.TimeSinceLastRealtimeUpdate[agencyID]; !tracked {
 			snapshot.TimeSinceLastRealtimeUpdate[agencyID] = 0
 		}
-		snapshot.RealtimeTripCountsUnmatched[agencyID] = len(unmatchedTripIDsByAgency[agencyID])
-		snapshot.RealtimeTripIDsUnmatched[agencyID] = sortedKeys(unmatchedTripIDsByAgency[agencyID])
-		snapshot.StopIDsMatchedCount[agencyID] = len(matchedStopIDsByAgency[agencyID])
-		snapshot.StopIDsUnmatchedCount[agencyID] = len(unmatchedStopIDsByAgency[agencyID])
-		snapshot.StopIDsUnmatched[agencyID] = sortedKeys(unmatchedStopIDsByAgency[agencyID])
+		snapshot.RealtimeTripCountsUnmatched[agencyID] = len(idSets.unmatchedTripIDs[agencyID])
+		snapshot.RealtimeTripIDsUnmatched[agencyID] = sortedKeys(idSets.unmatchedTripIDs[agencyID])
+		snapshot.StopIDsMatchedCount[agencyID] = len(idSets.matchedStopIDs[agencyID])
+		snapshot.StopIDsUnmatchedCount[agencyID] = len(idSets.unmatchedStopIDs[agencyID])
+		snapshot.StopIDsUnmatched[agencyID] = sortedKeys(idSets.unmatchedStopIDs[agencyID])
 	}
-
-	return nil
 }
 
 // addToAgencySet merges ids into agencyID's set within sets, so an ID that's
