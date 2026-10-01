@@ -253,7 +253,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
-	queryOffset := int64(currentTime.Sub(serviceMidnight))
+	queryOffset := int64(currentTime.Sub(serviceStart))
 
 	matchedStopTime, matchedIdx, found := findStopTimeForTripStop(orderedStopTimes, stopCode, params.StopSequence, queryOffset)
 	if !found {
