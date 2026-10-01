@@ -113,6 +113,50 @@ func TestArrivalsEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 	}
 }
 
+type dstTripDetailsResponse struct {
+	Data struct {
+		Entry struct {
+			ServiceDate int64 `json:"serviceDate"`
+		} `json:"entry"`
+	} `json:"data"`
+}
+
+func TestTripDetails_AcceptsTheArrivalsServiceDateOnDSTServiceDays(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	stopID := utils.FormCombinedID("dst-agency", "dst-stop1")
+	tripID := utils.FormCombinedID("dst-agency", "dst-trip")
+
+	for _, date := range []servicedate.Date{
+		servicedate.New(2026, time.November, 8),
+		servicedate.New(2026, time.November, 1),
+		servicedate.New(2026, time.March, 8),
+	} {
+		t.Run(date.String(), func(t *testing.T) {
+			now := date.Start(losAngeles).Add(7*time.Hour + 50*time.Minute)
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now),
+				fmt.Sprintf("dst-details-%s.zip", date), dstFiles())
+
+			_, plural := callAPIHandler[dstArrivalsResponse](t, api, fmt.Sprintf(
+				"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=5&minutesAfter=30", stopID))
+			require.Len(t, plural.Data.Entry.ArrivalsAndDepartures, 1)
+
+			midnight := date.Midnight(losAngeles)
+			for _, serviceDate := range []string{
+				fmt.Sprint(plural.Data.Entry.ArrivalsAndDepartures[0].ServiceDate),
+				fmt.Sprint(midnight.UnixMilli()),
+				midnight.Format("2006-01-02"),
+			} {
+				resp, details := callAPIHandler[dstTripDetailsResponse](t, api, fmt.Sprintf(
+					"/api/where/trip-details/%s.json?key=TEST&serviceDate=%s", tripID, serviceDate))
+				require.Equal(t, 200, resp.StatusCode, serviceDate)
+				assert.Equal(t, date, servicedate.FromInstant(time.UnixMilli(details.Data.Entry.ServiceDate), losAngeles), serviceDate)
+			}
+		})
+	}
+}
+
 func TestArrivalAndDepartureForStop_PicksTheClosestLoopVisitOnDSTServiceDays(t *testing.T) {
 	losAngeles, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
