@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -144,8 +145,9 @@ func ParseFloatParam(params url.Values, key string, fieldErrors map[string][]str
 	}
 
 	f, err := strconv.ParseFloat(val, 64)
-	if err != nil {
+	if err != nil || !isFinite(f) {
 		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
+		return 0, fieldErrors
 	}
 	return f, fieldErrors
 }
@@ -162,12 +164,19 @@ func ParseRequiredFloatParam(params url.Values, key string, fieldErrors map[stri
 	}
 
 	f, err := strconv.ParseFloat(val, 64)
-	if err != nil {
+	if err != nil || !isFinite(f) {
 		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
 		return 0, fieldErrors
 	}
 	return f, fieldErrors
 
+}
+
+// isFinite reports whether f is neither NaN nor infinite. strconv.ParseFloat
+// accepts "NaN" and "Inf", and NaN slips past range checks such as
+// lat < -90 || lat > 90 because every comparison with NaN is false.
+func isFinite(f float64) bool {
+	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }
 
 func ParseTimeParameter(timeParam string, currentLocation *time.Location, c clock.Clock) (string, time.Time, map[string][]string, bool) {
@@ -332,17 +341,6 @@ func TruncateComment(s string) string {
 	return s
 }
 
-// ValidateNumericParam returns the string if it's a valid float, empty string otherwise.
-func ValidateNumericParam(s string) string {
-	if s == "" {
-		return ""
-	}
-	if _, err := strconv.ParseFloat(s, 64); err != nil {
-		return ""
-	}
-	return s
-}
-
 const (
 	minUnixMillis = int64(0)
 	maxUnixMillis = int64(32503680000000) // year 3000
@@ -389,8 +387,8 @@ func ParseRequiredStringParam(params url.Values, key string, fieldErrors map[str
 }
 
 // ParseBoolParam retrieves a boolean value from the provided URL query parameters,
-// falling back to fallback when the key is absent. A value that is not a boolean
-// records a field error and leaves the fallback in place.
+// accepting only case-insensitive true/false. An absent or empty value uses
+// fallback; other supplied values append a field error.
 func ParseBoolParam(params url.Values, key string, fallback bool, fieldErrors map[string][]string) (bool, map[string][]string) {
 	if fieldErrors == nil {
 		fieldErrors = make(map[string][]string)
@@ -401,13 +399,15 @@ func ParseBoolParam(params url.Values, key string, fallback bool, fieldErrors ma
 		return fallback, fieldErrors
 	}
 
-	parsed, err := strconv.ParseBool(val)
-	if err != nil {
+	switch {
+	case strings.EqualFold(val, "true"):
+		return true, fieldErrors
+	case strings.EqualFold(val, "false"):
+		return false, fieldErrors
+	default:
 		fieldErrors[key] = append(fieldErrors[key], "must be a boolean value (true/false)")
 		return fallback, fieldErrors
 	}
-
-	return parsed, fieldErrors
 }
 
 // ClampRadius restricts a radius value to MaxSearchRadiusInMeters

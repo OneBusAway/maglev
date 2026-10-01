@@ -14,6 +14,11 @@ import (
 
 // vehiclesForAgencyHandler returns real-time vehicle positions for all vehicles operated by a given agency.
 func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, fieldErrors := ShouldIncludeReferences(r, nil)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	id, ok := api.extractAndValidateID(w, r)
 	if !ok {
@@ -257,7 +262,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 	// Omit references entirely when includeReferences=false.
 	references := models.NewEmptyReferences()
-	if ShouldIncludeReferences(r) {
+	if includeReferences {
 		if len(vehiclesList) > 0 {
 			references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 		}

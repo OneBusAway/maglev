@@ -66,14 +66,14 @@ func extractFTS5Terms(sanitizedQuery string) []string {
 // searchStopsHandler searches for stops matching a user-provided query string
 // using full-text search, with optional geographic bounds filtering.
 func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	ctx := r.Context()
 
 	// 1. Parse Parameters
 	queryParams := r.URL.Query()
-	fieldErrors := make(map[string][]string)
-
-	includeReferences := ShouldIncludeReferences(r)
+	fieldErrors := referenceErrors
 
 	// Standardized parameter parsing
 	query, fieldErrors := utils.ParseRequiredStringParam(queryParams, "input", fieldErrors)

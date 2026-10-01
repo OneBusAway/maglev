@@ -1,14 +1,33 @@
 package restapi
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
+
+func TestAgenciesWithCoverageHandlerValidatesReferencesBeforeDatabaseAccess(t *testing.T) {
+	// No GTFS manager is configured: invalid input must return before accessing it.
+	api := &RestAPI{Application: &app.Application{Clock: clock.RealClock{}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/where/agencies-with-coverage.json?includeReferences=abc", nil)
+	recorder := httptest.NewRecorder()
+
+	api.agenciesWithCoverageHandler(recorder, req)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	var model strictValidationResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &model))
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+	assert.NotEmpty(t, model.Data.FieldErrors["includeReferences"])
+}
 
 func TestAgenciesWithCoverageHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)

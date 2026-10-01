@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -465,19 +464,9 @@ func mapAlertEffectToSeverity(effect gtfs.AlertEffect) string {
 }
 
 // ShouldIncludeReferences parses the "includeReferences" query parameter from the request.
-// It defaults to true if the parameter is absent or if it fails to parse as a boolean.
-func ShouldIncludeReferences(r *http.Request) bool {
-	val := r.URL.Query().Get("includeReferences")
-	if val == "" {
-		return true
-	}
-
-	parsed, err := strconv.ParseBool(val)
-	if err != nil {
-		return true
-	}
-
-	return parsed
+// Absent or empty values default to true; invalid values append a field error.
+func ShouldIncludeReferences(r *http.Request, fieldErrors map[string][]string) (bool, map[string][]string) {
+	return utils.ParseBoolParam(r.URL.Query(), "includeReferences", true, fieldErrors)
 }
 
 // BuildStopReferencesAndRouteIDsForStops builds full stop references and collects unique routes for the given stop IDs.
@@ -642,27 +631,11 @@ func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, ids
 			routeIDs = []string{}
 		}
 
-		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
-		if direction == "" {
-			direction = models.UnknownValue
-		}
-
-		// compute stop-specific info once here; the agency-specifc info
-		// (ID, Parent) are computed in the following loop for each agencyID_stopID
-		// referencing the same stop.
-		stopInfo := models.Stop{
-			Code:               nulls.StringOrEmpty(stop.Code),
-			Direction:          direction,
-			ID:                 "",
-			Lat:                stop.Lat,
-			Lon:                stop.Lon,
-			LocationType:       int(nulls.Int64OrDefault(stop.LocationType, 0)),
-			Name:               nulls.StringOrEmpty(stop.Name),
-			Parent:             "",
-			RouteIDs:           routeIDs,
-			StaticRouteIDs:     routeIDs,
-			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-		}
+		// Build the stop-specific fields once through buildStopModel so direction
+		// and code follow the same rules as every other stop builder. The agency
+		// argument only feeds ID, which the loop below overwrites with each
+		// referring combined ID, so it is left empty here.
+		stopInfo := api.buildStopModel(ctx, "", stop, routeIDs)
 
 		for _, combinedID := range idsByBareID[stop.ID] {
 			agencyStop := stopInfo

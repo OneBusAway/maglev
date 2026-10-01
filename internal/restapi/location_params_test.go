@@ -70,6 +70,17 @@ func TestParseLocationParams_ValidationErrors(t *testing.T) {
 		assert.NotEmpty(t, errs["lonSpan"])
 	})
 
+	t.Run("NaN coordinates and spans return field errors", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test?lat=NaN&lon=NaN&radius=NaN&latSpan=NaN&lonSpan=NaN", nil)
+		loc, errs := api.parseLocationParams(req, nil)
+		assert.Nil(t, loc)
+		assert.NotEmpty(t, errs["lat"])
+		assert.NotEmpty(t, errs["lon"])
+		assert.NotEmpty(t, errs["radius"])
+		assert.NotEmpty(t, errs["latSpan"])
+		assert.NotEmpty(t, errs["lonSpan"])
+	})
+
 	t.Run("Out of bounds coordinates return location errors with nil initial fieldErrors", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test?lat=100.0&lon=200.0&radius=-10.0&latSpan=-5.0&lonSpan=-5.0", nil)
 		loc, errs := api.parseLocationParams(req, nil)

@@ -14,9 +14,11 @@ import (
 // routesForLocationHandler returns routes serving stops near a geographic location,
 // specified by lat/lon coordinates with an optional radius or latSpan/lonSpan bounding box.
 func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+
 	queryParams := r.URL.Query()
 
-	var fieldErrors map[string][]string
+	fieldErrors := referenceErrors
 	loc, fieldErrors := api.parseLocationParams(r, fieldErrors)
 	maxCount, fieldErrors := utils.ParseMaxCountClamped(queryParams, models.DefaultMaxCountForRoutesForLocation, fieldErrors)
 
@@ -70,7 +72,7 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	// Only agencies are referenced here: route beans carry no situation IDs, so
 	// references.situations stays empty even when alerts affect the returned routes.
 	// When includeReferences=false the references block is present but empty.
-	if ShouldIncludeReferences(r) {
+	if includeReferences {
 		agencyIDList := slices.Collect(maps.Keys(agencyIDs))
 		agencies, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesByIDs(ctx, agencyIDList)
 		if err != nil {

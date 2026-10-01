@@ -417,6 +417,36 @@ func TestParseFloatParam(t *testing.T) {
 			expectedValue: 150.0,
 			expectError:   false,
 		},
+		{
+			name: "NaN",
+			params: url.Values{
+				"lat": []string{"NaN"},
+			},
+			key:           "lat",
+			initialErrors: nil,
+			expectedValue: 0,
+			expectError:   true,
+		},
+		{
+			name: "Infinity",
+			params: url.Values{
+				"radius": []string{"Inf"},
+			},
+			key:           "radius",
+			initialErrors: nil,
+			expectedValue: 0,
+			expectError:   true,
+		},
+		{
+			name: "Overflow to infinity",
+			params: url.Values{
+				"radius": []string{"1e400"},
+			},
+			key:           "radius",
+			initialErrors: nil,
+			expectedValue: 0,
+			expectError:   true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1000,47 +1030,6 @@ func TestTruncateComment(t *testing.T) {
 	}
 }
 
-func TestValidateNumericParam(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "Empty string",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "Valid float",
-			input:    "47.6097",
-			expected: "47.6097",
-		},
-		{
-			name:     "Valid negative float",
-			input:    "-122.3331",
-			expected: "-122.3331",
-		},
-		{
-			name:     "Invalid text",
-			input:    "invalid-coord",
-			expected: "",
-		},
-		{
-			name:     "Mixed text and numbers",
-			input:    "12abc",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ValidateNumericParam(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestParseRequiredFloatParam(t *testing.T) {
 	t.Run("missing key returns error", func(t *testing.T) {
 		params := url.Values{}
@@ -1065,6 +1054,14 @@ func TestParseRequiredFloatParam(t *testing.T) {
 		val, fieldErrors := ParseRequiredFloatParam(params, "lat", nil)
 		assert.Equal(t, float64(0), val)
 		assert.Empty(t, fieldErrors)
+	})
+	t.Run("NaN and infinite values add parse error", func(t *testing.T) {
+		for _, value := range []string{"NaN", "Inf", "-Inf"} {
+			params := url.Values{"lat": []string{value}}
+			val, fieldErrors := ParseRequiredFloatParam(params, "lat", nil)
+			assert.Equal(t, float64(0), val, value)
+			assert.Contains(t, fieldErrors["lat"][0], "Invalid field value", value)
+		}
 	})
 	t.Run("existing fieldErrors are preserved", func(t *testing.T) {
 		params := url.Values{}
@@ -1210,5 +1207,18 @@ func TestParseBoolParam(t *testing.T) {
 				assert.Empty(t, fieldErrors)
 			}
 		})
+	}
+}
+
+func TestParseBoolParamStrictGrammar(t *testing.T) {
+	for _, raw := range []string{"true", "TRUE", "TrUe", "false", "FALSE", "FaLsE"} {
+		value, errors := ParseBoolParam(url.Values{"flag": {raw}}, "flag", false, nil)
+		assert.Equal(t, strings.EqualFold(raw, "true"), value)
+		assert.Empty(t, errors)
+	}
+	for _, raw := range []string{"1", "0", "t", "f", " true ", "garbage"} {
+		value, errors := ParseBoolParam(url.Values{"flag": {raw}}, "flag", true, nil)
+		assert.True(t, value)
+		assert.NotEmpty(t, errors["flag"])
 	}
 }
