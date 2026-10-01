@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -167,36 +168,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 
 		tripsInGroup := group.Trips
 
-		seenDirSvcIDs := make(map[string]bool)
-		var dirServiceIDs []string
-		for _, trip := range tripsInGroup {
-			if !seenDirSvcIDs[trip.ServiceID] {
-				seenDirSvcIDs[trip.ServiceID] = true
-				dirServiceIDs = append(dirServiceIDs, trip.ServiceID)
-			}
-		}
-
-		var orderedStopIDs []string
-		var err error
-		if !group.DirectionID.Valid {
-			orderedStopIDs, err = api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrip(ctx, tripsInGroup[0].ID)
-		} else {
-			orderedStopIDs, err = api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForRouteDirection(ctx,
-				gtfsdb.GetOrderedStopIDsForRouteDirectionParams{
-					RouteID:     routeID,
-					DirectionID: group.DirectionID,
-					ServiceIds:  dirServiceIDs,
-				})
-		}
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
-
-		for _, stopID := range orderedStopIDs {
-			globalStopIDSet[stopID] = struct{}{}
-		}
-
 		rawTripIDs := make([]string, 0, len(tripsInGroup))
 		for _, trip := range tripsInGroup {
 			rawTripIDs = append(rawTripIDs, trip.ID)
@@ -211,6 +182,15 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripsInGroup))
 		for _, st := range allStopTimes {
 			stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
+		}
+
+		orderedStopIDs, err := api.orderGroupStops(ctx, tripsInGroup, stopTimesByTrip)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		for _, stopID := range orderedStopIDs {
+			globalStopIDSet[stopID] = struct{}{}
 		}
 
 		// Collect headsigns; fall back to the last stop's name when a trip has no
@@ -376,4 +356,35 @@ func buildNoServiceResponse(agencyID, routeID string, scheduleDate int64, agency
 		"references": *refs,
 	}
 	return models.NewResponse(200, data, text, clk)
+}
+
+func (api *RestAPI) orderGroupStops(ctx context.Context, trips []gtfsdb.Trip, stopTimesByTrip map[string][]gtfsdb.StopTime) ([]string, error) {
+	sequences := make([][]string, 0, len(trips))
+	var stopIDs []string
+	seen := make(map[string]bool)
+	for _, trip := range trips {
+		stopTimes := stopTimesByTrip[trip.ID]
+		if len(stopTimes) == 0 {
+			continue
+		}
+		sequence := make([]string, len(stopTimes))
+		for i, st := range stopTimes {
+			sequence[i] = st.StopID
+			if !seen[st.StopID] {
+				seen[st.StopID] = true
+				stopIDs = append(stopIDs, st.StopID)
+			}
+		}
+		sequences = append(sequences, sequence)
+	}
+
+	stops, err := queryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	if err != nil {
+		return nil, err
+	}
+	coordinates := make(map[string]models.Location, len(stops))
+	for _, stop := range stops {
+		coordinates[stop.ID] = models.Location{Lat: stop.Lat, Lon: stop.Lon}
+	}
+	return utils.OrderStopsAlongRoute(sequences, coordinates), nil
 }
