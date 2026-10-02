@@ -9,6 +9,9 @@ import (
 type RestAPI struct {
 	*app.Application
 	rateLimiter *RateLimitMiddleware
+	// blockTripCache holds static per-trip block data between requests. Its zero
+	// value works, so the tests that build a RestAPI literal need no change.
+	blockTripCache blockTripDataCache
 }
 
 // NewRestAPI creates a new RestAPI instance with initialized rate limiter

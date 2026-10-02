@@ -1,9 +1,12 @@
 package restapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
+
+	gtfs "github.com/OneBusAway/go-gtfs"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
@@ -25,7 +28,10 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	ctx := r.Context()
+	// Vehicles frequently share a block, and BuildTripStatus resolves the whole
+	// block each time it runs. The snapshot cache lets every vehicle on a block pay
+	// for that once per request instead of once per vehicle.
+	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
 
 	agency, err := api.GtfsManager.FindAgency(ctx, id)
 	if err != nil {
@@ -106,6 +112,18 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	routeRefs := make(map[string]models.Route)
 	tripRefs := make(map[string]models.Trip)
 	situations := newSituationCollector()
+
+	// Stops named by each entry's closestStop and nextStop. #1195 requires them in
+	// references.stops, otherwise those IDs point at nothing.
+	var stopIDs []string
+
+	// serviceDate above is the response-shaped value; BuildTripStatus wants the
+	// underlying time.
+	serviceDateTime := utils.CalculateServiceDate(referenceTime)
+
+	// Populated lazily by frequencyForEntry, so trips shared by several vehicles
+	// are queried once per request rather than once per vehicle.
+	freqMap := make(map[string][]gtfsdb.Frequency)
 
 	for _, vehicle := range vehiclesForAgency {
 		if ctx.Err() != nil {
@@ -239,6 +257,19 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 				tripRouteRef{tripID: vehicle.Trip.ID.ID, routeID: vehicle.Trip.ID.RouteID},
 				routeByID,
 			))
+
+			// activeTripID, not the nominal trip: the distance and stop fields have
+			// to describe the trip whose ID this entry reports as activeTripId, or an
+			// interlined vehicle would carry one trip's ID beside another's distances.
+			api.fillTripStatusFromSharedBuilder(ctx, tripStatus, id, activeTripID, &vehicle,
+				serviceDateTime, referenceTime, freqMap)
+
+			statusStopIDs, err := referencedStopIDs(tripStatus, nil)
+			if err != nil {
+				api.serverErrorResponse(w, r, err)
+				return
+			}
+			stopIDs = append(stopIDs, statusStopIDs...)
 		} else {
 			defaultTripStatus := models.NewTripStatus()
 			defaultTripStatus.Status = "default"
@@ -250,11 +281,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Convert maps to slices for references
-	routeRefList := make([]models.Route, 0, len(routeRefs))
-	for _, routeRef := range routeRefs {
-		routeRefList = append(routeRefList, routeRef)
-	}
-
 	tripRefList := make([]models.Trip, 0, len(tripRefs))
 	for _, tripRef := range tripRefs {
 		tripRefList = append(tripRefList, tripRef)
@@ -266,6 +292,27 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		if len(vehiclesList) > 0 {
 			references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 		}
+
+		stops, stopRoutes, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, id, stopIDs)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		references.Stops = stops
+		// A stop reference lists the routes serving it, so those routes belong here
+		// too or the stop entries point at routes that are themselves absent.
+		for combinedRouteID, stopRoute := range stopRoutes {
+			if _, exists := routeRefs[combinedRouteID]; !exists {
+				routeRefs[combinedRouteID] = routeReferenceFromStopRow(stopRoute)
+			}
+		}
+
+		// Built after the merge above so the stops' routes are included.
+		routeRefList := make([]models.Route, 0, len(routeRefs))
+		for _, routeRef := range routeRefs {
+			routeRefList = append(routeRefList, routeRef)
+		}
+
 		references.Routes = routeRefList
 		references.Trips = tripRefList
 		references.Situations = api.situationReferences(ctx, situations.refs)
@@ -275,6 +322,51 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	const outOfRange, limitExceeded = false, false
 	response := models.NewListResponseWithRange(vehiclesList, *references, outOfRange, api.Clock, limitExceeded)
 	api.sendResponse(w, r, response)
+}
+
+// fillTripStatusFromSharedBuilder populates the tripStatus fields this handler
+// does not compute itself: the stop-relative fields, the distance fields,
+// scheduleDeviation and predicted. Every other real-time endpoint gets them from
+// BuildTripStatus; this one carried a reduced copy of the logic and left them at
+// their zero values (#1195).
+//
+// Only those fields are copied over. This endpoint resolves activeTripId,
+// blockTripSequence, status, phase, position, orientation and the update times
+// itself, and several of them deliberately differ from what the builder produces:
+// blockTripSequence reports -1 rather than 0 when it cannot be resolved, and
+// BuildVehicleStatus returns early for a vehicle it judges stale, which would
+// leave position at (0, 0) beside a real location at the top level. Copying the
+// whole status and then undoing the differences would leave this endpoint's
+// behaviour at the mercy of later changes to the builder, so the narrow direction
+// is deliberate.
+//
+// A failure leaves the fields at the zero values the endpoint emitted before, so
+// the entry degrades to its old shape instead of the request failing.
+func (api *RestAPI) fillTripStatusFromSharedBuilder(
+	ctx context.Context,
+	status *models.TripStatus,
+	agencyID, tripID string,
+	vehicle *gtfs.Vehicle,
+	serviceDate, currentTime time.Time,
+	freqMap map[string][]gtfsdb.Frequency,
+) {
+	built, _, err := api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime, freqMap)
+	if err != nil || built == nil {
+		logging.ForComponent(ctx, "http_server").Warn("BuildTripStatus failed, leaving tripStatus spec fields unset",
+			"tripID", tripID, "error", err)
+		return
+	}
+
+	status.ClosestStop = built.ClosestStop
+	status.ClosestStopTimeOffset = built.ClosestStopTimeOffset
+	status.NextStop = built.NextStop
+	status.NextStopTimeOffset = built.NextStopTimeOffset
+	status.ScheduleDeviation = built.ScheduleDeviation
+	status.ScheduledDistanceAlongTrip = built.ScheduledDistanceAlongTrip
+	status.TotalDistanceAlongTrip = built.TotalDistanceAlongTrip
+	status.DistanceAlongTrip = built.DistanceAlongTrip
+	// SetPredicted keeps Scheduled as its inverse.
+	status.SetPredicted(built.Predicted)
 }
 
 // addRouteReference inserts a route reference keyed by its combined agencyID_routeID.
