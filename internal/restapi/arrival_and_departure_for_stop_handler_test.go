@@ -1748,3 +1748,93 @@ func TestGetPredictedTimes_SequenceMustAgreeWithStopID(t *testing.T) {
 		})
 	}
 }
+
+// TestArrivalAndDepartureForStopHandler_CrossAgencyTimezone covers the singular
+// endpoint for issue #1459: the trip belongs to an agency in another timezone
+// than the stop prefix agency. The handler must localize the service date to
+// the trip agency's timezone instead of the stop agency's.
+func TestArrivalAndDepartureForStopHandler_CrossAgencyTimezone(t *testing.T) {
+	locLA, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(queryTimeUTC)
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyUTC  = "SgA"
+		agencyLA   = "SgB"
+		sharedStop = "SharedSgStop"
+		routeLA    = "RouteSgLA"
+		tripLA     = "TripSgLA"
+		calID      = "service_sg"
+	)
+
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyUTC, Name: "UTC Agency", Url: "http://utc-agency.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyLA, Name: "LA Agency", Url: "http://la-agency.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: sharedStop, Name: nulls.String("Shared Singular Stop"),
+		Lat: 47.6062, Lon: -122.3321,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: calID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20200101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeLA, AgencyID: agencyLA,
+		ShortName: nulls.String("LA-Line"),
+		LongName:  nulls.String("LA Express"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripLA, RouteID: routeLA, ServiceID: calID,
+		TripHeadsign: nulls.String("Southbound"),
+	})
+	require.NoError(t, err)
+
+	// 15:10 UTC is 07:10 PST in America/Los_Angeles on 2026-01-15.
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripLA, StopID: sharedStop, StopSequence: 1,
+		ArrivalTime:   int64(7*time.Hour + 10*time.Minute),
+		DepartureTime: int64(7*time.Hour + 12*time.Minute),
+	})
+	require.NoError(t, err)
+
+	// Query through the UTC agency's stop prefix for the LA agency's trip.
+	stopID := utils.FormCombinedID(agencyUTC, sharedStop)
+	tripID := utils.FormCombinedID(agencyLA, tripLA)
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d",
+		stopID, tripID, queryTimeUTC.UnixMilli())
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+
+	entry := model.Data.Entry
+	assert.Equal(t, stopID, entry.StopID)
+	assert.Equal(t, tripID, entry.TripID)
+	expectedArrivalUTC := time.Date(2026, 1, 15, 15, 10, 0, 0, time.UTC)
+	assert.True(t, entry.ScheduledArrivalTime.Equal(expectedArrivalUTC),
+		"singular endpoint must use the trip agency timezone, got %v", entry.ScheduledArrivalTime)
+	expectedMidnightLA := time.Date(2026, 1, 15, 0, 0, 0, 0, locLA)
+	assert.True(t, entry.ServiceDate.In(locLA).Equal(expectedMidnightLA),
+		"service date must be midnight in the trip agency timezone, got %v", entry.ServiceDate)
+}
