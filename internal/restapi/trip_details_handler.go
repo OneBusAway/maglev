@@ -12,6 +12,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -72,7 +73,7 @@ func parseEpochOrLayoutTime(value, layout string, loc *time.Location) (parsed *t
 // agencies at a positive UTC offset.
 func localizeTripTimes(params *TripParams, loc *time.Location) {
 	if params.ServiceDate != nil {
-		localized := params.ServiceDate.In(loc)
+		localized := servicedate.FromInstant(*params.ServiceDate, loc).Midnight(loc)
 		params.ServiceDate = &localized
 	}
 	if params.Time != nil {
