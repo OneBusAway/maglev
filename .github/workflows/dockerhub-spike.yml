@@ -1,0 +1,99 @@
+name: Docker Hub publication spike
+
+on:
+  push:
+    branches:
+      - release/edge-ci-validation
+
+permissions:
+  contents: read
+
+# Temporary infrastructure proof only; these images are not release inputs.
+concurrency:
+  group: dockerhub-publication-spike
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'OneBusAway/maglev' &&
+      github.ref == 'refs/heads/release/edge-ci-validation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      IMAGE: opentransitsoftwarefoundation/maglev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: linux/amd64,linux/arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push spike images
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            ${{ env.IMAGE }}:spike-${{ github.sha }}
+            ${{ env.IMAGE }}:edge-test
+      - name: Verify tags and platform entries
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for tag in "spike-${GITHUB_SHA}" edge-test; do
+            actual=$(docker buildx imagetools inspect "$IMAGE:$tag" --format '{{.Manifest.Digest}}')
+            test "$actual" = "$DIGEST"
+          done
+          docker buildx imagetools inspect "$IMAGE@$DIGEST" --raw > "$RUNNER_TEMP/spike-index.json"
+          jq -e '
+            (.manifests | length == 2) and
+            ([.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"]) and
+            all(.manifests[]; .digest | test("^sha256:[0-9a-f]{64}$"))
+          ' "$RUNNER_TEMP/spike-index.json"
+      - name: Pull each architecture and record evidence
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            docker pull --platform "linux/$arch" "$IMAGE@$DIGEST"
+            actual=$(docker image inspect "$IMAGE@$DIGEST" --format '{{.Os}}/{{.Architecture}}')
+            test "$actual" = "linux/$arch"
+          done
+          {
+            echo '## Docker Hub publication spike'
+            echo
+            echo 'Infrastructure proof only — not CI-validated or eligible for release promotion.'
+            echo
+            printf -- '- Commit: `%s`\n' "$GITHUB_SHA"
+            printf -- '- Image index: `%s@%s`\n' "$IMAGE" "$DIGEST"
+            printf -- '- Tags verified at that digest: `spike-%s`, `edge-test`\n' "$GITHUB_SHA"
+            echo '- Pulls verified: `linux/amd64`, `linux/arm64` (no containers run).'
+            echo
+            echo '### Runnable platform entries'
+            jq -r '.manifests[] | "- `\(.platform.os)/\(.platform.architecture)`: `\(.digest)`"' "$RUNNER_TEMP/spike-index.json"
+            echo
+            echo '### Reproduce pulls'
+            echo '```sh'
+            for arch in amd64 arm64; do
+              printf 'docker pull --platform linux/%s %s@%s\n' "$arch" "$IMAGE" "$DIGEST"
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
