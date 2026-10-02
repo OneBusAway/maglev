@@ -72,9 +72,11 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
+          # Classic image stores cannot keep both platforms under one index reference.
           for arch in amd64 arm64; do
-            docker pull --platform "linux/$arch" "$IMAGE@$DIGEST"
-            actual=$(docker image inspect "$IMAGE@$DIGEST" --format '{{.Os}}/{{.Architecture}}')
+            platform_digest=$(jq -er --arg arch "$arch" '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest' "$RUNNER_TEMP/spike-index.json")
+            docker pull --platform "linux/$arch" "$IMAGE@$platform_digest"
+            actual=$(docker image inspect "$IMAGE@$platform_digest" --format '{{.Os}}/{{.Architecture}}')
             test "$actual" = "linux/$arch"
           done
           {
@@ -92,8 +94,6 @@ jobs:
             echo
             echo '### Reproduce pulls'
             echo '```sh'
-            for arch in amd64 arm64; do
-              printf 'docker pull --platform linux/%s %s@%s\n' "$arch" "$IMAGE" "$DIGEST"
-            done
+            jq -r --arg image "$IMAGE" '.manifests[] | "docker pull --platform \(.platform.os)/\(.platform.architecture) \($image)@\(.digest)"' "$RUNNER_TEMP/spike-index.json"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
