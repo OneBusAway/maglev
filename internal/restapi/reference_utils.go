@@ -464,7 +464,7 @@ func mapAlertEffectToSeverity(effect gtfs.AlertEffect) string {
 }
 
 // ShouldIncludeReferences parses the "includeReferences" query parameter from the request.
-// Absent or empty values default to true; invalid values append a field error.
+// Absent values default to true; empty values are false; invalid values append a field error.
 func ShouldIncludeReferences(r *http.Request, fieldErrors map[string][]string) (bool, map[string][]string) {
 	return utils.ParseBoolParam(r.URL.Query(), "includeReferences", true, fieldErrors)
 }

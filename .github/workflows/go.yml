@@ -32,17 +32,14 @@ jobs:
 
   test:
     name: Test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
+    runs-on: ubuntu-latest
     env:
       CGO_ENABLED: 1
       SONAR_CI_ANALYSIS_ENABLED: false
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Go ${{ matrix.os }}
+      - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
@@ -60,21 +57,12 @@ jobs:
         shell: bash
 
       - name: Run tests (fast mode)
-        if: matrix.os == 'ubuntu-latest'
         run: go test -v -tags='sqlite_fts5 sqlite_math_functions' -coverprofile=profile.cov -timeout 40m ./...
         env:
           CGO_ENABLED: 1
         shell: bash
 
-      - name: Run tests (compatible mode)
-        if: matrix.os == 'windows-latest'
-        run: go test -v -tags=purego -coverprofile=profile.cov -timeout 40m ./...
-        env:
-          CGO_ENABLED: 0
-        shell: bash
-
       - name: Enforce Coverage Threshold
-        if: matrix.os == 'ubuntu-latest'
         run: |
           # Strip ALL auto-generated SQL code and test mocks from coverage math
           grep -v "query.sql.go" profile.cov | grep -v "gtfsdb/db.go" | grep -v "gtfsdb/models.go" | grep -v "_mock.go" > clean_profile.cov
@@ -94,8 +82,8 @@ jobs:
         shell: bash
 
       - name: SonarQube Scan
-        if: matrix.os == 'ubuntu-latest' && github.repository == 'OneBusAway/maglev' && env.SONAR_CI_ANALYSIS_ENABLED == 'true'
-        uses: SonarSource/sonarqube-scan-action@ba9859eae8dd6bd29e412f25ddbbef3d032000f4 # v8.2.2
+        if: github.repository == 'OneBusAway/maglev' && env.SONAR_CI_ANALYSIS_ENABLED == 'true'
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 

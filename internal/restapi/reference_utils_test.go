@@ -25,9 +25,19 @@ func TestShouldIncludeReferences(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "empty string defaults to true",
+			name:     "omitted parameter defaults to true",
 			url:      "/api/where/route/1.json?key=TEST",
 			expected: true,
+		},
+		{
+			name:     "empty value returns false",
+			url:      "/api/where/route/1.json?key=TEST&includeReferences=",
+			expected: false,
+		},
+		{
+			name:     "bare parameter returns false",
+			url:      "/api/where/route/1.json?key=TEST&includeReferences",
+			expected: false,
 		},
 		{
 			name:     "explicit true returns true",

@@ -1,3 +1,8 @@
+---
+name: oba-api-verify
+description: Check whether a Maglev API change fully accomplishes its stated goal, including test coverage for every sub-gap. Normally invoked by oba-api-review; use directly when you have a specific gap description and a diff.
+---
+
 # OBA API Verify
 
 Assess whether a change fully accomplishes its stated goal, including adequate test coverage for every sub-gap.
