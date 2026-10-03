@@ -184,21 +184,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 		resultRawStopIDs = append(resultRawStopIDs, stopID)
 
-		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
-
-		results = append(results, models.NewStop(
-			nulls.StringOrEmpty(stop.Code),
-			direction,
-			utils.FormCombinedID(agency.ID, stop.ID),
-			nulls.StringOrEmpty(stop.Name),
-			parentStationID(agency.ID, stop),
-			utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-			stop.Lat,
-			stop.Lon,
-			int(nulls.Int64OrDefault(stop.LocationType, 0)),
-			rids,
-			rids,
-		))
+		results = append(results, api.buildStopModel(ctx, agency.ID, stop, rids))
 	}
 
 	if ctx.Err() != nil {
