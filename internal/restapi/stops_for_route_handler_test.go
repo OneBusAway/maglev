@@ -512,9 +512,7 @@ func TestStopsForRouteIncludesCrossAgencyRouteOwner(t *testing.T) {
 }
 
 // TestStopsForRouteKeepsStopsOfTripsWithoutDirection guards against dropping
-// stops that only trips with a NULL direction_id serve. Those trips are grouped
-// under direction "0", so their stops must appear in that group. On RABA,
-// route 15 stop 1504 is only served by such trips.
+// stops that only trips with a NULL direction_id serve.
 func TestStopsForRouteKeepsStopsOfTripsWithoutDirection(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -526,14 +524,17 @@ func TestStopsForRouteKeepsStopsOfTripsWithoutDirection(t *testing.T) {
 	assert.Contains(t, entry.StopIds, "25_1504")
 
 	require.Len(t, entry.StopGroupings, 1)
-	var direction0 []string
+	stopIDsByGroup := make(map[string][]string)
+	namesByGroup := make(map[string]string)
 	for _, group := range entry.StopGroupings[0].StopGroups {
-		if group.ID == "0" {
-			direction0 = group.StopIds
-		}
+		stopIDsByGroup[group.ID] = group.StopIds
+		namesByGroup[group.ID] = group.Name.Name
 	}
-	require.NotNil(t, direction0, "expected a direction 0 stop group")
-	assert.Contains(t, direction0, "25_1504")
+	require.Contains(t, stopIDsByGroup, "")
+	assert.Equal(t, []string{"25_2000", "25_1801", "25_1501", "25_1505", "25_1504"}, stopIDsByGroup[""])
+	assert.Equal(t, "Northbound", namesByGroup[""])
+	assert.NotContains(t, stopIDsByGroup["0"], "25_1504")
+	assert.Equal(t, "Southbound", namesByGroup["0"])
 }
 
 // TestStopsForRouteOrdersStopsAcrossTripVariants guards the canonical stop
