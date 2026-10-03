@@ -377,7 +377,7 @@ func disambiguateGroupNames(groups []models.StopGroup) {
 
 		collision := false
 		for i := range groups {
-			if nameCounts[groups[i].Name.Name] <= 1 {
+			if nameCounts[groups[i].Name.Name] <= 1 || groups[i].ID == "" {
 				continue
 			}
 			collision = true

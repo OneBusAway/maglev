@@ -407,6 +407,11 @@ func TestDisambiguateGroupNames(t *testing.T) {
 			groups:    []models.StopGroup{group("0", "Loop"), group("1", "Loop"), group("2", "Express")},
 			wantNames: []string{"Loop - 0", "Loop - 1", "Express"},
 		},
+		{
+			name:      "group without a direction id keeps its name",
+			groups:    []models.StopGroup{group("1", "Northbound"), group("", "Northbound")},
+			wantNames: []string{"Northbound - 1", "Northbound"},
+		},
 	}
 
 	for _, tt := range tests {
