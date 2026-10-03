@@ -329,7 +329,10 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 		params := CreateStopParams{
 			ID:                 s.Id,
-			Code:               nulls.String(s.Code),
+			// Code should be stored as a non-empty string, so that it's Valid field
+			// is false when stop code is empty, allowing [nulls.StringOrDefault] 
+			// correctly fall back to the raw stop entity id for building stop responses.
+			Code:               nulls.NonEmptyString(s.Code),
 			Name:               nulls.String(s.Name),
 			Desc:               nulls.String(s.Description),
 			Lat:                *s.Latitude,

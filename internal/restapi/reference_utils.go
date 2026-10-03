@@ -559,7 +559,7 @@ func (api *RestAPI) combinedRouteIDsForStop(routesForStop []gtfsdb.Route) []stri
 func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gtfsdb.Stop, combinedRouteIDs []string) models.Stop {
 	return models.Stop{
 		ID:                 utils.FormCombinedID(agencyID, stop.ID),
-		Name:               stop.Name.String,
+		Name:               nulls.StringOrEmpty(stop.Name),
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
 		Code:               nulls.StringOrDefault(stop.Code, stop.ID),
@@ -568,6 +568,7 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 		WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		RouteIDs:           combinedRouteIDs,
 		StaticRouteIDs:     combinedRouteIDs,
+		Parent:             parentStationID(agencyID, stop),
 	}
 }
 
