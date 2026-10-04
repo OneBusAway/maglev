@@ -676,6 +676,7 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 func TestGetPredictedTimes_DelayPropagationLogic(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	tripID := "test_trip"
 	targetStopSequence := int64(5)
@@ -713,6 +714,7 @@ func TestGetPredictedTimes_DelayPropagationLogic(t *testing.T) {
 func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	tripID := "test_trip_level_delay"
 	targetStopSequence := int64(5)
@@ -831,6 +833,7 @@ func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			api := createTestApi(t)
 			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 			mockTrip := gtfs.Trip{
 				ID:              gtfs.TripID{ID: tc.tripID},
