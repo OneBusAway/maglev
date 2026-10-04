@@ -356,32 +356,46 @@ func orderedStopIDsForGroup(group directionGroup, sequences routeStopSequences) 
 	return utils.OrderStopsAlongRoute(tripSequences, sequences.coordinates)
 }
 
-// disambiguateGroupNames keeps direction groups distinguishable: any group whose
-// name is shared with another group has its direction id appended
-// ("Shasta Lake" -> "Shasta Lake - 0"), while a name that is already unique is
-// left untouched. The check is repeated against the *resulting* names, so a
-// suffixed name that happens to equal an originally-unique name (e.g. a literal
-// "A - 0" headsign) is disambiguated further rather than left duplicated.
-// Direction ids are unique, so two colliding groups always separate on the next
-// pass and the loop is bounded by the group count; the final names are a
-// function of the groups alone, independent of input order, which also makes the
-// later name-based sort deterministic. (The Java reference suffixes every group
-// whenever any collision exists; leaving unique names alone is a deliberate,
-// less noisy divergence.)
+// disambiguateGroupNames keeps direction groups distinguishable. A direction
+// group whose name is shared with another direction group has its direction id
+// appended ("Shasta Lake" -> "Shasta Lake - 0"). The group of trips without a
+// direction_id (empty id) never takes a name from a direction group: when its
+// name is shared with any other group it is labelled instead
+// ("Northbound" -> "Northbound - no direction"), and the direction groups keep
+// their names unless they also collide with each other. A name that is already
+// unique is left untouched. The check is repeated against the *resulting*
+// names, so a generated name that happens to equal an originally-unique name
+// (e.g. a literal "A - 0" headsign) is disambiguated further rather than left
+// duplicated. Direction ids are unique and there is at most one group without a
+// direction, so colliding groups always separate on the next pass and the loop
+// is bounded by the group count; the final names are a function of the groups
+// alone, independent of input order, which also makes the later name-based
+// sort deterministic. (The Java reference suffixes every group whenever any
+// collision exists; leaving unique names alone is a deliberate, less noisy
+// divergence.)
 func disambiguateGroupNames(groups []models.StopGroup) {
 	for range groups {
 		nameCounts := make(map[string]int, len(groups))
+		directionNameCounts := make(map[string]int, len(groups))
 		for _, group := range groups {
 			nameCounts[group.Name.Name]++
+			if group.ID != "" {
+				directionNameCounts[group.Name.Name]++
+			}
 		}
 
 		collision := false
 		for i := range groups {
-			if nameCounts[groups[i].Name.Name] <= 1 || groups[i].ID == "" {
+			var disambiguated string
+			switch {
+			case groups[i].ID == "" && nameCounts[groups[i].Name.Name] > 1:
+				disambiguated = groups[i].Name.Name + " - no direction"
+			case groups[i].ID != "" && directionNameCounts[groups[i].Name.Name] > 1:
+				disambiguated = groups[i].Name.Name + " - " + groups[i].ID
+			default:
 				continue
 			}
 			collision = true
-			disambiguated := groups[i].Name.Name + " - " + groups[i].ID
 			groups[i].Name.Name = disambiguated
 			groups[i].Name.Names = []string{disambiguated}
 		}

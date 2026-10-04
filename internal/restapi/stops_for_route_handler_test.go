@@ -408,9 +408,24 @@ func TestDisambiguateGroupNames(t *testing.T) {
 			wantNames: []string{"Loop - 0", "Loop - 1", "Express"},
 		},
 		{
-			name:      "group without a direction id keeps its name",
+			name:      "group without a direction id is labelled, direction group keeps its name",
 			groups:    []models.StopGroup{group("1", "Northbound"), group("", "Northbound")},
-			wantNames: []string{"Northbound - 1", "Northbound"},
+			wantNames: []string{"Northbound", "Northbound - no direction"},
+		},
+		{
+			name:      "group without a direction id keeps a unique name",
+			groups:    []models.StopGroup{group("0", "Southbound"), group("", "Northbound")},
+			wantNames: []string{"Southbound", "Northbound"},
+		},
+		{
+			name:      "direction groups sharing a name with each other and the group without a direction",
+			groups:    []models.StopGroup{group("0", "Loop"), group("1", "Loop"), group("", "Loop")},
+			wantNames: []string{"Loop - 0", "Loop - 1", "Loop - no direction"},
+		},
+		{
+			name:      "label of the group without a direction collides with a direction group's name",
+			groups:    []models.StopGroup{group("1", "A"), group("2", "A - no direction"), group("", "A")},
+			wantNames: []string{"A", "A - no direction", "A - no direction - no direction"},
 		},
 	}
 
@@ -532,7 +547,8 @@ func TestStopsForRouteKeepsStopsOfTripsWithoutDirection(t *testing.T) {
 	}
 	require.Contains(t, stopIDsByGroup, "")
 	assert.Equal(t, []string{"25_2000", "25_1801", "25_1501", "25_1505", "25_1504"}, stopIDsByGroup[""])
-	assert.Equal(t, "Northbound", namesByGroup[""])
+	assert.Equal(t, "Northbound - no direction", namesByGroup[""])
+	assert.Equal(t, "Northbound", namesByGroup["1"])
 	assert.NotContains(t, stopIDsByGroup["0"], "25_1504")
 	assert.Equal(t, "Southbound", namesByGroup["0"])
 }
