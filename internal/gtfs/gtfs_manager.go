@@ -89,7 +89,8 @@ func (manager *Manager) clearFeedData(feedID string) {
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
 
-	delete(manager.feedVehicleTimestamp, feedID)
+	// Keep the last applied vehicle timestamp. Dropping it lets the next poll
+	// of the same frozen payload look new and reset the circuit breaker.
 	delete(manager.feedVehicleLastSeen, feedID)
 
 	delete(manager.feedLastUpdate, feedID)

@@ -313,6 +313,46 @@ func TestClearFeedData(t *testing.T) {
 	assert.Len(t, manager.GetRealTimeVehicles(), 0, "Global vehicle lookup should be empty")
 }
 
+func TestClearFeedData_StalePayloadStaysRejected(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	freshAt := time.Unix(1_700_000_000, 0).UTC()
+	payload := encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-fresh")},
+		Timestamp: proto.Uint64(uint64(freshAt.Unix())),
+	}})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "cleared-feed",
+		VehiclePositionsURL: server.URL,
+	}
+
+	require.True(t, manager.updateFeedRealtime(ctx, feed))
+	require.NotEmpty(t, manager.GetRealTimeVehicles())
+
+	manager.realTimeMutex.RLock()
+	stamp := manager.feedVehicleTimestamp[feed.ID]
+	manager.realTimeMutex.RUnlock()
+	require.NotZero(t, stamp)
+
+	manager.clearFeedData(feed.ID)
+	assert.Empty(t, manager.GetRealTimeVehicles())
+
+	manager.realTimeMutex.RLock()
+	kept := manager.feedVehicleTimestamp[feed.ID]
+	manager.realTimeMutex.RUnlock()
+	assert.Equal(t, stamp, kept, "clearing a feed should keep the vehicle freshness watermark")
+
+	assert.False(t, manager.updateFeedRealtime(ctx, feed), "the same payload must stay stale after the feed is cleared")
+	assert.Empty(t, manager.GetRealTimeVehicles(), "a rejected stale payload must not republish vehicles")
+}
+
 func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
 	// Setup a server that always returns 500 error simulating an outage
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
