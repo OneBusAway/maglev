@@ -313,6 +313,40 @@ func TestClearFeedData(t *testing.T) {
 	assert.Len(t, manager.GetRealTimeVehicles(), 0, "Global vehicle lookup should be empty")
 }
 
+func TestUpdateFeedRealtime_RouteAgencyLookupErrorPreservesFeed(t *testing.T) {
+	manager := newTestManager()
+	manager.feedAgencyFilter["lookup-fail"] = map[string]bool{"agency-A": true}
+	manager.feedVehicles["lookup-fail"] = []gtfs.Vehicle{{
+		ID: &gtfs.VehicleID{ID: "kept"},
+	}}
+	manager.rebuildMergedRealtimeLocked()
+
+	freshAt := time.Unix(1_700_000_000, 0).UTC()
+	payload := encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{{
+		Vehicle: &gtfsrt.VehicleDescriptor{Id: proto.String("incoming")},
+		Trip: &gtfsrt.TripDescriptor{
+			TripId:  proto.String("T1"),
+			RouteId: proto.String("R1"),
+		},
+	}})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	applied := manager.updateFeedRealtime(context.Background(), RTFeedConfig{
+		ID:                  "lookup-fail",
+		VehiclePositionsURL: server.URL,
+	})
+
+	assert.False(t, applied, "a failed route-agency lookup should not count as a successful poll")
+	vehicles := manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1)
+	require.NotNil(t, vehicles[0].ID)
+	assert.Equal(t, "kept", vehicles[0].ID.ID, "previous vehicles should stay when the lookup fails")
+}
+
 func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
 	// Setup a server that always returns 500 error simulating an outage
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

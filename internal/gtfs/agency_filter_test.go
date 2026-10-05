@@ -3,6 +3,7 @@ package gtfs
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // newTestManagerWithRoutes creates a test manager with an in-memory DB
@@ -65,6 +67,17 @@ func newTestManagerWithRoutes(routes map[string]*gtfs.Route) *Manager {
 	return m
 }
 
+func routeAgencyMapFor(t *testing.T, manager *Manager, routeIDs []string) map[string]string {
+	t.Helper()
+	set := make(map[string]struct{}, len(routeIDs))
+	for _, id := range routeIDs {
+		set[id] = struct{}{}
+	}
+	got, err := manager.buildRouteAgencyMap(context.Background(), set)
+	require.NoError(t, err)
+	return got
+}
+
 // helper to make a *string from a literal
 func strPtr(s string) *string { return &s }
 
@@ -84,7 +97,8 @@ func TestFilterTripsByAgency(t *testing.T) {
 	}
 
 	allowed := map[string]bool{"agency-A": true}
-	filtered := manager.filterTripsByAgency(trips, allowed)
+	routeAgencyMap := routeAgencyMapFor(t, manager, []string{"R1", "R2", "R3", "R999"})
+	filtered := filterTripsByAgency(trips, allowed, routeAgencyMap)
 
 	assert.Len(t, filtered, 2, "should keep only agency-A trips")
 	assert.Equal(t, "T1", filtered[0].ID.ID)
@@ -114,7 +128,8 @@ func TestFilterVehiclesByAgency(t *testing.T) {
 	}
 
 	allowed := map[string]bool{"agency-A": true}
-	filtered := manager.filterVehiclesByAgency(vehicles, allowed)
+	routeAgencyMap := routeAgencyMapFor(t, manager, []string{"R1", "R2"})
+	filtered := filterVehiclesByAgency(vehicles, allowed, routeAgencyMap)
 
 	assert.Len(t, filtered, 1, "only V1 (agency-A) should remain")
 	assert.Equal(t, "V1", filtered[0].ID.ID)
@@ -122,12 +137,11 @@ func TestFilterVehiclesByAgency(t *testing.T) {
 
 // TestAgencyFilterNilTrip verifies vehicles without trips are dropped.
 func TestAgencyFilterNilTrip(t *testing.T) {
-	manager := newTestManagerWithRoutes(map[string]*gtfs.Route{})
 	vehicles := []gtfs.Vehicle{
 		{ID: &gtfs.VehicleID{ID: "V1"}}, // nil Trip
 	}
 	allowed := map[string]bool{"any": true}
-	assert.Empty(t, manager.filterVehiclesByAgency(vehicles, allowed))
+	assert.Empty(t, filterVehiclesByAgency(vehicles, allowed, nil))
 }
 
 // TestAlertMatchesAgency is a table-driven test for the alertMatchesAgency helper.
@@ -213,10 +227,10 @@ func TestAlertMatchesAgency(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	routeAgencyMap := routeAgencyMapFor(t, manager, []string{"R1", "R2", "R999"})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := alertMatchesAgency(ctx, manager, tt.alert, tt.allowed)
+			got := alertMatchesAgency(tt.alert, tt.allowed, routeAgencyMap)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -283,8 +297,9 @@ func TestAgencyFilterMultipleFeedsIntegration(t *testing.T) {
 		{ID: gtfs.TripID{ID: "T5", RouteID: "R2"}}, // agency-B ✓
 	}
 
-	filteredA := manager.filterTripsByAgency(tripsA, manager.feedAgencyFilter["feed-a"])
-	filteredB := manager.filterTripsByAgency(tripsB, manager.feedAgencyFilter["feed-b"])
+	routeAgencyMap := routeAgencyMapFor(t, manager, []string{"R1", "R2", "R3"})
+	filteredA := filterTripsByAgency(tripsA, manager.feedAgencyFilter["feed-a"], routeAgencyMap)
+	filteredB := filterTripsByAgency(tripsB, manager.feedAgencyFilter["feed-b"], routeAgencyMap)
 
 	manager.realTimeMutex.Lock()
 	manager.feedTrips["feed-a"] = filteredA
@@ -495,4 +510,49 @@ func TestFeedVehicleRetentionWithAgencyFilter(t *testing.T) {
 	manager.realTimeMutex.Unlock()
 
 	assert.Len(t, manager.GetRealTimeVehicles(), 1, "seeded vehicle should be present")
+}
+
+func TestBuildRouteAgencyMap(t *testing.T) {
+	t.Run("no route IDs", func(t *testing.T) {
+		manager := newTestManager()
+		got, err := manager.buildRouteAgencyMap(context.Background(), map[string]struct{}{})
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("database unavailable", func(t *testing.T) {
+		manager := newTestManager()
+		_, err := manager.buildRouteAgencyMap(context.Background(), map[string]struct{}{"R1": {}})
+		require.Error(t, err)
+	})
+
+	t.Run("query failure", func(t *testing.T) {
+		manager := newTestManagerWithRoutes(map[string]*gtfs.Route{
+			"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "agency-A"}},
+		})
+		require.NoError(t, manager.GtfsDB.DB.Close())
+
+		_, err := manager.buildRouteAgencyMap(context.Background(), map[string]struct{}{"R1": {}})
+		require.Error(t, err)
+	})
+
+	t.Run("more IDs than one SQLite batch", func(t *testing.T) {
+		count := utils.IDsPerBatchedQuery + 1
+		routes := make(map[string]*gtfs.Route, count)
+		for i := 0; i < count; i++ {
+			id := fmt.Sprintf("R%d", i)
+			routes[id] = &gtfs.Route{Id: id, Agency: &gtfs.Agency{Id: "agency-A"}}
+		}
+		manager := newTestManagerWithRoutes(routes)
+
+		set := make(map[string]struct{}, count)
+		for id := range routes {
+			set[id] = struct{}{}
+		}
+		got, err := manager.buildRouteAgencyMap(context.Background(), set)
+		require.NoError(t, err)
+		assert.Len(t, got, count)
+		assert.Equal(t, "agency-A", got["R0"])
+		assert.Equal(t, "agency-A", got[fmt.Sprintf("R%d", count-1)])
+	})
 }
