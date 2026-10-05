@@ -350,6 +350,23 @@ func TestSetDefaults_PartialConfig(t *testing.T) {
 	assert.Equal(t, "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", config.GtfsStaticFeed.URL)
 }
 
+func TestDefaultProtectedAPIKeys(t *testing.T) {
+	tests := []struct {
+		env  string
+		want []string
+	}{
+		{"development", []string{"protected-test-key"}},
+		{"test", []string{"protected-test-key"}},
+		{"production", nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.env, func(t *testing.T) {
+			assert.Equal(t, tc.want, DefaultProtectedAPIKeys(tc.env))
+		})
+	}
+}
+
 func TestValidate_PathTraversalDataPath(t *testing.T) {
 	tests := []struct {
 		name      string
