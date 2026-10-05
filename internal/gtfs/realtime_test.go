@@ -410,6 +410,159 @@ func TestStaleFeedRejected(t *testing.T) {
 	}
 }
 
+// TestUpdateFeedRealtime_StaleVehicleFeedReportsNoNewData verifies that a
+// vehicle feed fetched successfully with an unchanged header timestamp does
+// not report new data. That return value is what resets the poller circuit breaker.
+func TestUpdateFeedRealtime_StaleVehicleFeedReportsNoNewData(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var payload []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "stale-health",
+		VehiclePositionsURL: server.URL,
+	}
+
+	freshAt := time.Unix(1_700_000_000, 0).UTC()
+	freshVehicle := &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-fresh")},
+		Timestamp: proto.Uint64(uint64(freshAt.Unix())),
+	}
+	mu.Lock()
+	payload = encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{freshVehicle})
+	mu.Unlock()
+
+	assert.True(t, manager.updateFeedRealtime(ctx, feed), "a fresh vehicle feed should count as new data")
+	require.Len(t, manager.GetRealTimeVehicles(), 1)
+
+	var buf bytes.Buffer
+	staleCtx := logging.WithLogger(ctx, logging.NewStructuredLogger(&buf, slog.LevelDebug))
+	assert.False(t, manager.updateFeedRealtime(staleCtx, feed), "an unchanged vehicle feed timestamp should not count as new data")
+	vehicles := manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1)
+	require.NotNil(t, vehicles[0].ID)
+	assert.Equal(t, "veh-fresh", vehicles[0].ID.ID)
+	logOutput := buf.String()
+	assert.Contains(t, logOutput, "skipping_stale_vehicle_realtime_feed")
+	assert.NotContains(t, logOutput, "realtime feed update failed")
+
+	newerAt := freshAt.Add(time.Minute)
+	newerVehicle := &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-newer")},
+		Timestamp: proto.Uint64(uint64(newerAt.Unix())),
+	}
+	mu.Lock()
+	payload = encodeVehicleFeed(newerAt, []*gtfsrt.VehiclePosition{newerVehicle})
+	mu.Unlock()
+
+	assert.True(t, manager.updateFeedRealtime(ctx, feed), "a newer vehicle feed timestamp should count as new data")
+	foundNewer := false
+	for _, vehicle := range manager.GetRealTimeVehicles() {
+		if vehicle.ID != nil && vehicle.ID.ID == "veh-newer" {
+			foundNewer = true
+		}
+	}
+	assert.True(t, foundNewer, "a newer vehicle feed timestamp should be applied")
+}
+
+// TestUpdateFeedRealtime_StaleVehiclesWithSuccessfulTripsStillSucceed verifies
+// that a stale vehicle feed does not hide a trip update that was actually stored.
+func TestUpdateFeedRealtime_StaleVehiclesWithSuccessfulTripsStillSucceed(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	freshAt := time.Unix(1_700_000_000, 0).UTC()
+	var mu sync.Mutex
+	vehiclePayload := encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-fresh")},
+		Timestamp: proto.Uint64(uint64(freshAt.Unix())),
+	}})
+	vehicleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(vehiclePayload)
+	}))
+	defer vehicleServer.Close()
+
+	tripServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(encodeTripFeed(freshAt.Add(time.Minute), "trip-kept", "route-1"))
+	}))
+	defer tripServer.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "mixed-stale-vehicles",
+		TripUpdatesURL:      tripServer.URL,
+		VehiclePositionsURL: vehicleServer.URL,
+	}
+
+	assert.True(t, manager.updateFeedRealtime(ctx, feed), "the first poll should store both sub-feeds")
+
+	staleOnly := &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-should-not-apply")},
+		Timestamp: proto.Uint64(uint64(freshAt.Add(time.Minute).Unix())),
+	}
+	mu.Lock()
+	vehiclePayload = encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{staleOnly})
+	mu.Unlock()
+
+	assert.True(t, manager.updateFeedRealtime(ctx, feed), "successful trip updates should still count when vehicles are stale")
+
+	vehicles := manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1)
+	require.NotNil(t, vehicles[0].ID)
+	assert.Equal(t, "veh-fresh", vehicles[0].ID.ID, "stale vehicle payload should not replace stored vehicles")
+
+	trips := manager.GetRealTimeTrips()
+	require.Len(t, trips, 1)
+	assert.Equal(t, "trip-kept", trips[0].ID.ID)
+}
+
+// TestUpdateFeedRealtime_StaleVehiclesWithFailedTripsStillFail verifies that a
+// stale vehicle skip does not hide a trip-update fetch that actually failed.
+func TestUpdateFeedRealtime_StaleVehiclesWithFailedTripsStillFail(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	freshAt := time.Unix(1_700_000_000, 0).UTC()
+	vehicleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{{
+			Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-fresh")},
+			Timestamp: proto.Uint64(uint64(freshAt.Unix())),
+		}}))
+	}))
+	defer vehicleServer.Close()
+
+	tripServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer tripServer.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "stale-vehicles-failed-trips",
+		TripUpdatesURL:      tripServer.URL,
+		VehiclePositionsURL: vehicleServer.URL,
+	}
+
+	assert.True(t, manager.updateFeedRealtime(ctx, feed), "the first vehicle poll should count before the feed is stale")
+
+	var buf bytes.Buffer
+	staleCtx := logging.WithLogger(ctx, logging.NewStructuredLogger(&buf, slog.LevelDebug))
+	assert.False(t, manager.updateFeedRealtime(staleCtx, feed), "a failed trip update should still fail the poll when vehicles are stale")
+	assert.Contains(t, buf.String(), "realtime feed update failed")
+}
+
 // TestVehicleMerge_StaleIgnored ensures that when a feed update contains a
 // vehicle entity whose timestamp is older than the one already stored in the
 // manager, the older update is ignored and the existing (newer) record is
@@ -1197,6 +1350,29 @@ func encodeVehicleFeed(createdAt time.Time, positions []*gtfsrt.VehiclePosition)
 	b, err := proto.Marshal(feed)
 	if err != nil {
 		panic(fmt.Sprintf("failed to marshal realtime feed: %s", err))
+	}
+	return b
+}
+
+func encodeTripFeed(createdAt time.Time, tripID, routeID string) []byte {
+	feed := &gtfsrt.FeedMessage{
+		Header: &gtfsrt.FeedHeader{
+			GtfsRealtimeVersion: proto.String("2.0"),
+			Timestamp:           proto.Uint64(uint64(createdAt.Unix())),
+		},
+		Entity: []*gtfsrt.FeedEntity{{
+			Id: proto.String("trip-entity"),
+			TripUpdate: &gtfsrt.TripUpdate{
+				Trip: &gtfsrt.TripDescriptor{
+					TripId:  proto.String(tripID),
+					RouteId: proto.String(routeID),
+				},
+			},
+		}},
+	}
+	b, err := proto.Marshal(feed)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal trip feed: %s", err))
 	}
 	return b
 }
