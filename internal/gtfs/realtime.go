@@ -717,24 +717,35 @@ func filterAlertsByAgency(alerts []gtfs.Alert, allowed map[string]bool, routeAge
 }
 
 func alertMatchesAgency(alert gtfs.Alert, allowed map[string]bool, routeAgencyMap map[string]string) bool {
-	// NOTE: stop-only InformedEntities are not resolved to agencies.
-	// Alerts referencing only stop IDs will be dropped when agency filtering is active.
+	// Stop-only InformedEntities are not resolved to agencies, so an alert
+	// that names only stop IDs is dropped while agency filtering is active.
 	for _, entity := range alert.InformedEntities {
-		if entity.AgencyID != nil && allowed[*entity.AgencyID] {
+		if informedEntityMatchesAgency(entity, allowed, routeAgencyMap) {
 			return true
-		}
-		if entity.RouteID != nil && *entity.RouteID != "" {
-			if agencyID, ok := routeAgencyMap[*entity.RouteID]; ok && allowed[agencyID] {
-				return true
-			}
-		}
-		if entity.TripID != nil && entity.TripID.RouteID != "" {
-			if agencyID, ok := routeAgencyMap[entity.TripID.RouteID]; ok && allowed[agencyID] {
-				return true
-			}
 		}
 	}
 	return false
+}
+
+func informedEntityMatchesAgency(entity gtfs.AlertInformedEntity, allowed map[string]bool, routeAgencyMap map[string]string) bool {
+	if entity.AgencyID != nil && allowed[*entity.AgencyID] {
+		return true
+	}
+	if entity.RouteID != nil && routeBelongsToAllowedAgency(*entity.RouteID, allowed, routeAgencyMap) {
+		return true
+	}
+	if entity.TripID != nil && routeBelongsToAllowedAgency(entity.TripID.RouteID, allowed, routeAgencyMap) {
+		return true
+	}
+	return false
+}
+
+func routeBelongsToAllowedAgency(routeID string, allowed map[string]bool, routeAgencyMap map[string]string) bool {
+	if routeID == "" {
+		return false
+	}
+	agencyID, ok := routeAgencyMap[routeID]
+	return ok && allowed[agencyID]
 }
 
 func (manager *Manager) rebuildMergedRealtimeLocked() {

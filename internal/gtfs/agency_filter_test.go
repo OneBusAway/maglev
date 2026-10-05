@@ -225,6 +225,26 @@ func TestAlertMatchesAgency(t *testing.T) {
 			allowed: map[string]bool{"agency-A": true},
 			want:    false,
 		},
+		{
+			name: "blank route id",
+			alert: gtfs.Alert{
+				InformedEntities: []gtfs.AlertInformedEntity{
+					{RouteID: strPtr("")},
+				},
+			},
+			allowed: map[string]bool{"agency-A": true},
+			want:    false,
+		},
+		{
+			name: "blank trip route id",
+			alert: gtfs.Alert{
+				InformedEntities: []gtfs.AlertInformedEntity{
+					{TripID: &gtfs.TripID{ID: "T1", RouteID: ""}},
+				},
+			},
+			allowed: map[string]bool{"agency-A": true},
+			want:    false,
+		},
 	}
 
 	routeAgencyMap := routeAgencyMapFor(t, manager, []string{"R1", "R2", "R999"})
