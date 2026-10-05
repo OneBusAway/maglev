@@ -158,6 +158,33 @@ func TestStopsForRouteIncludePolylinesFalse(t *testing.T) {
 	}
 }
 
+func TestStopsForRouteEmptyBooleanFlags(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	for _, flag := range []string{"includeReferences", "includePolylines"} {
+		t.Run(flag, func(t *testing.T) {
+			endpoint := "/api/where/stops-for-route/" + testdata.Route1.ID + ".json?key=TEST&" + flag + "="
+			resp, model := callAPIHandler[StopsForRouteResponse](t, api, endpoint)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.NotEmpty(t, model.Data.Entry.StopIds)
+			if flag == "includeReferences" {
+				assert.Empty(t, model.Data.References.Agencies)
+				assert.Empty(t, model.Data.References.Routes)
+				assert.Empty(t, model.Data.References.Stops)
+				assert.NotEmpty(t, model.Data.Entry.Polylines)
+				return
+			}
+			assert.NotEmpty(t, model.Data.References.Agencies)
+			assert.Empty(t, model.Data.Entry.Polylines)
+			require.NotEmpty(t, model.Data.Entry.StopGroupings)
+			for _, group := range model.Data.Entry.StopGroupings[0].StopGroups {
+				assert.Empty(t, group.Polylines)
+			}
+		})
+	}
+}
+
 // TestStopsForRouteTimeFilter_ActiveDate verifies that supplying a time parameter
 // restricts results to trips active on that service date.
 func TestStopsForRouteTimeFilter_ActiveDate(t *testing.T) {
