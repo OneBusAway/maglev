@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
@@ -2265,23 +2264,6 @@ func TestSelectFrequency(t *testing.T) {
 		"a time before all windows falls back to the first row")
 }
 
-type buildTripScheduleShapeFailureDB struct {
-	gtfsdb.DBTX
-	failWith error
-}
-
-func (f *buildTripScheduleShapeFailureDB) QueryContext(
-	ctx context.Context,
-	query string,
-	args ...any,
-) (*sql.Rows, error) {
-	if strings.Contains(query, "-- name: GetShapePointsByTripID :many") {
-		return nil, f.failWith
-	}
-
-	return f.DBTX.QueryContext(ctx, query, args...)
-}
-
 func TestBuildTripSchedule_ShapeLookupFailureLogsAndContinues(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -2302,7 +2284,7 @@ func TestBuildTripSchedule_ShapeLookupFailureLogsAndContinues(t *testing.T) {
 	loc, err := time.LoadLocation(agency.Timezone)
 	require.NoError(t, err)
 
-	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(&buildTripScheduleShapeFailureDB{
+	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(&shapeFetchFailureDB{
 		DBTX:     api.GtfsManager.GtfsDB.DB,
 		failWith: errors.New("forced shape lookup failure"),
 	})
