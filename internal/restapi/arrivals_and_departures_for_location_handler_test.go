@@ -137,13 +137,32 @@ func TestArrivalsAndDeparturesForLocationEndToEnd(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.Trips)
 }
 
-func TestArrivalsAndDeparturesForLocationSortsArrivalsByTime(t *testing.T) {
+// stopIds come nearest first so maxCount truncation drops the farthest
+// stops; arrivals group by stop in the same order with best-arrival-time
+// order inside each stop.
+func TestArrivalsAndDeparturesForLocationOrdersNearestStopFirst(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
 
 	_, model := callArrivalsForLocation(t, api)
-	arrivals := model.Data.Entry.ArrivalsAndDepartures
-	require.Greater(t, len(arrivals), 1, "need at least two arrivals to check ordering")
+	entry := model.Data.Entry
+	require.Greater(t, len(entry.StopIDs), 1, "need at least two stops to check ordering")
+	require.Greater(t, len(entry.ArrivalsAndDepartures), 1, "need at least two arrivals to check ordering")
+
+	coords := make(map[string]models.Stop, len(model.Data.References.Stops))
+	for _, s := range model.Data.References.Stops {
+		coords[s.ID] = s
+	}
+	distance := func(id string) float64 {
+		s, ok := coords[id]
+		require.True(t, ok, "stop %s must resolve in references.stops", id)
+		return utils.Distance(40.539367, -122.34952, s.Lat, s.Lon)
+	}
+
+	for i := 1; i < len(entry.StopIDs); i++ {
+		assert.LessOrEqual(t, distance(entry.StopIDs[i-1]), distance(entry.StopIDs[i]),
+			"stopIds must be ordered nearest first")
+	}
 
 	effective := func(a models.ArrivalAndDeparture) int64 {
 		if a.PredictedArrivalTime.UnixMilli() > 0 {
@@ -151,9 +170,16 @@ func TestArrivalsAndDeparturesForLocationSortsArrivalsByTime(t *testing.T) {
 		}
 		return a.ScheduledArrivalTime.UnixMilli()
 	}
+	arrivals := entry.ArrivalsAndDepartures
 	for i := 1; i < len(arrivals); i++ {
-		assert.LessOrEqual(t, effective(arrivals[i-1]), effective(arrivals[i]),
-			"arrivals must be ordered by effective arrival time")
+		prev, curr := arrivals[i-1], arrivals[i]
+		if prev.StopID == curr.StopID {
+			assert.LessOrEqual(t, effective(prev), effective(curr),
+				"arrivals at one stop must be ordered by best arrival time")
+		} else {
+			assert.LessOrEqual(t, distance(prev.StopID), distance(curr.StopID),
+				"arrivals must be grouped nearest stop first")
+		}
 	}
 }
 
