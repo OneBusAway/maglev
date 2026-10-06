@@ -45,9 +45,10 @@ questions; PRs whose author can't explain the change will be closed.
 ## Testing
 
 <!--
-CI already runs fmt, the test suite (both build tags), coverage, and the
-OpenAPI check, so don't list those. Describe what YOU verified beyond CI:
-new/changed tests and the cases they cover, and any manual checks, e.g.:
+CI already runs fmt, go vet (both build tags), the test suite (CGO build
+only), coverage, and the OpenAPI check, so don't list those. Describe
+what YOU verified beyond CI: new/changed tests and the cases they cover,
+and any manual checks, e.g.:
 - `go test -tags "sqlite_fts5 sqlite_math_functions" ./internal/restapi -run TestArrivalAndDeparture`
 - Manual: hit `/api/where/...` against a local run and confirm <expected>
 -->
