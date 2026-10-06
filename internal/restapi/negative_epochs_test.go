@@ -24,7 +24,8 @@ func TestTripAndArrivalEpochValidation(t *testing.T) {
 		wantEpoch int64
 	}{
 		{name: "zero", value: "0"},
-		{name: "negative zero", value: "-0"},
+		{name: "negative zero", value: "-0", wantError: true},
+		{name: "leading plus", value: "+5", wantError: true},
 		{name: "positive", value: "1609459200000", wantEpoch: 1609459200000},
 		{name: "negative one", value: "-1", wantError: true},
 		{name: "negative five", value: "-5", wantError: true},
@@ -69,7 +70,7 @@ func TestTripAndArrivalEpochValidation(t *testing.T) {
 
 func TestArrivalsEpochValidation(t *testing.T) {
 	api := &RestAPI{Application: &app.Application{Clock: clock.NewMockClock(time.UnixMilli(1609459200000))}}
-	for _, raw := range []string{"-1", "-5", "-9223372036854775808"} {
+	for _, raw := range []string{"-0", "+5", "-1", "-5", "-9223372036854775808"} {
 		t.Run(raw, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "/?"+url.Values{"time": {raw}}.Encode(), nil)
 			_, fieldErrors := api.parseArrivalsAndDeparturesParams(request)
@@ -105,12 +106,15 @@ func TestNegativeEpochsReturnFieldErrors(t *testing.T) {
 		{path: "arrivals-and-departures-for-stop/1_unknown", fields: []string{"time"}},
 	} {
 		for _, field := range endpoint.fields {
-			t.Run(endpoint.path+"/"+field, func(t *testing.T) {
-				resp, model := callAPIHandler[strictValidationResponse](t, api, "/api/where/"+endpoint.path+".json?key=TEST&"+field+"=-5")
-				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-				assert.Equal(t, http.StatusBadRequest, model.Code)
-				assert.NotEmpty(t, model.Data.FieldErrors[field])
-			})
+			for _, raw := range []string{"-5", "-0", "+5"} {
+				t.Run(endpoint.path+"/"+field+"/"+raw, func(t *testing.T) {
+					query := url.Values{"key": {"TEST"}, field: {raw}}
+					resp, model := callAPIHandler[strictValidationResponse](t, api, "/api/where/"+endpoint.path+".json?"+query.Encode())
+					require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+					assert.Equal(t, http.StatusBadRequest, model.Code)
+					assert.NotEmpty(t, model.Data.FieldErrors[field])
+				})
+			}
 		}
 	}
 }

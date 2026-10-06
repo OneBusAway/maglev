@@ -72,7 +72,7 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 	}
 
 	if val := query.Get("time"); val != "" {
-		if timeMs, err := strconv.ParseInt(val, 10, 64); err == nil && timeMs >= 0 {
+		if timeMs, ok := utils.ParseEpochMillis(val); ok {
 			params.Time = time.Unix(timeMs/1000, (timeMs%1000)*1000000)
 		} else {
 			addError("time", "must be a valid Unix timestamp in milliseconds")
