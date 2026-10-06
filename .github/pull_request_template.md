@@ -55,12 +55,13 @@ and any manual checks, e.g.:
 
 -
 
-## Response comparison (delete if no API response changed)
+## Response comparison (delete if no Java-served response changed)
 
 <!--
-Required whenever this PR changes or adds an endpoint response. Show
-Maglev's output side-by-side with the Java production server for the
-same request, both before this PR and after it.
+Required whenever this PR changes the response of an endpoint that the
+Java OneBusAway server also serves. Show Maglev's output side-by-side
+with the Java production server for the same request, both before this
+PR and after it.
 
 Any of these is fine — pick whichever makes the diff easiest to read:
   - Screenshot of Maglev validator output
@@ -121,7 +122,8 @@ issue or PR if one exists.
 - [ ] Handler test added using `createTestApi(t)` +
       `serveApiAndRetrieveEndpoint` / `callAPIHandler`; covers both the
       success path and error cases (invalid ID, missing data)
-- [ ] Response comparison filled in above (Maglev vs. Java production)
+- [ ] Response comparison filled in above, if Java also serves this
+      endpoint (Maglev vs. Java production)
 - [ ] If the endpoint is not yet defined in the upstream OpenAPI spec,
       an issue has been opened at
       https://github.com/OneBusAway/sdk-config requesting that it be
