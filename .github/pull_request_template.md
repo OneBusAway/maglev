@@ -33,7 +33,7 @@ why it can't be split into one PR per issue.
 
 <!--
 Answer in your own words, 1–3 sentences each. Reviewers may ask follow-up
-questions; PRs whose author can't explain the change will be closed.
+questions.
 -->
 
 **Root cause:** <!-- For bug fixes: why did the bug happen, not just what you changed. For features/refactors: what constraint or gap drove this. -->
