@@ -10,6 +10,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -24,6 +25,7 @@ type arrivalsForLocationParams struct {
 	MaxCount             int
 	RouteTypes           []int
 	EmptyReturnsNotFound bool
+	IncludeReferences    bool
 }
 
 // maxRouteTypeValues bounds how many routeType values one request may send, so
@@ -104,7 +106,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// arrivals maxCount trimmed away.
 	refAcc := retainedAccumulator(lists.arrivals, lists.stopIDs, lists.nearby, acc)
 
-	references, err := api.locationReferences(ctx, r, agencies, refAcc)
+	references, err := api.locationReferences(ctx, params.IncludeReferences, agencies, refAcc)
 	if err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
 		return
@@ -202,11 +204,11 @@ func retainedAccumulator(
 // caller opted out with includeReferences=false.
 func (api *RestAPI) locationReferences(
 	ctx context.Context,
-	r *http.Request,
+	includeReferences bool,
 	agencies *stopAgencyIndex,
 	acc *arrivalsAccumulator,
 ) (*models.ReferencesModel, error) {
-	if !ShouldIncludeReferences(r) {
+	if !includeReferences {
 		return models.NewEmptyReferences(), nil
 	}
 
@@ -339,7 +341,7 @@ func (api *RestAPI) combinedIDsForNearbyStops(ctx context.Context, bareIDs []str
 			agencies.byStopID[row.StopID] = row.ID
 		}
 		if _, exists := agencies.locations[row.ID]; !exists {
-			agencies.locations[row.ID] = api.agencyLocationOrUTC(row.ID, row.Timezone)
+			agencies.locations[row.ID] = agencyLocationOrUTC(ctx, row.ID, row.Timezone)
 		}
 	}
 	for _, bareID := range bareIDs {
@@ -601,7 +603,7 @@ func (api *RestAPI) agenciesForStops(ctx context.Context, stops []gtfsdb.Stop) (
 		counts[row.ID]++
 
 		if _, exists := index.locations[row.ID]; !exists {
-			index.locations[row.ID] = api.agencyLocationOrUTC(row.ID, row.Timezone)
+			index.locations[row.ID] = agencyLocationOrUTC(ctx, row.ID, row.Timezone)
 		}
 	}
 
@@ -615,10 +617,10 @@ func (api *RestAPI) agenciesForStops(ctx context.Context, stops []gtfsdb.Stop) (
 
 // agencyLocationOrUTC resolves an agency's timezone, degrading to UTC rather
 // than failing the request over one unparseable timezone string.
-func (api *RestAPI) agencyLocationOrUTC(agencyID, timezone string) *time.Location {
+func agencyLocationOrUTC(ctx context.Context, agencyID, timezone string) *time.Location {
 	loc, err := loadAgencyLocation(agencyID, timezone)
 	if err != nil {
-		api.Logger.Warn("failed to load agency timezone, falling back to UTC",
+		logging.ForComponent(ctx, "http_server").Warn("failed to load agency timezone, falling back to UTC",
 			"agencyID", agencyID, "error", err)
 		return time.UTC
 	}
@@ -641,10 +643,11 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 	queryParams := r.URL.Query()
 
 	params := arrivalsForLocationParams{
-		QueryTime: api.Clock.Now(),
-		Before:    5 * time.Minute,
-		After:     35 * time.Minute,
-		MaxCount:  models.DefaultMaxCountForArrivalsForLocation,
+		QueryTime:         api.Clock.Now(),
+		Before:            5 * time.Minute,
+		After:             35 * time.Minute,
+		MaxCount:          models.DefaultMaxCountForArrivalsForLocation,
+		IncludeReferences: true,
 	}
 
 	var fieldErrors map[string][]string
@@ -677,6 +680,7 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 	params.MaxCount = parseArrivalsForLocationMaxCount(queryParams, addError)
 	params.RouteTypes = parseRouteTypesParam(queryParams, addError)
 	params.EmptyReturnsNotFound, fieldErrors = utils.ParseBoolParam(queryParams, "emptyReturnsNotFound", false, fieldErrors)
+	params.IncludeReferences, fieldErrors = ShouldIncludeReferences(r, fieldErrors)
 
 	return params, fieldErrors
 }
