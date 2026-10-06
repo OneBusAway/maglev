@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"maps"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
@@ -414,6 +416,32 @@ func TestParseArrivalsForLocationMaxCountClampsToCeiling(t *testing.T) {
 	assert.Equal(t, models.MaxCountForArrivalsForLocation,
 		parseArrivalsForLocationMaxCount(url.Values{"maxCount": {"5000"}}, addError))
 	assert.Empty(t, collected, "clamping above the ceiling must not error")
+}
+
+// A neighbour near the corner of the 100 m square box is inside the box on
+// both axes but over 100 m away in a straight line. Java still counts it as
+// nearby; a straight-line circle check would wrongly drop it.
+func TestNearbyCandidateIDsIncludesBoxCornerNeighbor(t *testing.T) {
+	center := gtfsdb.Stop{ID: "center", Lat: 40.0, Lon: -122.0}
+	corner := gtfsdb.Stop{ID: "corner",
+		Lat: 40.0 + 90.0/111320.0,
+		// cos(40°) ≈ 0.766 corrects the longitude scale.
+		Lon: -122.0 + 90.0/(111320.0*0.766),
+	}
+	far := gtfsdb.Stop{ID: "far",
+		Lat: 40.0 + 150.0/111320.0,
+		Lon: -122.0 + 150.0/(111320.0*0.766),
+	}
+
+	require.Greater(t, utils.Distance(center.Lat, center.Lon, corner.Lat, corner.Lon), 100.0,
+		"corner neighbour must be outside a 100 m circle for the test to mean anything")
+
+	nearIDs, err := nearbyCandidateIDs(context.Background(),
+		[]gtfsdb.Stop{corner, far, center}, []gtfsdb.Stop{center})
+	require.NoError(t, err)
+	assert.True(t, nearIDs["corner"], "box-corner neighbour must be nearby")
+	assert.False(t, nearIDs["far"], "stop outside the box must not be nearby")
+	assert.False(t, nearIDs["center"], "a stop must never be nearby to itself")
 }
 
 // minutes=153722868 would overflow time.Duration(minutes)*time.Minute into a
