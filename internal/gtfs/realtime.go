@@ -154,18 +154,26 @@ func isVehicleStale(existing, incoming gtfs.Vehicle) bool {
 	return incoming.Timestamp.Before(*existing.Timestamp)
 }
 
-// vehicleKey returns the key that identifies a vehicle across feed updates.
-// GTFS-RT allows a vehicle descriptor with only a label or license plate,
-// which go-gtfs parses with an empty ID, so those fields are the fallback.
-// The prefixes keep fallback keys apart from real vehicle IDs.
-func vehicleKey(id *gtfs.VehicleID) string {
+// vehicleKey identifies a vehicle across feed updates. Exactly one field is
+// set, recording which descriptor field the identity came from, so a real ID
+// never equals a label or license plate with the same text.
+type vehicleKey struct {
+	id           string
+	label        string
+	licensePlate string
+}
+
+// newVehicleKey returns the key for a vehicle descriptor. GTFS-RT allows a
+// descriptor with only a label or license plate, which go-gtfs parses with an
+// empty ID, so those fields are the fallback.
+func newVehicleKey(id *gtfs.VehicleID) vehicleKey {
 	if id.ID != "" {
-		return id.ID
+		return vehicleKey{id: id.ID}
 	}
 	if id.Label != "" {
-		return "label:" + id.Label
+		return vehicleKey{label: id.Label}
 	}
-	return "license-plate:" + id.LicensePlate
+	return vehicleKey{licensePlate: id.LicensePlate}
 }
 
 // cleanupExpiredVehicles removes vehicles from both the lastSeenMap and feedVehicles
@@ -195,7 +203,7 @@ func (manager *Manager) cleanupExpiredVehicles(feedID string) {
 			continue
 		}
 		// Keep the vehicle if it's still in the retention window
-		if _, ok := lastSeenMap[vehicleKey(v.ID)]; ok {
+		if _, ok := lastSeenMap[newVehicleKey(v.ID)]; ok {
 			validVehicles = append(validVehicles, v)
 		}
 	}
@@ -439,10 +447,10 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 		if applyVehicleUpdate {
 			prevVehicles := manager.feedVehicles[feedID]
-			prevByID := make(map[string]gtfs.Vehicle, len(prevVehicles))
+			prevByID := make(map[vehicleKey]gtfs.Vehicle, len(prevVehicles))
 			for _, pv := range prevVehicles {
 				if pv.ID != nil {
-					prevByID[vehicleKey(pv.ID)] = pv
+					prevByID[newVehicleKey(pv.ID)] = pv
 				}
 			}
 
@@ -452,12 +460,13 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 					continue
 				}
 
-				if prev, exists := prevByID[vehicleKey(v.ID)]; exists {
+				if prev, exists := prevByID[newVehicleKey(v.ID)]; exists {
 					if isVehicleStale(prev, v) {
 						// Log and keep the newer existing vehicle, dropping the stale update
 						logging.LogOperation(logger, "skipping_stale_vehicle_entity",
 							slog.String("feed", feedID),
-							slog.String("vehicle_id", vehicleKey(v.ID)),
+							slog.String("vehicle_id", v.ID.ID),
+							slog.String("vehicle_label", v.ID.Label),
 							slog.Time("existing_timestamp", *prev.Timestamp),
 							slog.Time("incoming_timestamp", *v.Timestamp),
 						)
@@ -471,13 +480,13 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 			now := time.Now()
 			if manager.feedVehicleLastSeen[feedID] == nil {
-				manager.feedVehicleLastSeen[feedID] = make(map[string]time.Time)
+				manager.feedVehicleLastSeen[feedID] = make(map[vehicleKey]time.Time)
 			}
 			lastSeenMap := manager.feedVehicleLastSeen[feedID]
 
-			currentVehicleIDs := make(map[string]struct{}, len(validVehicles))
+			currentVehicleIDs := make(map[vehicleKey]struct{}, len(validVehicles))
 			for _, v := range validVehicles {
-				key := vehicleKey(v.ID)
+				key := newVehicleKey(v.ID)
 				lastSeenMap[key] = now
 				currentVehicleIDs[key] = struct{}{}
 			}
@@ -497,7 +506,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				if pv.ID == nil {
 					continue
 				}
-				key := vehicleKey(pv.ID)
+				key := newVehicleKey(pv.ID)
 				if _, current := currentVehicleIDs[key]; !current {
 					if lastSeen, ok := lastSeenMap[key]; ok && now.Sub(lastSeen) <= staleVehicleTimeout {
 						validVehicles = append(validVehicles, pv)

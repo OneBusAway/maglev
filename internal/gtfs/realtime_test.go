@@ -326,7 +326,7 @@ func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
 		feedVehicles:         make(map[string][]gtfs.Vehicle),
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedVehicleTimestamp: make(map[string]uint64),
-		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 	}
 
 	cfg := RTFeedConfig{
@@ -583,24 +583,33 @@ func TestVehicleMerge_MissingTimestamp(t *testing.T) {
 	assert.Nil(t, vehicles[0].Timestamp, "incoming nil timestamp should replace existing")
 }
 
-func TestVehicleKey(t *testing.T) {
+func TestNewVehicleKey(t *testing.T) {
 	tests := []struct {
 		name string
 		id   gtfs.VehicleID
-		want string
+		want vehicleKey
 	}{
-		{"id only", gtfs.VehicleID{ID: "veh1"}, "veh1"},
-		{"id takes precedence over label", gtfs.VehicleID{ID: "veh1", Label: "101"}, "veh1"},
-		{"label only", gtfs.VehicleID{Label: "101"}, "label:101"},
-		{"label takes precedence over license plate", gtfs.VehicleID{Label: "101", LicensePlate: "ABC123"}, "label:101"},
-		{"license plate only", gtfs.VehicleID{LicensePlate: "ABC123"}, "license-plate:ABC123"},
+		{"id only", gtfs.VehicleID{ID: "veh1"}, vehicleKey{id: "veh1"}},
+		{"id takes precedence over label", gtfs.VehicleID{ID: "veh1", Label: "101"}, vehicleKey{id: "veh1"}},
+		{"label only", gtfs.VehicleID{Label: "101"}, vehicleKey{label: "101"}},
+		{"label takes precedence over license plate", gtfs.VehicleID{Label: "101", LicensePlate: "ABC123"}, vehicleKey{label: "101"}},
+		{"license plate only", gtfs.VehicleID{LicensePlate: "ABC123"}, vehicleKey{licensePlate: "ABC123"}},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, vehicleKey(&tc.id))
+			assert.Equal(t, tc.want, newVehicleKey(&tc.id))
 		})
 	}
+}
+
+func TestNewVehicleKey_IDNeverMatchesLabel(t *testing.T) {
+	realID := newVehicleKey(&gtfs.VehicleID{ID: "label:101"})
+	labelOnly := newVehicleKey(&gtfs.VehicleID{Label: "101"})
+	sameTextLabel := newVehicleKey(&gtfs.VehicleID{Label: "label:101"})
+
+	assert.NotEqual(t, realID, labelOnly)
+	assert.NotEqual(t, realID, sameTextLabel)
 }
 
 // labelOnlyPosition builds a VehiclePosition whose descriptor has a label but no id.
@@ -1375,7 +1384,7 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 		feedVehicles:         make(map[string][]gtfs.Vehicle),
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedVehicleTimestamp: make(map[string]uint64),
-		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 	}
 
 	// 1. Test partial success (OR logic): Trip updates succeed, Vehicle positions fail
