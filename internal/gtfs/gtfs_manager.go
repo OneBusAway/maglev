@@ -65,7 +65,7 @@ type Manager struct {
 	// No lock is required for reads.
 	feedAgencyFilter map[string]map[string]bool
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
-	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleID -> lastSeen
+	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleKey -> lastSeen
 
 	// Per-feed last successfully applied vehicle feed timestamp
 	feedVehicleTimestamp map[string]uint64 // feedID -> timestamp

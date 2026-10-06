@@ -154,6 +154,20 @@ func isVehicleStale(existing, incoming gtfs.Vehicle) bool {
 	return incoming.Timestamp.Before(*existing.Timestamp)
 }
 
+// vehicleKey returns the key that identifies a vehicle across feed updates.
+// GTFS-RT allows a vehicle descriptor with only a label or license plate,
+// which go-gtfs parses with an empty ID, so those fields are the fallback.
+// The prefixes keep fallback keys apart from real vehicle IDs.
+func vehicleKey(id *gtfs.VehicleID) string {
+	if id.ID != "" {
+		return id.ID
+	}
+	if id.Label != "" {
+		return "label:" + id.Label
+	}
+	return "license-plate:" + id.LicensePlate
+}
+
 // cleanupExpiredVehicles removes vehicles from both the lastSeenMap and feedVehicles
 // that have exceeded the staleVehicleTimeout threshold since they were last seen.
 // This ensures a consistent retention window across feed updates.
@@ -181,7 +195,7 @@ func (manager *Manager) cleanupExpiredVehicles(feedID string) {
 			continue
 		}
 		// Keep the vehicle if it's still in the retention window
-		if _, ok := lastSeenMap[v.ID.ID]; ok {
+		if _, ok := lastSeenMap[vehicleKey(v.ID)]; ok {
 			validVehicles = append(validVehicles, v)
 		}
 	}
@@ -428,7 +442,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			prevByID := make(map[string]gtfs.Vehicle, len(prevVehicles))
 			for _, pv := range prevVehicles {
 				if pv.ID != nil {
-					prevByID[pv.ID.ID] = pv
+					prevByID[vehicleKey(pv.ID)] = pv
 				}
 			}
 
@@ -438,12 +452,12 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 					continue
 				}
 
-				if prev, exists := prevByID[v.ID.ID]; exists {
+				if prev, exists := prevByID[vehicleKey(v.ID)]; exists {
 					if isVehicleStale(prev, v) {
 						// Log and keep the newer existing vehicle, dropping the stale update
 						logging.LogOperation(logger, "skipping_stale_vehicle_entity",
 							slog.String("feed", feedID),
-							slog.String("vehicle_id", v.ID.ID),
+							slog.String("vehicle_id", vehicleKey(v.ID)),
 							slog.Time("existing_timestamp", *prev.Timestamp),
 							slog.Time("incoming_timestamp", *v.Timestamp),
 						)
@@ -463,8 +477,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 			currentVehicleIDs := make(map[string]struct{}, len(validVehicles))
 			for _, v := range validVehicles {
-				lastSeenMap[v.ID.ID] = now
-				currentVehicleIDs[v.ID.ID] = struct{}{}
+				key := vehicleKey(v.ID)
+				lastSeenMap[key] = now
+				currentVehicleIDs[key] = struct{}{}
 			}
 
 			// Delete stale vehicles
@@ -482,8 +497,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				if pv.ID == nil {
 					continue
 				}
-				if _, current := currentVehicleIDs[pv.ID.ID]; !current {
-					if lastSeen, ok := lastSeenMap[pv.ID.ID]; ok && now.Sub(lastSeen) <= staleVehicleTimeout {
+				key := vehicleKey(pv.ID)
+				if _, current := currentVehicleIDs[key]; !current {
+					if lastSeen, ok := lastSeenMap[key]; ok && now.Sub(lastSeen) <= staleVehicleTimeout {
 						validVehicles = append(validVehicles, pv)
 					}
 				}
