@@ -1,8 +1,10 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,6 +61,10 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
+	// Nearest stop first: truncation below drops entries from the end, so the
+	// farthest stops must sort last.
+	sortStopsByDistance(stops, params.Location)
+
 	acc := newArrivalsAccumulator("")
 	arrivals, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
 		Stops:      stops,
@@ -73,7 +79,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
-	sortArrivalsByTime(arrivals)
+	sortArrivalsByStopDistance(arrivals, stopDistances(stops, agencies, params.Location))
 
 	nearby, err := api.nearbyStopsForLocation(ctx, stops, agencies, params)
 	if err != nil {
@@ -535,18 +541,46 @@ func (api *RestAPI) stopsServingRouteTypes(ctx context.Context, stopIDs []string
 	return matching, nil
 }
 
-// sortArrivalsByTime orders arrivals by when a rider would actually see them,
-// preferring the predicted time when one exists.
-func sortArrivalsByTime(arrivals []models.ArrivalAndDeparture) {
-	effectiveTime := func(a models.ArrivalAndDeparture) int64 {
-		if a.PredictedArrivalTime.UnixMilli() > 0 {
-			return a.PredictedArrivalTime.UnixMilli()
+// sortStopsByDistance orders stops nearest the search centre first, breaking
+// ties on bare stop ID so the order is deterministic.
+func sortStopsByDistance(stops []gtfsdb.Stop, loc *internalgtfs.LocationParams) {
+	slices.SortStableFunc(stops, func(a, b gtfsdb.Stop) int {
+		if d := utils.Distance(loc.Lat, loc.Lon, a.Lat, a.Lon) - utils.Distance(loc.Lat, loc.Lon, b.Lat, b.Lon); d != 0 {
+			return cmp.Compare(d, 0)
 		}
-		return a.ScheduledArrivalTime.UnixMilli()
-	}
-	sort.SliceStable(arrivals, func(i, j int) bool {
-		return effectiveTime(arrivals[i]) < effectiveTime(arrivals[j])
+		return strings.Compare(a.ID, b.ID)
 	})
+}
+
+// stopDistances maps each matched stop's combined ID to its distance from the
+// search centre, so arrivals sort by how near their stop is.
+func stopDistances(stops []gtfsdb.Stop, agencies *stopAgencyIndex, loc *internalgtfs.LocationParams) map[string]float64 {
+	distances := make(map[string]float64, len(stops))
+	for _, stop := range stops {
+		combined := utils.FormCombinedID(agencies.agencyIDFor(stop.ID), stop.ID)
+		distances[combined] = utils.Distance(loc.Lat, loc.Lon, stop.Lat, stop.Lon)
+	}
+	return distances
+}
+
+// sortArrivalsByStopDistance orders arrivals by stop distance from the search
+// centre, keeping best-arrival-time order within each stop.
+func sortArrivalsByStopDistance(arrivals []models.ArrivalAndDeparture, distances map[string]float64) {
+	slices.SortStableFunc(arrivals, func(a, b models.ArrivalAndDeparture) int {
+		if d := distances[a.StopID] - distances[b.StopID]; d != 0 {
+			return cmp.Compare(d, 0)
+		}
+		return cmp.Compare(effectiveArrivalTime(a), effectiveArrivalTime(b))
+	})
+}
+
+// effectiveArrivalTime is when a rider would actually see the arrival,
+// preferring the predicted time when one exists.
+func effectiveArrivalTime(a models.ArrivalAndDeparture) int64 {
+	if a.PredictedArrivalTime.UnixMilli() > 0 {
+		return a.PredictedArrivalTime.UnixMilli()
+	}
+	return a.ScheduledArrivalTime.UnixMilli()
 }
 
 // truncateSlice trims items to maxCount, reporting whether anything was dropped
