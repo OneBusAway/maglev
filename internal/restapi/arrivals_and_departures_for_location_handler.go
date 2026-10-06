@@ -22,6 +22,7 @@ import (
 type arrivalsForLocationParams struct {
 	Location             *internalgtfs.LocationParams
 	QueryTime            time.Time
+	TimeParam            string
 	Before               time.Duration
 	After                time.Duration
 	MaxCount             int
@@ -60,6 +61,16 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		api.serverErrorResponse(w, r, err)
 		return
 	}
+
+	// The service date is a local calendar date, so both epoch millis and
+	// yyyy-MM-dd_HH-mm-ss times are read in the fallback agency's timezone.
+	// Anything else is a validation error, as before.
+	_, queryTime, timeErrors, ok := utils.ParseTimeParameter(params.TimeParam, agencies.fallbackLocation, api.Clock)
+	if !ok {
+		api.validationErrorResponse(w, r, timeErrors)
+		return
+	}
+	params.QueryTime = queryTime
 
 	// Nearest stop first: truncation below drops entries from the end, so the
 	// farthest stops must sort last.
@@ -718,7 +729,9 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 
 	params.Before = parseMinutesValue(queryParams, "minutesBefore", params.Before, maxArrivalWindow, addError)
 	params.After = parseMinutesValue(queryParams, "minutesAfter", params.After, maxArrivalWindow, addError)
-	params.QueryTime = parseEpochMillisValue(queryParams, "time", params.QueryTime, addError)
+	// The time value is resolved after agencies are known so datetime formats
+	// parse in the agency timezone; see the handler.
+	params.TimeParam = queryParams.Get("time")
 	params.MaxCount = parseArrivalsForLocationMaxCount(queryParams, addError)
 	params.RouteTypes = parseRouteTypesParam(queryParams, addError)
 	params.EmptyReturnsNotFound, fieldErrors = utils.ParseBoolParam(queryParams, "emptyReturnsNotFound", false, fieldErrors)

@@ -90,6 +90,23 @@ func TestArrivalsAndDeparturesForLocationValidation(t *testing.T) {
 	}
 }
 
+// time accepts yyyy-MM-dd_HH-mm-ss in the agency timezone, like Java.
+func TestArrivalsAndDeparturesForLocationAcceptsDateTimeFormat(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
+		arrivalsForLocationURL(url.Values{
+			"lat":    {"40.539367"},
+			"lon":    {"-122.34952"},
+			"radius": {"2500"},
+			"time":   {"2025-06-02_08-00-00"},
+		}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, model.Data.FieldErrors)
+}
+
 func TestArrivalsAndDeparturesForLocationEndToEnd(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
