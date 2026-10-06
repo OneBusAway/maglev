@@ -2,8 +2,10 @@ package restapi
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"sort"
 	"strconv"
@@ -14,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
@@ -534,4 +537,62 @@ func TestParseMinutesValueCapsBeforeDurationOverflow(t *testing.T) {
 	assert.Equal(t, 5*time.Minute,
 		parseMinutesValue(url.Values{"minutesBefore": {"-5"}}, "minutesBefore", 5*time.Minute, maxArrivalWindow, addError))
 	assert.Contains(t, collected, "minutesBefore")
+}
+
+// A cancelled request must not be reported as a server failure: client
+// cancellation writes nothing, an expired deadline writes 504.
+func TestSendArrivalsForLocationErrorDistinguishesCancellation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	newRequest := func(ctx context.Context) (*httptest.ResponseRecorder, *http.Request) {
+		req := httptest.NewRequest(http.MethodGet, "/api/where/arrivals-and-departures-for-location.json", nil).WithContext(ctx)
+		return httptest.NewRecorder(), req
+	}
+
+	t.Run("client cancellation writes nothing", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		rec, req := newRequest(ctx)
+
+		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
+
+		assert.Empty(t, rec.Body.String(), "no body should be written when the client cancels")
+	})
+
+	t.Run("expired deadline writes gateway timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 0)
+		defer cancel()
+		rec, req := newRequest(ctx)
+
+		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
+
+		assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
+		assert.Contains(t, rec.Body.String(), "gateway timeout")
+	})
+
+	t.Run("genuine failure writes server error", func(t *testing.T) {
+		ctx := context.Background()
+		rec, req := newRequest(ctx)
+
+		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+}
+
+// Nearby stops served only by routes with no service on the query date are
+// dropped, matching Java (e.g. a seasonal shuttle outside its season).
+func TestBuildNearbyResultsDropsStopsInactiveOnDate(t *testing.T) {
+	stops := []gtfsdb.Stop{
+		{ID: "active", Lat: 40.0, Lon: -122.0},
+		{ID: "inactive", Lat: 40.0, Lon: -122.0},
+	}
+	combined := map[string]string{"active": "25_active", "inactive": "25_inactive"}
+	loc := &internalgtfs.LocationParams{Lat: 40.0, Lon: -122.0}
+
+	results := buildNearbyResults(stops, nil, map[string]bool{"active": true, "inactive": false}, combined, loc)
+
+	require.Len(t, results, 1, "stops with no active routes must be dropped")
+	assert.Equal(t, "25_active", results[0].StopID)
 }

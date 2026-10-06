@@ -103,10 +103,9 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		nearby:   nearby,
 	}, params.MaxCount)
 
-	if len(lists.arrivals) == 0 && len(lists.stopIDs) == 0 {
-		api.sendEmptyArrivalsForLocation(w, r, params)
-		return
-	}
+	// Note: no empty check here. stops is non-empty (empty searches return
+	// earlier) and maxCount is at least 1, so stopIDs is never empty and a
+	// stop list with zero arrivals is a normal response, not an empty one.
 
 	// Record each nearby stop's agency so references namespace it exactly as
 	// nearbyStopIds does, instead of falling back to the matched stops' agency.
