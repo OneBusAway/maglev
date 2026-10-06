@@ -108,8 +108,7 @@ issue or PR if one exists.
 
 <!-- Mirrors the "New Endpoint Implementation Workflow" in CLAUDE.md. -->
 
-- [ ] Behavior matches the OpenAPI spec (`testdata/openapi.yml`) and a
-      production OneBusAway server response was compared
+- [ ] Behavior matches the OpenAPI spec (`testdata/openapi.yml`)
 - [ ] Any new sqlc queries live in `gtfsdb/query.sql`, and `make models`
       was run
 - [ ] Response models added under `internal/models/` with JSON tags
