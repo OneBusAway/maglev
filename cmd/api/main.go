@@ -47,6 +47,7 @@ func main() {
 	var gtfsCfg gtfs.Config
 	var apiKeysFlag string
 	var exemptApiKeysFlag string
+	var protectedApiKeysFlag string
 	var envFlag string
 	var configFile string
 	var dumpConfig bool
@@ -66,6 +67,7 @@ func main() {
 	flag.StringVar(&envFlag, "env", "development", "Environment (development|test|production)")
 	flag.StringVar(&apiKeysFlag, "api-keys", "test", "Comma Separated API Keys (test, etc)")
 	flag.StringVar(&exemptApiKeysFlag, "exempt-api-keys", "org.onebusaway.iphone", "Comma separated list of API keys exempt from rate limiting")
+	flag.StringVar(&protectedApiKeysFlag, "protected-api-keys", "", "Comma separated API keys for protected endpoints (default: GTFS_PROTECTED_API_KEYS, or a test key in development and test)")
 	flag.IntVar(&cfg.RateLimit, "rate-limit", 100, "Requests per second across the entire service (global shared bucket; exempt keys bypass it)")
 	flag.StringVar(&gtfsCfg.GtfsURL, "gtfs-url", "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", "URL for a static GTFS zip file")
 	flag.StringVar(&gtfsCfg.StaticAuthHeaderKey, "gtfs-static-auth-header-name", "", "Optional header name for static GTFS feed auth")
@@ -121,8 +123,9 @@ func main() {
 			Env:           envFlag,
 			ApiKeys:       ParseAPIKeys(apiKeysFlag),
 			ExemptApiKeys: ParseAPIKeys(exemptApiKeysFlag),
-			// These fields have no flags, so set them before validation.
-			ProtectedApiKeys: appconf.DefaultProtectedAPIKeys(envFlag),
+			// Logging has no flags, and protected keys may come from the
+			// environment, so set them here before validation.
+			ProtectedApiKeys: cliProtectedAPIKeys(protectedApiKeysFlag, envFlag),
 			LogLevel:         "info",
 			LogFormat:        "text",
 			RateLimit:        cfg.RateLimit,
