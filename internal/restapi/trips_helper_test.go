@@ -1,9 +1,12 @@
 package restapi
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -2258,4 +2262,60 @@ func TestSelectFrequency(t *testing.T) {
 		"end_time is exclusive; no match falls back to the first row")
 	assert.Equal(t, &freqs[0], selectFrequency(freqs, serviceDate, serviceDate.Add(3*time.Hour)),
 		"a time before all windows falls back to the first row")
+}
+
+func TestBuildTripSchedule_ShapeLookupFailureLogsAndContinues(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+
+	trips, err := api.GtfsManager.GetTrips(ctx, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, trips)
+
+	tripRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, trips[0].ID)
+	require.NoError(t, err)
+
+	agencies := mustGetAgencies(t, api)
+	require.NotEmpty(t, agencies)
+
+	agency := agencies[0]
+	loc, err := time.LoadLocation(agency.Timezone)
+	require.NoError(t, err)
+
+	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(&shapeFetchFailureDB{
+		DBTX:     api.GtfsManager.GtfsDB.DB,
+		failWith: errors.New("forced shape lookup failure"),
+	})
+
+	var logBuf bytes.Buffer
+	previousLogger := slog.Default()
+
+	slog.SetDefault(
+		logging.NewStructuredLogger(&logBuf, slog.LevelWarn),
+	)
+
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+	})
+
+	schedule, err := api.BuildTripSchedule(
+		ctx,
+		agency.ID,
+		time.Now().In(loc),
+		&tripRow,
+		loc,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, schedule)
+
+	assert.Contains(
+		t,
+		logBuf.String(),
+		"BuildTripSchedule: failed to get shape points",
+	)
+	assert.Contains(t, logBuf.String(), tripRow.ID)
+	assert.Contains(t, logBuf.String(), "forced shape lookup failure")
 }

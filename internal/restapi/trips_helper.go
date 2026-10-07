@@ -450,6 +450,14 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 	}
 
 	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, trip.ID)
+	if err != nil {
+		slog.Warn(
+			"BuildTripSchedule: failed to get shape points",
+			slog.String("trip_id", trip.ID),
+			slog.String("error", err.Error()),
+		)
+	}
+
 	var shapePoints []gtfs.ShapePoint
 	if err == nil && len(shapeRows) > 0 {
 		shapePoints = shapeRowsToPoints(shapeRows)

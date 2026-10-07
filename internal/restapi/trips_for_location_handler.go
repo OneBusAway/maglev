@@ -188,9 +188,7 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 
 	queryParams := r.URL.Query()
 
-	// A supplied empty includeTrip previously meant false; omission defaults true.
-	includeTripDefault := !queryParams.Has("includeTrip") || queryParams.Get("includeTrip") != ""
-	includeTrip, fieldErrors := utils.ParseBoolParam(queryParams, "includeTrip", includeTripDefault, fieldErrors)
+	includeTrip, fieldErrors := utils.ParseBoolParam(queryParams, "includeTrip", true, fieldErrors)
 	includeSchedule, fieldErrors := utils.ParseBoolParam(queryParams, "includeSchedule", false, fieldErrors)
 	includeStatus, fieldErrors := utils.ParseBoolParam(queryParams, "includeStatus", false, fieldErrors)
 	includeReferences, fieldErrors := ShouldIncludeReferences(r, fieldErrors)
@@ -990,7 +988,17 @@ func (api *RestAPI) buildScheduleForTrip(
 	currentLocation *time.Location,
 	freqMap map[string][]gtfsdb.Frequency,
 ) (*models.TripsSchedule, error) {
-	shapeRows, _ := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
+	reqLogger := logging.ForComponent(ctx, "http_server")
+
+	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
+	if err != nil {
+		reqLogger.Warn(
+			"failed to get shape points for schedule",
+			"trip_id", tripID,
+			"error", err,
+		)
+	}
+
 	var shapePoints []gtfs.ShapePoint
 	if len(shapeRows) > 1 {
 		shapePoints = shapeRowsToPoints(shapeRows)
