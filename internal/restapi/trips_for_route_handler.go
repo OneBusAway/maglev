@@ -14,6 +14,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -72,12 +73,15 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Midnight at the start of the current service day (in the agency's timezone).
-	todayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentLocation)
-	// Midnight at the start of the previous service day. Trips that run past
-	// midnight belong to yesterday's service day, so their entries must report
-	// yesterday's midnight as serviceDate, not today's.
-	prevDayMidnight := todayMidnight.AddDate(0, 0, -1)
+	// The service date follows FromInstant. The calendar date of a service-day
+	// Start is the previous evening when the clocks spring forward.
+	queryDay := servicedate.FromInstant(currentTime, currentLocation)
+	formattedDate = queryDay.String()
+	// Local midnight of that service date. BuildTripStatus still reads the
+	// calendar date off this instant (#1497). Responses report the service-day start.
+	todayMidnight := queryDay.Midnight(currentLocation)
+	prevDay := queryDay.AddDays(-1)
+	prevDayMidnight := prevDay.Midnight(currentLocation)
 
 	// tripServiceDay records the service-day midnight for each active trip as
 	// it is resolved below, so past-midnight trips carry their own service day.
@@ -89,15 +93,14 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Time since midnight of the service day, as a duration.
-	serviceDayMidnight := time.Date(currentTime.Year(), currentTime.Month(), currentTime.Day(), 0, 0, 0, 0, currentTime.Location())
-	currentSinceMidnight := max(currentTime.Sub(serviceDayMidnight), 0)
+	// GTFS stop times are wall-clock durations. Elapsed time since local midnight
+	// is an hour off on a DST transition day, so the selection window uses the clock.
+	currentSinceMidnight := time.Duration(wallClockSinceMidnightNs(currentTime))
 
 	// Check the previous day's service for trips running past midnight.
 	// GTFS allows departure times > 24:00:00 (e.g., 25:30:00 = 1:30 AM next day).
 	// These trips belong to yesterday's service but are still active now.
-	prevDay := currentTime.AddDate(0, 0, -1)
-	prevFormattedDate := prevDay.Format("20060102")
+	prevFormattedDate := prevDay.String()
 	prevServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, prevFormattedDate)
 	if err != nil {
 		reqLogger.Warn("trips-for-route: failed to fetch previous-day service IDs", "date", prevFormattedDate, "error", err)
@@ -439,7 +442,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Frequency:    frequency,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  serviceDate.UnixMilli(),
+			ServiceDate:  servicedate.OffsetBase(serviceDate).UnixMilli(),
 			SituationIds: situations.addRefs(api.tripSituationRefs(ctx, entryTripID, tripsByID, routeAgencyMap)),
 			TripId:       utils.FormCombinedID(entryAgencyID, entryTripID),
 		}
@@ -522,7 +525,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Frequency:    frequency,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  serviceDate.UnixMilli(),
+			ServiceDate:  servicedate.OffsetBase(serviceDate).UnixMilli(),
 			SituationIds: situations.addRefs(api.tripSituationRefs(ctx, baseTripID, tripsByID, routeAgencyMap)),
 			TripId:       utils.FormCombinedID(agencyID, dupTripID),
 		}

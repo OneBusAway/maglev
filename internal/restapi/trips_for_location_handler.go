@@ -14,6 +14,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -935,7 +936,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			Frequency:    frequency,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  serviceDate.UnixMilli(),
+			ServiceDate:  servicedate.OffsetBase(serviceDate).UnixMilli(),
 			SituationIds: situations.add(alerts, agencyID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
@@ -949,10 +950,11 @@ type blockTripsKey struct {
 	blockID  string
 }
 
-// serviceDateMidnight returns the start of the service day in an agency's timezone.
+// serviceDateMidnight returns local midnight of the service date currentTime falls on.
+// Callers that add GTFS offsets use servicedate.OffsetBase; this midnight keeps the
+// calendar date BuildTripStatus still reads off the instant.
 func serviceDateMidnight(currentTime time.Time, agencyLocation *time.Location) time.Time {
-	_, midnight := utils.ServiceDateMidnight(nil, currentTime.In(agencyLocation))
-	return midnight
+	return servicedate.FromInstant(currentTime, agencyLocation).Midnight(agencyLocation)
 }
 
 // serviceDateResolversByZone builds one serviceDateResolver per distinct agency

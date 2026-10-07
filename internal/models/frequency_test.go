@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/servicedate"
 )
 
 func TestNewFrequencyFromDB(t *testing.T) {
@@ -266,4 +267,24 @@ func TestScheduleFrequencyJSON_StopHeadsignOmitEmpty(t *testing.T) {
 	// Other fields should still be present
 	assert.Contains(t, raw, "arrivalEnabled")
 	assert.Contains(t, raw, "departureEnabled")
+}
+
+func TestNewFrequencyFromDB_DSTServiceDayStart(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	spring := servicedate.New(2010, time.March, 14)
+	dbFreq := gtfsdb.Frequency{
+		TripID:      "trip_dst",
+		StartTime:   int64(8 * time.Hour),
+		EndTime:     int64(9 * time.Hour),
+		HeadwaySecs: 600,
+	}
+	want := spring.Start(loc).Add(8 * time.Hour)
+
+	for _, serviceDate := range []time.Time{spring.Midnight(loc), spring.Start(loc)} {
+		freq := NewFrequencyFromDB(dbFreq, serviceDate)
+		assert.True(t, want.Equal(freq.StartTime.Time), "got %s", freq.StartTime.Time)
+		assert.Equal(t, 8, freq.StartTime.Time.In(loc).Hour())
+	}
 }

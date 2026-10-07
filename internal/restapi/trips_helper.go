@@ -17,6 +17,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -406,9 +407,7 @@ func (api *RestAPI) frequencyForEntry(ctx context.Context, freqMap map[string][]
 // selectFrequency returns the row whose [start_time, end_time) window
 // contains effectiveTime, falling back to freqs[0].
 func selectFrequency(freqs []gtfsdb.Frequency, serviceDate, effectiveTime time.Time) *gtfsdb.Frequency {
-	midnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
-		0, 0, 0, 0, serviceDate.Location())
-	return selectFrequencyFromStart(freqs, midnight, effectiveTime)
+	return selectFrequencyFromStart(freqs, servicedate.OffsetBase(serviceDate), effectiveTime)
 }
 
 // selectFrequencyFromStart is selectFrequency with the windows measured from serviceStart.
@@ -443,6 +442,8 @@ func (api *RestAPI) fetchFrequenciesForTrips(ctx context.Context, tripIDs []stri
 
 // BuildTripSchedule returns the trip's schedule (stop times, block
 // neighbors, frequency) resolved around serviceDate in the agency's timezone.
+// Frequency offsets are added to servicedate.OffsetBase(serviceDate), the
+// service-day start, not local midnight.
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 	if err != nil {

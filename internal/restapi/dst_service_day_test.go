@@ -5,9 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -116,8 +118,48 @@ func TestArrivalsEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 type dstTripDetailsResponse struct {
 	Data struct {
 		Entry struct {
-			ServiceDate int64 `json:"serviceDate"`
+			ServiceDate int64         `json:"serviceDate"`
+			Frequency   *dstFrequency `json:"frequency"`
 		} `json:"entry"`
+	} `json:"data"`
+}
+
+type dstScheduleStopResponse struct {
+	Data struct {
+		Entry struct {
+			StopRouteSchedules []struct {
+				StopRouteDirectionSchedules []struct {
+					ScheduleFrequencies []struct {
+						StartTime   int64 `json:"startTime"`
+						ServiceDate int64 `json:"serviceDate"`
+					} `json:"scheduleFrequencies"`
+				} `json:"stopRouteDirectionSchedules"`
+			} `json:"stopRouteSchedules"`
+		} `json:"entry"`
+	} `json:"data"`
+}
+
+type dstScheduleRouteResponse struct {
+	Data struct {
+		Entry struct {
+			ScheduleDate      int64 `json:"scheduleDate"`
+			StopTripGroupings []struct {
+				TripsWithStopTimes []struct {
+					StopTimes []struct {
+						ArrivalTime int64 `json:"arrivalTime"`
+					} `json:"stopTimes"`
+				} `json:"tripsWithStopTimes"`
+			} `json:"stopTripGroupings"`
+		} `json:"entry"`
+	} `json:"data"`
+}
+
+type dstTripListResponse struct {
+	Data struct {
+		List []struct {
+			ServiceDate int64         `json:"serviceDate"`
+			Frequency   *dstFrequency `json:"frequency"`
+		} `json:"list"`
 	} `json:"data"`
 }
 
@@ -189,6 +231,137 @@ func TestArrivalAndDepartureForStop_PicksTheClosestLoopVisitOnDSTServiceDays(t *
 				"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d", stopID, tripID, start.UnixMilli()))
 			require.Equal(t, 200, resp.StatusCode)
 			assert.Equal(t, start.Add(tc.visit).UnixMilli(), single.Data.Entry.ScheduledArrivalTime)
+		})
+	}
+}
+
+func TestServiceDayFromQueryDate(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	spring := servicedate.New(2026, time.March, 8)
+
+	assert.Equal(t, spring, serviceDayFromQueryDate("", losAngeles, spring.Start(losAngeles).Add(8*time.Hour)))
+	assert.Equal(t, spring, serviceDayFromQueryDate("2026-03-08", losAngeles, time.Time{}))
+	// Start falls on the previous evening. The service date is still March 8.
+	assert.Equal(t, spring, serviceDayFromQueryDate(fmt.Sprint(spring.Start(losAngeles).UnixMilli()), losAngeles, time.Time{}))
+}
+
+func TestScheduleEndpoints_AddStopTimesToServiceDayStartOnDSTServiceDays(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	stopID := utils.FormCombinedID("dst-agency", "dst-stop1")
+	routeID := utils.FormCombinedID("dst-agency", "dst-route")
+
+	for _, date := range []servicedate.Date{
+		servicedate.New(2026, time.November, 8),
+		servicedate.New(2026, time.November, 1),
+		servicedate.New(2026, time.March, 8),
+	} {
+		t.Run(date.String(), func(t *testing.T) {
+			start := date.Start(losAngeles)
+			calendar := fmt.Sprintf("%04d-%02d-%02d", date.Year, int(date.Month), date.Day)
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(start.Add(8*time.Hour)),
+				fmt.Sprintf("dst-schedule-%s.zip", date), dstFiles())
+
+			for _, dateParam := range []string{calendar, fmt.Sprint(start.UnixMilli())} {
+				resp, schedule := callAPIHandler[dstScheduleStopResponse](t, api, fmt.Sprintf(
+					"/api/where/schedule-for-stop/%s.json?key=TEST&date=%s", stopID, dateParam))
+				require.Equal(t, 200, resp.StatusCode, dateParam)
+				freqs := schedule.Data.Entry.StopRouteSchedules[0].StopRouteDirectionSchedules[0].ScheduleFrequencies
+				require.NotEmpty(t, freqs, dateParam)
+				assert.Equal(t, start.Add(8*time.Hour).UnixMilli(), freqs[0].StartTime, dateParam)
+				assert.Equal(t, start.UnixMilli(), freqs[0].ServiceDate, dateParam)
+			}
+
+			resp, routeSchedule := callAPIHandler[dstScheduleRouteResponse](t, api, fmt.Sprintf(
+				"/api/where/schedule-for-route/%s.json?key=TEST&date=%s", routeID, calendar))
+			require.Equal(t, 200, resp.StatusCode)
+			assert.Equal(t, start.UnixMilli(), routeSchedule.Data.Entry.ScheduleDate)
+			require.NotEmpty(t, routeSchedule.Data.Entry.StopTripGroupings)
+			stopTimes := routeSchedule.Data.Entry.StopTripGroupings[0].TripsWithStopTimes[0].StopTimes
+			require.NotEmpty(t, stopTimes)
+			assert.Equal(t, int64(8*time.Hour/time.Second), stopTimes[0].ArrivalTime)
+			assert.Equal(t, start.Add(8*time.Hour).UnixMilli(), routeSchedule.Data.Entry.ScheduleDate+stopTimes[0].ArrivalTime*1000)
+		})
+	}
+}
+
+func TestTripsForRouteAndLocation_ReportServiceDayStartOnDSTServiceDays(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	routeID := utils.FormCombinedID("dst-agency", "dst-route")
+	lat := float32(37.7749)
+	lon := float32(-122.4194)
+
+	for _, date := range []servicedate.Date{
+		servicedate.New(2026, time.November, 8),
+		servicedate.New(2026, time.November, 1),
+		servicedate.New(2026, time.March, 8),
+	} {
+		t.Run(date.String(), func(t *testing.T) {
+			start := date.Start(losAngeles)
+			now := start.Add(8*time.Hour + 10*time.Minute)
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now),
+				fmt.Sprintf("dst-trips-%s.zip", date), dstFiles())
+			api.GtfsManager.MockAddVehicleWithOptions("dst-veh", "dst-trip", "dst-route", internalgtfs.MockVehicleOptions{
+				Timestamp: &now,
+				Position:  &gtfs.Position{Latitude: &lat, Longitude: &lon},
+			})
+
+			resp, routeTrips := callAPIHandler[dstTripListResponse](t, api, fmt.Sprintf(
+				"/api/where/trips-for-route/%s.json?key=TEST", routeID))
+			require.Equal(t, 200, resp.StatusCode)
+			require.NotEmpty(t, routeTrips.Data.List)
+			assert.Equal(t, start.UnixMilli(), routeTrips.Data.List[0].ServiceDate)
+			require.NotNil(t, routeTrips.Data.List[0].Frequency)
+			assert.Equal(t, start.Add(8*time.Hour).UnixMilli(), routeTrips.Data.List[0].Frequency.StartTime)
+
+			resp, located := callAPIHandler[dstTripListResponse](t, api, fmt.Sprintf(
+				"/api/where/trips-for-location.json?key=TEST&lat=%f&lon=%f&latSpan=0.05&lonSpan=0.05&includeSchedule=true", lat, lon))
+			require.Equal(t, 200, resp.StatusCode)
+			require.NotEmpty(t, located.Data.List)
+			assert.Equal(t, start.UnixMilli(), located.Data.List[0].ServiceDate)
+			require.NotNil(t, located.Data.List[0].Frequency)
+			assert.Equal(t, start.Add(8*time.Hour).UnixMilli(), located.Data.List[0].Frequency.StartTime)
+		})
+	}
+}
+
+func TestTripForVehicle_AcceptsTheArrivalsServiceDateOnDSTServiceDays(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	vehicleID := utils.FormCombinedID("dst-agency", "dst-veh")
+
+	for _, date := range []servicedate.Date{
+		servicedate.New(2026, time.November, 8),
+		servicedate.New(2026, time.November, 1),
+		servicedate.New(2026, time.March, 8),
+	} {
+		t.Run(date.String(), func(t *testing.T) {
+			start := date.Start(losAngeles)
+			now := start.Add(8*time.Hour + 10*time.Minute)
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now),
+				fmt.Sprintf("dst-vehicle-%s.zip", date), dstFiles())
+			api.GtfsManager.MockAddVehicleWithOptions("dst-veh", "dst-trip", "dst-route", internalgtfs.MockVehicleOptions{
+				Timestamp: &now,
+			})
+
+			midnight := date.Midnight(losAngeles)
+			for _, serviceDate := range []string{
+				fmt.Sprint(start.UnixMilli()),
+				fmt.Sprint(midnight.UnixMilli()),
+				midnight.Format("2006-01-02"),
+			} {
+				resp, details := callAPIHandler[dstTripDetailsResponse](t, api, fmt.Sprintf(
+					"/api/where/trip-for-vehicle/%s.json?key=TEST&serviceDate=%s&includeSchedule=true", vehicleID, serviceDate))
+				require.Equal(t, 200, resp.StatusCode, serviceDate)
+				assert.Equal(t, date, servicedate.FromInstant(time.UnixMilli(details.Data.Entry.ServiceDate), losAngeles), serviceDate)
+				require.NotNil(t, details.Data.Entry.Frequency)
+				assert.Equal(t, start.Add(8*time.Hour).UnixMilli(), details.Data.Entry.Frequency.StartTime, serviceDate)
+			}
 		})
 	}
 }

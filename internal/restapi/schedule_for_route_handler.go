@@ -59,20 +59,12 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var targetDate string
-	var scheduleDate int64
-	if dateParam != "" {
-		// dateParam was already validated above; ParseDate cannot fail here.
-		startOfDay, _ := utils.ParseDate(dateParam, loc)
-		targetDate = startOfDay.Format("20060102")
-		scheduleDate = startOfDay.UnixMilli()
-	} else {
-		now := api.Clock.Now().In(loc)
-		y, m, d := now.Date()
-		startOfDay := time.Date(y, m, d, 0, 0, 0, 0, loc)
-		targetDate = startOfDay.Format("20060102")
-		scheduleDate = startOfDay.UnixMilli()
-	}
+	now := api.Clock.Now().In(loc)
+	serviceDay := serviceDayFromQueryDate(dateParam, loc, now)
+	// scheduleDate is the base clients add stop-time durations to. That base is
+	// the service-day start, which is not local midnight on a DST transition day.
+	targetDate := serviceDay.String()
+	scheduleDate := serviceDay.Start(loc).UnixMilli()
 
 	agencyModel := models.AgencyReferenceFromDatabase(&agency)
 	routeModel := models.NewRoute(
