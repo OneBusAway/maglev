@@ -568,7 +568,6 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 		WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		RouteIDs:           combinedRouteIDs,
 		StaticRouteIDs:     combinedRouteIDs,
-		Parent:             parentStationID(agencyID, stop),
 	}
 }
 

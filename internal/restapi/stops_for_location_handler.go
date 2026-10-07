@@ -184,7 +184,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 		resultRawStopIDs = append(resultRawStopIDs, stopID)
 
-		results = append(results, api.buildStopModel(ctx, agency.ID, stop, rids))
+		results = append(results, api.buildSearchStopModel(ctx, agency.ID, stop, rids))
 	}
 
 	if ctx.Err() != nil {

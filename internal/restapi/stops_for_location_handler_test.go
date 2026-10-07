@@ -832,7 +832,7 @@ func TestStopsForLocationUsesAgencyDateForCurrentTime(t *testing.T) {
 }
 
 // TestStopsForLocationStopCodeFallback tests that a stop entry with no stop_code defined in the
-// feed falls back to the raw stop entity id.
+// feed falls back to the raw stop entity id for stop.Code.
 func TestStopsForLocationStopCodeFallback(t *testing.T) {
 	const (
 		agencyID = "A1"
