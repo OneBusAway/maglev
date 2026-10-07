@@ -88,6 +88,10 @@ Keep cognitive complexity low — check the SonarCloud analysis posted on your P
 
 Flag it in the PR description if your handler's behavior differs from other handlers' — an unusual response envelope, a deviation from a commonly adopted semantic, etc. These are often spec ambiguities that only become visible when comparing handlers side by side. Resolving the discrepancy and updating the `maglev.wiki` spec is the reviewer's job, not the contributor's — don't block your PR on getting the wiki updated yourself, just flag it clearly enough that the reviewer can act on it.
 
+### Java Response Comparison
+
+If your PR changes the response of an endpoint that the Java OneBusAway server also serves, include the Java production server's response for the same request in the PR description, next to Maglev's response before and after your change. Screenshots, validator output, or JSON blocks are all fine. If Maglev intentionally diverges because Java is wrong, say why. This isn't required for endpoints that exist only in Maglev.
+
 ## Code Conventions
 
 ### Context Propagation
