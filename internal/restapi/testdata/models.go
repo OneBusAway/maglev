@@ -209,4 +209,5 @@ var Stop4062 = models.Stop{
 	RouteIDs:           []string{"25_154"},
 	StaticRouteIDs:     []string{"25_154"},
 	WheelchairBoarding: "UNKNOWN",
+	Code:				"4062",
 }
