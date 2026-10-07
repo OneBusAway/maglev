@@ -265,7 +265,7 @@ func TestAgencyFilterFeedAgencyFilterPopulation(t *testing.T) {
 		feedVehicles:         make(map[string][]gtfs.Vehicle),
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedAgencyFilter:     make(map[string]map[string]bool),
-		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 		feedVehicleTimestamp: make(map[string]uint64),
 	}
 
@@ -525,7 +525,7 @@ func TestFeedVehicleRetentionWithAgencyFilter(t *testing.T) {
 	manager.feedVehicles["feed"] = []gtfs.Vehicle{
 		{ID: vid, Trip: &gtfs.Trip{ID: gtfs.TripID{RouteID: "R1"}}, Timestamp: &ts},
 	}
-	manager.feedVehicleLastSeen["feed"] = map[string]time.Time{"V1": now}
+	manager.feedVehicleLastSeen["feed"] = map[vehicleKey]time.Time{{id: "V1"}: now}
 	manager.rebuildMergedRealtimeLocked()
 	manager.realTimeMutex.Unlock()
 

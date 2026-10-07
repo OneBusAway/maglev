@@ -65,7 +65,7 @@ type Manager struct {
 	// No lock is required for reads.
 	feedAgencyFilter map[string]map[string]bool
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
-	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleID -> lastSeen
+	feedVehicleLastSeen map[string]map[vehicleKey]time.Time // feedID -> vehicleKey -> lastSeen
 
 	// Per-feed last successfully applied vehicle feed timestamp
 	feedVehicleTimestamp map[string]uint64 // feedID -> timestamp
@@ -138,7 +138,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedLastUpdate:       make(map[string]time.Time),
 		feedAgencyFilter:     make(map[string]map[string]bool),
-		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 		feedVehicleTimestamp: make(map[string]uint64),
 		Metrics:              config.Metrics,
 	}
