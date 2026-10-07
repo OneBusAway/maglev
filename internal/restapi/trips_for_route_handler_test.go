@@ -2472,6 +2472,50 @@ func TestTripsForRouteHandler_ReferenceLookupFailureDegradesGracefully(t *testin
 		"the unfetchable adjacent trip must not appear in references")
 }
 
+// previousDayBlockFailureDB wraps the GTFS DB and fails the second
+// GetBlockTripIndexIDsForRoute call. The handler looks up the query day's
+// blocks first and the previous day's second, so only the previous-day
+// lookup fails.
+type previousDayBlockFailureDB struct {
+	gtfsdb.DBTX
+	failWith   error
+	blockCalls int
+}
+
+func (f *previousDayBlockFailureDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if strings.Contains(query, "-- name: GetBlockTripIndexIDsForRoute") {
+		f.blockCalls++
+		if f.blockCalls == 2 {
+			return nil, f.failWith
+		}
+	}
+	return f.DBTX.QueryContext(ctx, query, args...)
+}
+
+// TestTripsForRouteHandler_PreviousDayBlockFailureKeepsQueryDayTrips verifies
+// that a failed previous-day block lookup is logged and skipped, so the trips
+// found on the query day still come back with a 200.
+func TestTripsForRouteHandler_PreviousDayBlockFailureKeepsQueryDayTrips(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(afterMidnightClock),
+		"trips-for-route-previous-day-failure.zip", crossAgencyInterlineFiles())
+	failingDB := &previousDayBlockFailureDB{
+		DBTX:     api.GtfsManager.GtfsDB.DB,
+		failWith: errors.New("forced previous-day lookup failure"),
+	}
+	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(failingDB)
+
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d",
+		combinedRouteID, afterMidnightClock.UnixMilli())
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, 2, failingDB.blockCalls, "the previous-day block lookup must run and fail")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1)
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "tfr-xa"), model.Data.List[0].TripId)
+}
+
 // TestTripsForRouteHandler_StopRoutesResolveInReferences verifies that every route referenced by a stop
 // (including routes no returned trip runs on) resolve to a route on references.routes and that these
 // route agencies resolve in references.agencies.

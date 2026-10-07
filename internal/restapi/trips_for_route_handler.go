@@ -97,6 +97,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	for dayIndex, day := range routeServiceDays {
 		blockIDs, dayNullBlockTrips, err := api.routeBlocksAndTripsInService(ctx, routeID, day)
 		if err != nil {
+			if dayIndex > 0 && ctx.Err() == nil {
+				reqLogger.Warn("trips-for-route: failed to fetch previous-day blocks", "route_id", routeID, "error", err)
+				continue
+			}
 			api.serverErrorResponse(w, r, err)
 			return
 		}
