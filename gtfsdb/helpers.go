@@ -408,11 +408,6 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	var allStopTimeParams []CreateStopTimeParams
 	for _, t := range data.Static.Trips {
 		for _, st := range t.StopTimes {
-			var shapeDistTraveled float64
-			if st.ShapeDistanceTraveled != nil {
-				shapeDistTraveled = *st.ShapeDistanceTraveled
-			}
-
 			params := CreateStopTimeParams{
 				TripID:            t.ID,
 				ArrivalTime:       int64(st.ArrivalTime),
@@ -422,7 +417,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 				StopHeadsign:      nulls.String(st.Headsign),
 				PickupType:        toNullInt64(int64(st.PickupType)),
 				DropOffType:       toNullInt64(int64(st.DropOffType)),
-				ShapeDistTraveled: toNullFloat64(shapeDistTraveled),
+				ShapeDistTraveled: nulls.Float64FromPtr(st.ShapeDistanceTraveled),
 				Timepoint:         toNullInt64(boolToInt(st.ExactTimes)),
 			}
 
@@ -456,17 +451,12 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	var allShapeParams []CreateShapeParams
 	for _, s := range data.Static.Shapes {
 		for idx, pt := range s.Points {
-			var distance float64
-			if pt.Distance != nil {
-				distance = *pt.Distance
-			}
-
 			params := CreateShapeParams{
 				ShapeID:           s.ID,
 				Lat:               pt.Latitude,
 				Lon:               pt.Longitude,
 				ShapePtSequence:   int64(idx),
-				ShapeDistTraveled: toNullFloat64(distance),
+				ShapeDistTraveled: nulls.Float64FromPtr(pt.Distance),
 			}
 			allShapeParams = append(allShapeParams, params)
 		}
@@ -713,16 +703,6 @@ func gtfsDirectionIDToDB(d gtfs.DirectionID) sql.NullInt64 {
 	default:
 		return sql.NullInt64{}
 	}
-}
-
-func toNullFloat64(f float64) sql.NullFloat64 {
-	if f != 0 {
-		return sql.NullFloat64{
-			Float64: f,
-			Valid:   true,
-		}
-	}
-	return sql.NullFloat64{}
 }
 
 func pickFirstAvailable(a, b string) string {
