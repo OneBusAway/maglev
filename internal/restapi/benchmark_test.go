@@ -1,12 +1,17 @@
 package restapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -127,5 +132,43 @@ func BenchmarkTripDetails(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
+	}
+}
+
+func BenchmarkVehiclesForAgencyVehicleCount(b *testing.B) {
+	for _, vehicleCount := range []int{1, 10, 50} {
+		b.Run(strconv.Itoa(vehicleCount)+"Vehicles", func(b *testing.B) {
+			now := time.Date(2024, 11, 4, 12, 0, 0, 0, time.UTC)
+			api := createTestApiWithClock(b, clock.NewMockClock(now))
+			defer api.Shutdown()
+			b.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			trips, err := api.GtfsManager.GetTrips(context.Background(), int64(vehicleCount))
+			if err != nil {
+				b.Fatal(err)
+			}
+			for i, trip := range trips {
+				api.GtfsManager.MockAddVehicleWithOptions(
+					"bench_v_"+strconv.Itoa(i), trip.ID, trip.RouteID,
+					gtfs.MockVehicleOptions{Timestamp: &now})
+			}
+
+			mux := http.NewServeMux()
+			api.SetRoutes(mux)
+			req := httptest.NewRequest(http.MethodGet,
+				"/api/where/vehicles-for-agency/"+testdata.Raba.ID+".json?key=TEST", nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				b.Fatalf("expected 200, got %d", w.Code)
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
+			}
+		})
 	}
 }
