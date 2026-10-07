@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,25 +11,33 @@ import (
 )
 
 // Benchmark arrivals endpoint (hot path).
+//
+// The RABA fixture's calendar ended 2025-12-31, so a real clock leaves every trip
+// out of service and the handler returns an empty list without ever entering its
+// per-arrival loop. Pin the clock inside the service window and ask for a stop
+// that has service then, the same pair the handler tests use.
 func BenchmarkArrivalsAndDeparturesForStop(b *testing.B) {
-	api, cleanup := createTestApiWithRealTimeData(b, clock.RealClock{})
+	api, cleanup := createTestApiWithRealTimeData(b, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
-
-	agencies := mustGetAgencies(b, api)
-	stops := mustGetStops(b, api)
-	if len(agencies) == 0 || len(stops) == 0 {
-		b.Fatal("no agencies or stops")
-	}
-	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
-	req := httptest.NewRequest(http.MethodGet, "/api/where/arrivals-and-departures-for-stop/"+stopID+".json?key=TEST", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/where/arrivals-and-departures-for-stop/"+arrivalsTestStopID+".json?key=TEST", nil)
 
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		b.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	// Without this the benchmark still passes on an empty list, which is how it
+	// came to measure the empty path unnoticed.
+	var warmup ArrivalsAndDeparturesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &warmup); err != nil {
+		b.Fatalf("decode warmup response: %v", err)
+	}
+	if len(warmup.Data.Entry.ArrivalsAndDepartures) == 0 {
+		b.Fatal("no arrivals in the benchmark window")
 	}
 
 	b.ReportAllocs()

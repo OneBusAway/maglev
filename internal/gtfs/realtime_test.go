@@ -353,6 +353,40 @@ func TestClearFeedData_StalePayloadStaysRejected(t *testing.T) {
 	assert.Empty(t, manager.GetRealTimeVehicles(), "a rejected stale payload must not republish vehicles")
 }
 
+func TestUpdateFeedRealtime_RouteAgencyLookupErrorPreservesFeed(t *testing.T) {
+	manager := newTestManager()
+	manager.feedAgencyFilter["lookup-fail"] = map[string]bool{"agency-A": true}
+	manager.feedVehicles["lookup-fail"] = []gtfs.Vehicle{{
+		ID: &gtfs.VehicleID{ID: "kept"},
+	}}
+	manager.rebuildMergedRealtimeLocked()
+
+	freshAt := time.Unix(1_700_000_000, 0).UTC()
+	payload := encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{{
+		Vehicle: &gtfsrt.VehicleDescriptor{Id: proto.String("incoming")},
+		Trip: &gtfsrt.TripDescriptor{
+			TripId:  proto.String("T1"),
+			RouteId: proto.String("R1"),
+		},
+	}})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	applied := manager.updateFeedRealtime(context.Background(), RTFeedConfig{
+		ID:                  "lookup-fail",
+		VehiclePositionsURL: server.URL,
+	})
+
+	assert.False(t, applied, "a failed route-agency lookup should not count as a successful poll")
+	vehicles := manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1)
+	require.NotNil(t, vehicles[0].ID)
+	assert.Equal(t, "kept", vehicles[0].ID.ID, "previous vehicles should stay when the lookup fails")
+}
+
 func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
 	// Setup a server that always returns 500 error simulating an outage
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -366,7 +400,7 @@ func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
 		feedVehicles:         make(map[string][]gtfs.Vehicle),
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedVehicleTimestamp: make(map[string]uint64),
-		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 	}
 
 	cfg := RTFeedConfig{
@@ -774,6 +808,127 @@ func TestVehicleMerge_MissingTimestamp(t *testing.T) {
 	vehicles := manager.GetRealTimeVehicles()
 	require.Len(t, vehicles, 1)
 	assert.Nil(t, vehicles[0].Timestamp, "incoming nil timestamp should replace existing")
+}
+
+func TestNewVehicleKey(t *testing.T) {
+	tests := []struct {
+		name string
+		id   gtfs.VehicleID
+		want vehicleKey
+	}{
+		{"id only", gtfs.VehicleID{ID: "veh1"}, vehicleKey{id: "veh1"}},
+		{"id takes precedence over label", gtfs.VehicleID{ID: "veh1", Label: "101"}, vehicleKey{id: "veh1"}},
+		{"label only", gtfs.VehicleID{Label: "101"}, vehicleKey{label: "101"}},
+		{"label takes precedence over license plate", gtfs.VehicleID{Label: "101", LicensePlate: "ABC123"}, vehicleKey{label: "101"}},
+		{"license plate only", gtfs.VehicleID{LicensePlate: "ABC123"}, vehicleKey{licensePlate: "ABC123"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, newVehicleKey(&tc.id))
+		})
+	}
+}
+
+func TestNewVehicleKey_IDNeverMatchesLabel(t *testing.T) {
+	realID := newVehicleKey(&gtfs.VehicleID{ID: "label:101"})
+	labelOnly := newVehicleKey(&gtfs.VehicleID{Label: "101"})
+	sameTextLabel := newVehicleKey(&gtfs.VehicleID{Label: "label:101"})
+
+	assert.NotEqual(t, realID, labelOnly)
+	assert.NotEqual(t, realID, sameTextLabel)
+}
+
+// labelOnlyPosition builds a VehiclePosition whose descriptor has a label but no id.
+func labelOnlyPosition(label string, latitude float32, timestamp time.Time) *gtfsrt.VehiclePosition {
+	return &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Label: proto.String(label)},
+		Position:  &gtfsrt.Position{Latitude: proto.Float32(latitude), Longitude: proto.Float32(-122.3)},
+		Timestamp: proto.Uint64(uint64(timestamp.Unix())),
+	}
+}
+
+// labelOnlyVehicle builds the parsed form of labelOnlyPosition.
+func labelOnlyVehicle(label string, latitude float32, timestamp time.Time) gtfs.Vehicle {
+	longitude := float32(-122.3)
+	return gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{Label: label},
+		Position:  &gtfs.Position{Latitude: &latitude, Longitude: &longitude},
+		Timestamp: &timestamp,
+	}
+}
+
+// vehiclesByLabel indexes the current realtime vehicles by label, failing on duplicates.
+func vehiclesByLabel(t *testing.T, manager *Manager) map[string]gtfs.Vehicle {
+	t.Helper()
+	byLabel := make(map[string]gtfs.Vehicle)
+	for _, v := range manager.GetRealTimeVehicles() {
+		require.NotContains(t, byLabel, v.ID.Label, "vehicle %q appears more than once", v.ID.Label)
+		byLabel[v.ID.Label] = v
+	}
+	return byLabel
+}
+
+// serveVehicleFeed serves the given positions as a vehicle positions feed.
+func serveVehicleFeed(t *testing.T, createdAt time.Time, positions []*gtfsrt.VehiclePosition) RTFeedConfig {
+	t.Helper()
+	payload := encodeVehicleFeed(createdAt, positions)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+	return RTFeedConfig{ID: "test-feed", VehiclePositionsURL: server.URL, RefreshInterval: 30, Enabled: true}
+}
+
+// TestVehicleMerge_LabelOnlyVehicles checks that vehicles identified only by a
+// label are merged independently. Bus 101 is seeded last, so if both buses
+// shared one key, bus 102's update would be compared with bus 101's newer
+// timestamp, dropped as stale, and replaced by a copy of bus 101.
+func TestVehicleMerge_LabelOnlyVehicles(t *testing.T) {
+	manager := newTestManager()
+	now := time.Now().Truncate(time.Second)
+	manager.feedVehicles["test-feed"] = []gtfs.Vehicle{
+		labelOnlyVehicle("102", 47.2, now.Add(-90*time.Second)),
+		labelOnlyVehicle("101", 47.1, now.Add(-25*time.Second)),
+	}
+
+	bus102Timestamp := now.Add(-60 * time.Second)
+	feed := serveVehicleFeed(t, now, []*gtfsrt.VehiclePosition{
+		labelOnlyPosition("101", 47.3, now.Add(-5*time.Second)),
+		labelOnlyPosition("102", 47.4, bus102Timestamp),
+	})
+	manager.updateFeedRealtime(context.Background(), feed)
+
+	byLabel := vehiclesByLabel(t, manager)
+	require.Len(t, byLabel, 2)
+	assert.InDelta(t, 47.3, *byLabel["101"].Position.Latitude, 0.001)
+	assert.InDelta(t, 47.4, *byLabel["102"].Position.Latitude, 0.001)
+	assert.Equal(t, bus102Timestamp.Unix(), byLabel["102"].Timestamp.Unix())
+}
+
+// TestVehicleMerge_LabelOnlyVehicleRetained checks that a label-only vehicle
+// missing from one update is retained even while another label-only vehicle
+// is still reported.
+func TestVehicleMerge_LabelOnlyVehicleRetained(t *testing.T) {
+	manager := newTestManager()
+	now := time.Now().Truncate(time.Second)
+
+	firstFeed := serveVehicleFeed(t, now.Add(-30*time.Second), []*gtfsrt.VehiclePosition{
+		labelOnlyPosition("101", 47.1, now.Add(-35*time.Second)),
+		labelOnlyPosition("102", 47.2, now.Add(-40*time.Second)),
+	})
+	manager.updateFeedRealtime(context.Background(), firstFeed)
+
+	secondFeed := serveVehicleFeed(t, now, []*gtfsrt.VehiclePosition{
+		labelOnlyPosition("101", 47.3, now.Add(-5*time.Second)),
+	})
+	manager.updateFeedRealtime(context.Background(), secondFeed)
+
+	byLabel := vehiclesByLabel(t, manager)
+	require.Len(t, byLabel, 2, "bus 102 should be retained within the stale-vehicle window")
+	assert.InDelta(t, 47.3, *byLabel["101"].Position.Latitude, 0.001)
+	assert.InDelta(t, 47.2, *byLabel["102"].Position.Latitude, 0.001)
 }
 
 // TestIsVehicleStale verifies the isVehicleStale function correctly compares
@@ -1479,7 +1634,7 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 		feedVehicles:         make(map[string][]gtfs.Vehicle),
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedVehicleTimestamp: make(map[string]uint64),
-		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 	}
 
 	// 1. Test partial success (OR logic): Trip updates succeed, Vehicle positions fail

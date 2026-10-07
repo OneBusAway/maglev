@@ -559,7 +559,7 @@ func (api *RestAPI) combinedRouteIDsForStop(routesForStop []gtfsdb.Route) []stri
 func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gtfsdb.Stop, combinedRouteIDs []string) models.Stop {
 	return models.Stop{
 		ID:                 utils.FormCombinedID(agencyID, stop.ID),
-		Name:               stop.Name.String,
+		Name:               nulls.StringOrEmpty(stop.Name),
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
 		Code:               nulls.StringOrDefault(stop.Code, stop.ID),
@@ -579,12 +579,12 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 // depend on which SQLite the build links against. A statement binding
 // anything besides the batched slice needs queryInBatchesReserving instead,
 // so that budget also accounts for those binds.
-const idsPerBatchedQuery = 900
+const idsPerBatchedQuery = utils.IDsPerBatchedQuery
 
 // queryInBatches runs query over ids in batches small enough to stay under the
 // bind variable limit, concatenating the results.
 func queryInBatches[T any](ctx context.Context, ids []string, query func(context.Context, []string) ([]T, error)) ([]T, error) {
-	return queryInBatchesReserving(ctx, ids, 0, query)
+	return utils.QueryInBatches(ctx, ids, query)
 }
 
 // queryInBatchesReserving is queryInBatches with reserved slots subtracted
