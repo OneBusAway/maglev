@@ -530,52 +530,71 @@ func stopModelsByIDs(api *RestAPI, ctx context.Context, agencyID string, stopIDs
 // Each added record carries its own route list. The route rows are returned
 // so callers can add them to references.routes.
 func (api *RestAPI) missingParentStops(ctx context.Context, stops []models.Stop) ([]models.Stop, []gtfsdb.GetRoutesForStopsRow, error) {
+	seen := seenStopIDs(stops)
+	var added []models.Stop
+	var parentRoutes []gtfsdb.GetRoutesForStopsRow
+	pending := stops
+	for len(pending) > 0 {
+		byAgency := parentIDsByAgency(pending, seen)
+		if len(byAgency) == 0 {
+			break
+		}
+		next, routes, err := api.fetchParentStops(ctx, byAgency)
+		if err != nil {
+			return nil, nil, err
+		}
+		added = append(added, next...)
+		parentRoutes = append(parentRoutes, routes...)
+		pending = next
+	}
+	return added, parentRoutes, nil
+}
+
+func seenStopIDs(stops []models.Stop) map[string]struct{} {
 	seen := make(map[string]struct{}, len(stops))
 	for _, stop := range stops {
 		if stop.ID != "" {
 			seen[stop.ID] = struct{}{}
 		}
 	}
+	return seen
+}
 
-	var added []models.Stop
-	var parentRoutes []gtfsdb.GetRoutesForStopsRow
-	pending := stops
-	for len(pending) > 0 {
-		byAgency := make(map[string][]string)
-		for _, stop := range pending {
-			if stop.Parent == "" {
-				continue
-			}
-			if _, ok := seen[stop.Parent]; ok {
-				continue
-			}
-			agencyID, rawID, err := utils.ExtractAgencyIDAndCodeID(stop.Parent)
-			if err != nil || agencyID == "" || rawID == "" {
-				seen[stop.Parent] = struct{}{}
-				continue
-			}
-			seen[stop.Parent] = struct{}{}
-			byAgency[agencyID] = append(byAgency[agencyID], rawID)
+// parentIDsByAgency groups parent station IDs that still need a record.
+// A parent is marked seen even when it cannot be parsed, so a bad ID is not retried.
+func parentIDsByAgency(stops []models.Stop, seen map[string]struct{}) map[string][]string {
+	byAgency := make(map[string][]string)
+	for _, stop := range stops {
+		if stop.Parent == "" {
+			continue
 		}
-		if len(byAgency) == 0 {
-			break
+		if _, ok := seen[stop.Parent]; ok {
+			continue
 		}
-
-		var next []models.Stop
-		for _, agencyID := range slices.Sorted(maps.Keys(byAgency)) {
-			refs, routes, err := stopModelsByIDs(api, ctx, agencyID, byAgency[agencyID])
-			if err != nil {
-				return nil, nil, err
-			}
-			for _, row := range routes {
-				parentRoutes = append(parentRoutes, row)
-			}
-			next = append(next, refs...)
-			added = append(added, refs...)
+		seen[stop.Parent] = struct{}{}
+		agencyID, rawID, err := utils.ExtractAgencyIDAndCodeID(stop.Parent)
+		if err != nil || agencyID == "" || rawID == "" {
+			continue
 		}
-		pending = next
+		byAgency[agencyID] = append(byAgency[agencyID], rawID)
 	}
-	return added, parentRoutes, nil
+	return byAgency
+}
+
+func (api *RestAPI) fetchParentStops(ctx context.Context, byAgency map[string][]string) ([]models.Stop, []gtfsdb.GetRoutesForStopsRow, error) {
+	var stops []models.Stop
+	var parentRoutes []gtfsdb.GetRoutesForStopsRow
+	for _, agencyID := range slices.Sorted(maps.Keys(byAgency)) {
+		refs, routes, err := stopModelsByIDs(api, ctx, agencyID, byAgency[agencyID])
+		if err != nil {
+			return nil, nil, err
+		}
+		stops = append(stops, refs...)
+		for _, row := range routes {
+			parentRoutes = append(parentRoutes, row)
+		}
+	}
+	return stops, parentRoutes, nil
 }
 
 // dedupeStrings returns the input slice with duplicates removed, preserving order.
