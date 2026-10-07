@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -470,7 +472,25 @@ func ShouldIncludeReferences(r *http.Request, fieldErrors map[string][]string) (
 }
 
 // BuildStopReferencesAndRouteIDsForStops builds full stop references and collects unique routes for the given stop IDs.
+// Parent stations named by those records are included, with their own route lists.
 func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, agencyID string, stopIDs []string) ([]models.Stop, map[string]gtfsdb.GetRoutesForStopsRow, error) {
+	stops, routes, err := stopModelsByIDs(api, ctx, agencyID, stopIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	added, parentRoutes, err := api.missingParentStops(ctx, stops)
+	if err != nil {
+		return nil, nil, err
+	}
+	stops = append(stops, added...)
+	for _, row := range parentRoutes {
+		routes[utils.FormCombinedID(row.AgencyID, row.ID)] = row
+	}
+	return stops, routes, nil
+}
+
+// stopModelsByIDs builds stop records for the requested IDs without walking parent stations.
+func stopModelsByIDs(api *RestAPI, ctx context.Context, agencyID string, stopIDs []string) ([]models.Stop, map[string]gtfsdb.GetRoutesForStopsRow, error) {
 	if len(stopIDs) == 0 {
 		return []models.Stop{}, map[string]gtfsdb.GetRoutesForStopsRow{}, nil
 	}
@@ -503,6 +523,59 @@ func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, a
 	}
 
 	return modelStops, uniqueRouteMap, nil
+}
+
+// missingParentStops returns full records for parent stations named by stops
+// that are not already in the slice, including parents of those parents.
+// Each added record carries its own route list. The route rows are returned
+// so callers can add them to references.routes.
+func (api *RestAPI) missingParentStops(ctx context.Context, stops []models.Stop) ([]models.Stop, []gtfsdb.GetRoutesForStopsRow, error) {
+	seen := make(map[string]struct{}, len(stops))
+	for _, stop := range stops {
+		if stop.ID != "" {
+			seen[stop.ID] = struct{}{}
+		}
+	}
+
+	var added []models.Stop
+	var parentRoutes []gtfsdb.GetRoutesForStopsRow
+	pending := stops
+	for len(pending) > 0 {
+		byAgency := make(map[string][]string)
+		for _, stop := range pending {
+			if stop.Parent == "" {
+				continue
+			}
+			if _, ok := seen[stop.Parent]; ok {
+				continue
+			}
+			agencyID, rawID, err := utils.ExtractAgencyIDAndCodeID(stop.Parent)
+			if err != nil || agencyID == "" || rawID == "" {
+				seen[stop.Parent] = struct{}{}
+				continue
+			}
+			seen[stop.Parent] = struct{}{}
+			byAgency[agencyID] = append(byAgency[agencyID], rawID)
+		}
+		if len(byAgency) == 0 {
+			break
+		}
+
+		var next []models.Stop
+		for _, agencyID := range slices.Sorted(maps.Keys(byAgency)) {
+			refs, routes, err := stopModelsByIDs(api, ctx, agencyID, byAgency[agencyID])
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, row := range routes {
+				parentRoutes = append(parentRoutes, row)
+			}
+			next = append(next, refs...)
+			added = append(added, refs...)
+		}
+		pending = next
+	}
+	return added, parentRoutes, nil
 }
 
 // dedupeStrings returns the input slice with duplicates removed, preserving order.
@@ -557,17 +630,21 @@ func (api *RestAPI) combinedRouteIDsForStop(routesForStop []gtfsdb.Route) []stri
 
 // buildStopModel converts a database stop into a models.Stop with the given combined route IDs.
 func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gtfsdb.Stop, combinedRouteIDs []string) models.Stop {
+	if combinedRouteIDs == nil {
+		combinedRouteIDs = []string{}
+	}
 	return models.Stop{
 		ID:                 utils.FormCombinedID(agencyID, stop.ID),
 		Name:               nulls.StringOrEmpty(stop.Name),
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
-		Code:               nulls.StringOrDefault(stop.Code, stop.ID),
+		Code:               nulls.StringOrNonEmpty(stop.Code, stop.ID),
 		Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
 		LocationType:       int(nulls.Int64OrDefault(stop.LocationType, 0)),
 		WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		RouteIDs:           combinedRouteIDs,
 		StaticRouteIDs:     combinedRouteIDs,
+		Parent:             parentStationID(agencyID, stop),
 	}
 }
 
@@ -651,7 +728,34 @@ func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, ids
 			stopList = append(stopList, agencyStop)
 		}
 	}
-	return stopList, routeIDsByStop
+
+	added, err := api.appendResolvedParents(ctx, stopList, routeIDsByStop)
+	if err != nil {
+		logging.ForComponent(ctx, "http_server").Error("failed to resolve parent stop references", "error", err)
+		return stopList, routeIDsByStop
+	}
+	return append(stopList, added...), routeIDsByStop
+}
+
+// appendResolvedParents adds parent-station records that stopList names but does
+// not already contain, and records their route IDs for reference collection.
+func (api *RestAPI) appendResolvedParents(ctx context.Context, stopList []models.Stop, routeIDsByStop map[string][]string) ([]models.Stop, error) {
+	added, _, err := api.missingParentStops(ctx, stopList)
+	if err != nil {
+		return nil, err
+	}
+	for _, stop := range added {
+		rawID, err := utils.ExtractCodeID(stop.ID)
+		if err != nil {
+			continue
+		}
+		routeIDs := stop.StaticRouteIDs
+		if routeIDs == nil {
+			routeIDs = []string{}
+		}
+		routeIDsByStop[rawID] = routeIDs
+	}
+	return added, nil
 }
 
 // routeIDsForStops maps each stop to the combined IDs of the routes serving it.

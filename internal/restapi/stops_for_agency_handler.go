@@ -49,8 +49,19 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Build route references from stops
-	routeRefs, err := api.BuildRouteReferences(ctx, id, stopsList)
+	// Resolve parent stations referenced by any stop into references.stops.
+	parentRefs, err := api.buildParentStationReferences(ctx, id, stopsList)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+
+	// Route references cover the listed stops and their parent stations, so a
+	// route that serves only the station still resolves.
+	routeSource := make([]models.Stop, 0, len(stopsList)+len(parentRefs))
+	routeSource = append(routeSource, stopsList...)
+	routeSource = append(routeSource, parentRefs...)
+	routeRefs, err := api.BuildRouteReferences(ctx, id, routeSource)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -60,6 +71,7 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 	references := models.NewEmptyReferences()
 	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 	references.Routes = routeRefs
+	references.Stops = parentRefs
 
 	// A route in routeRefs can belong to a different agency than the one
 	// requested here (a stop can be served by more than one agency's routes).
@@ -67,14 +79,6 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 	for _, route := range routeRefs {
 		api.appendRouteAgencyReference(ctx, references, route.AgencyID, id)
 	}
-
-	// Resolve parent stations referenced by any stop into references.stops.
-	parentRefs, err := api.buildParentStationReferences(ctx, id, stopsList)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-	references.Stops = parentRefs
 
 	response := models.NewListResponse(stopsList, *references, false, api.Clock)
 	api.sendResponse(w, r, response)
@@ -152,7 +156,7 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 		}
 
 		stopsList = append(stopsList, models.Stop{
-			Code:               nulls.StringOrDefault(stop.Code, stop.ID),
+			Code:               nulls.StringOrNonEmpty(stop.Code, stop.ID),
 			Direction:          nulls.StringOrEmpty(stop.Direction),
 			ID:                 utils.FormCombinedID(agencyID, stop.ID),
 			Lat:                stop.Lat,

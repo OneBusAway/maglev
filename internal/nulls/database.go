@@ -25,6 +25,15 @@ func StringOrDefault(ns sql.NullString, defaultValue string) string {
 	return defaultValue
 }
 
+// StringOrNonEmpty returns ns when it is valid and not empty. Otherwise it
+// returns fallback. A whitespace-only value is kept.
+func StringOrNonEmpty(ns sql.NullString, fallback string) string {
+	if ns.Valid && ns.String != "" {
+		return ns.String
+	}
+	return fallback
+}
+
 // Int64OrDefault returns the int64 value if valid, otherwise returns the default value
 func Int64OrDefault(ni sql.NullInt64, defaultValue int64) int64 {
 	if ni.Valid {

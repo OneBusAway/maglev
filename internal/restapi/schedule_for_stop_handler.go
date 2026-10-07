@@ -283,10 +283,43 @@ func (api *RestAPI) buildScheduleForStopReferences(
 		return nil, err
 	}
 
+	queried := buildQueriedStopRef(agencyID, stop, routeIDs)
+	addedParents, parentRoutes, err := api.missingParentStops(ctx, []models.Stop{queried})
+	if err != nil {
+		return nil, err
+	}
+
 	references := models.NewEmptyReferences()
 	references.Routes = utils.MapValues(routeRefs)
 	references.Agencies = utils.MapValues(agencyRefs)
-	references.Stops = append(references.Stops, buildQueriedStopRef(agencyID, stop, routeIDs))
+	references.Stops = append(references.Stops, queried)
+	references.Stops = append(references.Stops, addedParents...)
+
+	presentRoutes := make(map[string]struct{}, len(references.Routes))
+	for _, route := range references.Routes {
+		presentRoutes[route.ID] = struct{}{}
+	}
+	presentAgencies := make(map[string]struct{}, len(references.Agencies))
+	for _, agency := range references.Agencies {
+		presentAgencies[agency.ID] = struct{}{}
+	}
+	for _, row := range parentRoutes {
+		combinedID := utils.FormCombinedID(row.AgencyID, row.ID)
+		if _, ok := presentRoutes[combinedID]; ok {
+			continue
+		}
+		presentRoutes[combinedID] = struct{}{}
+		references.Routes = append(references.Routes, routeReferenceFromStopRow(row))
+		if _, ok := presentAgencies[row.AgencyID]; ok {
+			continue
+		}
+		presentAgencies[row.AgencyID] = struct{}{}
+		agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, row.AgencyID)
+		if err != nil {
+			return nil, err
+		}
+		references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
+	}
 
 	return references, nil
 }
@@ -348,11 +381,11 @@ func buildQueriedStopRef(agencyID string, stop gtfsdb.Stop, routeIDs []string) m
 	}
 
 	return models.NewStop(
-		nulls.StringOrEmpty(stop.Code),
+		nulls.StringOrNonEmpty(stop.Code, stop.ID),
 		nulls.StringOrEmpty(stop.Direction),
 		utils.FormCombinedID(agencyID, stop.ID),
 		nulls.StringOrEmpty(stop.Name),
-		"",
+		parentStationID(agencyID, stop),
 		utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		stop.Lat,
 		stop.Lon,

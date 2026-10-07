@@ -680,7 +680,8 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 			Name:               stopData.Name.String,
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
-			Code:               nulls.StringOrDefault(stopData.Code, stopData.ID),
+			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
+			Parent:             parentStationID(stopAgencyID, stopData),
 			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
@@ -688,6 +689,13 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 			StaticRouteIDs:     combinedRouteIDs,
 		})
 	}
+
+	added, parentRoutes, err := api.missingParentStops(ctx, references.Stops)
+	if err != nil {
+		return err
+	}
+	references.Stops = append(references.Stops, added...)
+	collectStopRoutes(parentRoutes, acc)
 
 	return nil
 }
