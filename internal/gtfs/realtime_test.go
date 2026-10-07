@@ -353,6 +353,214 @@ func TestClearFeedData_StalePayloadStaysRejected(t *testing.T) {
 	assert.Empty(t, manager.GetRealTimeVehicles(), "a rejected stale payload must not republish vehicles")
 }
 
+func TestDecideVehicleFeedTimestamp(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	prevAt := now.Add(-time.Minute)
+	prev := uint64(prevAt.UnixNano())
+	futureWatermark := uint64(now.Add(time.Hour).UnixNano())
+
+	tests := []struct {
+		name          string
+		prev          uint64
+		createdAt     time.Time
+		wantApply     bool
+		wantWatermark uint64
+		wantReason    vehicleFeedTimestampReason
+	}{
+		{
+			name:          "missing header applies without moving the watermark",
+			prev:          prev,
+			wantApply:     true,
+			wantWatermark: prev,
+			wantReason:    vehicleFeedAccept,
+		},
+		{
+			name:          "newer header applies",
+			prev:          prev,
+			createdAt:     now,
+			wantApply:     true,
+			wantWatermark: uint64(now.UnixNano()),
+			wantReason:    vehicleFeedAccept,
+		},
+		{
+			name:          "equal header is stale",
+			prev:          prev,
+			createdAt:     prevAt,
+			wantApply:     false,
+			wantWatermark: prev,
+			wantReason:    vehicleFeedSkipStale,
+		},
+		{
+			name:          "older header is stale",
+			prev:          prev,
+			createdAt:     now.Add(-2 * time.Minute),
+			wantApply:     false,
+			wantWatermark: prev,
+			wantReason:    vehicleFeedSkipStale,
+		},
+		{
+			name:          "header at the future skew bound applies",
+			createdAt:     now.Add(maxVehicleFeedFutureSkew),
+			wantApply:     true,
+			wantWatermark: uint64(now.Add(maxVehicleFeedFutureSkew).UnixNano()),
+			wantReason:    vehicleFeedAccept,
+		},
+		{
+			name:          "header beyond the future skew is not recorded",
+			prev:          prev,
+			createdAt:     now.Add(maxVehicleFeedFutureSkew + time.Second),
+			wantApply:     false,
+			wantWatermark: prev,
+			wantReason:    vehicleFeedSkipFuture,
+		},
+		{
+			name:          "first future header leaves a zero watermark",
+			createdAt:     now.Add(time.Hour),
+			wantApply:     false,
+			wantWatermark: 0,
+			wantReason:    vehicleFeedSkipFuture,
+		},
+		{
+			name:          "future watermark accepts a corrected header",
+			prev:          futureWatermark,
+			createdAt:     now,
+			wantApply:     true,
+			wantWatermark: uint64(now.UnixNano()),
+			wantReason:    vehicleFeedRecover,
+		},
+		{
+			name:          "future watermark accepts a header at the recovery bound",
+			prev:          futureWatermark,
+			createdAt:     now.Add(-maxVehicleFeedFutureSkew),
+			wantApply:     true,
+			wantWatermark: uint64(now.Add(-maxVehicleFeedFutureSkew).UnixNano()),
+			wantReason:    vehicleFeedRecover,
+		},
+		{
+			name:          "future watermark still rejects an old header",
+			prev:          futureWatermark,
+			createdAt:     now.Add(-maxVehicleFeedFutureSkew - time.Second),
+			wantApply:     false,
+			wantWatermark: futureWatermark,
+			wantReason:    vehicleFeedSkipStale,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := decideVehicleFeedTimestamp(tt.prev, tt.createdAt, now)
+			assert.Equal(t, tt.wantApply, got.apply)
+			assert.Equal(t, tt.wantWatermark, got.watermark)
+			assert.Equal(t, tt.wantReason, got.reason)
+		})
+	}
+}
+
+func TestUpdateFeedRealtime_FutureHeaderThenClearAcceptsCorrectedHeader(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var payload []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "clock-correction",
+		VehiclePositionsURL: server.URL,
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	futureAt := now.Add(time.Hour)
+	mu.Lock()
+	payload = encodeVehicleFeed(futureAt, []*gtfsrt.VehiclePosition{{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-future")},
+		Timestamp: proto.Uint64(uint64(futureAt.Unix())),
+	}})
+	mu.Unlock()
+
+	var buf bytes.Buffer
+	futureCtx := logging.WithLogger(ctx, logging.NewStructuredLogger(&buf, slog.LevelDebug))
+	assert.False(t, manager.updateFeedRealtime(futureCtx, feed), "a future vehicle header must not count as new data")
+	assert.Empty(t, manager.GetRealTimeVehicles())
+	manager.realTimeMutex.RLock()
+	assert.Zero(t, manager.feedVehicleTimestamp[feed.ID], "a future header must not become the watermark")
+	manager.realTimeMutex.RUnlock()
+	assert.Contains(t, buf.String(), "skipping_future_vehicle_realtime_feed")
+	assert.NotContains(t, buf.String(), "realtime feed update failed")
+
+	manager.clearFeedData(feed.ID)
+
+	correctedAt := now
+	mu.Lock()
+	payload = encodeVehicleFeed(correctedAt, []*gtfsrt.VehiclePosition{{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-corrected")},
+		Timestamp: proto.Uint64(uint64(correctedAt.Unix())),
+	}})
+	mu.Unlock()
+
+	require.True(t, manager.updateFeedRealtime(ctx, feed), "a corrected header must apply after the future header is rejected")
+	vehicles := manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1)
+	require.NotNil(t, vehicles[0].ID)
+	assert.Equal(t, "veh-corrected", vehicles[0].ID.ID)
+	manager.realTimeMutex.RLock()
+	correctedStamp := manager.feedVehicleTimestamp[feed.ID]
+	manager.realTimeMutex.RUnlock()
+	assert.Equal(t, correctedAt.Unix(), time.Unix(0, int64(correctedStamp)).Unix())
+
+	manager.clearFeedData(feed.ID)
+	assert.Empty(t, manager.GetRealTimeVehicles())
+	assert.False(t, manager.updateFeedRealtime(ctx, feed), "the same corrected payload must stay stale after clearing")
+	assert.Empty(t, manager.GetRealTimeVehicles(), "a rejected stale payload must not republish vehicles")
+	manager.realTimeMutex.RLock()
+	assert.Equal(t, correctedStamp, manager.feedVehicleTimestamp[feed.ID])
+	manager.realTimeMutex.RUnlock()
+}
+
+func TestUpdateFeedRealtime_FutureWatermarkRecoversAfterClear(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	payload := encodeVehicleFeed(now, []*gtfsrt.VehiclePosition{{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-corrected")},
+		Timestamp: proto.Uint64(uint64(now.Unix())),
+	}})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "poisoned-watermark",
+		VehiclePositionsURL: server.URL,
+	}
+	manager.feedVehicleTimestamp[feed.ID] = uint64(now.Add(time.Hour).UnixNano())
+	manager.clearFeedData(feed.ID)
+	manager.realTimeMutex.RLock()
+	require.Equal(t, uint64(now.Add(time.Hour).UnixNano()), manager.feedVehicleTimestamp[feed.ID])
+	manager.realTimeMutex.RUnlock()
+
+	var buf bytes.Buffer
+	recoverCtx := logging.WithLogger(ctx, logging.NewStructuredLogger(&buf, slog.LevelDebug))
+	require.True(t, manager.updateFeedRealtime(recoverCtx, feed), "a corrected header must replace an implausible future watermark")
+	vehicles := manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1)
+	require.NotNil(t, vehicles[0].ID)
+	assert.Equal(t, "veh-corrected", vehicles[0].ID.ID)
+	assert.Contains(t, buf.String(), "recovering_vehicle_feed_timestamp")
+	manager.realTimeMutex.RLock()
+	assert.Equal(t, now.Unix(), time.Unix(0, int64(manager.feedVehicleTimestamp[feed.ID])).Unix())
+	manager.realTimeMutex.RUnlock()
+}
+
 func TestUpdateFeedRealtime_RouteAgencyLookupErrorPreservesFeed(t *testing.T) {
 	manager := newTestManager()
 	manager.feedAgencyFilter["lookup-fail"] = map[string]bool{"agency-A": true}
