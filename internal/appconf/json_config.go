@@ -59,6 +59,19 @@ func DefaultProtectedAPIKeys(env string) []string {
 	return nil
 }
 
+// ProtectedAPIKeysFromEnv returns the comma-separated keys in
+// GTFS_PROTECTED_API_KEYS with surrounding whitespace and empty entries
+// removed, or nil when none are set.
+func ProtectedAPIKeysFromEnv() []string {
+	var keys []string
+	for _, key := range strings.Split(os.Getenv("GTFS_PROTECTED_API_KEYS"), ",") {
+		if trimmed := strings.TrimSpace(key); trimmed != "" {
+			keys = append(keys, trimmed)
+		}
+	}
+	return keys
+}
+
 // setDefaults applies default values to the JSON config if fields are missing or zero
 func (j *JSONConfig) setDefaults() {
 	if j.Port == 0 {
@@ -413,17 +426,8 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 	}
 
 	// Override Protected API Keys
-	if envProtectedKeys := os.Getenv("GTFS_PROTECTED_API_KEYS"); envProtectedKeys != "" {
-		rawKeys := strings.Split(envProtectedKeys, ",")
-		var cleanKeys []string
-		for _, k := range rawKeys {
-			if trimmed := strings.TrimSpace(k); trimmed != "" {
-				cleanKeys = append(cleanKeys, trimmed)
-			}
-		}
-		if len(cleanKeys) > 0 {
-			config.ProtectedApiKeys = cleanKeys
-		}
+	if envProtectedKeys := ProtectedAPIKeysFromEnv(); len(envProtectedKeys) > 0 {
+		config.ProtectedApiKeys = envProtectedKeys
 	}
 
 	// Override Static Feed Auth (Name + Value)
