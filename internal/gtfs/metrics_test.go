@@ -617,6 +617,32 @@ func TestGetMetrics_MatchedStopIDsDeduplicatedAcrossFeeds(t *testing.T) {
 	assert.Equal(t, 1, snapshot.StopIDsMatchedCount["A"])
 }
 
+// TestGetMetrics_MatchedTripsDeduplicatedAcrossFeeds covers two feeds
+// covering the same agency that both report an active trip: Java's
+// MetricsBeanServiceImpl#getValidRealtimeTripIds unions matched trip IDs
+// across data sources in a set, so that trip counts once, not once per feed.
+func TestGetMetrics_MatchedTripsDeduplicatedAcrossFeeds(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+	mustCreateTrip(t, manager, "T1", "R1")
+	mustCreateTrip(t, manager, "T2", "R1")
+
+	manager.feedTrips["feed-a"] = []gtfs.Trip{
+		{ID: gtfs.TripID{ID: "T1", RouteID: "R1"}, StopTimeUpdates: activeStopTimeUpdates()},
+	}
+	manager.feedTrips["feed-b"] = []gtfs.Trip{
+		{ID: gtfs.TripID{ID: "T1", RouteID: "R1"}, StopTimeUpdates: activeStopTimeUpdates()},
+		{ID: gtfs.TripID{ID: "T2", RouteID: "R1"}, StopTimeUpdates: activeStopTimeUpdates()},
+	}
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, snapshot.RealtimeTripCountsMatched["A"], "T1 is reported by both feeds but is one trip")
+}
+
 func TestGetMetrics_MultipleFeedsIsolateAgencies(t *testing.T) {
 	routes := map[string]*gtfs.Route{
 		"RA": {Id: "RA", Agency: &gtfs.Agency{Id: "A"}},

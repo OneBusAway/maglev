@@ -21,7 +21,7 @@ import (
 // window (see isCombinedRecordActive), mirroring Java's
 // GtfsRealtimeTripLibrary#isTripActive gate. Record counting and
 // matched/unmatched ID deduplication follow Java's semantics too: see
-// countMatchedGroupsByAgency and computeFeedMetrics.
+// matchedTripIDsByAgency and computeFeedMetrics.
 type MetricsSnapshot struct {
 	AgencyIDs                   []string
 	ScheduledTripsCount         map[string]int
@@ -240,9 +240,10 @@ func (manager *Manager) snapshotRealtimeFeedState() []realtimeFeedState {
 // populateRealtimeMetrics computes matched/unmatched trip and stop counts for
 // each feed and attributes them to the agencies that feed covers: its
 // configured `agency-ids` filter if set, otherwise every static agency,
-// matching GtfsRealtimeSource#start. Matched trip counts are the exception:
-// they go to each matched trip's own agency, among those the feed covers,
-// matching MetricsBeanServiceImpl#getValidRealtimeTripIds.
+// matching GtfsRealtimeSource#start. Matched trips are the exception: they
+// go to each matched trip's own agency, among those the feed covers, and a
+// trip matched by several feeds counts once, matching
+// MetricsBeanServiceImpl#getValidRealtimeTripIds.
 //
 // Trip activity is judged against scheduleReferenceTime, but staleness is
 // measured against the real wall clock: feedLastUpdate is always stamped
@@ -276,6 +277,7 @@ func (manager *Manager) populateRealtimeMetrics(ctx context.Context, snapshot *M
 // every feed covering it, so an ID reported by more than one such feed is
 // only counted once.
 type agencyIDSets struct {
+	matchedTripIDs   map[string]map[string]bool
 	unmatchedTripIDs map[string]map[string]bool
 	matchedStopIDs   map[string]map[string]bool
 	unmatchedStopIDs map[string]map[string]bool
@@ -283,6 +285,7 @@ type agencyIDSets struct {
 
 func newAgencyIDSets(agencyCount int) agencyIDSets {
 	return agencyIDSets{
+		matchedTripIDs:   make(map[string]map[string]bool, agencyCount),
 		unmatchedTripIDs: make(map[string]map[string]bool, agencyCount),
 		matchedStopIDs:   make(map[string]map[string]bool, agencyCount),
 		unmatchedStopIDs: make(map[string]map[string]bool, agencyCount),
@@ -328,8 +331,8 @@ func feedStaleness(feed realtimeFeedState, wallClockNow time.Time) int64 {
 func attributeFeedMetrics(snapshot *MetricsSnapshot, idSets agencyIDSets, metrics feedMetrics, attribution feedAttribution) {
 	for agencyID := range attribution.coveredAgencies {
 		snapshot.RealtimeRecordsTotal[agencyID] += metrics.recordsTotal
-		snapshot.RealtimeTripCountsMatched[agencyID] += metrics.tripsMatchedByAgency[agencyID]
 		updateStaleness(snapshot, agencyID, attribution.staleness)
+		addToAgencySet(idSets.matchedTripIDs, agencyID, metrics.tripIDsMatchedByAgency[agencyID])
 		addToAgencySet(idSets.unmatchedTripIDs, agencyID, metrics.tripIDsUnmatched)
 		addToAgencySet(idSets.matchedStopIDs, agencyID, metrics.stopIDsMatched)
 		addToAgencySet(idSets.unmatchedStopIDs, agencyID, metrics.stopIDsUnmatched)
@@ -343,6 +346,7 @@ func finalizeRealtimeMetrics(snapshot *MetricsSnapshot, idSets agencyIDSets) {
 		if _, tracked := snapshot.TimeSinceLastRealtimeUpdate[agencyID]; !tracked {
 			snapshot.TimeSinceLastRealtimeUpdate[agencyID] = 0
 		}
+		snapshot.RealtimeTripCountsMatched[agencyID] = len(idSets.matchedTripIDs[agencyID])
 		snapshot.RealtimeTripCountsUnmatched[agencyID] = len(idSets.unmatchedTripIDs[agencyID])
 		snapshot.RealtimeTripIDsUnmatched[agencyID] = sortedKeys(idSets.unmatchedTripIDs[agencyID])
 		snapshot.StopIDsMatchedCount[agencyID] = len(idSets.matchedStopIDs[agencyID])
@@ -352,7 +356,7 @@ func finalizeRealtimeMetrics(snapshot *MetricsSnapshot, idSets agencyIDSets) {
 }
 
 // addToAgencySet merges ids into agencyID's set within sets, so an ID that's
-// unmatched by more than one feed covering the same agency is only counted
+// reported by more than one feed covering the same agency is only counted
 // once in the final snapshot.
 func addToAgencySet(sets map[string]map[string]bool, agencyID string, ids []string) {
 	set, ok := sets[agencyID]
@@ -367,11 +371,11 @@ func addToAgencySet(sets map[string]map[string]bool, agencyID string, ids []stri
 
 // feedMetrics is the matched/unmatched breakdown computed for a single feed.
 type feedMetrics struct {
-	recordsTotal         int
-	tripsMatchedByAgency map[string]int
-	tripIDsUnmatched     []string
-	stopIDsMatched       []string
-	stopIDsUnmatched     []string
+	recordsTotal           int
+	tripIDsMatchedByAgency map[string][]string
+	tripIDsUnmatched       []string
+	stopIDsMatched         []string
+	stopIDsUnmatched       []string
 }
 
 // computeFeedMetrics cross-references a feed's real-time trips (and the stops
@@ -391,7 +395,7 @@ type feedMetrics struct {
 // but not-currently-active block counts toward neither matched nor
 // unmatched, matching GtfsRealtimeTripLibrary#createVehicleLocationRecordForUpdate.
 func (manager *Manager) computeFeedMetrics(ctx context.Context, trips []gtfs.Trip, now time.Time) (feedMetrics, error) {
-	metrics := feedMetrics{tripsMatchedByAgency: map[string]int{}}
+	metrics := feedMetrics{tripIDsMatchedByAgency: map[string][]string{}}
 	if len(trips) == 0 {
 		return metrics, nil
 	}
@@ -413,7 +417,7 @@ func (manager *Manager) computeFeedMetrics(ctx context.Context, trips []gtfs.Tri
 
 	tripGroups := groupTripsByBlock(trips, tripBlockByID)
 	metrics.recordsTotal = len(tripGroups)
-	metrics.tripsMatchedByAgency = countMatchedGroupsByAgency(tripGroups, tripRouteByID, agencyByRouteID, now)
+	metrics.tripIDsMatchedByAgency = matchedTripIDsByAgency(tripGroups, tripRouteByID, agencyByRouteID, now)
 
 	classification := classifyTrips(trips, tripRouteByID, staticStopIDs)
 	metrics.tripIDsUnmatched = sortedKeys(classification.unmatchedTripIDs)
@@ -496,21 +500,24 @@ func classifyStopTimeUpdates(updates []gtfs.StopTimeUpdate, staticStopIDs map[st
 	}
 }
 
-// countMatchedGroupsByAgency counts, per agency, the block-grouped records
-// that resolve statically and are currently active; see
+// matchedTripIDsByAgency lists, per agency, one trip ID for each
+// block-grouped record that resolves statically and is currently active; see
 // isCombinedRecordActive for why a resolved but not-currently-active block
-// counts toward neither matched nor unmatched. Each record goes to the
-// agency of its first statically matched trip, the counterpart of Java
-// splitting matched trip IDs by their agency prefix.
-func countMatchedGroupsByAgency(tripGroups map[string][]gtfs.Trip, tripRouteByID, agencyByRouteID map[string]string, now time.Time) map[string]int {
-	matchedByAgency := make(map[string]int)
+// counts toward neither matched nor unmatched. A record is identified by its
+// first statically matched trip, the counterpart of the record trip ID Java
+// adds to MonitoredResult#getMatchedTripIds, and goes to that trip's agency,
+// the counterpart of Java splitting matched trip IDs by their agency prefix.
+// Keeping IDs rather than counts lets populateRealtimeMetrics union them
+// across feeds.
+func matchedTripIDsByAgency(tripGroups map[string][]gtfs.Trip, tripRouteByID, agencyByRouteID map[string]string, now time.Time) map[string][]string {
+	matchedByAgency := make(map[string][]string)
 	for _, group := range tripGroups {
-		routeID, matched := firstStaticRouteID(group, tripRouteByID)
+		tripID, routeID, matched := firstStaticTrip(group, tripRouteByID)
 		if !matched || !isCombinedRecordActive(group, now) {
 			continue
 		}
 		if agencyID, ok := agencyByRouteID[routeID]; ok {
-			matchedByAgency[agencyID]++
+			matchedByAgency[agencyID] = append(matchedByAgency[agencyID], tripID)
 		}
 	}
 	return matchedByAgency
@@ -538,13 +545,13 @@ func groupTripsByBlock(trips []gtfs.Trip, tripBlockByID map[string]string) map[s
 	return groups
 }
 
-func firstStaticRouteID(group []gtfs.Trip, tripRouteByID map[string]string) (string, bool) {
+func firstStaticTrip(group []gtfs.Trip, tripRouteByID map[string]string) (tripID, routeID string, matched bool) {
 	for _, trip := range group {
 		if routeID, matched := tripRouteByID[trip.ID.ID]; matched {
-			return routeID, true
+			return trip.ID.ID, routeID, true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
 // activeRecordLookahead is how far in the future a combined record's first
