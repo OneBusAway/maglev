@@ -117,8 +117,10 @@ const staleFeedThreshold = 5 * time.Minute
 
 // maxVehicleFeedFutureSkew is how far a vehicle-feed header may sit ahead of
 // local time and still be stored as the freshness watermark. A larger jump is
-// not recorded: clearFeedData keeps the watermark, so a future value would
-// reject a corrected clock until wall time passed it.
+// still applied, so a millisecond header or a clock written as local epoch
+// seconds keeps publishing vehicles, but it is not recorded. clearFeedData
+// keeps the watermark, so a future value would reject a corrected clock until
+// wall time passed it.
 const maxVehicleFeedFutureSkew = 15 * time.Minute
 
 // realtimeHTTPClient is a dedicated HTTP client for GTFS-RT feed fetching,
@@ -165,7 +167,6 @@ type vehicleFeedTimestampReason int
 
 const (
 	vehicleFeedAccept vehicleFeedTimestampReason = iota
-	vehicleFeedRecover
 	vehicleFeedSkipStale
 	vehicleFeedSkipFuture
 )
@@ -177,30 +178,22 @@ type vehicleFeedTimestampDecision struct {
 }
 
 // decideVehicleFeedTimestamp decides whether a vehicle payload is new and which
-// watermark to store. Headers beyond maxVehicleFeedFutureSkew are rejected
-// before the watermark moves. A watermark that is already that far ahead of now
-// is replaced by a header near local time, so a corrected clock can recover
-// after clearFeedData keeps the old value. Unchanged and older plausible
-// headers stay rejected.
+// watermark to store. Headers beyond maxVehicleFeedFutureSkew are applied and
+// left out of the watermark, so a fast producer clock still publishes vehicles
+// without blocking a later correction. Unchanged and older plausible headers
+// stay rejected, including after clearFeedData keeps the watermark.
 func decideVehicleFeedTimestamp(prev uint64, createdAt, now time.Time) vehicleFeedTimestampDecision {
 	if createdAt.IsZero() {
 		return vehicleFeedTimestampDecision{apply: true, watermark: prev, reason: vehicleFeedAccept}
 	}
 
-	futureLimit := now.Add(maxVehicleFeedFutureSkew)
-	if createdAt.After(futureLimit) {
-		return vehicleFeedTimestampDecision{apply: false, watermark: prev, reason: vehicleFeedSkipFuture}
+	if createdAt.After(now.Add(maxVehicleFeedFutureSkew)) {
+		return vehicleFeedTimestampDecision{apply: true, watermark: prev, reason: vehicleFeedSkipFuture}
 	}
 
 	incoming := uint64(createdAt.UnixNano())
 	if prev == 0 || incoming > prev {
 		return vehicleFeedTimestampDecision{apply: true, watermark: incoming, reason: vehicleFeedAccept}
-	}
-
-	prevTime := time.Unix(0, int64(prev))
-	recoveryFloor := now.Add(-maxVehicleFeedFutureSkew)
-	if prevTime.After(futureLimit) && !createdAt.Before(recoveryFloor) {
-		return vehicleFeedTimestampDecision{apply: true, watermark: incoming, reason: vehicleFeedRecover}
 	}
 
 	return vehicleFeedTimestampDecision{apply: false, watermark: prev, reason: vehicleFeedSkipStale}
@@ -488,9 +481,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		manager.feedUnattributedTrips[feedID] = unattributedTrips
 	}
 
-	// False until a vehicle payload is actually stored. A fetch that parses
-	// but is skipped as stale or implausibly future must not reset the poller
-	// circuit breaker.
+	// False until a vehicle payload is actually stored. A stale header is not
+	// stored and must not reset the poller circuit breaker. A header past
+	// maxVehicleFeedFutureSkew is stored without moving the watermark.
 	applyVehicleUpdate := false
 	if vehicleData != nil && vehicleErr == nil {
 		// Guard against zero CreatedAt from feeds without FeedHeader timestamp.
@@ -502,7 +495,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		case vehicleFeedSkipFuture:
 			logging.LogOperation(
 				logger,
-				"skipping_future_vehicle_realtime_feed",
+				"ignoring_future_vehicle_feed_timestamp",
 				slog.String("feed", feedID),
 				slog.Time("feed_timestamp", vehicleData.CreatedAt),
 			)
@@ -514,15 +507,6 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				slog.Uint64("feed_timestamp", uint64(vehicleData.CreatedAt.UnixNano())),
 				slog.Uint64("last_applied_timestamp", manager.feedVehicleTimestamp[feedID]),
 			)
-		case vehicleFeedRecover:
-			logging.LogOperation(
-				logger,
-				"recovering_vehicle_feed_timestamp",
-				slog.String("feed", feedID),
-				slog.Time("feed_timestamp", vehicleData.CreatedAt),
-				slog.Uint64("last_applied_timestamp", manager.feedVehicleTimestamp[feedID]),
-			)
-			manager.feedVehicleTimestamp[feedID] = decision.watermark
 		default:
 			if decision.apply && !vehicleData.CreatedAt.IsZero() {
 				manager.feedVehicleTimestamp[feedID] = decision.watermark
@@ -669,6 +653,8 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				slog.Int("alerts", len(manager.feedAlerts[feedID])),
 			)
 		} else {
+			// Fresh trips beside a stale vehicle header land here with
+			// vehicle_positions_success false. That skip is not a fetch error.
 			logger.Warn("realtime feed partially updated",
 				slog.String("feed", feedID),
 				slog.Bool("trip_updates_configured", feedCfg.TripUpdatesURL != ""),
