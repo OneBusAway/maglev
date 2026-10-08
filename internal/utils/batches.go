@@ -2,19 +2,43 @@ package utils
 
 import "context"
 
-// IDsPerBatchedQuery bounds how many IDs go into one IN (...) list. SQLite
-// rejects a statement carrying more bind variables than it allows rather than
+// IDsPerBatchedQuery bounds how many IDs go into one IN (...) list, assuming
+// the batched slice is the only bind the statement carries. SQLite rejects a
+// statement carrying more bind variables than it allows rather than
 // truncating it, and these ID sets are only bounded by feed or request size.
 // Kept well under the oldest limit (999) so the batch size does not depend on
-// which SQLite the build links against.
+// which SQLite the build links against. A statement binding anything besides
+// the batched slice needs QueryInBatchesReserving instead, so that budget
+// also accounts for those binds.
 const IDsPerBatchedQuery = 900
 
 // QueryInBatches runs query over ids in batches small enough to stay under the
 // bind variable limit, concatenating the results.
 func QueryInBatches[T any](ctx context.Context, ids []string, query func(context.Context, []string) ([]T, error)) ([]T, error) {
+	return QueryInBatchesReserving(ctx, ids, 0, query)
+}
+
+// QueryInBatchesReserving is QueryInBatches with reserved slots subtracted
+// from the batch size, for a statement that binds something besides the
+// batched slice — a second IN (...) list, a scalar. Without this, sizing the
+// batch at IDsPerBatchedQuery silently assumes the batched slice is the whole
+// statement, and the untracked binds can push the total over the limit.
+//
+// Assumes the reserved binds themselves fit in one statement. When they use
+// up the whole IDsPerBatchedQuery budget (hundreds of active service IDs on
+// one day, say), batches fall back to a single ID each rather than failing:
+// that budget is kept conservatively under the oldest SQLite limit (999),
+// and both bundled drivers allow 32766 binds, so such a statement still
+// runs.
+func QueryInBatchesReserving[T any](ctx context.Context, ids []string, reserved int,
+	query func(context.Context, []string) ([]T, error)) ([]T, error) {
+	if len(ids) == 0 {
+		return []T{}, nil
+	}
+	batchSize := max(1, IDsPerBatchedQuery-reserved)
 	results := make([]T, 0, len(ids))
-	for start := 0; start < len(ids); start += IDsPerBatchedQuery {
-		end := min(start+IDsPerBatchedQuery, len(ids))
+	for start := 0; start < len(ids); start += batchSize {
+		end := min(start+batchSize, len(ids))
 		batch, err := query(ctx, ids[start:end])
 		if err != nil {
 			return nil, err
