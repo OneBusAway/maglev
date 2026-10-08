@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strconv"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
@@ -270,9 +271,9 @@ func processTripGroups(
 	includePolylines bool,
 ) error {
 	dirGroups := groupTripsByDirection(trips)
+	noDirectionGroupID := noDirectionStopGroupID(dirGroups)
 
-	var allStopGroups []models.StopGroup
-
+	routeStopGroups := make([]routeStopGroup, 0, len(dirGroups))
 	for _, group := range dirGroups {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -281,11 +282,19 @@ func processTripGroups(
 		if err != nil {
 			return err
 		}
-		allStopGroups = append(allStopGroups, stopGroup)
+		noDirection := !group.DirectionID.Valid
+		if noDirection {
+			stopGroup.ID = noDirectionGroupID
+		}
+		routeStopGroups = append(routeStopGroups, routeStopGroup{StopGroup: stopGroup, noDirection: noDirection})
 	}
 
-	disambiguateGroupNames(allStopGroups)
+	disambiguateGroupNames(routeStopGroups)
 
+	allStopGroups := make([]models.StopGroup, 0, len(routeStopGroups))
+	for _, group := range routeStopGroups {
+		allStopGroups = append(allStopGroups, group.StopGroup)
+	}
 	slices.SortFunc(allStopGroups, func(a, b models.StopGroup) int {
 		return cmp.Compare(a.Name.Name, b.Name.Name)
 	})
@@ -356,11 +365,33 @@ func orderedStopIDsForGroup(group directionGroup, sequences routeStopSequences) 
 	return utils.OrderStopsAlongRoute(tripSequences, sequences.coordinates)
 }
 
+// noDirectionStopGroupID returns the stop group id for the route's trips without
+// a direction_id: the next integer after the real direction ids, or "0" when the
+// route has none. Stop group ids are integer strings in the spec and clients
+// parse them as such; Java's clustering fallback numbers the group the same way
+// for routes whose trips all lack a direction_id.
+func noDirectionStopGroupID(dirGroups []directionGroup) string {
+	var nextID int64
+	for _, group := range dirGroups {
+		if group.DirectionID.Valid && group.DirectionID.Int64 >= nextID {
+			nextID = group.DirectionID.Int64 + 1
+		}
+	}
+	return strconv.FormatInt(nextID, 10)
+}
+
+// routeStopGroup is a StopGroup together with whether it holds the route's
+// trips without a direction_id, which its numeric id alone cannot tell.
+type routeStopGroup struct {
+	models.StopGroup
+	noDirection bool
+}
+
 // disambiguateGroupNames keeps direction groups distinguishable. A direction
 // group whose name is shared with another direction group has its direction id
 // appended ("Shasta Lake" -> "Shasta Lake - 0"). The group of trips without a
-// direction_id (empty id) never takes a name from a direction group: when its
-// name is shared with any other group it is labelled instead
+// direction_id never takes a name from a direction group: when its name is
+// shared with any other group it is labelled instead
 // ("Northbound" -> "Northbound - no direction"), and the direction groups keep
 // their names unless they also collide with each other. A name that is already
 // unique is left untouched. The check is repeated against the *resulting*
@@ -373,13 +404,13 @@ func orderedStopIDsForGroup(group directionGroup, sequences routeStopSequences) 
 // sort deterministic. (The Java reference suffixes every group whenever any
 // collision exists; leaving unique names alone is a deliberate, less noisy
 // divergence.)
-func disambiguateGroupNames(groups []models.StopGroup) {
+func disambiguateGroupNames(groups []routeStopGroup) {
 	for range groups {
 		nameCounts := make(map[string]int, len(groups))
 		directionNameCounts := make(map[string]int, len(groups))
 		for _, group := range groups {
 			nameCounts[group.Name.Name]++
-			if group.ID != "" {
+			if !group.noDirection {
 				directionNameCounts[group.Name.Name]++
 			}
 		}
@@ -388,9 +419,9 @@ func disambiguateGroupNames(groups []models.StopGroup) {
 		for i := range groups {
 			var disambiguated string
 			switch {
-			case groups[i].ID == "" && nameCounts[groups[i].Name.Name] > 1:
+			case groups[i].noDirection && nameCounts[groups[i].Name.Name] > 1:
 				disambiguated = groups[i].Name.Name + " - no direction"
-			case groups[i].ID != "" && directionNameCounts[groups[i].Name.Name] > 1:
+			case !groups[i].noDirection && directionNameCounts[groups[i].Name.Name] > 1:
 				disambiguated = groups[i].Name.Name + " - " + groups[i].ID
 			default:
 				continue
