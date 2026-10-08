@@ -92,7 +92,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		nearby:   nearby,
 	}, params.MaxCount)
 
-	if err := api.finishArrivalTripStatus(ctx, lists.arrivals, pending.Arrivals[:len(lists.arrivals)], acc); err != nil {
+	if err := api.finishRetainedLocationArrivals(ctx, lists, pending, stops, agencies, acc); err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
 		return
 	}
@@ -100,13 +100,6 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	if len(lists.arrivals) == 0 && len(lists.stopIDs) == 0 {
 		api.sendEmptyArrivalsForLocation(w, r, params)
 		return
-	}
-
-	if pending.Matched {
-		if err := api.addStopLevelArrivalAlerts(ctx, stops, agencies, acc); err != nil {
-			api.sendArrivalsForLocationError(w, r, ctx, err)
-			return
-		}
 	}
 
 	// Record each nearby stop's agency so references namespace it exactly as
@@ -138,6 +131,26 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		lists.limitExceeded,
 		api.Clock,
 	))
+}
+
+// finishRetainedLocationArrivals builds trip status for the arrivals that
+// survived maxCount, then records stop-level alerts when the window matched
+// any stop_time. Dropped rows never reach BuildTripStatus.
+func (api *RestAPI) finishRetainedLocationArrivals(
+	ctx context.Context,
+	lists locationLists,
+	pending multiStopArrivalsResult,
+	stops []gtfsdb.Stop,
+	agencies *stopAgencyIndex,
+	acc *arrivalsAccumulator,
+) error {
+	if err := api.finishArrivalTripStatus(ctx, lists.arrivals, pending.Arrivals[:len(lists.arrivals)], acc); err != nil {
+		return err
+	}
+	if !pending.Matched {
+		return nil
+	}
+	return api.addStopLevelArrivalAlerts(ctx, stops, agencies, acc)
 }
 
 // sendArrivalsForLocationError distinguishes the client hanging up from a
