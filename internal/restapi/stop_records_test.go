@@ -3,12 +3,15 @@ package restapi
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 )
@@ -56,25 +59,28 @@ func TestScheduleForStopStopRecords(t *testing.T) {
 	seedStopRecordFixture(t, api)
 
 	tests := []struct {
-		name       string
-		stopID     string
-		wantCode   string
-		wantParent string
-		parentID   string
+		name               string
+		stopID             string
+		wantCode           string
+		wantParent         string
+		wantParentCode     string
+		wantParentRouteIDs []string
 	}{
 		{
-			name:       "null code falls back to the raw stop id",
-			stopID:     "nullstop",
-			wantCode:   "nullstop",
-			wantParent: "s1547_servedstation",
-			parentID:   "s1547_servedstation",
+			name:               "null code falls back to the raw stop id",
+			stopID:             "nullstop",
+			wantCode:           "nullstop",
+			wantParent:         "s1547_servedstation",
+			wantParentCode:     "servedstation",
+			wantParentRouteIDs: []string{"s1547_stationroute"},
 		},
 		{
-			name:       "empty code falls back to the raw stop id",
-			stopID:     "emptystop",
-			wantCode:   "emptystop",
-			wantParent: "s1547_emptystation",
-			parentID:   "s1547_emptystation",
+			name:               "empty code falls back to the raw stop id",
+			stopID:             "emptystop",
+			wantCode:           "emptystop",
+			wantParent:         "s1547_emptystation",
+			wantParentCode:     "emptystation",
+			wantParentRouteIDs: []string{},
 		},
 		{
 			name:     "non-empty code is preserved",
@@ -92,25 +98,73 @@ func TestScheduleForStopStopRecords(t *testing.T) {
 			got := stops["s1547_"+tt.stopID]
 			assert.Equal(t, tt.wantCode, got.Code)
 			assert.Equal(t, tt.wantParent, got.Parent)
-			if tt.parentID == "" {
+			if tt.wantParent == "" {
 				return
 			}
-			parent := stops[tt.parentID]
-			assert.Equal(t, parent.ID, got.Parent)
+			parent := stops[tt.wantParent]
+			assert.Equal(t, tt.wantParentCode, parent.Code)
 			assert.Equal(t, parent.RouteIDs, parent.StaticRouteIDs)
-			if tt.parentID == "s1547_servedstation" {
-				assert.Equal(t, []string{"s1547_stationroute"}, parent.RouteIDs)
-				assert.Equal(t, "servedstation", parent.Code)
-			} else {
-				assert.Empty(t, parent.RouteIDs)
-				assert.NotNil(t, parent.RouteIDs)
-			}
+			assert.Equal(t, tt.wantParentRouteIDs, parent.RouteIDs)
+			assert.NotNil(t, parent.RouteIDs)
 		})
 	}
 
 	_, suppressed := callAPIHandler[scheduleStopResponse](t, api,
 		"/api/where/schedule-for-stop/s1547_nullstop.json?key=TEST&includeReferences=false")
 	assert.Empty(t, suppressed.Data.References.Stops)
+}
+
+func TestParentStopsAcrossScheduleTripAndArrivalEndpoints(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	api := createTestApiWithClock(t, clock.NewMockClock(time.Date(2025, 6, 12, 0, 5, 0, 0, loc)))
+	defer api.Shutdown()
+	seedStopRecordFixture(t, api)
+
+	serviceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, loc).UnixMilli()
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "schedule-for-route", path: "/api/where/schedule-for-route/s1547_r1.json?key=TEST&date=2025-06-12"},
+		{name: "trip-details", path: "/api/where/trip-details/s1547_trip1547.json?key=TEST&serviceDate=2025-06-12"},
+		{
+			name: "arrival-and-departure-for-stop",
+			path: fmt.Sprintf("/api/where/arrival-and-departure-for-stop/s1547_nullstop.json?key=TEST&tripId=s1547_trip1547&serviceDate=%d", serviceDate),
+		},
+		{name: "trips-for-route", path: "/api/where/trips-for-route/s1547_r1.json?key=TEST"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[scheduleStopResponse](t, api, tt.path)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Equal(t, http.StatusOK, model.Code, tt.path)
+			stops := stopsByID(model.Data.References.Stops)
+
+			child := stops["s1547_nullstop"]
+			assert.Equal(t, "nullstop", child.Code)
+			assert.Equal(t, "s1547_servedstation", child.Parent)
+
+			parent := stops["s1547_servedstation"]
+			assert.Equal(t, "servedstation", parent.Code)
+			assert.Equal(t, []string{"s1547_stationroute"}, parent.RouteIDs)
+			assert.Equal(t, "s1547_hub", parent.Parent)
+
+			hub := stops["s1547_hub"]
+			assert.Equal(t, "HUB", hub.Code)
+			assert.Empty(t, hub.RouteIDs)
+			assert.NotNil(t, hub.RouteIDs)
+
+			var foundStationRoute bool
+			for _, route := range model.Data.References.Routes {
+				if route.ID == "s1547_stationroute" {
+					foundStationRoute = true
+				}
+			}
+			assert.True(t, foundStationRoute, "parent route is referenced")
+		})
+	}
 }
 
 type scheduleStopResponse struct {
@@ -139,8 +193,15 @@ func seedStopRecordFixture(t *testing.T, api *RestAPI) {
 	require.NoError(t, err)
 
 	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
-		ID: "servedstation", Name: nulls.String("Served Station"), Lat: 47.6, Lon: -122.3,
+		ID: "hub", Name: nulls.String("Hub"), Lat: 47.59, Lon: -122.29,
+		Code:         nulls.String("HUB"),
 		LocationType: sql.NullInt64{Int64: 1, Valid: true},
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: "servedstation", Name: nulls.String("Served Station"), Lat: 47.6, Lon: -122.3,
+		LocationType:  sql.NullInt64{Int64: 1, Valid: true},
+		ParentStation: nulls.String("hub"),
 	})
 	require.NoError(t, err)
 	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
@@ -196,4 +257,5 @@ func seedStopRecordFixture(t *testing.T, api *RestAPI) {
 		ArrivalTime: 37000, DepartureTime: 37030,
 	})
 	require.NoError(t, err)
+	require.NoError(t, q.BulkUpdateTripTimeBounds(ctx))
 }

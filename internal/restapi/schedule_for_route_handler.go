@@ -334,40 +334,15 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(uniqueStopIDs) > 0 {
-		modelStops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, uniqueStopIDs)
+		modelStops, _, err := stopModelsByIDs(api, ctx, agencyID, uniqueStopIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
 		}
 		references.Stops = append(references.Stops, modelStops...)
-
-		originalStopIDs := make(map[string]struct{}, len(uniqueStopIDs))
-		for _, sid := range uniqueStopIDs {
-			originalStopIDs[utils.FormCombinedID(agencyID, sid)] = struct{}{}
-		}
-		var parentStops []models.Stop
-		for _, stop := range modelStops {
-			if _, ok := originalStopIDs[stop.ID]; !ok {
-				parentStops = append(parentStops, stop)
-			}
-		}
-		if len(parentStops) > 0 {
-			parentRouteRefs, err := api.BuildRouteReferences(ctx, agencyID, parentStops)
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
-			}
-			presentRoutes := make(map[string]struct{}, len(references.Routes))
-			for _, route := range references.Routes {
-				presentRoutes[route.ID] = struct{}{}
-			}
-			for _, route := range parentRouteRefs {
-				if _, ok := presentRoutes[route.ID]; ok {
-					continue
-				}
-				references.Routes = append(references.Routes, route)
-				api.appendRouteAgencyReference(ctx, references, route.AgencyID, agencyID)
-			}
+		if err := api.mergeParentStopsIntoReferences(ctx, references, modelStops, agencyID); err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
 		}
 	}
 

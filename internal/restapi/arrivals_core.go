@@ -692,7 +692,8 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 
 	added, parentRoutes, err := api.missingParentStops(ctx, references.Stops)
 	if err != nil {
-		return err
+		reqLogger.Warn("failed to resolve parent stops", slog.Any("error", err))
+		return nil
 	}
 	references.Stops = append(references.Stops, added...)
 	collectStopRoutes(parentRoutes, acc)
@@ -748,17 +749,8 @@ func collectStopRoutes(routesForStop []gtfsdb.GetRoutesForStopsRow, acc *arrival
 		if _, exists := acc.routes[route.ID]; exists {
 			continue
 		}
-		acc.routes[route.ID] = &gtfsdb.Route{
-			ID:        route.ID,
-			AgencyID:  route.AgencyID,
-			ShortName: route.ShortName,
-			LongName:  route.LongName,
-			Desc:      route.Desc,
-			Type:      route.Type,
-			Url:       route.Url,
-			Color:     route.Color,
-			TextColor: route.TextColor,
-		}
+		copied := routeFromStopRow(route)
+		acc.routes[route.ID] = &copied
 	}
 	return combinedRouteIDs
 }

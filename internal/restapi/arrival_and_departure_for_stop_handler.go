@@ -526,17 +526,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		combinedRouteIDs := make([]string, len(routesForThisStop))
 		for i, route := range routesForThisStop {
 			combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)
-			routeCopy := gtfsdb.Route{
-				ID:        route.ID,
-				AgencyID:  route.AgencyID,
-				ShortName: route.ShortName,
-				LongName:  route.LongName,
-				Desc:      route.Desc,
-				Type:      route.Type,
-				Url:       route.Url,
-				Color:     route.Color,
-				TextColor: route.TextColor,
+			if _, exists := routeIDSet[route.ID]; exists {
+				continue
 			}
+			routeCopy := routeFromStopRow(route)
 			routeIDSet[route.ID] = &routeCopy
 		}
 
@@ -558,26 +551,16 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	addedParents, parentRoutes, err := api.missingParentStops(r.Context(), references.Stops)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-	references.Stops = append(references.Stops, addedParents...)
-	for _, route := range parentRoutes {
-		if _, exists := routeIDSet[route.ID]; exists {
-			continue
+		reqLogger.Warn("failed to resolve parent stops", "error", err)
+	} else {
+		references.Stops = append(references.Stops, addedParents...)
+		for _, route := range parentRoutes {
+			if _, exists := routeIDSet[route.ID]; exists {
+				continue
+			}
+			routeCopy := routeFromStopRow(route)
+			routeIDSet[route.ID] = &routeCopy
 		}
-		routeCopy := gtfsdb.Route{
-			ID:        route.ID,
-			AgencyID:  route.AgencyID,
-			ShortName: route.ShortName,
-			LongName:  route.LongName,
-			Desc:      route.Desc,
-			Type:      route.Type,
-			Url:       route.Url,
-			Color:     route.Color,
-			TextColor: route.TextColor,
-		}
-		routeIDSet[route.ID] = &routeCopy
 	}
 
 	// Build routes references

@@ -307,6 +307,53 @@ func mergeParentRouteReferences(routes []models.Route, parentRoutes map[string]g
 	return routes
 }
 
+// mergeParentStopsIntoReferences appends full parent records for stops and any
+// routes those parents serve that are not already referenced. A parent route
+// whose agency cannot be loaded is logged and left out.
+func (api *RestAPI) mergeParentStopsIntoReferences(ctx context.Context, references *models.ReferencesModel, stops []models.Stop, requestAgencyID string) error {
+	added, parentRoutes, err := api.missingParentStops(ctx, stops)
+	if err != nil {
+		return err
+	}
+	references.Stops = append(references.Stops, added...)
+
+	present := make(map[string]struct{}, len(references.Routes))
+	for _, route := range references.Routes {
+		present[route.ID] = struct{}{}
+	}
+	references.Routes = mergeParentRouteReferences(references.Routes, routeRowsByCombinedID(parentRoutes))
+	for _, route := range references.Routes {
+		if _, ok := present[route.ID]; ok {
+			continue
+		}
+		api.appendRouteAgencyReference(ctx, references, route.AgencyID, requestAgencyID)
+	}
+	return nil
+}
+
+func routeRowsByCombinedID(rows []gtfsdb.GetRoutesForStopsRow) map[string]gtfsdb.GetRoutesForStopsRow {
+	byID := make(map[string]gtfsdb.GetRoutesForStopsRow, len(rows))
+	for _, row := range rows {
+		byID[utils.FormCombinedID(row.AgencyID, row.ID)] = row
+	}
+	return byID
+}
+
+// routeFromStopRow copies the route columns of a stops-derived row.
+func routeFromStopRow(row gtfsdb.GetRoutesForStopsRow) gtfsdb.Route {
+	return gtfsdb.Route{
+		ID:        row.ID,
+		AgencyID:  row.AgencyID,
+		ShortName: row.ShortName,
+		LongName:  row.LongName,
+		Desc:      row.Desc,
+		Type:      row.Type,
+		Url:       row.Url,
+		Color:     row.Color,
+		TextColor: row.TextColor,
+	}
+}
+
 // agencyReferencesForStops deduplicates the rows returned by GetAgenciesForStops into
 // AgencyReference objects, reusing AgencyReferenceFromDatabase for the field mapping.
 func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []models.AgencyReference {
@@ -616,17 +663,7 @@ func groupRoutesByStop(allRoutes []gtfsdb.GetRoutesForStopsRow) (map[string][]gt
 	routesByStop := make(map[string][]gtfsdb.Route)
 	uniqueRouteMap := make(map[string]gtfsdb.GetRoutesForStopsRow)
 	for _, routeRow := range allRoutes {
-		route := gtfsdb.Route{
-			ID:        routeRow.ID,
-			AgencyID:  routeRow.AgencyID,
-			ShortName: routeRow.ShortName,
-			LongName:  routeRow.LongName,
-			Desc:      routeRow.Desc,
-			Type:      routeRow.Type,
-			Url:       routeRow.Url,
-			Color:     routeRow.Color,
-			TextColor: routeRow.TextColor,
-		}
+		route := routeFromStopRow(routeRow)
 		routesByStop[routeRow.StopID] = append(routesByStop[routeRow.StopID], route)
 		combinedID := utils.FormCombinedID(routeRow.AgencyID, routeRow.ID)
 		uniqueRouteMap[combinedID] = routeRow
