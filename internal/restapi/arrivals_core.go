@@ -269,6 +269,7 @@ type batchedActiveStopTime struct {
 	activeStopTime
 	StopCode  string
 	AgencyID  string
+	Location  *time.Location
 	QueryTime time.Time
 }
 
@@ -395,9 +396,9 @@ func (api *RestAPI) appendBatchedStopTimesForDay(ctx context.Context, group agen
 		return ctx.Err()
 	}
 
-	targetDate := group.queryTime.AddDate(0, 0, dayOffset)
-	serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, group.location)
-	serviceDateStr := targetDate.Format("20060102")
+	serviceDate := servicedate.Of(group.queryTime.In(group.location)).AddDays(dayOffset)
+	serviceStart := serviceDate.Start(group.location)
+	serviceDateStr := serviceDate.String()
 
 	activeSet, err := api.activeServicesForDate(ctx, serviceDateStr, dayOffset, activeByDate)
 	if err != nil {
@@ -407,8 +408,8 @@ func (api *RestAPI) appendBatchedStopTimesForDay(ctx context.Context, group agen
 		return nil
 	}
 
-	windowStartNanos := group.queryTime.Add(-in.Before).Sub(serviceMidnight).Nanoseconds()
-	windowEndNanos := group.queryTime.Add(in.After).Sub(serviceMidnight).Nanoseconds()
+	windowStartNanos := group.queryTime.Add(-in.Before).Sub(serviceStart).Nanoseconds()
+	windowEndNanos := group.queryTime.Add(in.After).Sub(serviceStart).Nanoseconds()
 	if windowEndNanos < 0 {
 		return nil
 	}
@@ -433,10 +434,11 @@ func (api *RestAPI) appendBatchedStopTimesForDay(ctx context.Context, group agen
 		*allActive = append(*allActive, batchedActiveStopTime{
 			activeStopTime: activeStopTime{
 				GetStopTimesForStopInWindowRow: convertStopsInWindowRow(row),
-				ServiceDate:                    serviceMidnight,
+				ServiceDate:                    serviceDate,
 			},
 			StopCode:  row.StopID,
 			AgencyID:  group.agencyID,
+			Location:  group.location,
 			QueryTime: group.queryTime,
 		})
 	}
@@ -513,7 +515,8 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 		arrival := api.buildArrival(ctx, arrivalInput{
 			stopTime:         st,
 			route:            route,
-			serviceMidnight:  b.ServiceDate,
+			serviceDate:      b.ServiceDate,
+			location:         b.Location,
 			queryTime:        b.QueryTime,
 			stopCode:         b.StopCode,
 			stopID:           utils.FormCombinedID(b.AgencyID, b.StopCode),
