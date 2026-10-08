@@ -309,11 +309,14 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		}
 		references.Stops = stops
 		// A stop reference lists the routes serving it, so those routes belong here
-		// too or the stop entries point at routes that are themselves absent.
+		// too or the stop entries point at routes that are themselves absent. Stops
+		// are often shared between agencies, so those routes can belong to an agency
+		// other than the one requested, and that agency has to be referenced as well.
 		for combinedRouteID, stopRoute := range stopRoutes {
 			if _, exists := routeRefs[combinedRouteID]; !exists {
 				routeRefs[combinedRouteID] = routeReferenceFromStopRow(stopRoute)
 			}
+			api.appendRouteAgencyReference(ctx, references, stopRoute.AgencyID, id)
 		}
 
 		// Built after the merge above so the stops' routes are included.

@@ -1480,3 +1480,72 @@ func TestVehiclesForAgencyHandler_InterlinedStopsMatchAcrossStaleness(t *testing
 	assert.Equal(t, stale.TotalDistanceAlongTrip, fresh.TotalDistanceAlongTrip,
 		"the trip's total distance must not depend on staleness")
 }
+
+// sharedStopTwoAgencyFiles adds a second agency whose route also serves P3, the stop
+// the vehicle's nextStop points at, so the stop reference lists a route belonging to
+// an agency other than the one requested.
+func sharedStopTwoAgencyFiles() map[string]string {
+	files := tripStatusSpecFieldsFiles()
+	files["agency.txt"] += "TB,Other Transit,https://other.test,America/Los_Angeles\n"
+	files["routes.txt"] += "R2,TB,2,Other Route,3\n"
+	files["trips.txt"] += "R2,WD,T2,Other Outbound,,\n"
+	files["stop_times.txt"] += "T2,13:00:00,13:00:00,P3,1,\n" +
+		"T2,13:10:00,13:10:00,P4,2,\n"
+	return files
+}
+
+// Stops are shared between agencies, so pulling the stops' routes into
+// references.routes can introduce a route whose agencyId is not the requested one.
+// That agency has to be referenced too, or the route entries point at an agency that
+// is not in the response. Java does the same: vehicles-for-agency/1 on Puget Sound
+// returns agencies 1, 40, 29 and 23 because its stops list other operators' routes.
+func TestVehiclesForAgencyHandler_ReferencesAgenciesOfSharedStopRoutes(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	now := time.Date(2025, 6, 2, 12, 15, 0, 0, loc)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now),
+		"shared-stop-two-agency.zip", sharedStopTwoAgencyFiles())
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	const vehicleID = "v_shared_stop"
+	vehicleLat, vehicleLon := float32(40.010), float32(-121.980)
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, "T1", "R1", gtfs.MockVehicleOptions{
+		Position:  &gogtfs.Position{Latitude: &vehicleLat, Longitude: &vehicleLon},
+		Timestamp: &now,
+	})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL("TA"))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+
+	// The premise: a referenced stop really does list the other agency's route.
+	routesByStop := make(map[string][]string, len(model.Data.References.Stops))
+	for _, stop := range model.Data.References.Stops {
+		routesByStop[stop.ID] = stop.RouteIDs
+	}
+	require.Contains(t, routesByStop, "TA_P3")
+	require.Contains(t, routesByStop["TA_P3"], "TB_R2",
+		"the shared stop should list the second agency's route")
+
+	referencedRoutes := make(map[string]struct{}, len(model.Data.References.Routes))
+	for _, route := range model.Data.References.Routes {
+		referencedRoutes[route.ID] = struct{}{}
+	}
+	assert.Contains(t, referencedRoutes, "TB_R2", "the shared stop's route must be referenced")
+
+	referencedAgencies := make(map[string]struct{}, len(model.Data.References.Agencies))
+	for _, agency := range model.Data.References.Agencies {
+		referencedAgencies[agency.ID] = struct{}{}
+	}
+	assert.Contains(t, referencedAgencies, "TA", "the requested agency")
+	assert.Contains(t, referencedAgencies, "TB",
+		"an agency owning a referenced route must itself be referenced")
+
+	// Every route named anywhere in references must resolve to a referenced agency.
+	for _, route := range model.Data.References.Routes {
+		assert.Contains(t, referencedAgencies, route.AgencyID,
+			"route %s names agency %s, which must be referenced", route.ID, route.AgencyID)
+	}
+}
