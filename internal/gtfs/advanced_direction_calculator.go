@@ -68,6 +68,33 @@ func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.
 	return nil
 }
 
+// shapeDistancesCanLocateAStop reports whether a shape's shape_dist_traveled values
+// are usable for finding where along it a stop sits.
+//
+// GTFS requires the values to increase with shape_pt_sequence, but some feeds fill
+// the column with a constant placeholder instead of leaving it out. Matching against
+// a column like that puts every stop on the same point, so the whole trip reports the
+// orientation of one segment. Two distinct increasing values are the minimum that can
+// place a stop, since a single reference distance matches everything equally.
+//
+// Points without a distance are skipped rather than disqualifying the shape: a feed
+// that supplies the column for most points and omits a few is still usable.
+func shapeDistancesCanLocateAStop(points []gtfsdb.GetShapePointsWithDistanceRow) bool {
+	withDistance := 0
+	previous := 0.0
+	for _, point := range points {
+		if !point.ShapeDistTraveled.Valid {
+			continue
+		}
+		if withDistance > 0 && point.ShapeDistTraveled.Float64 <= previous {
+			return false
+		}
+		previous = point.ShapeDistTraveled.Float64
+		withDistance++
+	}
+	return withDistance >= 2
+}
+
 // CalculateStopDirection computes the direction for a stop using the Java algorithm
 func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Context, stopID string, gtfsDirection ...sql.NullString) string {
 	if len(gtfsDirection) > 0 && gtfsDirection[0].Valid && gtfsDirection[0].String != "" {
@@ -325,7 +352,7 @@ func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.C
 	minDiff := math.MaxFloat64
 
 	// Use shape_dist_traveled if available (distTraveled >= 0)
-	if distTraveled >= 0 {
+	if distTraveled >= 0 && shapeDistancesCanLocateAStop(shapePoints) {
 		// Find the closest shape point using shape_dist_traveled
 		for i, point := range shapePoints {
 			if point.ShapeDistTraveled.Valid {

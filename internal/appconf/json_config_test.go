@@ -367,6 +367,27 @@ func TestDefaultProtectedAPIKeys(t *testing.T) {
 	}
 }
 
+func TestProtectedAPIKeysFromEnv(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  []string
+	}{
+		{"unset", "", nil},
+		{"single key", "key1", []string{"key1"}},
+		{"multiple keys", "key1,key2", []string{"key1", "key2"}},
+		{"spaces and empty segments", " key1 , , key2 ,", []string{"key1", "key2"}},
+		{"only separators", " , ,", nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("GTFS_PROTECTED_API_KEYS", tc.value)
+			assert.Equal(t, tc.want, ProtectedAPIKeysFromEnv())
+		})
+	}
+}
+
 func TestValidate_PathTraversalDataPath(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -640,6 +661,24 @@ func TestLoadFromFile_EnvVarOverrides(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, []string{"file-key"}, config.ApiKeys)
+	})
+
+	t.Run("Protected Keys Override Default", func(t *testing.T) {
+		t.Setenv("GTFS_PROTECTED_API_KEYS", "protected-1 , , protected-2")
+
+		config, err := LoadFromFile(tmpFile.Name())
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{"protected-1", "protected-2"}, config.ProtectedApiKeys)
+	})
+
+	t.Run("Empty Protected Keys Keep Default", func(t *testing.T) {
+		t.Setenv("GTFS_PROTECTED_API_KEYS", "")
+
+		config, err := LoadFromFile(tmpFile.Name())
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{"protected-test-key"}, config.ProtectedApiKeys)
 	})
 
 	t.Run("Validation Still Fires - Duplicate Keys", func(t *testing.T) {

@@ -45,19 +45,23 @@ func runMainWithArgs(t *testing.T, args string) (int, string) {
 
 func TestMain_CommandLineFlagsPassValidation(t *testing.T) {
 	tests := []struct {
-		name         string
-		env          string
-		wantExitCode int
-		wantOutput   string
+		name                string
+		args                string
+		protectedAPIKeysEnv string
+		wantExitCode        int
+		wantOutput          string
 	}{
-		{"development uses default protected key", "development", 0, `"env": "development"`},
-		{"test uses default protected key", "test", 0, `"env": "test"`},
-		{"production requires a protected key", "production", 1, "protected-api-keys cannot be empty"},
+		{"development uses default protected key", "-env development", "", 0, `"env": "development"`},
+		{"test uses default protected key", "-env test", "", 0, `"env": "test"`},
+		{"production accepts protected keys flag", "-env production -protected-api-keys prod-key", "", 0, `"env": "production"`},
+		{"production accepts protected keys env var", "-env production", "prod-key", 0, `"env": "production"`},
+		{"production requires a protected key", "-env production", "", 1, "protected-api-keys cannot be empty"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			exitCode, output := runMainWithArgs(t, "-dump-config -env "+tc.env)
+			t.Setenv("GTFS_PROTECTED_API_KEYS", tc.protectedAPIKeysEnv)
+			exitCode, output := runMainWithArgs(t, "-dump-config "+tc.args)
 
 			assert.Equal(t, tc.wantExitCode, exitCode, output)
 			assert.Contains(t, output, tc.wantOutput)
