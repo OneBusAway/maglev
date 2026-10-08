@@ -335,6 +335,30 @@ func TestParseAPIKeysEdgeCases(t *testing.T) {
 	}
 }
 
+func TestCLIProtectedAPIKeys(t *testing.T) {
+	tests := []struct {
+		name      string
+		flagValue string
+		envVar    string
+		env       string
+		want      []string
+	}{
+		{"flag is used", "flag-1,flag-2", "", "production", []string{"flag-1", "flag-2"}},
+		{"flag wins over env var", "flag-key", "env-key", "production", []string{"flag-key"}},
+		{"env var is used without flag", "", "env-1, env-2", "production", []string{"env-1", "env-2"}},
+		{"env var wins over development default", "", "env-key", "development", []string{"env-key"}},
+		{"development falls back to default", "", "", "development", []string{"protected-test-key"}},
+		{"production has no default", "", "", "production", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GTFS_PROTECTED_API_KEYS", tt.envVar)
+			assert.Equal(t, tt.want, cliProtectedAPIKeys(tt.flagValue, tt.env))
+		})
+	}
+}
+
 func TestRunWithPortZeroAndImmediateShutdown(t *testing.T) {
 	ctx := context.Background()
 
