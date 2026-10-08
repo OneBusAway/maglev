@@ -2,13 +2,16 @@ package restapi
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // devDate is a placeholder service date for tests that don't exercise the
@@ -597,4 +600,73 @@ func TestGetStopDelaysFromTripUpdates_SequenceMustAgreeWithStopID(t *testing.T) 
 
 func delayEvent(d time.Duration) *gtfs.StopTimeEvent {
 	return &gtfs.StopTimeEvent{Delay: &d}
+}
+
+func TestDeviationAtScheduledArrival(t *testing.T) {
+	samples := []deviationSample{
+		{scheduledArrival: 100, deviation: 10},
+		{scheduledArrival: 200, deviation: 20},
+	}
+
+	tests := []struct {
+		name             string
+		scheduledArrival int64
+		wantDeviation    int
+		wantPropagates   bool
+	}{
+		{name: "upstream of every sample", scheduledArrival: 50, wantPropagates: false},
+		{name: "exact sample", scheduledArrival: 100, wantDeviation: 10, wantPropagates: true},
+		{name: "between samples takes the previous one", scheduledArrival: 150, wantDeviation: 10, wantPropagates: true},
+		{name: "downstream of every sample takes the last one", scheduledArrival: 300, wantDeviation: 20, wantPropagates: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deviation, propagates := deviationAtScheduledArrival(samples, tt.scheduledArrival)
+			assert.Equal(t, tt.wantPropagates, propagates)
+			assert.Equal(t, tt.wantDeviation, deviation)
+		})
+	}
+}
+
+func TestBlockDeviationSamples(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+
+	trip := mustGetTrip(t, api)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	require.NoError(t, err)
+	// Samples are keyed by scheduled arrival, so use stops whose arrivals
+	// differ; consecutive stops can share one.
+	stopTimes = slices.CompactFunc(stopTimes, func(a, b gtfsdb.StopTime) bool { return a.ArrivalTime == b.ArrivalTime })
+	require.GreaterOrEqual(t, len(stopTimes), 3, "need a trip with at least 3 distinct stop arrival times")
+
+	stuFor := func(st gtfsdb.StopTime, arrivalDelay, departureDelay *time.Duration) gtfs.StopTimeUpdate {
+		seq := uint32(st.StopSequence)
+		stu := gtfs.StopTimeUpdate{StopID: &st.StopID, StopSequence: &seq}
+		if arrivalDelay != nil {
+			stu.Arrival = &gtfs.StopTimeEvent{Delay: arrivalDelay}
+		}
+		if departureDelay != nil {
+			stu.Departure = &gtfs.StopTimeEvent{Delay: departureDelay}
+		}
+		return stu
+	}
+	arrivalOnly, arrivalDelay, departureDelay, skippedDelay := 60*time.Second, 30*time.Second, 90*time.Second, 500*time.Second
+	skipped := stuFor(stopTimes[2], &skippedDelay, nil)
+	skipped.ScheduleRelationship = gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED
+	api.GtfsManager.MockAddTripUpdate(trip.ID, nil, []gtfs.StopTimeUpdate{
+		stuFor(stopTimes[0], &arrivalOnly, nil),
+		stuFor(stopTimes[1], &arrivalDelay, &departureDelay),
+		skipped,
+	})
+
+	samples := api.blockDeviationSamples(ctx, []string{trip.ID}, devDate, devNow)
+
+	assert.Equal(t, []deviationSample{
+		{scheduledArrival: utils.NanosToSeconds(stopTimes[0].ArrivalTime), deviation: 60},
+		{scheduledArrival: utils.NanosToSeconds(stopTimes[1].ArrivalTime), deviation: 90},
+	}, samples, "a departure prediction wins over an arrival one, and skipped stops contribute no sample")
 }

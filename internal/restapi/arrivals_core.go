@@ -959,7 +959,7 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 		blockTripSequence = tripStatus.BlockTripSequence
 	}
 
-	applyTripStatusPrediction(arrival, tripStatus, statusExtras, in)
+	api.applyTripStatusPrediction(ctx, arrival, tripStatus, statusExtras, in)
 
 	arrival.TripStatus = tripStatus
 	arrival.DistanceFromStop = distanceFromStop
@@ -971,15 +971,16 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 // applyTripStatusPrediction fills an unpredicted arrival's predicted times
 // from its trip status's schedule deviation when getPredictedTimes found no
 // per-stop prediction.
-func applyTripStatusPrediction(arrival *models.ArrivalAndDeparture, tripStatus *models.TripStatus, statusExtras *tripStatusExtras, in arrivalInput) {
+func (api *RestAPI) applyTripStatusPrediction(ctx context.Context, arrival *models.ArrivalAndDeparture, tripStatus *models.TripStatus, statusExtras *tripStatusExtras, in arrivalInput) {
 	if arrival.Predicted {
 		return
 	}
 	serviceStart := in.serviceDate.Start(in.location)
-	predictedArrival, predictedDeparture, ok := predictedTimesFromScheduleDeviation(scheduleDeviationFallback{
+	predictedArrival, predictedDeparture, ok := api.predictedTimesFromScheduleDeviation(ctx, scheduleDeviationFallback{
 		status:             tripStatus,
 		extras:             statusExtras,
 		stopSequence:       int64(in.stopTime.StopSequence),
+		stopArrivalSeconds: utils.NanosToSeconds(in.stopTime.ArrivalTime),
 		serviceMidnight:    in.serviceDate.Midnight(in.location),
 		currentTime:        in.queryTime,
 		scheduledArrival:   serviceStart.Add(time.Duration(in.stopTime.ArrivalTime)),
