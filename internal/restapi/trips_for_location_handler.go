@@ -382,8 +382,8 @@ func (api *RestAPI) inServiceTripIDs(
 			continue
 		}
 
-		windowStart := day.sinceMidnightNs - int64(runningLate)
-		windowEnd := day.sinceMidnightNs + int64(runningEarly)
+		windowStart := day.sinceStartNs - int64(runningLate)
+		windowEnd := day.sinceStartNs + int64(runningEarly)
 		// Reserve room for the two window scalars and the ServiceIds slice this
 		// statement also binds — utils.QueryInBatches alone would size the StopIds
 		// batch as if it were the only bind, and a day with enough active
@@ -508,7 +508,7 @@ func (api *RestAPI) blockedScheduledTripIDsInBounds(
 		seenActiveTrip:    make(map[string]struct{}),
 	}
 	ctx = WithSnapshotCache(ctx, newSnapshotCache())
-	serviceDateForDay := []time.Time{serviceDates.queryDayMidnight, serviceDates.queryDayMidnight.AddDate(0, 0, -1)}
+	serviceDateForDay := []time.Time{serviceDates.queryDayMidnight, serviceDates.previousDayMidnight}
 
 	var visible []string
 	for dayIndex, day := range serviceDates.ServiceDays() {
@@ -550,8 +550,8 @@ func (api *RestAPI) blockedTripIDsForServiceDay(
 		return nil, err
 	}
 
-	windowStart := day.sinceMidnightNs - int64(runningLate)
-	windowEnd := day.sinceMidnightNs + int64(runningEarly)
+	windowStart := day.sinceStartNs - int64(runningLate)
+	windowEnd := day.sinceStartNs + int64(runningEarly)
 
 	var visible []string
 	for _, anchor := range selectBlockAnchors(spans, windowStart, windowEnd) {
@@ -772,15 +772,15 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	serviceDatesByAgency := make(map[string]*serviceDateResolver, len(agencyIDs))
 	for agencyID := range agencyIDs {
 		agencyLocation := request.AgencyLocations[agencyID]
-		queryDayMidnight := serviceDateMidnight(request.CurrentTime, agencyLocation)
-		days, err := api.serviceIDsForDays(ctx, queryDayMidnight)
+		queryDay := servicedate.FromInstant(request.CurrentTime, agencyLocation)
+		days, err := api.serviceIDsForDays(ctx, queryDay)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return nil, nil
 		}
 		services[agencyID] = days
 		serviceDatesByAgency[agencyID] = newServiceDateResolverFor(
-			queryDayMidnight, request.CurrentTime.In(agencyLocation), days)
+			queryDay, agencyLocation, request.CurrentTime.In(agencyLocation), days)
 	}
 
 	stopTimesMap := make(map[string][]gtfsdb.StopTime)
@@ -988,12 +988,12 @@ func (api *RestAPI) serviceDateResolversByZone(
 		if _, ok := resolvers[zoneName]; ok {
 			continue
 		}
-		queryDayMidnight := serviceDateMidnight(currentTime, location)
-		days, err := api.serviceIDsForDays(ctx, queryDayMidnight)
+		queryDay := servicedate.FromInstant(currentTime, location)
+		days, err := api.serviceIDsForDays(ctx, queryDay)
 		if err != nil {
 			return nil, err
 		}
-		resolvers[zoneName] = newServiceDateResolverFor(queryDayMidnight, currentTime.In(location), days)
+		resolvers[zoneName] = newServiceDateResolverFor(queryDay, location, currentTime.In(location), days)
 	}
 	return resolvers, nil
 }

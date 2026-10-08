@@ -31,6 +31,7 @@ func TestServiceDateResolver_Resolve(t *testing.T) {
 	// belong to either service date.
 	resolver := &serviceDateResolver{
 		queryDayMidnight:     queryDay,
+		previousDayMidnight:  previousDay,
 		sinceStartNs:         int64(30 * time.Minute),
 		previousSinceStartNs: int64(30*time.Minute + 24*time.Hour),
 		queryDayServices:     map[string]struct{}{"weekday": {}},
@@ -115,6 +116,7 @@ func TestServiceDateResolver_PreviousDayServiceOnly(t *testing.T) {
 
 	resolver := &serviceDateResolver{
 		queryDayMidnight:     queryDay,
+		previousDayMidnight:  queryDay.AddDate(0, 0, -1),
 		sinceStartNs:         int64(30 * time.Minute),
 		previousSinceStartNs: int64(30*time.Minute + 24*time.Hour),
 		queryDayServices:     map[string]struct{}{"weekday": {}},
@@ -133,7 +135,7 @@ func TestNewServiceDateResolverFor(t *testing.T) {
 	queryDay := time.Date(2024, 3, 15, 0, 0, 0, 0, location)
 	currentTime := queryDay.Add(30 * time.Minute)
 
-	resolver := newServiceDateResolverFor(queryDay, currentTime, serviceIDsByDay{
+	resolver := newServiceDateResolverFor(servicedate.Of(queryDay), location, currentTime, serviceIDsByDay{
 		QueryDay:    []string{"weekday"},
 		PreviousDay: []string{"friday-night"},
 	})
@@ -148,7 +150,7 @@ func TestNewServiceDateResolverFor_SpringForwardMeasuresFromServiceStart(t *test
 	require.NoError(t, err)
 	day := servicedate.New(2026, time.March, 8)
 	now := time.Date(2026, time.March, 8, 1, 40, 0, 0, losAngeles)
-	resolver := newServiceDateResolverFor(day.Midnight(losAngeles), now, serviceIDsByDay{
+	resolver := newServiceDateResolverFor(day, losAngeles, now, serviceIDsByDay{
 		QueryDay: []string{"sunday"},
 	})
 
@@ -158,6 +160,23 @@ func TestNewServiceDateResolverFor_SpringForwardMeasuresFromServiceStart(t *test
 
 	days := resolver.ServiceDays()
 	require.Len(t, days, 2)
-	assert.Equal(t, resolver.sinceStartNs, days[0].sinceMidnightNs)
-	assert.Equal(t, resolver.previousSinceStartNs, days[1].sinceMidnightNs)
+	assert.Equal(t, resolver.sinceStartNs, days[0].sinceStartNs)
+	assert.Equal(t, resolver.previousSinceStartNs, days[1].sinceStartNs)
+}
+
+func TestNewServiceDateResolverFor_SkippedMidnightUsesServiceDate(t *testing.T) {
+	santiago, err := time.LoadLocation("America/Santiago")
+	require.NoError(t, err)
+	now := time.Date(2026, time.September, 6, 8, 0, 0, 0, santiago)
+	day := servicedate.FromInstant(now, santiago)
+	require.Equal(t, servicedate.New(2026, time.September, 6), day)
+
+	resolver := newServiceDateResolverFor(day, santiago, now, serviceIDsByDay{
+		QueryDay: []string{"sunday"},
+	})
+
+	assert.Equal(t, now.Sub(day.Start(santiago)).Nanoseconds(), resolver.sinceStartNs)
+	assert.Equal(t, now.Sub(day.AddDays(-1).Start(santiago)).Nanoseconds(), resolver.previousSinceStartNs)
+	assert.Equal(t, day.Midnight(santiago), resolver.Resolve(tripWithWindow("sunday", 8, 8.5)))
+	assert.Equal(t, "20260906", day.String())
 }
