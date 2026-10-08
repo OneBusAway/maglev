@@ -105,7 +105,10 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// References cover only the retained entry results, not the stops and
 	// arrivals maxCount trimmed away.
 	refAcc := retainedAccumulator(lists.arrivals, lists.stopIDs, lists.nearby, acc)
-	api.collectRouteAlertsForRetained(refAcc)
+	if err := api.collectSituationsForRetainedStops(ctx, lists.stopIDs, agencies, refAcc); err != nil {
+		api.sendArrivalsForLocationError(w, r, ctx, err)
+		return
+	}
 
 	references, err := api.locationReferences(ctx, params.IncludeReferences, agencies, refAcc)
 	if err != nil {
@@ -217,14 +220,36 @@ func retainedAccumulator(
 	return refAcc
 }
 
-// collectRouteAlertsForRetained adds alerts scoped to the retained routes.
-// Trip status and stop lookups never see these: a route alert with no arrival
-// in the window still affects those stops per spec step 12.
-func (api *RestAPI) collectRouteAlertsForRetained(acc *arrivalsAccumulator) {
-	for _, route := range acc.routes {
-		alerts := api.GtfsManager.GetAlertsForRoute(route.ID)
-		acc.situations.add(alerts, route.AgencyID)
+// collectSituationsForRetainedStops gathers the alerts affecting the retained
+// stops: route alerts for every route serving them — even with no arrival in
+// the window — and stop alerts for the stops themselves. Trip situations for
+// retained arrivals are already in the accumulator; everything here is scoped
+// to the truncated lists so trimmed results leave no alerts behind.
+func (api *RestAPI) collectSituationsForRetainedStops(ctx context.Context, stopIDs []string, agencies *stopAgencyIndex, acc *arrivalsAccumulator) error {
+	bareIDs := make([]string, 0, len(stopIDs))
+	for _, id := range stopIDs {
+		if _, bareID, err := utils.ExtractAgencyIDAndCodeID(id); err == nil {
+			bareIDs = append(bareIDs, bareID)
+		}
 	}
+
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, bareIDs)
+	if err != nil {
+		return err
+	}
+	seenRoutes := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		if seenRoutes[row.ID] {
+			continue
+		}
+		seenRoutes[row.ID] = true
+		acc.situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), row.AgencyID)
+	}
+
+	for _, bareID := range bareIDs {
+		acc.situations.add(api.GtfsManager.GetAlertsForStop(bareID), agencies.agencyIDFor(bareID))
+	}
+	return nil
 }
 
 // locationReferences builds the references block, or an empty one when the

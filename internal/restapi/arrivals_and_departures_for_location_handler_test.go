@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"maps"
 	"net/http"
 	"net/url"
@@ -12,7 +13,6 @@ import (
 	gogtfs "github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
@@ -438,24 +438,53 @@ func TestParseMinutesValueCapsBeforeDurationOverflow(t *testing.T) {
 	assert.Contains(t, collected, "minutesBefore")
 }
 
-// A route alert with no arrival in the window must still reach situationIds:
-// trip status and stop lookups never see route-scoped alerts.
-func TestCollectRouteAlertsForRetainedAddsRouteOnlyAlerts(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
+// A route alert with no arrival in the window and a stop alert on a matched
+// stop must both reach situationIds, even when the window holds no arrivals.
+func TestLocationSituationsWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	trip := mustGetTrip(t, api)
-	agencyID := mustGetAgencies(t, api)[0].ID
+	overnightMs := func() string {
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		return strconv.FormatInt(time.Date(2025, 6, 13, 2, 0, 0, 0, loc).UnixMilli(), 10)
+	}()
+	overnight := url.Values{
+		"lat":           {"40.539367"},
+		"lon":           {"-122.34952"},
+		"radius":        {"2500"},
+		"time":          {overnightMs},
+		"minutesBefore": {"0"},
+		"minutesAfter":  {"1"},
+	}
+	_, probe := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
+		arrivalsForLocationURL(overnight))
+	require.Empty(t, probe.Data.Entry.ArrivalsAndDepartures, "02:00 must have no arrivals on the fixture")
+	require.NotEmpty(t, probe.Data.Entry.StopIDs, "the search must still match stops")
+
+	_, stopCode, err := utils.ExtractAgencyIDAndCodeID(probe.Data.Entry.StopIDs[0])
+	require.NoError(t, err)
+
+	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(context.Background(), []string{stopCode})
+	require.NoError(t, err)
+	require.NotEmpty(t, routes, "matched stop must serve at least one route")
+
 	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
 		ID:               "route-only-alert",
-		InformedEntities: []gogtfs.AlertInformedEntity{{RouteID: &trip.RouteID}},
+		InformedEntities: []gogtfs.AlertInformedEntity{{RouteID: &routes[0].ID}},
+	})
+	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
+		ID:               "stop-only-alert",
+		InformedEntities: []gogtfs.AlertInformedEntity{{StopID: &stopCode}},
 	})
 
-	acc := newArrivalsAccumulator("")
-	acc.routes[trip.RouteID] = &gtfsdb.Route{ID: trip.RouteID, AgencyID: agencyID}
-	api.collectRouteAlertsForRetained(acc)
+	_, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
+		arrivalsForLocationURL(overnight))
 
-	assert.Contains(t, situationIDsFromRefs(acc.situations.refs), utils.FormCombinedID(agencyID, "route-only-alert"))
+	assert.Empty(t, model.Data.Entry.ArrivalsAndDepartures)
+	assert.Contains(t, model.Data.Entry.SituationIDs, utils.FormCombinedID(routes[0].AgencyID, "route-only-alert"))
+	assert.Contains(t, model.Data.Entry.SituationIDs, utils.FormCombinedID(routes[0].AgencyID, "stop-only-alert"))
 }
 
 // Situations from arrivals that maxCount trimmed away must not leak into
