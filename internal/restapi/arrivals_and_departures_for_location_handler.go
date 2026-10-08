@@ -22,6 +22,8 @@ type arrivalsForLocationParams struct {
 	QueryTime            time.Time
 	Before               time.Duration
 	After                time.Duration
+	FrequencyBefore      time.Duration
+	FrequencyAfter       time.Duration
 	MaxCount             int
 	RouteTypes           []int
 	EmptyReturnsNotFound bool
@@ -61,12 +63,14 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	acc := newArrivalsAccumulator("")
 	arrivals, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
-		Stops:      stops,
-		Agencies:   agencies,
-		QueryTime:  params.QueryTime,
-		Before:     params.Before,
-		After:      params.After,
-		RouteTypes: params.RouteTypes,
+		Stops:           stops,
+		Agencies:        agencies,
+		QueryTime:       params.QueryTime,
+		Before:          params.Before,
+		After:           params.After,
+		FrequencyBefore: params.FrequencyBefore,
+		FrequencyAfter:  params.FrequencyAfter,
+		RouteTypes:      params.RouteTypes,
 	}, acc)
 	if err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
@@ -646,6 +650,8 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 		QueryTime:         api.Clock.Now(),
 		Before:            5 * time.Minute,
 		After:             35 * time.Minute,
+		FrequencyBefore:   defaultFrequencyBefore,
+		FrequencyAfter:    defaultFrequencyAfter,
 		MaxCount:          models.DefaultMaxCountForArrivalsForLocation,
 		IncludeReferences: true,
 	}
@@ -676,6 +682,8 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 
 	params.Before = parseMinutesValue(queryParams, "minutesBefore", params.Before, maxArrivalWindow, addError)
 	params.After = parseMinutesValue(queryParams, "minutesAfter", params.After, maxArrivalWindow, addError)
+	params.FrequencyBefore = parseMinutesValue(queryParams, "frequencyMinutesBefore", params.FrequencyBefore, maxArrivalWindow, addError)
+	params.FrequencyAfter = parseMinutesValue(queryParams, "frequencyMinutesAfter", params.FrequencyAfter, maxArrivalWindow, addError)
 	params.QueryTime = parseEpochMillisValue(queryParams, "time", params.QueryTime, addError)
 	params.MaxCount = parseArrivalsForLocationMaxCount(queryParams, addError)
 	params.RouteTypes = parseRouteTypesParam(queryParams, addError)

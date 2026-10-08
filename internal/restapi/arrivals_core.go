@@ -22,13 +22,15 @@ import (
 // Location is the agency timezone the window is anchored in; QueryTime must
 // already be expressed in it.
 type stopArrivalsInput struct {
-	StopCode   string
-	AgencyID   string
-	Location   *time.Location
-	QueryTime  time.Time
-	Before     time.Duration
-	After      time.Duration
-	RouteTypes []int // nil or empty means no route-type filter
+	StopCode        string
+	AgencyID        string
+	Location        *time.Location
+	QueryTime       time.Time
+	Before          time.Duration
+	After           time.Duration
+	FrequencyBefore time.Duration
+	FrequencyAfter  time.Duration
+	RouteTypes      []int // nil or empty means no route-type filter
 }
 
 // arrivalsAccumulator gathers the entities that the arrivals of one or more
@@ -133,6 +135,14 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 			continue
 		}
 
+		before, after := in.Before, in.After
+		if len(freqMap[st.TripID]) > 0 {
+			before, after = in.FrequencyBefore, in.FrequencyAfter
+		}
+		if !api.stopTimeInArrivalWindow(ctx, ast, in.Location, in.QueryTime, before, after) {
+			continue
+		}
+
 		rCopy := route
 		acc.routes[route.ID] = &rCopy
 		tCopy := trip
@@ -161,8 +171,10 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 // started before midnight are not dropped.
 func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrivalsInput) ([]activeStopTime, error) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
-	windowStart := in.QueryTime.Add(-in.Before)
-	windowEnd := in.QueryTime.Add(in.After)
+	// Fetch the union of both windows, then filter each trip using its own
+	// window once the batch frequency lookup identifies frequency trips.
+	windowStart := in.QueryTime.Add(-max(in.Before, in.FrequencyBefore))
+	windowEnd := in.QueryTime.Add(max(in.After, in.FrequencyAfter))
 
 	var allActiveStopTimes []activeStopTime
 
@@ -254,12 +266,14 @@ func (api *RestAPI) stopTimesForServiceDay(
 // multiStopArrivalsInput carries the per-request values the batched multi-stop
 // arrivals pipeline needs.
 type multiStopArrivalsInput struct {
-	Stops      []gtfsdb.Stop
-	Agencies   *stopAgencyIndex
-	QueryTime  time.Time
-	Before     time.Duration
-	After      time.Duration
-	RouteTypes []int // nil or empty means no route-type filter
+	Stops           []gtfsdb.Stop
+	Agencies        *stopAgencyIndex
+	QueryTime       time.Time
+	Before          time.Duration
+	After           time.Duration
+	FrequencyBefore time.Duration
+	FrequencyAfter  time.Duration
+	RouteTypes      []int // nil or empty means no route-type filter
 }
 
 // batchedActiveStopTime pairs a stop_time row matched for one stop with that
@@ -408,8 +422,8 @@ func (api *RestAPI) appendBatchedStopTimesForDay(ctx context.Context, group agen
 		return nil
 	}
 
-	windowStartNanos := group.queryTime.Add(-in.Before).Sub(serviceStart).Nanoseconds()
-	windowEndNanos := group.queryTime.Add(in.After).Sub(serviceStart).Nanoseconds()
+	windowStartNanos := group.queryTime.Add(-max(in.Before, in.FrequencyBefore)).Sub(serviceStart).Nanoseconds()
+	windowEndNanos := group.queryTime.Add(max(in.After, in.FrequencyAfter)).Sub(serviceStart).Nanoseconds()
 	if windowEndNanos < 0 {
 		return nil
 	}
@@ -507,6 +521,14 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 			continue
 		}
 
+		before, after := in.Before, in.After
+		if len(lookups.frequencies[st.TripID]) > 0 {
+			before, after = in.FrequencyBefore, in.FrequencyAfter
+		}
+		if !api.stopTimeInArrivalWindow(ctx, b.activeStopTime, b.Location, b.QueryTime, before, after) {
+			continue
+		}
+
 		rCopy := route
 		acc.routes[route.ID] = &rCopy
 		tCopy := trip
@@ -527,6 +549,24 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 		arrivals = append(arrivals, *arrival)
 	}
 	return arrivals, nil
+}
+
+// stopTimeInArrivalWindow checks scheduled and available predicted times against
+// the trip's window before expensive trip-status and reference construction.
+// Bounds are inclusive, matching the candidate queries and Java's range check.
+func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopTime, location *time.Location, queryTime time.Time, before, after time.Duration) bool {
+	start, end := queryTime.Add(-before), queryTime.Add(after)
+	inRange := func(t time.Time) bool {
+		return !t.IsZero() && !t.Before(start) && !t.After(end)
+	}
+	serviceStart := ast.ServiceDate.Start(location)
+	arrival := serviceStart.Add(time.Duration(ast.ArrivalTime))
+	departure := serviceStart.Add(time.Duration(ast.DepartureTime))
+	if inRange(arrival) || inRange(departure) {
+		return true
+	}
+	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure)
+	return predicted && (inRange(predictedArrival) || inRange(predictedDeparture))
 }
 
 // convertStopsInWindowRow adapts the multi-stop window row to the single-stop
