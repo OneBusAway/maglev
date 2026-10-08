@@ -378,7 +378,7 @@ func (api *RestAPI) orderGroupStops(ctx context.Context, trips []gtfsdb.Trip, st
 		sequences = append(sequences, sequence)
 	}
 
-	stops, err := queryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	stops, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	if err != nil {
 		return nil, err
 	}
