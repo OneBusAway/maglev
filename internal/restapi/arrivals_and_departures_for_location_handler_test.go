@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
@@ -133,6 +134,44 @@ func TestArrivalsAndDeparturesForLocationEndToEnd(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.Agencies)
 	require.NotEmpty(t, model.Data.References.Routes)
 	require.NotEmpty(t, model.Data.References.Trips)
+}
+
+func TestArrivalsAndDeparturesForLocationIncludesStopAlertsWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencyID, stopID, err := utils.ExtractAgencyIDAndCodeID(testdata.Stop4062.ID)
+	require.NoError(t, err)
+
+	const alertID = "location-no-arrivals-stop-alert"
+	api.GtfsManager.AddAlertForTest(gtfs.Alert{
+		ID:               alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}},
+		Header:           []gtfs.AlertText{{Text: "Stop alert without arrivals", Language: "en"}},
+	})
+
+	quietTime := time.Date(2025, 6, 13, 3, 0, 0, 0, arrivalsTestClock.Location())
+	resp, model := callArrivalsForLocation(t, api, url.Values{
+		"time":          {strconv.FormatInt(quietTime.UnixMilli(), 10)},
+		"minutesBefore": {"0"},
+		"minutesAfter":  {"0"},
+	})
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the quiet-time query must have no arrivals")
+
+	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+	assert.Contains(t, model.Data.Entry.SituationIDs, wantSituationID)
+	var referenced bool
+	for _, situation := range model.Data.References.Situations {
+		if situation.ID == wantSituationID {
+			referenced = true
+			break
+		}
+	}
+	assert.True(t, referenced, "the stop alert must resolve in references.situations")
 }
 
 func TestArrivalsAndDeparturesForLocationSortsArrivalsByTime(t *testing.T) {
