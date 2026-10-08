@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -298,6 +299,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 
 	references := models.NewEmptyReferences()
 	references.Agencies = append(references.Agencies, agencyModel)
+	references.Routes = utils.MapValues(routeRefs)
 
 	tripIDs := make([]string, 0, len(tripIDsSet))
 	for tid := range tripIDsSet {
@@ -333,23 +335,13 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(uniqueStopIDs) > 0 {
-		modelStops, stopRoutes, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, uniqueStopIDs)
+		stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, uniqueStopIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
 		}
-		references.Stops = append(references.Stops, modelStops...)
-
-		// Every routeId a stop reference lists must resolve in references.routes.
-		for combinedID, row := range stopRoutes {
-			if _, ok := routeRefs[combinedID]; ok {
-				continue
-			}
-			routeRefs[combinedID] = routeReferenceFromStopRow(row)
-			api.appendRouteAgencyReference(ctx, references, row.AgencyID, agencyID)
-		}
+		references.Stops = api.scheduleStopReferences(ctx, agencyID, stops, utils.FormCombinedID(agencyID, routeID))
 	}
-	references.Routes = utils.MapValues(routeRefs)
 
 	for _, sref := range stopTimesRefs {
 		references.StopTimes = append(references.StopTimes, sref...)
@@ -362,6 +354,20 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		StopTripGroupings: stopTripGroupings,
 	}
 	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
+}
+
+// scheduleStopReferences builds the stop references of a route schedule. As in
+// Java's RouteScheduleBeanServiceImpl.addStopReference, each stop lists only
+// the schedule's route rather than every route serving it, and staticRouteIds
+// is left empty, so references.routes stays limited to the schedule's route.
+func (api *RestAPI) scheduleStopReferences(ctx context.Context, agencyID string, stops []gtfsdb.Stop, scheduleRouteID string) []models.Stop {
+	stopRefs := make([]models.Stop, 0, len(stops))
+	for _, stop := range stops {
+		stopRef := api.buildStopModel(ctx, agencyID, stop, []string{scheduleRouteID})
+		stopRef.StaticRouteIDs = []string{}
+		stopRefs = append(stopRefs, stopRef)
+	}
+	return stopRefs
 }
 
 // buildNoServiceResponse constructs the empty-schedule response for a route that has
