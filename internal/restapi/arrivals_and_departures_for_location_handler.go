@@ -105,6 +105,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// References cover only the retained entry results, not the stops and
 	// arrivals maxCount trimmed away.
 	refAcc := retainedAccumulator(lists.arrivals, lists.stopIDs, lists.nearby, acc)
+	api.collectRouteAlertsForRetained(refAcc)
 
 	references, err := api.locationReferences(ctx, params.IncludeReferences, agencies, refAcc)
 	if err != nil {
@@ -161,9 +162,8 @@ func combinedStopIDs(stops []gtfsdb.Stop, agencies *stopAgencyIndex) []string {
 }
 
 // retainedAccumulator rebuilds an accumulator holding only what the truncated
-// entry lists reference, so references do not serialize the stops, trips and
-// routes maxCount trimmed away. Situation references stay global: alerts are
-// few, and tracking them per trip would require invasive accumulator changes.
+// entry lists reference, so references do not serialize the stops, trips,
+// routes and situations maxCount trimmed away.
 func retainedAccumulator(
 	arrivals []models.ArrivalAndDeparture,
 	stopIDs []string,
@@ -171,7 +171,24 @@ func retainedAccumulator(
 	acc *arrivalsAccumulator,
 ) *arrivalsAccumulator {
 	refAcc := newArrivalsAccumulator("")
-	refAcc.situations = acc.situations
+
+	// Trip situations come from every arrival built before truncation, so keep
+	// only the ones the retained arrivals name. Route alerts join below in
+	// collectRouteAlertsForRetained.
+	retainedIDs := make(map[string]bool)
+	for _, a := range arrivals {
+		for _, id := range a.SituationIDs {
+			retainedIDs[id] = true
+		}
+	}
+	kept := make([]situationRef, 0, len(acc.situations.refs))
+	for _, ref := range acc.situations.refs {
+		if retainedIDs[ref.ID] {
+			kept = append(kept, ref)
+		}
+	}
+	refAcc.situations = newSituationCollector()
+	refAcc.situations.addRefs(kept)
 
 	for _, id := range stopIDs {
 		if _, bareID, err := utils.ExtractAgencyIDAndCodeID(id); err == nil {
@@ -198,6 +215,16 @@ func retainedAccumulator(
 	}
 
 	return refAcc
+}
+
+// collectRouteAlertsForRetained adds alerts scoped to the retained routes.
+// Trip status and stop lookups never see these: a route alert with no arrival
+// in the window still affects those stops per spec step 12.
+func (api *RestAPI) collectRouteAlertsForRetained(acc *arrivalsAccumulator) {
+	for _, route := range acc.routes {
+		alerts := api.GtfsManager.GetAlertsForRoute(route.ID)
+		acc.situations.add(alerts, route.AgencyID)
+	}
 }
 
 // locationReferences builds the references block, or an empty one when the

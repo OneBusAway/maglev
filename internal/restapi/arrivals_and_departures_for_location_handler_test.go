@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	gogtfs "github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
@@ -434,4 +436,39 @@ func TestParseMinutesValueCapsBeforeDurationOverflow(t *testing.T) {
 	assert.Equal(t, 5*time.Minute,
 		parseMinutesValue(url.Values{"minutesBefore": {"-5"}}, "minutesBefore", 5*time.Minute, maxArrivalWindow, addError))
 	assert.Contains(t, collected, "minutesBefore")
+}
+
+// A route alert with no arrival in the window must still reach situationIds:
+// trip status and stop lookups never see route-scoped alerts.
+func TestCollectRouteAlertsForRetainedAddsRouteOnlyAlerts(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	trip := mustGetTrip(t, api)
+	agencyID := mustGetAgencies(t, api)[0].ID
+	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
+		ID:               "route-only-alert",
+		InformedEntities: []gogtfs.AlertInformedEntity{{RouteID: &trip.RouteID}},
+	})
+
+	acc := newArrivalsAccumulator("")
+	acc.routes[trip.RouteID] = &gtfsdb.Route{ID: trip.RouteID, AgencyID: agencyID}
+	api.collectRouteAlertsForRetained(acc)
+
+	assert.Contains(t, situationIDsFromRefs(acc.situations.refs), utils.FormCombinedID(agencyID, "route-only-alert"))
+}
+
+// Situations from arrivals that maxCount trimmed away must not leak into
+// references: only retained arrivals' IDs survive.
+func TestRetainedAccumulatorDropsUnretainedSituations(t *testing.T) {
+	acc := newArrivalsAccumulator("")
+	acc.situations.addRefs([]situationRef{
+		{ID: "25_kept", Alert: gogtfs.Alert{ID: "kept"}},
+		{ID: "25_dropped", Alert: gogtfs.Alert{ID: "dropped"}},
+	})
+
+	arrivals := []models.ArrivalAndDeparture{{SituationIDs: []string{"25_kept"}}}
+	refAcc := retainedAccumulator(arrivals, nil, nil, acc)
+
+	assert.Equal(t, []string{"25_kept"}, situationIDsFromRefs(refAcc.situations.refs))
 }
