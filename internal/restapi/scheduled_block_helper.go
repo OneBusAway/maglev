@@ -627,7 +627,7 @@ func (api *RestAPI) fetchStopCoordsForStopTimes(
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	stops, err := queryInBatches(ctx, ids, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	stops, err := utils.QueryInBatches(ctx, ids, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	if err != nil {
 		slog.Warn("fetchStopCoordsForStopTimes: GetStopsByIDs failed",
 			slog.Int("stop_count", len(ids)), slog.String("error", err.Error()))

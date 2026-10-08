@@ -78,6 +78,17 @@ func routeAgencyMapFor(t *testing.T, manager *Manager, routeIDs []string) map[st
 	return got
 }
 
+func tripAgencyMapFor(t *testing.T, manager *Manager, trips []gtfs.Trip) map[string]string {
+	t.Helper()
+	routeIDs := make([]string, 0, len(trips))
+	for _, trip := range trips {
+		routeIDs = append(routeIDs, trip.ID.RouteID)
+	}
+	got, err := manager.tripAgencyIDs(context.Background(), trips, routeAgencyMapFor(t, manager, routeIDs))
+	require.NoError(t, err)
+	return got
+}
+
 // helper to make a *string from a literal
 func strPtr(s string) *string { return &s }
 
@@ -97,12 +108,13 @@ func TestFilterTripsByAgency(t *testing.T) {
 	}
 
 	allowed := map[string]bool{"agency-A": true}
-	routeAgencyMap := routeAgencyMapFor(t, manager, []string{"R1", "R2", "R3", "R999"})
-	filtered := filterTripsByAgency(trips, allowed, routeAgencyMap)
+	filtered, unattributed := filterTripsByAgency(trips, allowed, tripAgencyMapFor(t, manager, trips))
 
 	assert.Len(t, filtered, 2, "should keep only agency-A trips")
 	assert.Equal(t, "T1", filtered[0].ID.ID)
 	assert.Equal(t, "T3", filtered[1].ID.ID)
+	require.Len(t, unattributed, 1, "only the unknown-route trip is unattributable; T2 belongs to agency-B")
+	assert.Equal(t, "T4", unattributed[0].ID.ID)
 }
 
 func TestFilterVehiclesByAgency(t *testing.T) {
@@ -317,9 +329,8 @@ func TestAgencyFilterMultipleFeedsIntegration(t *testing.T) {
 		{ID: gtfs.TripID{ID: "T5", RouteID: "R2"}}, // agency-B ✓
 	}
 
-	routeAgencyMap := routeAgencyMapFor(t, manager, []string{"R1", "R2", "R3"})
-	filteredA := filterTripsByAgency(tripsA, manager.feedAgencyFilter["feed-a"], routeAgencyMap)
-	filteredB := filterTripsByAgency(tripsB, manager.feedAgencyFilter["feed-b"], routeAgencyMap)
+	filteredA, _ := filterTripsByAgency(tripsA, manager.feedAgencyFilter["feed-a"], tripAgencyMapFor(t, manager, tripsA))
+	filteredB, _ := filterTripsByAgency(tripsB, manager.feedAgencyFilter["feed-b"], tripAgencyMapFor(t, manager, tripsB))
 
 	manager.realTimeMutex.Lock()
 	manager.feedTrips["feed-a"] = filteredA

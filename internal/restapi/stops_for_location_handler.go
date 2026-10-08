@@ -278,7 +278,7 @@ func (api *RestAPI) parentStationReferences(
 	}
 
 	bareParentIDs := slices.Sorted(maps.Keys(parentIDsByBareID))
-	parents, err := queryInBatches(ctx, bareParentIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	parents, err := utils.QueryInBatches(ctx, bareParentIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	if err != nil {
 		return nil, nil, err
 	}
