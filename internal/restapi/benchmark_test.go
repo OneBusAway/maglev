@@ -57,7 +57,7 @@ func BenchmarkArrivalsAndDeparturesForLocation(b *testing.B) {
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
-	req := httptest.NewRequest(http.MethodGet, arrivalsForLocationURL(), nil)
+	req := httptest.NewRequest(http.MethodGet, arrivalsForLocationURL(arrivalsForLocationCenter), nil)
 
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
