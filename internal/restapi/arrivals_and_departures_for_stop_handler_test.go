@@ -1000,6 +1000,18 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 			wantArrivalOffset:   174 * time.Second,
 			wantDepartureOffset: 0,
 		},
+		{
+			// The only StopTimeUpdate is on an earlier trip in the block, so
+			// the queried stop is downstream of every deviation sample and
+			// Java's getBestScheduleDeviation carries the last one forward.
+			name: "earlier block trip's stop update propagates downstream",
+			setup: func(t *testing.T, api *RestAPI, now time.Time, tripID string) {
+				addEarlierBlockTripSTU(t, api, 174*time.Second)
+			},
+			wantPredicted:       true,
+			wantArrivalOffset:   174 * time.Second,
+			wantDepartureOffset: 0,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1047,6 +1059,22 @@ func addEarlierBlockTrip(t *testing.T, api *RestAPI) string {
 	})
 	require.NoError(t, err)
 	return earlierTripID
+}
+
+// addEarlierBlockTripSTU adds an earlier trip in the same block via
+// addEarlierBlockTrip and injects a TripUpdate whose only StopTimeUpdate
+// targets that trip's stop with the given delay.
+func addEarlierBlockTripSTU(t *testing.T, api *RestAPI, delay time.Duration) {
+	t.Helper()
+	earlierTripID := addEarlierBlockTrip(t, api)
+	stopID := "dp-stop"
+	seq := uint32(1)
+	api.GtfsManager.MockAddTripUpdate(earlierTripID, nil, []gtfs.StopTimeUpdate{
+		{
+			StopID: &stopID, StopSequence: &seq,
+			Arrival: &gtfs.StopTimeEvent{Delay: &delay},
+		},
+	})
 }
 
 // findArrivalForTrip returns the arrival for tripID, failing the test when

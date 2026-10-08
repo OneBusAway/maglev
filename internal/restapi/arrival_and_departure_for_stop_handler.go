@@ -352,10 +352,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			predictedDepartureTime = predictedDeparture
 			predicted = true
 		} else {
-			predictedArrivalTime, predictedDepartureTime, predicted = predictedTimesFromScheduleDeviation(scheduleDeviationFallback{
+			predictedArrivalTime, predictedDepartureTime, predicted = api.predictedTimesFromScheduleDeviation(ctx, scheduleDeviationFallback{
 				status:             status,
 				extras:             statusExtras,
 				stopSequence:       matchedStopTime.StopSequence,
+				stopArrivalSeconds: utils.NanosToSeconds(matchedStopTime.ArrivalTime),
 				serviceMidnight:    serviceMidnight,
 				currentTime:        currentTime,
 				scheduledArrival:   scheduledArrivalTime,

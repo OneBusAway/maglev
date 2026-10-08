@@ -382,10 +382,11 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 	tripStatus, statusExtras, distanceFromStop, numberOfStopsAway := api.tripStatusForArrival(ctx, in, vehicle, acc)
 
 	if !predicted {
-		predictedArrivalTime, predictedDepartureTime, predicted = predictedTimesFromScheduleDeviation(scheduleDeviationFallback{
+		predictedArrivalTime, predictedDepartureTime, predicted = api.predictedTimesFromScheduleDeviation(ctx, scheduleDeviationFallback{
 			status:             tripStatus,
 			extras:             statusExtras,
 			stopSequence:       int64(st.StopSequence),
+			stopArrivalSeconds: utils.NanosToSeconds(st.ArrivalTime),
 			serviceMidnight:    in.serviceDate.Midnight(in.location),
 			currentTime:        in.queryTime,
 			scheduledArrival:   scheduledArrivalTime,
