@@ -95,6 +95,41 @@ func TestArrivalsAndDeparturesForStopHandlerEndToEnd(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.Stops)
 }
 
+// TestArrivalsAndDeparturesForStopHandler_StopCodeFallback tests that arrivals_and_departures_for_stop_handler
+// falls back to the raw stop entity id for code when the stop code is not supplied in the feed.
+func TestArrivalsAndDeparturesForStopHandler_StopCodeFallback(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	ctx := context.Background()
+	_, bareStopId, err := utils.ExtractAgencyIDAndCodeID(arrivalsTestStopID)
+	require.NoError(t, err)
+	// simulate a stop, whose stop_code is not defined in the feed and
+	// is thus stored as null in the DB.
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(ctx,
+		"UPDATE stops SET code = NULL WHERE id = ?", bareStopId)
+	require.NoError(t, err)
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(arrivalsTestStopID,
+			url.Values{"minutesBefore": {"60"}, "minutesAfter": {"240"}}))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"Stop4062 should have an arrival in the test window")
+
+	var stopReference *models.Stop
+	for i := range model.Data.References.Stops {
+		if model.Data.References.Stops[i].ID == arrivalsTestStopID {
+			stopReference = &model.Data.References.Stops[i]
+			break
+		}
+	}
+	require.NotNil(t, stopReference, "expected the queried stop in references.stops")
+	assert.Equal(t, bareStopId, stopReference.Code,
+		"stop code should fall back to the raw stop ID when stop_code is not defined in the feed")
+}
+
 // TestArrivalsAndDeparturesForStopHandler_RouteAlertReferences verifies that a
 // route-level alert appears on the affected arrival and that its situation ID
 // resolves in references.situations.

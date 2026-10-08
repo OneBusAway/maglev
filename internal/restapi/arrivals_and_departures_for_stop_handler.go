@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
@@ -45,39 +44,9 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 
 	query := r.URL.Query()
 
-	if val := query.Get("minutesAfter"); val != "" {
-		if minutes, err := strconv.Atoi(val); err == nil {
-			paramAfter := time.Duration(minutes) * time.Minute
-			if paramAfter < 0 {
-				addError("minutesAfter", "must be a non-negative integer")
-			} else {
-				params.After = min(paramAfter, maxAfter)
-			}
-		} else {
-			addError("minutesAfter", "must be a valid integer")
-		}
-	}
-
-	if val := query.Get("minutesBefore"); val != "" {
-		if minutes, err := strconv.Atoi(val); err == nil {
-			paramBefore := time.Duration(minutes) * time.Minute
-			if paramBefore < 0 {
-				addError("minutesBefore", "must be a non-negative integer")
-			} else {
-				params.Before = min(paramBefore, maxBefore)
-			}
-		} else {
-			addError("minutesBefore", "must be a valid integer")
-		}
-	}
-
-	if val := query.Get("time"); val != "" {
-		if timeMs, err := strconv.ParseInt(val, 10, 64); err == nil {
-			params.Time = time.Unix(timeMs/1000, (timeMs%1000)*1000000)
-		} else {
-			addError("time", "must be a valid Unix timestamp in milliseconds")
-		}
-	}
+	params.After = parseMinutesValue(query, "minutesAfter", params.After, maxAfter, addError)
+	params.Before = parseMinutesValue(query, "minutesBefore", params.Before, maxBefore, addError)
+	params.Time = parseEpochMillisValue(query, "time", params.Time, addError)
 
 	return params, fieldErrors
 }
