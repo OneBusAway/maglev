@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -2603,4 +2605,94 @@ func TestTripsForRouteHandler_DuplicatedTripLookupFailures(t *testing.T) {
 		}
 		assert.True(t, found, "duplicated trip entry should be present in response list")
 	})
+}
+
+type shapeFetchFailureDB struct {
+	gtfsdb.DBTX
+	failWith error
+}
+
+func (f *shapeFetchFailureDB) QueryContext(
+	ctx context.Context,
+	query string,
+	args ...any,
+) (*sql.Rows, error) {
+	if strings.Contains(query, "-- name: GetShapePointsByTripID :many") {
+		return nil, f.failWith
+	}
+
+	return f.DBTX.QueryContext(ctx, query, args...)
+}
+
+func TestTripsForRouteHandler_ShapeLookupFailureDegradesGracefully(t *testing.T) {
+	api := createTestApiWithGTFSFixture(
+		t,
+		clock.NewMockClock(tripsForRouteTestClock),
+		"trips-for-route-shape-error.zip",
+		shapedTripsForRouteFiles(),
+	)
+
+	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(&shapeFetchFailureDB{
+		DBTX:     api.GtfsManager.GtfsDB.DB,
+		failWith: errors.New("forced shape lookup failure"),
+	})
+
+	var logBuf bytes.Buffer
+	previousLogger := slog.Default()
+
+	slog.SetDefault(
+		logging.NewStructuredLogger(&logBuf, slog.LevelWarn),
+	)
+
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+	})
+
+	combinedRouteID := utils.FormCombinedID(
+		tripsForRouteAgencyID,
+		tripsForRouteRouteID,
+	)
+
+	url := fmt.Sprintf(
+		"/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=false&includeTrip=false&time=%d",
+		combinedRouteID,
+		tripsForRouteTestClock.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1)
+
+	require.NotNil(t, model.Data.List[0].Schedule)
+	require.Len(t, model.Data.List[0].Schedule.StopTimes, 2)
+
+	for _, stopTime := range model.Data.List[0].Schedule.StopTimes {
+		assert.Zero(t, stopTime.DistanceAlongTrip)
+	}
+
+	assert.Contains(
+		t,
+		logBuf.String(),
+		"failed to get shape points for schedule",
+	)
+
+	assert.Contains(
+		t,
+		logBuf.String(),
+		"forced shape lookup failure",
+	)
+}
+
+func shapedTripsForRouteFiles() map[string]string {
+	files := basicTripsForRouteFiles()
+
+	files["trips.txt"] = "route_id,service_id,trip_id,trip_headsign,direction_id,block_id,shape_id\n" +
+		tripsForRouteRouteID + ",tfr-svc," + tripsForRouteTripID + "," + tripsForRouteHeadsign + ",0,tfr-block,tfr-shape\n"
+
+	files["shapes.txt"] = "shape_id,shape_pt_sequence,shape_pt_lat,shape_pt_lon,shape_dist_traveled\n" +
+		"tfr-shape,0,37.7749,-122.4194,0\n" +
+		"tfr-shape,1,37.7849,-122.4094,1400\n"
+
+	return files
 }

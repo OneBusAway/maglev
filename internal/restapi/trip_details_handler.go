@@ -12,6 +12,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -47,13 +48,13 @@ const (
 
 // parseEpochOrLayoutTime parses a param accepting either a Unix timestamp in
 // milliseconds or a timestamp in the given layout. A missing param yields a nil
-// time and no error; ok is false only when a supplied value matches neither form.
+// time and no error; epochs must contain only ASCII digits.
 func parseEpochOrLayoutTime(value, layout string, loc *time.Location) (parsed *time.Time, ok bool) {
 	if value == "" {
 		return nil, true
 	}
 
-	if epochMillis, err := strconv.ParseInt(value, 10, 64); err == nil {
+	if epochMillis, ok := utils.ParseEpochMillis(value); ok {
 		fromEpoch := time.UnixMilli(epochMillis)
 		return &fromEpoch, true
 	}
@@ -72,7 +73,7 @@ func parseEpochOrLayoutTime(value, layout string, loc *time.Location) (parsed *t
 // agencies at a positive UTC offset.
 func localizeTripTimes(params *TripParams, loc *time.Location) {
 	if params.ServiceDate != nil {
-		localized := params.ServiceDate.In(loc)
+		localized := servicedate.FromInstant(*params.ServiceDate, loc).Midnight(loc)
 		params.ServiceDate = &localized
 	}
 	if params.Time != nil {

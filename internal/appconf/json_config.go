@@ -49,6 +49,16 @@ type JSONConfig struct {
 	TLSKeyPath       string         `json:"tls-key-path"`
 }
 
+// DefaultProtectedAPIKeys returns the protected API keys used when none are
+// configured. Only development and test get a default; production must
+// supply its own keys.
+func DefaultProtectedAPIKeys(env string) []string {
+	if env == "development" || env == "test" {
+		return []string{"protected-test-key"}
+	}
+	return nil
+}
+
 // setDefaults applies default values to the JSON config if fields are missing or zero
 func (j *JSONConfig) setDefaults() {
 	if j.Port == 0 {
@@ -60,8 +70,8 @@ func (j *JSONConfig) setDefaults() {
 	if len(j.ApiKeys) == 0 {
 		j.ApiKeys = []string{"test"}
 	}
-	if len(j.ProtectedApiKeys) == 0 && (j.Env == "development" || j.Env == "test") {
-		j.ProtectedApiKeys = []string{"protected-test-key"}
+	if len(j.ProtectedApiKeys) == 0 {
+		j.ProtectedApiKeys = DefaultProtectedAPIKeys(j.Env)
 	}
 	if len(j.ExemptApiKeys) == 0 {
 		j.ExemptApiKeys = []string{"org.onebusaway.iphone"}

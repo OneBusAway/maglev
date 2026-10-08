@@ -121,7 +121,11 @@ func main() {
 			Env:           envFlag,
 			ApiKeys:       ParseAPIKeys(apiKeysFlag),
 			ExemptApiKeys: ParseAPIKeys(exemptApiKeysFlag),
-			RateLimit:     cfg.RateLimit,
+			// These fields have no flags, so set them before validation.
+			ProtectedApiKeys: appconf.DefaultProtectedAPIKeys(envFlag),
+			LogLevel:         "info",
+			LogFormat:        "text",
+			RateLimit:        cfg.RateLimit,
 			GtfsStaticFeed: appconf.GtfsStaticFeed{
 				URL:             gtfsCfg.GtfsURL,
 				AuthHeaderName:  gtfsCfg.StaticAuthHeaderKey,
@@ -160,10 +164,6 @@ func main() {
 			os.Exit(1)
 		}
 		gtfsCfg = gtfsConfigFromData(gtfsCfgData)
-
-		// Set verbosity flags (CLI specific)
-		cfg.LogLevel = "info"
-		cfg.LogFormat = "text"
 	}
 
 	// Handle dump-config flag
