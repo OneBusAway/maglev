@@ -63,9 +63,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	now := api.Clock.Now().In(loc)
 	serviceDay := serviceDayFromQueryDate(dateParam, loc, now)
-	// GTFS offsets are added to the service-day start. Reading the calendar
-	// date off that instant is wrong when the clocks spring forward: Start
-	// falls on the previous evening.
+	// GTFS offsets are added to the service-day start. entry.date is the
+	// requested instant: a YYYY-MM-DD date echoes local midnight.
 	serviceStart := serviceDay.Start(loc)
 	var responseDate int64
 
@@ -76,7 +75,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		// Echo the exact Unix timestamp if provided
 		responseDate = unixMillis
 	} else {
-		responseDate = serviceStart.UnixMilli()
+		responseDate = serviceDay.Midnight(loc).UnixMilli()
 	}
 
 	targetDate := serviceDay.String()
@@ -684,6 +683,8 @@ func serviceDayFromQueryDate(dateParam string, loc *time.Location, now time.Time
 	if unixMillis, err := strconv.ParseInt(dateParam, 10, 64); err == nil {
 		return servicedate.FromInstant(time.UnixMilli(unixMillis), loc)
 	}
-	parsed, _ := time.ParseInLocation("2006-01-02", dateParam, loc)
+	// A calendar date has no time of day. Parsing it in a zone that skips
+	// local midnight, such as Santiago or Havana, lands on the previous day.
+	parsed, _ := time.Parse("2006-01-02", dateParam)
 	return servicedate.Of(parsed)
 }

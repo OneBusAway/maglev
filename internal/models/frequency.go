@@ -51,13 +51,6 @@ func NewFrequencyFromServiceStart(dbFreq gtfsdb.Frequency, serviceStart time.Tim
 	}
 }
 
-// NewFrequencyWindowFromDB converts a database Frequency row's window into absolute times,
-// for the frequency shapes that carry a window but no exactTimes field. See
-// NewFrequencyFromDB for the unit conventions involved.
-func NewFrequencyWindowFromDB(dbFreq gtfsdb.Frequency, serviceDate time.Time) FrequencyWindow {
-	return frequencyWindowFrom(dbFreq, servicedate.OffsetBase(serviceDate))
-}
-
 func frequencyWindowFrom(dbFreq gtfsdb.Frequency, startOfDay time.Time) FrequencyWindow {
 	return FrequencyWindow{
 		StartTime: NewModelTime(startOfDay.Add(time.Duration(dbFreq.StartTime))),

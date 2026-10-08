@@ -346,6 +346,24 @@ const (
 	maxUnixMillis = int64(32503680000000) // year 3000
 )
 
+// ParseEpochMillis parses a non-empty string of ASCII digits as Unix milliseconds.
+// It returns false for signs, non-digit characters, or values that overflow int64.
+func ParseEpochMillis(value string) (int64, bool) {
+	if value == "" {
+		return 0, false
+	}
+	for _, char := range value {
+		if !isASCIIDigit(char) {
+			return 0, false
+		}
+	}
+	epochMillis, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return epochMillis, true
+}
+
 // ParseDate parses date strings in YYYY-MM-DD format or as a Unix millisecond integer.
 // It returns a time.Time set to midnight (start of day) in the provided location.
 func ParseDate(date string, loc *time.Location) (time.Time, error) {

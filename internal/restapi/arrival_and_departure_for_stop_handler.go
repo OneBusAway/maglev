@@ -76,7 +76,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 
 	// Validate time
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
-		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
+		if timeMs, ok := utils.ParseEpochMillis(timeStr); ok {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
 		} else {
@@ -91,7 +91,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 
 	// Validate serviceDate
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
-		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
+		if serviceDateMs, ok := utils.ParseEpochMillis(serviceDateStr); ok {
 			serviceDate := time.Unix(serviceDateMs/1000, 0)
 			params.ServiceDate = &serviceDate
 		} else {
@@ -545,7 +545,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			Name:               stopData.Name.String,
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
-			Code:               stopData.Code.String,
+			Code:               nulls.StringOrDefault(stopData.Code, stopData.ID),
 			Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),

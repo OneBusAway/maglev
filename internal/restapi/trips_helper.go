@@ -427,7 +427,7 @@ func selectFrequencyFromStart(freqs []gtfsdb.Frequency, serviceStart, effectiveT
 // succeeds; errors propagate.
 func (api *RestAPI) fetchFrequenciesForTrips(ctx context.Context, tripIDs []string) (map[string][]gtfsdb.Frequency, error) {
 	freqMap := make(map[string][]gtfsdb.Frequency, len(tripIDs))
-	allFreqs, err := queryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips)
+	allFreqs, err := utils.QueryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips)
 	if err != nil {
 		return nil, err
 	}
@@ -1346,10 +1346,11 @@ const (
 // the query day would put serviceDate and the trip's stop-time offsets a day
 // apart.
 type serviceDateResolver struct {
-	queryDayMidnight    time.Time
-	sinceMidnightNs     int64
-	queryDayServices    map[string]struct{}
-	previousDayServices map[string]struct{}
+	queryDayMidnight     time.Time
+	sinceStartNs         int64
+	previousSinceStartNs int64
+	queryDayServices     map[string]struct{}
+	previousDayServices  map[string]struct{}
 }
 
 // serviceIDsByDay carries the service IDs active on the query day and the day
@@ -1362,12 +1363,25 @@ type serviceIDsByDay struct {
 // newServiceDateResolverFor builds a resolver from the service IDs the caller
 // already fetched for the query day and the day before it.
 func newServiceDateResolverFor(queryDayMidnight, currentTime time.Time, services serviceIDsByDay) *serviceDateResolver {
+	sinceStartNs, previousSinceStartNs := serviceStartOffsets(queryDayMidnight, currentTime)
 	return &serviceDateResolver{
-		queryDayMidnight:    queryDayMidnight,
-		sinceMidnightNs:     wallClockSinceMidnightNs(currentTime),
-		queryDayServices:    serviceIDSet(services.QueryDay),
-		previousDayServices: serviceIDSet(services.PreviousDay),
+		queryDayMidnight:     queryDayMidnight,
+		sinceStartNs:         sinceStartNs,
+		previousSinceStartNs: previousSinceStartNs,
+		queryDayServices:     serviceIDSet(services.QueryDay),
+		previousDayServices:  serviceIDSet(services.PreviousDay),
 	}
+}
+
+// serviceStartOffsets measures currentTime from the service-day start of
+// queryDayMidnight and of the day before it. GTFS stop times use that start,
+// noon minus twelve hours, which is an hour off local midnight on a DST
+// transition day. A 24-hour day makes the previous offset exactly 24h later.
+func serviceStartOffsets(queryDayMidnight, currentTime time.Time) (int64, int64) {
+	loc := queryDayMidnight.Location()
+	queryDay := servicedate.Of(queryDayMidnight)
+	return currentTime.Sub(queryDay.Start(loc)).Nanoseconds(),
+		currentTime.Sub(queryDay.AddDays(-1).Start(loc)).Nanoseconds()
 }
 
 func serviceIDSet(serviceIDs []string) map[string]struct{} {
@@ -1411,18 +1425,18 @@ func (api *RestAPI) activeServiceIDsForDate(ctx context.Context, day time.Time) 
 
 // Resolve returns midnight of the service date trip belongs to.
 func (r *serviceDateResolver) Resolve(trip gtfsdb.Trip) time.Time {
-	if r.runsOn(r.queryDayServices, trip, r.sinceMidnightNs) {
+	if r.runsOn(r.queryDayServices, trip, r.sinceStartNs) {
 		return r.queryDayMidnight
 	}
-	if r.runsOn(r.previousDayServices, trip, r.sinceMidnightNs+int64(24*time.Hour)) {
+	if r.runsOn(r.previousDayServices, trip, r.previousSinceStartNs) {
 		return r.queryDayMidnight.AddDate(0, 0, -1)
 	}
 	return r.queryDayMidnight
 }
 
 // runsOn reports whether trip's service is active in services and its scheduled
-// span overlaps the running window [sinceMidnightNs-runningLate,
-// sinceMidnightNs+runningEarly], measured from that service day's midnight.
+// span overlaps the running window [sinceStartNs-runningLate,
+// sinceStartNs+runningEarly], measured from that service day's start.
 //
 // Overlap rather than containment: requiring the span to contain sinceMidnightNs
 // would classify a just-ended previous-day trip as not running and report it
@@ -1442,20 +1456,22 @@ func (r *serviceDateResolver) runsOn(services map[string]struct{}, trip gtfsdb.T
 	return startsBeforeWindowEnds && endsAfterWindowStarts
 }
 
-// serviceDay pairs the services active on one day with the time-since-midnight
-// offset a trip's scheduled span is measured against for that day.
+// serviceDay pairs the services active on one day with the offset from that
+// day's service-day start. Trip spans are GTFS durations from the same start.
 type serviceDay struct {
 	serviceIDs      []string
+	services        map[string]struct{}
 	sinceMidnightNs int64
+	midnight        time.Time
 }
 
 // ServiceDays returns the query day and the day before it. A trip belonging to
-// the previous service day is matched against the query moment offset by +24h,
-// since GTFS expresses its stop times relative to its own service date.
+// the previous service day is matched against the query moment measured from
+// that day's own start, which is 24h earlier only when the day is 24 hours long.
 func (r *serviceDateResolver) ServiceDays() []serviceDay {
 	return []serviceDay{
-		{serviceIDs: serviceIDSlice(r.queryDayServices), sinceMidnightNs: r.sinceMidnightNs},
-		{serviceIDs: serviceIDSlice(r.previousDayServices), sinceMidnightNs: r.sinceMidnightNs + int64(24*time.Hour)},
+		{serviceIDs: serviceIDSlice(r.queryDayServices), services: r.queryDayServices, sinceMidnightNs: r.sinceStartNs, midnight: r.queryDayMidnight},
+		{serviceIDs: serviceIDSlice(r.previousDayServices), services: r.previousDayServices, sinceMidnightNs: r.previousSinceStartNs, midnight: r.queryDayMidnight.AddDate(0, 0, -1)},
 	}
 }
 

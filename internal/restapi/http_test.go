@@ -34,16 +34,22 @@ var (
 	testDbPath              = filepath.Join("../../testdata", "raba-test.db")
 )
 
+func removeTestDb() {
+	_ = os.Remove(testDbPath)
+	_ = os.Remove(testDbPath + "-shm")
+	_ = os.Remove(testDbPath + "-wal")
+}
+
 // TestMain handles setup and cleanup for all tests in this package
 func TestMain(m *testing.M) {
 	// Clean up any leftover test database from interrupted/failed previous runs
-	_ = os.Remove(testDbPath)
+	removeTestDb()
 
 	// Run all tests
 	code := m.Run()
 
 	// Clean up test database after all tests complete
-	_ = os.Remove(testDbPath)
+	removeTestDb()
 
 	os.Exit(code)
 }

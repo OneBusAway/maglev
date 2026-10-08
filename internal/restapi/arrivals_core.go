@@ -675,15 +675,12 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 			stopAgencyID = agencyID
 		}
 
-		// NOTE: deliberately not buildStopModel — that helper defaults Code to
-		// the stop ID when stops.code is NULL, which would change this
-		// endpoint's existing output.
 		references.Stops = append(references.Stops, models.Stop{
 			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
 			Name:               stopData.Name.String,
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
-			Code:               stopData.Code.String,
+			Code:               nulls.StringOrDefault(stopData.Code, stopData.ID),
 			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),

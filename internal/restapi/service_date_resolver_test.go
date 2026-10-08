@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/servicedate"
 )
 
 // tripWithWindow builds a trip whose scheduled span runs from minHours to
@@ -28,10 +30,11 @@ func TestServiceDateResolver_Resolve(t *testing.T) {
 	// The query moment is 00:30 on the query day — the window where a trip could
 	// belong to either service date.
 	resolver := &serviceDateResolver{
-		queryDayMidnight:    queryDay,
-		sinceMidnightNs:     int64(30 * time.Minute),
-		queryDayServices:    map[string]struct{}{"weekday": {}},
-		previousDayServices: map[string]struct{}{"weekday": {}},
+		queryDayMidnight:     queryDay,
+		sinceStartNs:         int64(30 * time.Minute),
+		previousSinceStartNs: int64(30*time.Minute + 24*time.Hour),
+		queryDayServices:     map[string]struct{}{"weekday": {}},
+		previousDayServices:  map[string]struct{}{"weekday": {}},
 	}
 
 	tests := []struct {
@@ -111,10 +114,11 @@ func TestServiceDateResolver_PreviousDayServiceOnly(t *testing.T) {
 	queryDay := time.Date(2024, 3, 15, 0, 0, 0, 0, location)
 
 	resolver := &serviceDateResolver{
-		queryDayMidnight:    queryDay,
-		sinceMidnightNs:     int64(30 * time.Minute),
-		queryDayServices:    map[string]struct{}{"weekday": {}},
-		previousDayServices: map[string]struct{}{"friday-night": {}},
+		queryDayMidnight:     queryDay,
+		sinceStartNs:         int64(30 * time.Minute),
+		previousSinceStartNs: int64(30*time.Minute + 24*time.Hour),
+		queryDayServices:     map[string]struct{}{"weekday": {}},
+		previousDayServices:  map[string]struct{}{"friday-night": {}},
 	}
 
 	assert.Equal(t, queryDay.AddDate(0, 0, -1),
@@ -137,4 +141,23 @@ func TestNewServiceDateResolverFor(t *testing.T) {
 	assert.Equal(t, queryDay, resolver.Resolve(tripWithWindow("weekday", 0, 1)))
 	assert.Equal(t, queryDay.AddDate(0, 0, -1), resolver.Resolve(tripWithWindow("friday-night", 23, 26)))
 	assert.Equal(t, queryDay, resolver.Resolve(tripWithWindow("saturday", 0, 1)))
+}
+
+func TestNewServiceDateResolverFor_SpringForwardMeasuresFromServiceStart(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	day := servicedate.New(2026, time.March, 8)
+	now := time.Date(2026, time.March, 8, 1, 40, 0, 0, losAngeles)
+	resolver := newServiceDateResolverFor(day.Midnight(losAngeles), now, serviceIDsByDay{
+		QueryDay: []string{"sunday"},
+	})
+
+	assert.Equal(t, now.Sub(day.Start(losAngeles)).Nanoseconds(), resolver.sinceStartNs)
+	assert.Equal(t, now.Sub(day.AddDays(-1).Start(losAngeles)).Nanoseconds(), resolver.previousSinceStartNs)
+	assert.Equal(t, day.Midnight(losAngeles), resolver.Resolve(tripWithWindow("sunday", 2.5, 2+50.0/60)))
+
+	days := resolver.ServiceDays()
+	require.Len(t, days, 2)
+	assert.Equal(t, resolver.sinceStartNs, days[0].sinceMidnightNs)
+	assert.Equal(t, resolver.previousSinceStartNs, days[1].sinceMidnightNs)
 }
