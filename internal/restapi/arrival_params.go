@@ -4,6 +4,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // maxArrivalWindow caps minute-valued arrival-window parameters at one service
@@ -41,8 +43,8 @@ func parseEpochMillisValue(queryParams url.Values, key string, fallback time.Tim
 		return fallback
 	}
 
-	timeMs, err := strconv.ParseInt(values[0], 10, 64)
-	if err != nil {
+	timeMs, ok := utils.ParseEpochMillis(values[0])
+	if !ok {
 		addError(key, "must be a valid Unix timestamp in milliseconds")
 		return fallback
 	}
