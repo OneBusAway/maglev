@@ -508,8 +508,7 @@ func TestConnectionPoolTuning(t *testing.T) {
 		t.Skip("testdata/raba.zip not found")
 	}
 
-	tmpDir := filepath.Join(os.TempDir(), "maglev_pool_tuning")
-	require.NoError(t, os.MkdirAll(tmpDir, 0755))
+	tmpDir := t.TempDir()
 
 	const (
 		concurrency = 25
@@ -529,7 +528,6 @@ func TestConnectionPoolTuning(t *testing.T) {
 
 	for _, maxConns := range []int{5, 10, 25, 50} {
 		dbPath := filepath.Join(tmpDir, fmt.Sprintf("raba_pool_%d.db", maxConns))
-		_ = os.Remove(dbPath)
 
 		cfg := Config{DBPath: dbPath, Env: appconf.Development}
 		client, err := NewClient(cfg)
@@ -588,7 +586,6 @@ func TestConnectionPoolTuning(t *testing.T) {
 
 		poolStats := client.DB.Stats()
 		_ = client.Close()
-		_ = os.Remove(dbPath)
 
 		if len(samples) == 0 {
 			continue
