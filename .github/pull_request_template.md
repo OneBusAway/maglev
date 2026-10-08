@@ -1,149 +1,58 @@
+<!-- maglev-pr-template:v1 -->
+<!-- ^ Keep the marker line above this comment.
+
+     Draft pull requests may leave boxes unchecked. Before marking a pull request
+     ready for review, check every box under Checklist.
+
+     An explanation does not replace a required check. If a statement is not true
+     yet, keep the pull request as Draft.
+
+     Everything else, including these guidance comments, is yours to delete. -->
+
 Fixes #
-<!-- Use "Part of #N" instead if this PR doesn't fully close the issue. -->
+<!-- An issue a maintainer has triaged or assigned to you (see CONTRIBUTING.md). Use "Part of #N" if this doesn't fully close it. -->
 
-## Summary
+## What it does
 
-<!--
-1–3 short bullets: what problem this solves and what the PR does about it,
-at a glance. Save the reasoning for "Understanding" below.
-If this PR's behavior differs from other handlers (response envelope,
-error handling, reference building, etc.) or from the OpenAPI spec
-(testdata/openapi.yml), call it out here so the reviewer can decide
-whether to fix the code or the spec.
--->
+<!-- 1–3 sentences: the problem and the fix. Call out any behavior that differs from other handlers or from testdata/openapi.yml. -->
 
--
+## Root cause
 
-## Changes
-
-<!--
-The WHAT: one bullet per logical change, grouped by file or subsystem.
-Required, even for small PRs (1–2 bullets is fine).
--->
-
--
-
-**Size:** ~___ lines changed
-<!--
-CONTRIBUTING.md targets ≤200 lines. If this is larger, briefly explain
-why it can't be split into one PR per issue.
--->
-
-## Understanding
-
-<!--
-Answer in your own words, 1–3 sentences each. Reviewers may ask follow-up
-questions.
--->
-
-**Root cause:** <!-- For bug fixes: why did the bug happen, not just what you changed. For features/refactors: what constraint or gap drove this. -->
-
-**Alternatives considered:** <!-- What else could fix this, and why you chose this approach. -->
-
-**Riskiest part of this change:** <!-- Where would you look first if it broke? -->
+<!-- In your own words. For a bug fix: why it happened. For a feature: the gap it fills. -->
 
 ## Testing
 
-<!--
-CI already runs fmt, go vet (both build tags), the test suite (CGO build
-only), coverage, and the OpenAPI check, so don't list those. Describe
-what YOU verified beyond CI: new/changed tests and the cases they cover,
-and any manual checks, e.g.:
-- `go test -tags "sqlite_fts5 sqlite_math_functions" ./internal/restapi -run TestArrivalAndDeparture`
-- Manual: hit `/api/where/...` against a local run and confirm <expected>
--->
+<!-- What you actually ran. Paste real output, not descriptions. CI already runs fmt, vet and the tests. -->
 
--
+- **Test failing on `main` before this change:** <!-- The failing assertion. Write "n/a" if this isn't a bug fix. -->
+- **Manual check:** <!-- The request or command you ran, and what you saw. -->
 
 ## Response comparison (delete if no Java-served response changed)
 
-<!--
-Required whenever this PR changes the response of an endpoint that the
-Java OneBusAway server also serves. Show Maglev's output side-by-side
-with the Java production server for the same request, both before this
-PR and after it.
+<!-- The same request against Maglev and Java. JSON (wrap long blocks in <details>), screenshots or validator output are all fine. -->
 
-Any of these is fine — pick whichever makes the diff easiest to read:
-  - Screenshot of Maglev validator output
-  - Screenshots (Postman, browser, etc.)
-  - Fenced JSON blocks, wrapped in <details> to keep the page readable:
+- **Request URL(s):**
+- **Java server, feeds and date checked:** <!-- If you read Java's source instead of running it, say so and link file:line. -->
+- **Maglev before:**
+- **Maglev after:**
+- **Java:**
+- **If Maglev intentionally differs from Java:** <!-- Why Java is wrong. Link the onebusaway-application-modules issue if one exists. -->
 
-    <details><summary>Maglev response</summary>
+## Checklist
 
-    ```json
-    { ... }
-    ```
+**Ready-for-review requirement:** Every box must be checked. If any statement is not true, keep the pull request
+as Draft.
 
-    </details>
--->
+- [ ] This PR addresses one issue.
+- [ ] It is under ~200 changed lines, or the description says why it can't be split.
+- [ ] For a bug fix, the new or changed test fails on `main` and passes on this branch.
+- [ ] Each commit is one logical change with a clear message.
+- [ ] I did not hand-edit `gtfsdb/` (sqlc-generated) or `testdata/openapi.yml` (synced from upstream).
+- [ ] Handlers pass `r.Context()` to DB/service calls, not `context.Background()`.
+- [ ] The response comparison above is filled in, or this PR doesn't change a Java-served response.
+- [ ] Any new endpoint matches `testdata/openapi.yml`, or an issue asking for it is open on OneBusAway/sdk-config.
+- [ ] I read every line of this diff and can explain it if asked.
 
-**Region / production server:**
-**GTFS static feed(s):**
-**GTFS-RT feed(s):**
-**Endpoint(s) exercised:**
-<!-- If running a production server locally, also mention which gtfs-static / gtfs-rt feeds + general configs you used -->
+## Notes for reviewers (optional)
 
-**Maglev vs Java — before this PR:**
-
-<!-- Paste JSON, drop a screenshot, or link the validator output. -->
-
-**Maglev vs Java — after this PR:**
-
-<!-- Paste JSON, drop a screenshot, or link the validator output. -->
-
-### Java-side bug (delete if Maglev matches Java)
-
-<!--
-Fill this in only if Java's response is wrong and Maglev is intentionally
-diverging to do the right thing. Link the OneBusAway/onebusaway-application-modules
-issue or PR if one exists.
--->
-
-- **Java behavior:**
-- **Why it's wrong:**
-- **Maglev behavior (and source of truth):**
-- **Reproduction:**
-
-## New endpoint checklist (delete if not adding an endpoint)
-
-<!-- Mirrors the "New Endpoint Implementation Workflow" in CLAUDE.md. -->
-
-- [ ] Behavior matches the OpenAPI spec (`testdata/openapi.yml`)
-- [ ] Any new sqlc queries live in `gtfsdb/query.sql`, and `make models`
-      was run
-- [ ] Response models added under `internal/models/` with JSON tags
-      matching the production API field names exactly
-- [ ] Handler follows the patterns in `internal/restapi/` (ID parsing
-      via `utils.Extract*`, references built via
-      `reference_utils.go`, errors via `sendNotFound` / `serverErrorResponse`)
-- [ ] Route registered in `internal/restapi/routes.go` behind
-      `rateLimitAndValidateAPIKey`
-- [ ] Handler test added using `createTestApi(t)` +
-      `serveApiAndRetrieveEndpoint` / `callAPIHandler`; covers both the
-      success path and error cases (invalid ID, missing data)
-- [ ] Response comparison filled in above, if Java also serves this
-      endpoint (Maglev vs. Java production)
-- [ ] If the endpoint is not yet defined in the upstream OpenAPI spec,
-      an issue has been opened at
-      https://github.com/OneBusAway/sdk-config requesting that it be
-      added to `stainless/openapi.yml` (link the issue here):
-
-## Author checklist
-
-- [ ] `go vet -tags "sqlite_fts5 sqlite_math_functions" ./...` passes
-- [ ] `go vet -tags "purego" ./...` passes
-- [ ] `make test` passes
-- [ ] `go fmt ./...` was run and its changes committed
-- [ ] Each commit is one logical change with a clear message (subject ≤50 chars, capitalized)
-- [ ] No hand-edits under `gtfsdb/` (generated by sqlc)
-- [ ] Handlers pass `r.Context()` to DB/service calls, not `context.Background()`
-- [ ] SonarCloud cognitive-complexity check is passing
-- [ ] New branches/conditions have test coverage
-
-## Notes for reviewers
-
-<!--
-Optional. Anything that's easier to flag than to discover: known
-follow-ups, intentional scope limits, spec/wiki discrepancies, or a
-heads-up that a particular commit is worth reading first.
--->
+<!-- The riskiest part of this change, follow-ups, scope limits, spec/wiki discrepancies. -->
