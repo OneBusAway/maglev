@@ -1351,6 +1351,21 @@ func TestVehiclesForAgencyHandler_TripStatusSpecFields(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
+	// A trip update running 120s late, so scheduleDeviation and the stop offsets
+	// have a real value to carry rather than zero. Trips go in before the vehicle,
+	// since both are published under the same synthetic feed.
+	delay := 120 * time.Second
+	targetStopID, targetSequence := "P3", uint32(3)
+	api.GtfsManager.SetRealTimeTripsForTest([]gogtfs.Trip{{
+		ID: gogtfs.TripID{ID: "T1"},
+		StopTimeUpdates: []gogtfs.StopTimeUpdate{{
+			StopID:       &targetStopID,
+			StopSequence: &targetSequence,
+			Arrival:      &gogtfs.StopTimeEvent{Delay: &delay},
+			Departure:    &gogtfs.StopTimeEvent{Delay: &delay},
+		}},
+	}})
+
 	const vehicleID = "v_spec_fields"
 	// Parked at the third stop, past the turn, so the projection has real work.
 	vehicleLat, vehicleLon := float32(40.010), float32(-121.980)
@@ -1367,10 +1382,21 @@ func TestVehiclesForAgencyHandler_TripStatusSpecFields(t *testing.T) {
 	require.NotNil(t, entry.TripStatus)
 	status := entry.TripStatus
 
-	assert.NotEmpty(t, status.ClosestStop, "closestStop must be resolved")
-	assert.NotEmpty(t, status.NextStop, "nextStop must be resolved")
-	assert.Greater(t, status.TotalDistanceAlongTrip, 0.0, "totalDistanceAlongTrip comes from the shape")
-	assert.Greater(t, status.DistanceAlongTrip, 0.0, "distanceAlongTrip comes from the shape")
+	// The fixture is fully determined, so these are exact. At 12:15 the vehicle sits
+	// between P2 (12:10) and P3 (12:20), and the 120s deviation pushes both offsets
+	// that much later than the schedule alone would put them.
+	assert.Equal(t, "TA_P2", status.ClosestStop)
+	assert.Equal(t, -180, status.ClosestStopTimeOffset, "P2 was due 300s ago, running 120s late")
+	assert.Equal(t, "TA_P3", status.NextStop)
+	assert.Equal(t, 420, status.NextStopTimeOffset, "P3 is due in 300s, running 120s late")
+	assert.Equal(t, 120, status.ScheduleDeviation, "comes from the trip update")
+
+	// Distances are derived from the shape, so they are compared with a tolerance
+	// rather than pinned to the last decimal.
+	assert.InDelta(t, 3364.43, status.TotalDistanceAlongTrip, 1.0, "the shape's full length")
+	assert.InDelta(t, 2252.13, status.DistanceAlongTrip, 1.0, "the vehicle's position along the shape")
+	assert.InDelta(t, 1272.01, status.ScheduledDistanceAlongTrip, 1.0, "where the schedule alone would put it")
+
 	assert.True(t, status.Predicted, "a fresh vehicle is real-time tracked")
 	assert.False(t, status.Scheduled, "scheduled must stay the inverse of predicted")
 
