@@ -48,6 +48,39 @@ func BenchmarkArrivalsAndDeparturesForStop(b *testing.B) {
 	}
 }
 
+// Benchmark arrivals-and-departures-for-location on the same RABA window as
+// the for-stop benchmark, so the two can be compared after trip status moves
+// to after maxCount. An empty list would measure the wrong path.
+func BenchmarkArrivalsAndDeparturesForLocation(b *testing.B) {
+	api, cleanup := createTestApiWithRealTimeData(b, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+	req := httptest.NewRequest(http.MethodGet, arrivalsForLocationURL(), nil)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		b.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var warmup ArrivalsAndDeparturesForLocationResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &warmup); err != nil {
+		b.Fatalf("decode warmup response: %v", err)
+	}
+	if len(warmup.Data.Entry.ArrivalsAndDepartures) == 0 {
+		b.Fatal("no arrivals in the benchmark window")
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+	}
+}
+
 // Benchmark stops-for-location (high-traffic lookup).
 func BenchmarkStopsForLocation(b *testing.B) {
 	api := createTestApi(b)
