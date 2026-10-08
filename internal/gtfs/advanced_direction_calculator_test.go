@@ -119,7 +119,7 @@ func TestCalculateStopDirectionResultCache(t *testing.T) {
 	assert.Equal(t, "", result, "should return empty for stop with no direction data")
 
 	// The empty result should be cached (negative cache) — verify via sync.Map
-	cached, ok := calc.directionResults.Load("nonexistent-stop")
+	cached, ok := calc.cache.Load().directionResults.Load("nonexistent-stop")
 	assert.True(t, ok, "empty result should be cached in directionResults")
 	assert.Equal(t, "", cached.(string), "cached value should be empty string")
 
@@ -148,7 +148,7 @@ func TestTransientDBError_NotCached(t *testing.T) {
 	assert.Equal(t, "", result, "should return empty string on DB error")
 
 	// Critical check: ensure the failure was NOT permanently cached
-	_, cached := calc.directionResults.Load(stopID)
+	_, cached := calc.cache.Load().directionResults.Load(stopID)
 	assert.False(t, cached, "transient DB error result must not be cached in directionResults")
 }
 

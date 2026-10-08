@@ -28,28 +28,32 @@ type AdvancedDirectionCalculator struct {
 	shapeCache                 map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
 	initialized                atomic.Bool                                       // Tracks whether concurrent operations have started
 	cacheMutex                 sync.RWMutex                                      // Protects shapeCache map access
-	// directionResults caches computed stop directions.
-	// Only non-error results are cached; transient DB errors are never stored so that
-	// a recovered database will be retried on the next request.
-	// Lifecycle note: This map caches computed directions to reduce database load.
-	// It is explicitly cleared during GTFS reloads (via UpdateQueries) to prevent
-	// stale directions from persisting across dataset updates.
-	directionResults sync.Map           // Cached direction results (stopID -> string), includes negative cache
-	requestGroup     singleflight.Group // Prevents duplicate concurrent computations for the same stop
+	cache                      atomic.Pointer[directionCache]
+}
+
+// Each calculation retains its generation so work in flight during a reload cannot
+// populate the new caches or share a singleflight result with new requests.
+type directionCache struct {
+	directionResults sync.Map // stopID -> string, including unknown directions
+	tripDistances    sync.Map // tripID -> bool, including unusable sequences
+	requestGroup     singleflight.Group
+	tripGroup        singleflight.Group
 }
 
 // NewAdvancedDirectionCalculator creates a new advanced direction calculator
 func NewAdvancedDirectionCalculator(queries *gtfsdb.Queries) *AdvancedDirectionCalculator {
-	return &AdvancedDirectionCalculator{
+	calculator := &AdvancedDirectionCalculator{
 		queries:                    queries,
 		standardDeviationThreshold: defaultStandardDeviationThreshold,
 	}
+	calculator.cache.Store(&directionCache{})
+	return calculator
 }
 
-// ClearCache clears the direction result cache so stale entries from old GTFS
-// data are not served.
+// ClearCache replaces direction and trip validation caches after a GTFS reload.
+// In-flight calculations can only write to the retired generation.
 func (adc *AdvancedDirectionCalculator) ClearCache() {
-	adc.directionResults.Clear()
+	adc.cache.Store(&directionCache{})
 }
 
 // SetShapeCache is retained exclusively for use by the DirectionPrecomputer during startup.
@@ -95,6 +99,52 @@ func shapeDistancesCanLocateAStop(points []gtfsdb.GetShapePointsWithDistanceRow)
 	return withDistance >= 2
 }
 
+// stopDistancesCanLocateStops checks supplied distances in stop_sequence order.
+// Missing values do not disqualify increasing supplied values; those occurrences
+// still use geographic matching. A single value cannot establish trip progress.
+func stopDistancesCanLocateStops(rows []gtfsdb.StopTime) bool {
+	count := 0
+	previous := 0.0
+	for _, row := range rows {
+		distance := row.ShapeDistTraveled
+		if !distance.Valid {
+			continue
+		}
+		value := distance.Float64
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+		if count > 0 && value <= previous {
+			return false
+		}
+		previous = value
+		count++
+	}
+	return count >= 2
+}
+
+func (adc *AdvancedDirectionCalculator) tripStopDistancesUsable(ctx context.Context, tripID string, cache *directionCache) (bool, error) {
+	if cached, ok := cache.tripDistances.Load(tripID); ok {
+		return cached.(bool), nil
+	}
+	value, err, _ := cache.tripGroup.Do(tripID, func() (any, error) {
+		if cached, ok := cache.tripDistances.Load(tripID); ok {
+			return cached.(bool), nil
+		}
+		rows, err := adc.queries.GetStopTimesForTrip(ctx, tripID)
+		if err != nil {
+			return false, err
+		}
+		usable := stopDistancesCanLocateStops(rows)
+		cache.tripDistances.Store(tripID, usable)
+		return usable, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return value.(bool), nil
+}
+
 // CalculateStopDirection computes the direction for a stop using the Java algorithm
 func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Context, stopID string, gtfsDirection ...sql.NullString) string {
 	if len(gtfsDirection) > 0 && gtfsDirection[0].Valid && gtfsDirection[0].String != "" {
@@ -104,7 +154,8 @@ func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Conte
 	}
 
 	// Check the in-memory result cache (includes negative cache for empty results)
-	if cached, ok := adc.directionResults.Load(stopID); ok {
+	cache := adc.cache.Load()
+	if cached, ok := cache.directionResults.Load(stopID); ok {
 		return cached.(string)
 	}
 
@@ -113,20 +164,20 @@ func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Conte
 
 	// Fall back to computing from shapes, protected by singleflight
 	// This ensures concurrent requests for the SAME stopID don't hit the DB multiple times.
-	v, _, _ := adc.requestGroup.Do(stopID, func() (any, error) {
+	v, _, _ := cache.requestGroup.Do(stopID, func() (any, error) {
 		// Double-check cache inside the singleflight in case another goroutine just finished it
-		if cached, ok := adc.directionResults.Load(stopID); ok {
+		if cached, ok := cache.directionResults.Load(stopID); ok {
 			return cached.(string), nil
 		}
 
 		// Actually compute it (Hits the DB)
-		computedDir, err := adc.computeFromShapes(context.WithoutCancel(ctx), stopID)
+		computedDir, err := adc.computeFromShapesWithCache(context.WithoutCancel(ctx), stopID, cache)
 
 		// Only cache when there was no transient error. A transient error (e.g. DB
 		// connection lost) must not permanently poison the cache; omitting it here
 		// means the next request will retry the DB.
 		if err == nil {
-			adc.directionResults.Store(stopID, computedDir)
+			cache.directionResults.Store(stopID, computedDir)
 		}
 
 		// Intentionally return nil so singleflight shares the empty fallback result with concurrent callers.
@@ -187,6 +238,10 @@ func (adc *AdvancedDirectionCalculator) translateGtfsDirection(direction string)
 // data for the stop (safe to cache), or ("", err) on a transient database error
 // (must NOT be cached so the next request retries the DB).
 func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, stopID string) (string, error) {
+	return adc.computeFromShapesWithCache(ctx, stopID, adc.cache.Load())
+}
+
+func (adc *AdvancedDirectionCalculator) computeFromShapesWithCache(ctx context.Context, stopID string, cache *directionCache) (string, error) {
 	stopTrips, err := adc.queries.GetStopsWithShapeContext(ctx, stopID)
 	if err != nil {
 		slog.Warn("failed to get stop shape context",
@@ -220,13 +275,17 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 
 		shapeID := stopTrip.ShapeID.String
 		distTraveled := -1.0 // Use -1 to signal geographic matching
-		useGeo := false
+		useGeo := true
 
-		// Prefer shape_dist_traveled if available
-		if stopTrip.ShapeDistTraveled.Valid {
-			distTraveled = stopTrip.ShapeDistTraveled.Float64
-		} else {
-			useGeo = true
+		if stopTrip.ShapeDistTraveled.Valid && stopTrip.ShapeDistTraveled.Float64 >= 0 {
+			usable, err := adc.tripStopDistancesUsable(ctx, stopTrip.TripID, cache)
+			if err != nil {
+				return "", err
+			}
+			if usable {
+				distTraveled = stopTrip.ShapeDistTraveled.Float64
+				useGeo = false
+			}
 		}
 
 		// Check cache first

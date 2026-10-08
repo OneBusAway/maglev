@@ -227,8 +227,8 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 
 	manager.regionBounds = newRegionBounds
 
-	// Clear the direction calculator's cached results so stale entries from the
-	// pre-reload dataset aren't served
+	// Replace direction and trip-distance caches together for the new feed.
+	// In-flight calculations retain the retired cache generation.
 	if changed && manager.DirectionCalculator != nil {
 		manager.DirectionCalculator.ClearCache()
 	}
