@@ -122,6 +122,9 @@ type dstTripDetails struct {
 		ServiceDate int64         `json:"serviceDate"`
 		Frequency   *dstFrequency `json:"frequency"`
 	} `json:"status"`
+	Schedule *struct {
+		Frequency *dstFrequency `json:"frequency"`
+	} `json:"schedule"`
 }
 
 type dstTripDetailsResponse struct {
@@ -140,6 +143,9 @@ func assertDSTTripDetails(t *testing.T, entry dstTripDetails, start time.Time) {
 	assert.Equal(t, start.UnixMilli(), entry.Status.ServiceDate)
 	require.NotNil(t, entry.Status.Frequency)
 	assert.Equal(t, wantFrequencyStart, entry.Status.Frequency.StartTime)
+	require.NotNil(t, entry.Schedule)
+	require.NotNil(t, entry.Schedule.Frequency)
+	assert.Equal(t, wantFrequencyStart, entry.Schedule.Frequency.StartTime)
 }
 
 func TestTripDetails_AcceptsTheArrivalsServiceDateOnDSTServiceDays(t *testing.T) {
@@ -247,7 +253,7 @@ func TestTripEndpoints_ReportServiceDayStartOnDSTServiceDays(t *testing.T) {
 			}
 
 			resp, forVehicle := callAPIHandler[dstTripDetailsResponse](t, api, fmt.Sprintf(
-				"/api/where/trip-for-vehicle/%s.json?key=TEST", vehicleID))
+				"/api/where/trip-for-vehicle/%s.json?key=TEST&includeSchedule=true", vehicleID))
 			require.Equal(t, 200, resp.StatusCode)
 			assertDSTTripDetails(t, forVehicle.Data.Entry, start)
 		})
