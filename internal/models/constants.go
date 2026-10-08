@@ -32,6 +32,12 @@ const (
 	// MaxCountForRoutesForLocation is the routes-for-location ceiling; the endpoint
 	// silently clamps larger requests instead of rejecting them.
 	MaxCountForRoutesForLocation = 50
+	// DefaultMaxCountForArrivalsForLocation and MaxCountForArrivalsForLocation are
+	// the arrivals-and-departures-for-location default and ceiling. They are
+	// higher than MaxAllowedCount because that endpoint caps three lists
+	// (stops, arrivals, nearby stops) against a single value.
+	DefaultMaxCountForArrivalsForLocation = 250
+	MaxCountForArrivalsForLocation        = 1000
 )
 
 // RangeSearchBufferMeters provides a 50m tolerance for GPS inaccuracy and curve approximation.

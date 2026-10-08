@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -103,6 +104,12 @@ func assertConformance(t *testing.T, serverURL string, doc *openapi3.T, endpoint
 
 	statusCode, jsonBody := serveAndCaptureRawJSON(t, serverURL, endpointURL)
 	require.Equal(t, http.StatusOK, statusCode, "Expected 200 OK for %s, got %d", endpointURL, statusCode)
+
+	validateResponseSchema(t, doc, jsonBody, specEndpointPath)
+}
+
+func validateResponseSchema(t *testing.T, doc *openapi3.T, jsonBody any, specEndpointPath string) {
+	t.Helper()
 
 	schema := getResponseSchema(t, doc, specEndpointPath)
 	errs := validateJSONAgainstSchema(schema, jsonBody)
@@ -351,6 +358,25 @@ func TestOpenAPIConformance_LocationEndpoints(t *testing.T) {
 			assertConformance(t, server.URL, doc, tt.endpoint, tt.specPath)
 		})
 	}
+
+	// arrivals-and-departures-for-location pins a fixture-known time inside the
+	// RABA service window and requires at least one arrival, so an empty list
+	// cannot silently skip the arrival item schema.
+	t.Run("arrivals-and-departures-for-location", func(t *testing.T) {
+		endpoint := "/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=40.58&lon=-122.39&radius=5000" +
+			"&time=" + strconv.FormatInt(arrivalsTestClock.UnixMilli(), 10)
+
+		statusCode, jsonBody := serveAndCaptureRawJSON(t, server.URL, endpoint)
+		require.Equal(t, http.StatusOK, statusCode, "Expected 200 OK for %s, got %d", endpoint, statusCode)
+
+		data, _ := jsonBody["data"].(map[string]any)
+		entry, _ := data["entry"].(map[string]any)
+		arrivals, _ := entry["arrivalsAndDepartures"].([]any)
+		require.NotEmpty(t, arrivals,
+			"expected at least one arrival to exercise the item schema")
+
+		validateResponseSchema(t, doc, jsonBody, "/api/where/arrivals-and-departures-for-location.json")
+	})
 }
 
 // TestOpenAPIConformance_SearchEndpoints tests search endpoints.
