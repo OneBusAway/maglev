@@ -1299,3 +1299,213 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *t
 			"LA trip service date must be midnight in its own timezone")
 	}
 }
+func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *testing.T) {
+	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(queryTimeUTC)
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyPrimary = "AgencyPrimaryErr"
+		agencyInvalid = "AgencyInvalidTz"
+		sharedStop    = "StopSharedError"
+		routePrimary  = "RoutePrimaryErr"
+		routeInvalid  = "RouteInvalidErr"
+		tripInvalid   = "TripInvalidErr"
+		calID         = "service_cal_err"
+	)
+
+	defer func() {
+		conn, err := api.GtfsManager.GtfsDB.DB.Conn(context.Background())
+		if err == nil {
+			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = OFF")
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_times WHERE stop_id = ?", sharedStop)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM trips WHERE id = ?", tripInvalid)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM routes WHERE id IN (?, ?)", routePrimary, routeInvalid)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stops WHERE id = ?", sharedStop)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM calendars WHERE id = ?", calID)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM agencies WHERE id IN (?, ?)", agencyPrimary, agencyInvalid)
+			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
+			conn.Close()
+		}
+	}()
+
+	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyPrimary, Name: "Primary Agency", Url: "http://primary.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyInvalid, Name: "Invalid Agency", Url: "http://invalid.com", Timezone: "Not/A_Valid_Timezone",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: sharedStop, Name: nulls.String("Shared Stop"),
+		Lat: 47.6062, Lon: -122.3321,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: calID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20200101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routePrimary, AgencyID: agencyPrimary,
+		ShortName: nulls.String("Route-1"),
+		LongName:  nulls.String("Route One"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeInvalid, AgencyID: agencyInvalid,
+		ShortName: nulls.String("Route-2"),
+		LongName:  nulls.String("Route Two"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripInvalid, RouteID: routeInvalid, ServiceID: calID,
+		TripHeadsign: nulls.String("Loop"),
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripInvalid, StopID: sharedStop, StopSequence: 1,
+		ArrivalTime:   int64(15*time.Hour + 10*time.Minute),
+		DepartureTime: int64(15*time.Hour + 12*time.Minute),
+	})
+	require.NoError(t, err)
+
+	endpoint := arrivalsAndDeparturesURL(utils.FormCombinedID(agencyPrimary, sharedStop), nil)
+	resp, model := callAPIHandler[models.ResponseModel](t, api, endpoint)
+	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	require.Equal(t, http.StatusInternalServerError, model.Code)
+}
+
+func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySkipped(t *testing.T) {
+	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(queryTimeUTC)
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyPrimary = "AgencyPrimaryOK"
+		agencyMissing = "AgencyMissingRow"
+		sharedStop    = "StopSharedMissingAgency"
+		routePrimary  = "RoutePrimaryOK"
+		routeMissing  = "RouteMissingAgency"
+		tripPrimary   = "TripPrimaryOK"
+		tripMissing   = "TripMissingAgency"
+		calID         = "service_cal_ok"
+	)
+
+	defer func() {
+		conn, err := api.GtfsManager.GtfsDB.DB.Conn(context.Background())
+		if err == nil {
+			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = OFF")
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_times WHERE stop_id = ?", sharedStop)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM trips WHERE id IN (?, ?)", tripPrimary, tripMissing)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM routes WHERE id IN (?, ?)", routePrimary, routeMissing)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stops WHERE id = ?", sharedStop)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM calendars WHERE id = ?", calID)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM agencies WHERE id IN (?, ?)", agencyPrimary, agencyMissing)
+			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
+			conn.Close()
+		}
+	}()
+
+	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyPrimary, Name: "Primary Agency", Url: "http://primary-ok.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyMissing, Name: "Transient Agency", Url: "http://missing.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: sharedStop, Name: nulls.String("Shared Stop Missing Agency"),
+		Lat: 47.6062, Lon: -122.3321,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: calID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20200101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routePrimary, AgencyID: agencyPrimary,
+		ShortName: nulls.String("Route-OK"),
+		LongName:  nulls.String("Route OK"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeMissing, AgencyID: agencyMissing,
+		ShortName: nulls.String("Route-Missing"),
+		LongName:  nulls.String("Route Missing"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripPrimary, RouteID: routePrimary, ServiceID: calID,
+		TripHeadsign: nulls.String("Inbound"),
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripPrimary, StopID: sharedStop, StopSequence: 1,
+		ArrivalTime:   int64(15*time.Hour + 5*time.Minute),
+		DepartureTime: int64(15*time.Hour + 6*time.Minute),
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripMissing, RouteID: routeMissing, ServiceID: calID,
+		TripHeadsign: nulls.String("MissingAgencyTrip"),
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripMissing, StopID: sharedStop, StopSequence: 1,
+		ArrivalTime:   int64(15*time.Hour + 8*time.Minute),
+		DepartureTime: int64(15*time.Hour + 9*time.Minute),
+	})
+	require.NoError(t, err)
+
+	// Now delete the agency row with foreign keys disabled on a dedicated connection,
+	// leaving the route referencing a genuinely missing agency row (sql.ErrNoRows).
+	conn, err := api.GtfsManager.GtfsDB.DB.Conn(ctx)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, "DELETE FROM agencies WHERE id = ?", agencyMissing)
+	require.NoError(t, err)
+	conn.Close()
+
+	endpoint := arrivalsAndDeparturesURL(utils.FormCombinedID(agencyPrimary, sharedStop), url.Values{
+		"minutesBefore": {"5"},
+		"minutesAfter":  {"30"},
+	})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.Entry.ArrivalsAndDepartures, 1)
+	assert.Equal(t, utils.FormCombinedID(agencyPrimary, tripPrimary), model.Data.Entry.ArrivalsAndDepartures[0].TripID)
+}
