@@ -58,15 +58,30 @@ func TestSortArrivalsByBestTime(t *testing.T) {
 		Predicted:            false,
 		StopSequence:         1,
 	}
+	// Same best time and trip, inserted with the later stop first.
+	sameTripLaterStop := models.ArrivalAndDeparture{
+		TripID:               "agency_same",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(40 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         2,
+	}
+	sameTripEarlierStop := models.ArrivalAndDeparture{
+		TripID:               "agency_same",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(40 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         1,
+	}
 
 	arrivals := []models.ArrivalAndDeparture{
-		sameTimeLaterTrip, late, sameTimeEarlierTrip, onTime, scheduledOnly,
+		sameTimeLaterTrip, late, sameTimeEarlierTrip, sameTripLaterStop, sameTripEarlierStop, onTime, scheduledOnly,
 	}
 	sortArrivalsByBestTime(arrivals)
 
 	got := make([]string, len(arrivals))
+	gotStopSequences := make([]int, len(arrivals))
 	for i, a := range arrivals {
 		got[i] = a.TripID
+		gotStopSequences[i] = a.StopSequence
 	}
 	assert.Equal(t, []string{
 		"agency_scheduled",
@@ -74,7 +89,10 @@ func TestSortArrivalsByBestTime(t *testing.T) {
 		"agency_late",
 		"agency_a",
 		"agency_b",
+		"agency_same",
+		"agency_same",
 	}, got)
+	assert.Equal(t, []int{2, 1, 1, 4, 1, 1, 2}, gotStopSequences)
 }
 
 func assertArrivalsSortedByBestTime(t *testing.T, arrivals []models.ArrivalAndDeparture) {
