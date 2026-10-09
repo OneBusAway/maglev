@@ -280,6 +280,19 @@ func TestEnabledFeeds(t *testing.T) {
 	}
 }
 
+func TestConfigFeedAgencyFilters(t *testing.T) {
+	cfg := Config{RTFeeds: []RTFeedConfig{
+		{ID: "filtered", AgencyIDs: []string{"A", "B"}, TripUpdatesURL: "http://example.com/tu", Enabled: true},
+		{ID: "unfiltered", TripUpdatesURL: "http://example.com/tu", Enabled: true},
+		{ID: "disabled", AgencyIDs: []string{"A"}, TripUpdatesURL: "http://example.com/tu", Enabled: false},
+		{ID: "no-urls", AgencyIDs: []string{"A"}, Enabled: true},
+	}}
+
+	assert.Equal(t, map[string]map[string]bool{
+		"filtered": {"A": true, "B": true},
+	}, cfg.feedAgencyFilters(), "only enabled feeds with agency-ids get a filter")
+}
+
 func TestClearFeedData(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
@@ -291,6 +304,9 @@ func TestClearFeedData(t *testing.T) {
 		},
 		feedAlerts: map[string][]gtfs.Alert{
 			"test_feed": {{ID: "alert1"}},
+		},
+		feedUnattributedTrips: map[string][]gtfs.Trip{
+			"test_feed": {{ID: gtfs.TripID{ID: "ghost"}}},
 		},
 		feedLastUpdate: map[string]time.Time{
 			"test_feed": time.Now(),
@@ -308,6 +324,7 @@ func TestClearFeedData(t *testing.T) {
 	assert.Empty(t, manager.feedTrips["test_feed"], "feedTrips should be empty after clearing")
 	assert.Empty(t, manager.feedVehicles["test_feed"], "feedVehicles should be empty after clearing")
 	assert.Empty(t, manager.feedAlerts["test_feed"], "feedAlerts should be empty after clearing")
+	assert.NotContains(t, manager.feedUnattributedTrips, "test_feed", "feedUnattributedTrips should be removed after clearing")
 	assert.NotContains(t, manager.feedLastUpdate, "test_feed", "feedLastUpdate should be removed after clearing")
 	assert.Len(t, manager.GetRealTimeTrips(), 0, "Global trip lookup should be empty")
 	assert.Len(t, manager.GetRealTimeVehicles(), 0, "Global vehicle lookup should be empty")
