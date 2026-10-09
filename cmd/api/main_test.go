@@ -50,12 +50,13 @@ func TestMain_CommandLineFlagsPassValidation(t *testing.T) {
 		protectedAPIKeysEnv string
 		wantExitCode        int
 		wantOutput          string
+		wantProtectedKeys   string
 	}{
-		{"development uses default protected key", "-env development", "", 0, `"env": "development"`},
-		{"test uses default protected key", "-env test", "", 0, `"env": "test"`},
-		{"production accepts protected keys flag", "-env production -protected-api-keys prod-key", "", 0, `"env": "production"`},
-		{"production accepts protected keys env var", "-env production", "prod-key", 0, `"env": "production"`},
-		{"production requires a protected key", "-env production", "", 1, "protected-api-keys cannot be empty"},
+		{"development uses default protected key", "-env development", "", 0, `"env": "development"`, "***REDACTED*** (1 keys)"},
+		{"test uses default protected key", "-env test", "", 0, `"env": "test"`, "***REDACTED*** (1 keys)"},
+		{"production accepts protected keys flag", "-env production -protected-api-keys prod-key,prod-key-2", "", 0, `"env": "production"`, "***REDACTED*** (2 keys)"},
+		{"production accepts protected keys env var", "-env production", "prod-key, prod-key-2", 0, `"env": "production"`, "***REDACTED*** (2 keys)"},
+		{"production requires a protected key", "-env production", "", 1, "protected-api-keys cannot be empty", ""},
 	}
 
 	for _, tc := range tests {
@@ -65,6 +66,11 @@ func TestMain_CommandLineFlagsPassValidation(t *testing.T) {
 
 			assert.Equal(t, tc.wantExitCode, exitCode, output)
 			assert.Contains(t, output, tc.wantOutput)
+			if tc.wantProtectedKeys != "" {
+				assert.Contains(t, output, tc.wantProtectedKeys)
+				assert.NotContains(t, output, "prod-key")
+				assert.NotContains(t, output, "protected-test-key")
+			}
 		})
 	}
 }
