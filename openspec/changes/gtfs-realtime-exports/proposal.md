@@ -33,7 +33,7 @@ None; the project has no existing capability specs.
 
 - New HTTP routes and serializers in `internal/restapi/`, consuming the immutable realtime snapshot and static GTFS schedule data.
 - Reuse or extraction of existing prediction helpers, notably `trip_updates_helper.go`, `trips_helper.go`, and the arrival/departure prediction paths. Existing JSON API behavior should not change incidentally.
-- Protobuf bindings for the OBA headsign extensions, alongside existing GTFS-RT bindings; the dependency and generation approach remains a design concern.
+- Maglev-local schema and generated Go bindings for the two OBA headsign extensions, importing existing standard GTFS-RT types without adding OBA-specific bindings to `go-gtfs`.
 - Tests for binary/text semantic equivalence, authorization and parameters, freshness boundaries, multi-agency and route selection, sparse predictions, interlining, cancellations, and extension decoding.
 - Confirmed direct client benefit for inspected iOS vehicle and alert paths. No direct dependency on these exports was established for inspected Android, Wayfinder, or JS SDK revisions; no inspected client dependency was established for trip exports.
 - Legacy 2.7.1 source and controlled/public captures inform compatibility, but observed bugs and CDN behavior are not requirements. Specs describe the required behavior and acceptance examples directly; reference-source knowledge is not needed to understand the contract.

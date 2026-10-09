@@ -81,11 +81,20 @@ Carry service-instance identity and stop sequence through reconstruction, then a
 
 ### OBA headsign compatibility through extension-aware descriptors
 
-Obtain the authoritative OBA protobuf extension definitions associated with legacy `GtfsRealtimeOneBusAway`; preserve their field numbers, extendee types, and nested message definitions. Use generated or registered extension descriptors compatible with the existing protobuf runtime for both encoding and readable text output. Verify that the current GTFS-RT descriptors expose the needed extension ranges before selecting the binding-generation approach.
+Keep the OBA headsign schema and generated Go bindings in a dedicated Maglev-local internal package. Do not add OBA-specific types to `go-gtfs` or require a separate-repository change for headsign support. Generate Go bindings using `protoc` and `protoc-gen-go`, importing the existing `github.com/OneBusAway/go-gtfs/proto` types rather than generating another copy of standard GTFS-RT messages.
+
+Use the public [OBA schema](https://github.com/OneBusAway/onebusaway-gtfs-realtime-api/blob/b134b5428a2f63b511b80f2a6c534e0e8028ad54/src/main/proto/com/google/transit/realtime/gtfs-realtime-OneBusAway.proto) as the authoritative wire definition. Retain its license/attribution. The local schema needs the two headsign-bearing messages and their extensions, not registration of unrelated OBA extensions:
+
+- `transit_realtime.OneBusAwayTripUpdate.tripHeadsign` is string field 3; `transit_realtime.oba_trip_update` extends TripUpdate at field 1000.
+- `transit_realtime.OneBusAwayStopTimeUpdate.stopHeadsign` is string field 1; `transit_realtime.oba_stop_time_update` extends TripUpdate.StopTimeUpdate at field 1000.
+
+Adjust only Go package/import placement as needed; preserve protobuf names, field numbers, types, and extendees. The pinned standard descriptors already support the required extension ranges, and the existing NYCT stop extension uses field 1001. Import the local generated package where encoding/decoding requires extension registration so named protobuf text output works.
+
+An isolated runtime probe with these descriptors confirmed binary encoding, ordinary decoding without OBA registration, extension-aware decoding, and named protobuf-text roundtripping using Maglev's current dependency. This verifies runtime compatibility; generation of the actual local bindings remains implementation work.
 
 Do not substitute ordinary custom fields in the standard schema or assume that appending unknown binary fields alone gives named `.pbtext` extensions. Test with an extension-aware decoder as well as an ordinary GTFS-RT decoder. Match static stop headsigns by trip and stop visit; avoid an ambiguous first-stop-ID match on loops.
 
-**Alternative:** omit extensions, or only preserve opaque bytes. Neither meets the agreed binary and text headsign contract.
+**Alternatives:** shared-library OBA bindings would introduce unnecessary cross-repository coordination and broaden a reusable dependency with application-specific compatibility. Omitting extensions or preserving only opaque bytes would not meet the binary and named-text headsign contract.
 
 ### Legacy entity-ID conventions, separate from reconciliation identity
 
@@ -156,4 +165,3 @@ Rollback is reverting the new route registration and implementation; preserve ex
 ## Open Questions
 
 - Where should narrowly scoped ownership/field-retention support live: within Maglev or in the shared `go-gtfs` dependency? Either placement must meet the same contract and preserve existing consumers.
-- Should extension bindings be checked into Maglev or supplied through a compatible shared bindings package? The wire definitions and extension-aware serialization remain mandatory regardless of placement.
