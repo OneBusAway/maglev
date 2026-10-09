@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"sort"
 	"time"
 
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
@@ -118,6 +119,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
+	// Java's ArrivalAndDepartureComparator orders by predicted arrival when
+	// one exists, otherwise by scheduled arrival. Do this after buildArrival
+	// so the predicted times are already filled in.
+	sortArrivalsByBestTime(result.Arrivals)
+
 	// Nothing scheduled in the window: emit the bare envelope without paying
 	// for reference, alert or nearby-stop lookups.
 	if !result.Matched {
@@ -149,6 +155,31 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
 	response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nearbyStopIDs, topLevelSituationIDs, stopID, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// bestArrivalMillis is the instant Java sorts on: the predicted arrival when
+// the row is predicted, otherwise the scheduled arrival.
+func bestArrivalMillis(a models.ArrivalAndDeparture) int64 {
+	if a.Predicted {
+		return a.PredictedArrivalTime.UnixMilli()
+	}
+	return a.ScheduledArrivalTime.UnixMilli()
+}
+
+// sortArrivalsByBestTime orders arrivals by bestArrivalMillis, then by trip ID
+// so equal times come out the same on every request.
+func sortArrivalsByBestTime(arrivals []models.ArrivalAndDeparture) {
+	sort.SliceStable(arrivals, func(i, j int) bool {
+		left := bestArrivalMillis(arrivals[i])
+		right := bestArrivalMillis(arrivals[j])
+		if left != right {
+			return left < right
+		}
+		if arrivals[i].TripID != arrivals[j].TripID {
+			return arrivals[i].TripID < arrivals[j].TripID
+		}
+		return arrivals[i].StopSequence < arrivals[j].StopSequence
+	})
 }
 
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) []string {
