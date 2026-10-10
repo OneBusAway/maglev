@@ -59,8 +59,8 @@ Each exported vehicle SHALL carry its vehicle descriptor, position, and last-upd
 - **THEN** their entity IDs are `1` and `2`, and their payloads contain the corresponding coordinates, vehicle IDs, and update timestamps
 
 ### Requirement: Supported vehicle fields
-The export SHALL retain and export supplied bearing, speed, odometer, stop ID, current stop sequence, current status, congestion level, occupancy status, and occupancy percentage. Descriptor fields supplied for eligible vehicles SHALL also survive export. Unsupported future fields are not implicitly required.
+The export SHALL preserve bearing, speed, odometer, stop ID, current stop sequence/status, congestion level, occupancy status/percentage, and descriptor values already retained by the current vehicle model. Unavailable values SHALL NOT be invented. Additional standard-field ingestion/model expansion is deferred; agency ownership provenance remains required for selection.
 
-#### Scenario: Rich vehicle ingestion
-- **WHEN** a selected upstream vehicle supplies bearing, speed, odometer, stop sequence/status, congestion, and occupancy values
-- **THEN** those values survive ingestion and appear in its exported VehiclePosition
+#### Scenario: Rich retained vehicle
+- **WHEN** a selected vehicle record retains bearing, speed, odometer, stop sequence/status, congestion, and occupancy values
+- **THEN** those values appear in its exported VehiclePosition without requiring new standard-field retention in ingestion
