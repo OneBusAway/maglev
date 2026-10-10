@@ -357,8 +357,8 @@ Common nullable fields: `ShortName`, `LongName`, `Desc`, `Url`, `Color`, `TextCo
 
 ## Testing
 
-- Run single test: `go test ./path/to/package -run TestName`
-- Run tests with verbose output: `go test -v ./...`
+- Run single test: `CGO_ENABLED=1 go test -tags "sqlite_fts5 sqlite_math_functions" ./path/to/package -run TestName`
+- Run tests with verbose output: `CGO_ENABLED=1 go test -tags "sqlite_fts5 sqlite_math_functions" -v ./...`
 - Generate coverage: `make coverage` (opens HTML report in browser)
 
 Test files follow Go conventions with `_test.go` suffix and are co-located with the code they test.
