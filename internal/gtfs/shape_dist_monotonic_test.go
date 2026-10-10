@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -205,6 +206,39 @@ func TestShapeDistancesCanLocateAStop(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.usable, shapeDistancesCanLocateAStop(tt.rows))
+		})
+	}
+}
+
+func TestStopDistancesCanLocateStops(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []any
+		usable bool
+	}{
+		{"valid first zero", []any{0.0, 900.0, 2000.0}, true},
+		{"increasing with gaps", []any{0.0, nil, 2000.0, nil}, true},
+		{"all zero", []any{0.0, 0.0, 0.0}, false},
+		{"constant positive", []any{100.0, 100.0}, false},
+		{"decreasing", []any{0.0, 900.0, 800.0}, false},
+		{"repeat", []any{0.0, 900.0, 900.0}, false},
+		{"single value", []any{nil, 900.0, nil}, false},
+		{"all missing", []any{nil, nil}, false},
+		{"empty", nil, false},
+		{"negative", []any{-1.0, 0.0, 900.0}, false},
+		{"NaN", []any{0.0, math.NaN(), 900.0}, false},
+		{"positive infinity", []any{0.0, math.Inf(1)}, false},
+		{"negative infinity", []any{math.Inf(-1), 900.0}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows := make([]gtfsdb.StopTime, len(tt.values))
+			for i, value := range tt.values {
+				if distance, ok := value.(float64); ok {
+					rows[i].ShapeDistTraveled = sql.NullFloat64{Float64: distance, Valid: true}
+				}
+			}
+			assert.Equal(t, tt.usable, stopDistancesCanLocateStops(rows))
 		})
 	}
 }
