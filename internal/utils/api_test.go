@@ -1030,47 +1030,6 @@ func TestTruncateComment(t *testing.T) {
 	}
 }
 
-func TestValidateNumericParam(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "Empty string",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "Valid float",
-			input:    "47.6097",
-			expected: "47.6097",
-		},
-		{
-			name:     "Valid negative float",
-			input:    "-122.3331",
-			expected: "-122.3331",
-		},
-		{
-			name:     "Invalid text",
-			input:    "invalid-coord",
-			expected: "",
-		},
-		{
-			name:     "Mixed text and numbers",
-			input:    "12abc",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ValidateNumericParam(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestParseRequiredFloatParam(t *testing.T) {
 	t.Run("missing key returns error", func(t *testing.T) {
 		params := url.Values{}
@@ -1111,6 +1070,41 @@ func TestParseRequiredFloatParam(t *testing.T) {
 		assert.Contains(t, fieldErrors["lat"][0], "Missing required field")
 		assert.Equal(t, []string{"some error"}, fieldErrors["other"])
 	})
+}
+
+func TestParseEpochMillis(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		wantEpoch int64
+		wantOK    bool
+	}{
+		{name: "zero", value: "0", wantOK: true},
+		{name: "positive", value: "1609459200123", wantEpoch: 1609459200123, wantOK: true},
+		{name: "leading zeros", value: "0005", wantEpoch: 5, wantOK: true},
+		{name: "maximum int64", value: "9223372036854775807", wantEpoch: 9223372036854775807, wantOK: true},
+		{name: "empty", value: ""},
+		{name: "negative zero", value: "-0"},
+		{name: "leading plus", value: "+5"},
+		{name: "negative", value: "-5"},
+		{name: "overflow", value: "9223372036854775808"},
+		{name: "leading whitespace", value: " 5"},
+		{name: "trailing whitespace", value: "5 "},
+		{name: "decimal", value: "5.0"},
+		{name: "exponent", value: "5e3"},
+		{name: "hexadecimal", value: "0x5"},
+		{name: "underscore", value: "1_000"},
+		{name: "trailing junk", value: "5junk"},
+		{name: "Arabic digit", value: "٥"},
+		{name: "full-width digit", value: "５"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			epochMillis, ok := ParseEpochMillis(tt.value)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantEpoch, epochMillis)
+		})
+	}
 }
 
 func TestParseDate(t *testing.T) {
@@ -1223,10 +1217,22 @@ func TestParseBoolParam(t *testing.T) {
 			expectedValue: true,
 		},
 		{
-			name:          "Empty value takes the fallback",
+			name:          "Empty value is false despite true fallback",
 			params:        url.Values{"includeTrip": []string{""}},
 			fallback:      true,
-			expectedValue: true,
+			expectedValue: false,
+		},
+		{
+			name:          "Empty value with false fallback",
+			params:        url.Values{"includeTrip": []string{""}},
+			fallback:      false,
+			expectedValue: false,
+		},
+		{
+			name:          "Missing parameter with false fallback",
+			params:        url.Values{},
+			fallback:      false,
+			expectedValue: false,
 		},
 		{
 			name:          "Non-boolean value errors and keeps the fallback",
@@ -1248,5 +1254,18 @@ func TestParseBoolParam(t *testing.T) {
 				assert.Empty(t, fieldErrors)
 			}
 		})
+	}
+}
+
+func TestParseBoolParamStrictGrammar(t *testing.T) {
+	for _, raw := range []string{"true", "TRUE", "TrUe", "false", "FALSE", "FaLsE"} {
+		value, errors := ParseBoolParam(url.Values{"flag": {raw}}, "flag", false, nil)
+		assert.Equal(t, strings.EqualFold(raw, "true"), value)
+		assert.Empty(t, errors)
+	}
+	for _, raw := range []string{"1", "0", "t", "f", " true ", "garbage"} {
+		value, errors := ParseBoolParam(url.Values{"flag": {raw}}, "flag", true, nil)
+		assert.True(t, value)
+		assert.NotEmpty(t, errors["flag"])
 	}
 }

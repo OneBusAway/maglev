@@ -11,9 +11,11 @@ import (
 // routeSearchHandler searches for routes matching a user-provided query string
 // using full-text search.
 func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+
 	queryParams := r.URL.Query()
-	includeReferences := ShouldIncludeReferences(r)
-	fieldErrors := make(map[string][]string)
+
+	fieldErrors := referenceErrors
 
 	// Standardized parameter parsing
 	query, fieldErrors := utils.ParseRequiredStringParam(queryParams, "input", fieldErrors)

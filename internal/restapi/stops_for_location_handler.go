@@ -21,13 +21,12 @@ import (
 // stopsForLocationHandler returns stops near a geographic location, specified by
 // lat/lon coordinates with an optional radius or latSpan/lonSpan bounding box.
 func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, fieldErrors := ShouldIncludeReferences(r, nil)
 	queryParams := r.URL.Query()
 
-	var fieldErrors map[string][]string
 	loc, fieldErrors := api.parseLocationParams(r, fieldErrors)
 	maxCount, fieldErrors := utils.ParseMaxCountClamped(queryParams, models.DefaultMaxCountForStops, fieldErrors)
 	query := queryParams.Get("query")
-	includeReferences := ShouldIncludeReferences(r)
 
 	var routeTypes []int
 	if routeTypeStr := queryParams.Get("routeType"); routeTypeStr != "" {
@@ -185,21 +184,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 		resultRawStopIDs = append(resultRawStopIDs, stopID)
 
-		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
-
-		results = append(results, models.NewStop(
-			nulls.StringOrEmpty(stop.Code),
-			direction,
-			utils.FormCombinedID(agency.ID, stop.ID),
-			nulls.StringOrEmpty(stop.Name),
-			parentStationID(agency.ID, stop),
-			utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-			stop.Lat,
-			stop.Lon,
-			int(nulls.Int64OrDefault(stop.LocationType, 0)),
-			rids,
-			rids,
-		))
+		results = append(results, api.buildSearchStopModel(ctx, agency.ID, stop, rids))
 	}
 
 	if ctx.Err() != nil {
@@ -293,7 +278,7 @@ func (api *RestAPI) parentStationReferences(
 	}
 
 	bareParentIDs := slices.Sorted(maps.Keys(parentIDsByBareID))
-	parents, err := queryInBatches(ctx, bareParentIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	parents, err := utils.QueryInBatches(ctx, bareParentIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	if err != nil {
 		return nil, nil, err
 	}

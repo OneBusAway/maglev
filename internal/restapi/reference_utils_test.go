@@ -25,9 +25,19 @@ func TestShouldIncludeReferences(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "empty string defaults to true",
+			name:     "omitted parameter defaults to true",
 			url:      "/api/where/route/1.json?key=TEST",
 			expected: true,
+		},
+		{
+			name:     "empty value returns false",
+			url:      "/api/where/route/1.json?key=TEST&includeReferences=",
+			expected: false,
+		},
+		{
+			name:     "bare parameter returns false",
+			url:      "/api/where/route/1.json?key=TEST&includeReferences",
+			expected: false,
 		},
 		{
 			name:     "explicit true returns true",
@@ -49,7 +59,8 @@ func TestShouldIncludeReferences(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
-			actual := ShouldIncludeReferences(req)
+			actual, errors := ShouldIncludeReferences(req, nil)
+			assert.Equal(t, strings.Contains(tt.url, "banana"), len(errors) > 0)
 			assert.Equal(t, tt.expected, actual)
 		})
 	}
@@ -139,73 +150,6 @@ func TestBuildStopReferencesAndRouteIDsForStops(t *testing.T) {
 	}
 }
 
-func TestQueryInBatches(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("An empty ID set runs no query", func(t *testing.T) {
-		queried := false
-		results, err := queryInBatches(ctx, nil, func(context.Context, []string) ([]string, error) {
-			queried = true
-			return nil, nil
-		})
-
-		require.NoError(t, err)
-		assert.Empty(t, results)
-		assert.False(t, queried, "there is nothing to look up")
-	})
-
-	t.Run("A failing batch stops the run", func(t *testing.T) {
-		batches := 0
-		_, err := queryInBatches(ctx, make([]string, idsPerBatchedQuery+1),
-			func(context.Context, []string) ([]string, error) {
-				batches++
-				return nil, errors.New("query failed")
-			})
-
-		require.Error(t, err)
-		assert.Equal(t, 1, batches, "the remaining batches must not run once one fails")
-	})
-}
-
-func TestQueryInBatchesReserving(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("reserved binds shrink the batch size", func(t *testing.T) {
-		// Sized to fit under idsPerBatchedQuery on its own, but not once 200
-		// reserved binds are subtracted from the budget.
-		ids := make([]string, idsPerBatchedQuery-100)
-
-		var batchSizes []int
-		results, err := queryInBatchesReserving(ctx, ids, 200,
-			func(_ context.Context, batch []string) ([]string, error) {
-				batchSizes = append(batchSizes, len(batch))
-				return batch, nil
-			})
-
-		require.NoError(t, err)
-		assert.Len(t, results, len(ids), "batches must still concatenate to the full input")
-		assert.Greater(t, len(batchSizes), 1,
-			"the reserved binds must force more than one batch for this test to mean anything")
-		for _, size := range batchSizes {
-			assert.LessOrEqual(t, size, idsPerBatchedQuery-200,
-				"no batch may exceed the budget left after reserving")
-		}
-	})
-
-	t.Run("zero reserved matches queryInBatches", func(t *testing.T) {
-		ids := make([]string, idsPerBatchedQuery+1)
-		batches := 0
-		_, err := queryInBatchesReserving(ctx, ids, 0,
-			func(context.Context, []string) ([]string, error) {
-				batches++
-				return nil, nil
-			})
-
-		require.NoError(t, err)
-		assert.Equal(t, 2, batches)
-	})
-}
-
 func TestStopReferences(t *testing.T) {
 	api := createTestApi(t)
 	ctx := context.Background()
@@ -251,14 +195,61 @@ func TestStopReferences(t *testing.T) {
 	assert.Empty(t, refs[1].RouteIDs)
 	assert.NotNil(t, refs[1].RouteIDs, "an unresolved route list is empty, not null")
 	assert.Equal(t, refs[1].RouteIDs, refs[1].StaticRouteIDs)
-	// No stop_times and no shape, so nothing supports a direction.
-	assert.Equal(t, models.UnknownValue, refs[1].Direction)
+	// No stop_times and no shape, so nothing supports a direction. Java copies
+	// the empty narrative direction, so this must be "" and not "UNKNOWN".
+	assert.Equal(t, "", refs[1].Direction)
 
 	assert.Equal(t, 0, refs[2].LocationType)
 	assert.Empty(t, refs[2].Parent)
 
 	assert.Equal(t, 0, refs[3].LocationType)
 	assert.Empty(t, refs[3].Parent)
+}
+
+func TestStopReferences_DirectionAndCodeMatchBuildStopModel(t *testing.T) {
+	api := createTestApi(t)
+	ctx := context.Background()
+
+	const referringAgencyID = "agency"
+
+	tests := []struct {
+		name          string
+		stop          gtfsdb.Stop
+		wantDirection string
+		wantCode      string
+	}{
+		{
+			name:          "no direction and no stop_code",
+			stop:          gtfsdb.Stop{ID: "no-code-stop", Lat: 40.5, Lon: -122.3},
+			wantDirection: "",
+			wantCode:      "no-code-stop",
+		},
+		{
+			name:          "stop_code is kept when present",
+			stop:          gtfsdb.Stop{ID: "coded-stop", Code: nulls.String("C03"), Lat: 40.6, Lon: -122.4},
+			wantDirection: "",
+			wantCode:      "C03",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			referringIDs := map[string][]string{
+				tt.stop.ID: {utils.FormCombinedID(referringAgencyID, tt.stop.ID)},
+			}
+
+			refs, _ := api.stopReferences(ctx, []gtfsdb.Stop{tt.stop}, referringIDs)
+			require.Len(t, refs, 1)
+
+			assert.Equal(t, tt.wantDirection, refs[0].Direction)
+			assert.Equal(t, tt.wantCode, refs[0].Code)
+
+			// The reference must agree with the canonical stop builder.
+			canonical := api.buildStopModel(ctx, referringAgencyID, tt.stop, []string{})
+			assert.Equal(t, canonical.Direction, refs[0].Direction)
+			assert.Equal(t, canonical.Code, refs[0].Code)
+		})
+	}
 }
 
 func TestBuildStopReferencesAndRouteIDsForStops_DeduplicatesStopIDs(t *testing.T) {

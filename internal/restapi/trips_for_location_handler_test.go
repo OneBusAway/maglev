@@ -386,13 +386,14 @@ func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
 		name           string
 		statusParam    string
 		expectedStatus bool
+		wantStatus     int
 	}{
-		{name: "With Status (Explicit true)", statusParam: "includeStatus=true", expectedStatus: true},
-		{name: "With Status (Integer 1)", statusParam: "includeStatus=1", expectedStatus: true},
-		{name: "With Status (Uppercase TRUE)", statusParam: "includeStatus=TRUE", expectedStatus: true},
-		{name: "Without Status (Explicit false)", statusParam: "includeStatus=false", expectedStatus: false},
-		{name: "Without Status (Invalid value)", statusParam: "includeStatus=invalid_value", expectedStatus: false},
-		{name: "Without Status (Default/Omitted)", statusParam: "", expectedStatus: false},
+		{name: "With Status (Explicit true)", statusParam: "includeStatus=true", expectedStatus: true, wantStatus: http.StatusOK},
+		{name: "With Status (Integer 1)", statusParam: "includeStatus=1", expectedStatus: true, wantStatus: http.StatusBadRequest},
+		{name: "With Status (Uppercase TRUE)", statusParam: "includeStatus=TRUE", expectedStatus: true, wantStatus: http.StatusOK},
+		{name: "Without Status (Explicit false)", statusParam: "includeStatus=false", expectedStatus: false, wantStatus: http.StatusOK},
+		{name: "Without Status (Invalid value)", statusParam: "includeStatus=invalid_value", expectedStatus: false, wantStatus: http.StatusBadRequest},
+		{name: "Without Status (Default/Omitted)", statusParam: "", expectedStatus: false, wantStatus: http.StatusOK},
 	}
 
 	for _, tt := range tests {
@@ -404,16 +405,19 @@ func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
 
 			resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
 
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Equal(t, tt.wantStatus, resp.StatusCode)
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
 			require.NotEmpty(t, model.Data.List, "expected at least one trip in the response to verify status behavior")
 
 			for _, entry := range model.Data.List {
 				if tt.expectedStatus {
-					if assert.NotNil(t, entry.Status, "expected status when includeStatus=true/1/TRUE") {
+					if assert.NotNil(t, entry.Status, "expected status when includeStatus=true/TRUE") {
 						assert.NotEmpty(t, entry.Status.Phase)
 					}
 				} else {
-					assert.Nil(t, entry.Status, "expected status to be omitted when includeStatus=false/invalid/omitted")
+					assert.Nil(t, entry.Status, "expected status to be omitted when includeStatus=false/omitted")
 				}
 			}
 		})
@@ -454,6 +458,7 @@ func TestTripsForLocationHandler_ParseAndValidateRequest(t *testing.T) {
 		name                string
 		queryString         string
 		expectedIncludeTrip bool
+		wantFieldError      bool
 	}{
 		{
 			name:                "includeTrip omitted defaults to true",
@@ -471,7 +476,8 @@ func TestTripsForLocationHandler_ParseAndValidateRequest(t *testing.T) {
 			expectedIncludeTrip: true,
 		},
 		{
-			name:                "includeTrip=invalid_value safely defaults to false",
+			name:                "includeTrip=invalid_value returns field error",
+			wantFieldError:      true,
 			queryString:         "lat=40.5865&lon=-122.3917&latSpan=0.1&lonSpan=0.1&includeTrip=invalid_value",
 			expectedIncludeTrip: false,
 		},
@@ -483,8 +489,12 @@ func TestTripsForLocationHandler_ParseAndValidateRequest(t *testing.T) {
 
 			parsedReq, fieldErrors, err := api.parseAndValidateRequest(req)
 
-			assert.Empty(t, fieldErrors)
 			assert.NoError(t, err)
+			if tt.wantFieldError {
+				assert.NotEmpty(t, fieldErrors["includeTrip"])
+				return
+			}
+			require.Empty(t, fieldErrors)
 			assert.Equal(t, tt.expectedIncludeTrip, parsedReq.IncludeTrip)
 		})
 	}
@@ -500,11 +510,12 @@ func TestTripsForLocationHandler_TripInclusion(t *testing.T) {
 		name         string
 		includeParam string
 		expected     bool
+		wantStatus   int
 	}{
-		{name: "With Trip (Default/Omitted)", includeParam: "", expected: true},
-		{name: "With Trip (Explicit true)", includeParam: "includeTrip=true", expected: true},
-		{name: "Without Trip (Explicit false)", includeParam: "includeTrip=false", expected: false},
-		{name: "Without Trip (Invalid value)", includeParam: "includeTrip=invalid_value", expected: false},
+		{name: "With Trip (Default/Omitted)", includeParam: "", expected: true, wantStatus: http.StatusOK},
+		{name: "With Trip (Explicit true)", includeParam: "includeTrip=true", expected: true, wantStatus: http.StatusOK},
+		{name: "Without Trip (Explicit false)", includeParam: "includeTrip=false", expected: false, wantStatus: http.StatusOK},
+		{name: "Without Trip (Invalid value)", includeParam: "includeTrip=invalid_value", expected: false, wantStatus: http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -516,11 +527,14 @@ func TestTripsForLocationHandler_TripInclusion(t *testing.T) {
 
 			resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
 
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Equal(t, tt.wantStatus, resp.StatusCode)
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
 			if tt.expected {
 				assert.NotEmpty(t, model.Data.References.Trips, "trips should be present in references when includeTrip is true or omitted")
 			} else {
-				assert.Empty(t, model.Data.References.Trips, "trips should be omitted when includeTrip=false or invalid")
+				assert.Empty(t, model.Data.References.Trips, "trips should be omitted when includeTrip=false")
 			}
 		})
 	}
@@ -1127,13 +1141,13 @@ func TestCandidateTripIDsForStops_BatchesLargeStopSets(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, stops)
 
-	stopIDs := make([]string, 0, idsPerBatchedQuery+len(stops))
-	for len(stopIDs) <= idsPerBatchedQuery {
+	stopIDs := make([]string, 0, utils.IDsPerBatchedQuery+len(stops))
+	for len(stopIDs) <= utils.IDsPerBatchedQuery {
 		for _, stop := range stops {
 			stopIDs = append(stopIDs, stop.ID)
 		}
 	}
-	require.Greater(t, len(stopIDs), idsPerBatchedQuery,
+	require.Greater(t, len(stopIDs), utils.IDsPerBatchedQuery,
 		"the input must span more than one batch for this test to mean anything")
 
 	batched, err := api.candidateTripIDsForStops(ctx, stopIDs)
@@ -1308,13 +1322,13 @@ func TestInServiceTripIDs_BatchesLargeStopSets(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, stops)
 
-	stopIDs := make([]string, 0, idsPerBatchedQuery+len(stops))
-	for len(stopIDs) <= idsPerBatchedQuery {
+	stopIDs := make([]string, 0, utils.IDsPerBatchedQuery+len(stops))
+	for len(stopIDs) <= utils.IDsPerBatchedQuery {
 		for _, stop := range stops {
 			stopIDs = append(stopIDs, stop.ID)
 		}
 	}
-	require.Greater(t, len(stopIDs), idsPerBatchedQuery,
+	require.Greater(t, len(stopIDs), utils.IDsPerBatchedQuery,
 		"the input must span more than one batch for this test to mean anything")
 
 	batched, err := api.inServiceTripIDs(ctx, stopIDs, resolver, map[string]struct{}{})

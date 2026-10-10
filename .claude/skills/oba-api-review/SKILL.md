@@ -1,3 +1,8 @@
+---
+name: oba-api-review
+description: Review a maglev PR, branch, or proposed change for spec alignment, goal completion, and client impact. Use when reviewing Maglev API changes or when asked to run oba-api-review.
+---
+
 # OBA API Review
 
 Entry point for reviewing a change to the OBA API. Determines which analyses are relevant and runs them.

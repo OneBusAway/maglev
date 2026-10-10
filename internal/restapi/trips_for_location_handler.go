@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
@@ -93,7 +92,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		visibleTripIDs = append(visibleTripIDs, tripID)
 	}
 
-	trips, err := queryInBatches(ctx, visibleTripIDs, api.GtfsManager.GtfsDB.Queries.GetTripsByIDs)
+	trips, err := utils.QueryInBatches(ctx, visibleTripIDs, api.GtfsManager.GtfsDB.Queries.GetTripsByIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -108,7 +107,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	var routes []gtfsdb.Route
 	if len(routeIDs) > 0 {
-		routes, err = queryInBatches(ctx, routeIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
+		routes, err = utils.QueryInBatches(ctx, routeIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
@@ -140,9 +139,7 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	references := *models.NewEmptyReferences()
 
-	includeReferences := ShouldIncludeReferences(r)
-
-	if includeReferences {
+	if parsedReq.IncludeReferences {
 		tripSchedulesAndStatuses := make([]tripScheduleAndStatus, 0, len(result))
 
 		for _, trip := range result {
@@ -177,12 +174,13 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 // tripsForLocationRequest holds the parsed and validated query parameters for
 // the trips-for-location endpoint.
 type tripsForLocationRequest struct {
-	LocationParams  *internalgtfs.LocationParams
-	IncludeTrip     bool
-	IncludeSchedule bool
-	IncludeStatus   bool
-	CurrentTime     time.Time
-	AgencyLocations map[string]*time.Location
+	LocationParams    *internalgtfs.LocationParams
+	IncludeTrip       bool
+	IncludeSchedule   bool
+	IncludeStatus     bool
+	IncludeReferences bool
+	CurrentTime       time.Time
+	AgencyLocations   map[string]*time.Location
 }
 
 func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationRequest, map[string][]string, error) {
@@ -190,11 +188,10 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 
 	queryParams := r.URL.Query()
 
-	includeTrip := parseIncludeTrip(queryParams)
-	includeSchedule, _ := strconv.ParseBool(queryParams.Get("includeSchedule"))
-	// Intentionally defaulting includeStatus to false to align with includeSchedule
-	// behavior for this endpoint, even though trips-for-route defaults to true.
-	includeStatus, _ := strconv.ParseBool(queryParams.Get("includeStatus"))
+	includeTrip, fieldErrors := utils.ParseBoolParam(queryParams, "includeTrip", true, fieldErrors)
+	includeSchedule, fieldErrors := utils.ParseBoolParam(queryParams, "includeSchedule", false, fieldErrors)
+	includeStatus, fieldErrors := utils.ParseBoolParam(queryParams, "includeStatus", false, fieldErrors)
+	includeReferences, fieldErrors := ShouldIncludeReferences(r, fieldErrors)
 
 	agencies, agenciesErr := api.GtfsManager.GetAgencies(r.Context())
 
@@ -206,13 +203,9 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 		return nil, nil, errors.New("no agencies configured in GTFS manager")
 	}
 
-	agencyLocations := make(map[string]*time.Location, len(agencies))
-	for _, agency := range agencies {
-		location, locationErr := loadAgencyLocation(agency.ID, agency.Timezone)
-		if locationErr != nil {
-			return nil, nil, locationErr
-		}
-		agencyLocations[agency.ID] = location
+	agencyLocations, locationErr := agencyLocationsByID(agencies)
+	if locationErr != nil {
+		return nil, nil, locationErr
 	}
 	currentLocation := agencyLocations[agencies[0].ID]
 
@@ -224,24 +217,15 @@ func (api *RestAPI) parseAndValidateRequest(r *http.Request) (*tripsForLocationR
 	}
 
 	parsedReq := &tripsForLocationRequest{
-		LocationParams:  loc,
-		IncludeTrip:     includeTrip,
-		IncludeSchedule: includeSchedule,
-		IncludeStatus:   includeStatus,
-		CurrentTime:     currentTime,
-		AgencyLocations: agencyLocations,
+		LocationParams:    loc,
+		IncludeTrip:       includeTrip,
+		IncludeSchedule:   includeSchedule,
+		IncludeStatus:     includeStatus,
+		IncludeReferences: includeReferences,
+		CurrentTime:       currentTime,
+		AgencyLocations:   agencyLocations,
 	}
 	return parsedReq, nil, nil
-}
-
-// parseIncludeTrip parses the includeTrip query parameter, defaulting to true when omitted
-// and to false when present but not a valid boolean.
-func parseIncludeTrip(queryParams url.Values) bool {
-	if !queryParams.Has("includeTrip") {
-		return true
-	}
-	includeTrip, _ := strconv.ParseBool(queryParams.Get("includeTrip"))
-	return includeTrip
 }
 
 // resolveCurrentTime resolves the query time: the explicit time parameter if supplied,
@@ -320,7 +304,7 @@ func (api *RestAPI) blocklessScheduledTripIDsInBounds(
 		return nil, err
 	}
 
-	trips, err := queryInBatches(ctx, candidateIDs, api.GtfsManager.GtfsDB.Queries.GetTripsByIDs)
+	trips, err := utils.QueryInBatches(ctx, candidateIDs, api.GtfsManager.GtfsDB.Queries.GetTripsByIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -400,11 +384,11 @@ func (api *RestAPI) inServiceTripIDs(
 		windowStart := day.sinceMidnightNs - int64(runningLate)
 		windowEnd := day.sinceMidnightNs + int64(runningEarly)
 		// Reserve room for the two window scalars and the ServiceIds slice this
-		// statement also binds — queryInBatches alone would size the StopIds
+		// statement also binds — utils.QueryInBatches alone would size the StopIds
 		// batch as if it were the only bind, and a day with enough active
 		// service IDs could still push the statement over the limit.
 		reserved := len(day.serviceIDs) + 2
-		tripIDs, err := queryInBatchesReserving(ctx, stopIDs, reserved, func(ctx context.Context, batch []string) ([]string, error) {
+		tripIDs, err := utils.QueryInBatchesReserving(ctx, stopIDs, reserved, func(ctx context.Context, batch []string) ([]string, error) {
 			return api.GtfsManager.GtfsDB.Queries.GetInServiceTripIDsForStops(ctx, gtfsdb.GetInServiceTripIDsForStopsParams{
 				StopIds:     batch,
 				ServiceIds:  day.serviceIDs,
@@ -591,7 +575,7 @@ func (api *RestAPI) tripSpansForBlocksServingStops(
 	stopIDs []string,
 	day serviceDay,
 ) ([]gtfsdb.GetTripSpansForBlocksRow, error) {
-	blockIDs, err := queryInBatchesReserving(ctx, stopIDs, len(day.serviceIDs),
+	blockIDs, err := utils.QueryInBatchesReserving(ctx, stopIDs, len(day.serviceIDs),
 		func(ctx context.Context, batch []string) ([]sql.NullString, error) {
 			return api.GtfsManager.GtfsDB.Queries.GetBlockIDsForStops(ctx, gtfsdb.GetBlockIDsForStopsParams{
 				StopIds:    batch,
@@ -607,7 +591,7 @@ func (api *RestAPI) tripSpansForBlocksServingStops(
 		blockIDStrings[i] = blockID.String
 	}
 
-	return queryInBatchesReserving(ctx, blockIDStrings, len(day.serviceIDs),
+	return utils.QueryInBatchesReserving(ctx, blockIDStrings, len(day.serviceIDs),
 		func(ctx context.Context, batch []string) ([]gtfsdb.GetTripSpansForBlocksRow, error) {
 			nullableBatch := make([]sql.NullString, len(batch))
 			for i, blockID := range batch {
@@ -650,7 +634,7 @@ func (api *RestAPI) activeTripInBoundsForAnchor(
 }
 
 func (api *RestAPI) stopTimesByTrip(ctx context.Context, tripIDs []string) (map[string][]gtfsdb.StopTime, error) {
-	stopTimes, err := queryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs)
+	stopTimes, err := utils.QueryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -681,7 +665,7 @@ func (api *RestAPI) shapePointsForTrips(ctx context.Context, trips []gtfsdb.Trip
 		return byID, nil
 	}
 
-	shapePoints, err := queryInBatches(ctx, shapeIDs, api.GtfsManager.GtfsDB.Queries.GetShapePointsByIDs)
+	shapePoints, err := utils.QueryInBatches(ctx, shapeIDs, api.GtfsManager.GtfsDB.Queries.GetShapePointsByIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -697,7 +681,7 @@ func (api *RestAPI) shapePointsForTrips(ctx context.Context, trips []gtfsdb.Trip
 // candidateTripIDsForStops returns the IDs of the trips serving any of these
 // stops. IDs may repeat across batches; the caller sets them.
 func (api *RestAPI) candidateTripIDsForStops(ctx context.Context, stopIDs []string) ([]string, error) {
-	return queryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetTripIDsForStops)
+	return utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetTripIDsForStops)
 }
 
 func extractStopIDs(stops []gtfsdb.Stop) []string {
@@ -967,6 +951,19 @@ func serviceDateMidnight(currentTime time.Time, agencyLocation *time.Location) t
 	return midnight
 }
 
+// agencyLocationsByID maps each agency ID to the agency's time zone.
+func agencyLocationsByID(agencies []gtfsdb.Agency) (map[string]*time.Location, error) {
+	locations := make(map[string]*time.Location, len(agencies))
+	for _, agency := range agencies {
+		location, err := loadAgencyLocation(agency.ID, agency.Timezone)
+		if err != nil {
+			return nil, err
+		}
+		locations[agency.ID] = location
+	}
+	return locations, nil
+}
+
 // serviceDateResolversByZone builds one serviceDateResolver per distinct agency
 // time zone in locations. Candidate selection runs before any trip's agency is
 // known, so a candidate can't be resolved in its own agency's zone directly —
@@ -1000,7 +997,17 @@ func (api *RestAPI) buildScheduleForTrip(
 	currentLocation *time.Location,
 	freqMap map[string][]gtfsdb.Frequency,
 ) (*models.TripsSchedule, error) {
-	shapeRows, _ := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
+	reqLogger := logging.ForComponent(ctx, "http_server")
+
+	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, tripID)
+	if err != nil {
+		reqLogger.Warn(
+			"failed to get shape points for schedule",
+			"trip_id", tripID,
+			"error", err,
+		)
+	}
+
 	var shapePoints []gtfs.ShapePoint
 	if len(shapeRows) > 1 {
 		shapePoints = shapeRowsToPoints(shapeRows)

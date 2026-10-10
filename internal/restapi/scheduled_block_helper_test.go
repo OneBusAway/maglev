@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // Pure-function tests — no DB or test API needed.
@@ -510,7 +511,7 @@ func TestFetchStopCoordsForStopTimes_PropagatesError(t *testing.T) {
 // batch boundary, and the batches must concatenate correctly rather than
 // silently dropping rows from any but the first.
 //
-// RABA's fixture has only 375 unique stops, well under idsPerBatchedQuery, so
+// RABA's fixture has only 375 unique stops, well under utils.IDsPerBatchedQuery, so
 // the unique ID set is padded with synthetic stop IDs that don't exist in the
 // DB (GetStopsByIDs simply returns fewer rows for those). Real stop IDs are
 // interleaved before and after the synthetic block so some land in the first
@@ -531,7 +532,7 @@ func TestFetchStopCoordsForStopTimes_BatchesLargeStopSets(t *testing.T) {
 		stopTimes = append(stopTimes, gtfsdb.StopTime{StopID: stop.ID})
 	}
 
-	syntheticCount := idsPerBatchedQuery + 100
+	syntheticCount := utils.IDsPerBatchedQuery + 100
 	for i := 0; i < syntheticCount; i++ {
 		stopTimes = append(stopTimes, gtfsdb.StopTime{StopID: fmt.Sprintf("synthetic-stop-%d", i)})
 	}
@@ -544,7 +545,7 @@ func TestFetchStopCoordsForStopTimes_BatchesLargeStopSets(t *testing.T) {
 	for _, st := range stopTimes {
 		uniqueIDs[st.StopID] = struct{}{}
 	}
-	require.Greater(t, len(uniqueIDs), idsPerBatchedQuery,
+	require.Greater(t, len(uniqueIDs), utils.IDsPerBatchedQuery,
 		"the deduped ID set must span more than one batch for this test to mean anything")
 
 	coords, err := api.fetchStopCoordsForStopTimes(ctx, stopTimes)

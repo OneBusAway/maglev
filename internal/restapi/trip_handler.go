@@ -10,6 +10,12 @@ import (
 
 // tripHandler returns details for a single trip, including its route, stop times, and shape.
 func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
+	if len(referenceErrors) > 0 {
+		api.validationErrorResponse(w, r, referenceErrors)
+		return
+	}
+
 	agencyID, id, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
@@ -80,7 +86,7 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 
 	// includeReferences defaults to true; when explicitly false the references
 	// block is returned with all sub-arrays empty (matches the Java reference).
-	if ShouldIncludeReferences(r) {
+	if includeReferences {
 		references.Routes = append(references.Routes, models.NewRoute(
 			utils.FormCombinedID(route.AgencyID, trip.RouteID),
 			route.AgencyID,

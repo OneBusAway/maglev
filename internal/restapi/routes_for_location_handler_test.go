@@ -42,11 +42,12 @@ func TestRoutesForLocationHandlerIncludeReferences(t *testing.T) {
 		name           string
 		params         string
 		wantReferences bool
+		wantStatus     int
 	}{
-		{"includeReferences=false suppresses references", "&includeReferences=false", false},
-		{"includeReferences=true populates references", "&includeReferences=true", true},
-		{"includeReferences absent defaults to populated", "", true},
-		{"includeReferences unparseable defaults to populated", "&includeReferences=notabool", true},
+		{"includeReferences=false suppresses references", "&includeReferences=false", false, http.StatusOK},
+		{"includeReferences=true populates references", "&includeReferences=true", true, http.StatusOK},
+		{"includeReferences absent defaults to populated", "", true, http.StatusOK},
+		{"includeReferences unparseable returns 400", "&includeReferences=notabool", false, http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -55,7 +56,10 @@ func TestRoutesForLocationHandlerIncludeReferences(t *testing.T) {
 
 			resp, model := callAPIHandler[RoutesResponse](t, api, baseURL+tt.params)
 
-			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Equal(t, tt.wantStatus, resp.StatusCode)
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
 			assert.ElementsMatch(t, []models.Route{testdata.Route19}, model.Data.List, "list must be unaffected by includeReferences")
 
 			if tt.wantReferences {

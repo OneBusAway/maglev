@@ -1,3 +1,8 @@
+---
+name: oba-api-client-impact
+description: Assess the impact of a Maglev API change on Wayfinder, the JS SDK, iOS, and Android. Normally invoked by oba-api-review; use directly to isolate client analysis.
+---
+
 # OBA API Client Impact
 
 Assess the impact of a production change (or proposed change) on the three OBA clients: Wayfinder + JS SDK, iOS, and Android.

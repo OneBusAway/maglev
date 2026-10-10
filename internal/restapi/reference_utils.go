@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -465,19 +464,9 @@ func mapAlertEffectToSeverity(effect gtfs.AlertEffect) string {
 }
 
 // ShouldIncludeReferences parses the "includeReferences" query parameter from the request.
-// It defaults to true if the parameter is absent or if it fails to parse as a boolean.
-func ShouldIncludeReferences(r *http.Request) bool {
-	val := r.URL.Query().Get("includeReferences")
-	if val == "" {
-		return true
-	}
-
-	parsed, err := strconv.ParseBool(val)
-	if err != nil {
-		return true
-	}
-
-	return parsed
+// Absent values default to true; empty values are false; invalid values append a field error.
+func ShouldIncludeReferences(r *http.Request, fieldErrors map[string][]string) (bool, map[string][]string) {
+	return utils.ParseBoolParam(r.URL.Query(), "includeReferences", true, fieldErrors)
 }
 
 // BuildStopReferencesAndRouteIDsForStops builds full stop references and collects unique routes for the given stop IDs.
@@ -570,7 +559,7 @@ func (api *RestAPI) combinedRouteIDsForStop(routesForStop []gtfsdb.Route) []stri
 func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gtfsdb.Stop, combinedRouteIDs []string) models.Stop {
 	return models.Stop{
 		ID:                 utils.FormCombinedID(agencyID, stop.ID),
-		Name:               stop.Name.String,
+		Name:               nulls.StringOrEmpty(stop.Name),
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
 		Code:               nulls.StringOrDefault(stop.Code, stop.ID),
@@ -580,47 +569,6 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 		RouteIDs:           combinedRouteIDs,
 		StaticRouteIDs:     combinedRouteIDs,
 	}
-}
-
-// idsPerBatchedQuery bounds how many IDs go into one IN (...) list, assuming
-// the batched slice is the only bind the statement carries. SQLite rejects a
-// statement carrying more bind variables than it allows rather than
-// truncating it, and these ID sets are only bounded by how much the request
-// matched. Kept well under the oldest limit (999) so the batch size does not
-// depend on which SQLite the build links against. A statement binding
-// anything besides the batched slice needs queryInBatchesReserving instead,
-// so that budget also accounts for those binds.
-const idsPerBatchedQuery = 900
-
-// queryInBatches runs query over ids in batches small enough to stay under the
-// bind variable limit, concatenating the results.
-func queryInBatches[T any](ctx context.Context, ids []string, query func(context.Context, []string) ([]T, error)) ([]T, error) {
-	return queryInBatchesReserving(ctx, ids, 0, query)
-}
-
-// queryInBatchesReserving is queryInBatches with reserved slots subtracted
-// from the batch size, for a statement that binds something besides the
-// batched slice — a second IN (...) list, a scalar. Without this, sizing the
-// batch at idsPerBatchedQuery silently assumes the batched slice is the whole
-// statement, and the untracked binds can push the total over the limit.
-//
-// ponytail: assumes the reserved binds themselves fit in one statement. A
-// second dimension large enough on its own to need batching (hundreds of
-// active service IDs on one day, say) would still overflow; batch that
-// dimension too if a feed ever gets there.
-func queryInBatchesReserving[T any](ctx context.Context, ids []string, reserved int,
-	query func(context.Context, []string) ([]T, error)) ([]T, error) {
-	batchSize := max(1, idsPerBatchedQuery-reserved)
-	results := make([]T, 0, len(ids))
-	for start := 0; start < len(ids); start += batchSize {
-		end := min(start+batchSize, len(ids))
-		batch, err := query(ctx, ids[start:end])
-		if err != nil {
-			return nil, err
-		}
-		results = append(results, batch...)
-	}
-	return results, nil
 }
 
 // stopReferences builds the stop reference block for a set of list entries,
@@ -642,27 +590,11 @@ func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, ids
 			routeIDs = []string{}
 		}
 
-		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
-		if direction == "" {
-			direction = models.UnknownValue
-		}
-
-		// compute stop-specific info once here; the agency-specifc info
-		// (ID, Parent) are computed in the following loop for each agencyID_stopID
-		// referencing the same stop.
-		stopInfo := models.Stop{
-			Code:               nulls.StringOrEmpty(stop.Code),
-			Direction:          direction,
-			ID:                 "",
-			Lat:                stop.Lat,
-			Lon:                stop.Lon,
-			LocationType:       int(nulls.Int64OrDefault(stop.LocationType, 0)),
-			Name:               nulls.StringOrEmpty(stop.Name),
-			Parent:             "",
-			RouteIDs:           routeIDs,
-			StaticRouteIDs:     routeIDs,
-			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-		}
+		// Build the stop-specific fields once through buildStopModel so direction
+		// and code follow the same rules as every other stop builder. The agency
+		// argument only feeds ID, which the loop below overwrites with each
+		// referring combined ID, so it is left empty here.
+		stopInfo := api.buildStopModel(ctx, "", stop, routeIDs)
 
 		for _, combinedID := range idsByBareID[stop.ID] {
 			agencyStop := stopInfo
@@ -694,7 +626,7 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 		stopIDs[i] = stop.ID
 	}
 
-	rows, err := queryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops)
+	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops)
 	if err != nil {
 		reqLogger.Error("failed to fetch routes for stop references", "error", err)
 		return routeIDsByStop
@@ -925,7 +857,7 @@ func (api *RestAPI) stopsReferencedBySchedulesAndStatuses(ctx context.Context, s
 		bareIDs = append(bareIDs, bareID)
 	}
 
-	stops, err := queryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	stops, err := utils.QueryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	return stops, stopIDsByBareID, err
 }
 

@@ -428,7 +428,7 @@ func selectFrequencyFromStart(freqs []gtfsdb.Frequency, serviceStart, effectiveT
 // succeeds; errors propagate.
 func (api *RestAPI) fetchFrequenciesForTrips(ctx context.Context, tripIDs []string) (map[string][]gtfsdb.Frequency, error) {
 	freqMap := make(map[string][]gtfsdb.Frequency, len(tripIDs))
-	allFreqs, err := queryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips)
+	allFreqs, err := utils.QueryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrips)
 	if err != nil {
 		return nil, err
 	}
@@ -450,6 +450,14 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 	}
 
 	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, trip.ID)
+	if err != nil {
+		slog.Warn(
+			"BuildTripSchedule: failed to get shape points",
+			slog.String("trip_id", trip.ID),
+			slog.String("error", err.Error()),
+		)
+	}
+
 	var shapePoints []gtfs.ShapePoint
 	if err == nil && len(shapeRows) > 0 {
 		shapePoints = shapeRowsToPoints(shapeRows)
@@ -1437,7 +1445,9 @@ func (r *serviceDateResolver) runsOn(services map[string]struct{}, trip gtfsdb.T
 // offset a trip's scheduled span is measured against for that day.
 type serviceDay struct {
 	serviceIDs      []string
+	services        map[string]struct{}
 	sinceMidnightNs int64
+	midnight        time.Time
 }
 
 // ServiceDays returns the query day and the day before it. A trip belonging to
@@ -1445,8 +1455,8 @@ type serviceDay struct {
 // since GTFS expresses its stop times relative to its own service date.
 func (r *serviceDateResolver) ServiceDays() []serviceDay {
 	return []serviceDay{
-		{serviceIDs: serviceIDSlice(r.queryDayServices), sinceMidnightNs: r.sinceMidnightNs},
-		{serviceIDs: serviceIDSlice(r.previousDayServices), sinceMidnightNs: r.sinceMidnightNs + int64(24*time.Hour)},
+		{serviceIDs: serviceIDSlice(r.queryDayServices), services: r.queryDayServices, sinceMidnightNs: r.sinceMidnightNs, midnight: r.queryDayMidnight},
+		{serviceIDs: serviceIDSlice(r.previousDayServices), services: r.previousDayServices, sinceMidnightNs: r.sinceMidnightNs + int64(24*time.Hour), midnight: r.queryDayMidnight.AddDate(0, 0, -1)},
 	}
 }
 

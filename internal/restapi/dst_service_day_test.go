@@ -147,6 +147,14 @@ type dstScheduleForStopResponse struct {
 	} `json:"data"`
 }
 
+type dstTripDetailsResponse struct {
+	Data struct {
+		Entry struct {
+			ServiceDate int64 `json:"serviceDate"`
+		} `json:"entry"`
+	} `json:"data"`
+}
+
 type dstScheduleForRouteResponse struct {
 	Data struct {
 		Entry struct {
@@ -204,36 +212,74 @@ func TestScheduleEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 	}
 }
 
-func TestArrivalForStop_PicksLoopVisitOnDSTServiceDays(t *testing.T) {
+func TestTripDetails_AcceptsTheArrivalsServiceDateOnDSTServiceDays(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	stopID := utils.FormCombinedID("dst-agency", "dst-stop1")
+	tripID := utils.FormCombinedID("dst-agency", "dst-trip")
+
+	for _, date := range []servicedate.Date{
+		servicedate.New(2026, time.November, 8),
+		servicedate.New(2026, time.November, 1),
+		servicedate.New(2026, time.March, 8),
+	} {
+		t.Run(date.String(), func(t *testing.T) {
+			now := date.Start(losAngeles).Add(7*time.Hour + 50*time.Minute)
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now),
+				fmt.Sprintf("dst-details-%s.zip", date), dstFiles())
+
+			_, plural := callAPIHandler[dstArrivalsResponse](t, api, fmt.Sprintf(
+				"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=5&minutesAfter=30", stopID))
+			require.Len(t, plural.Data.Entry.ArrivalsAndDepartures, 1)
+
+			midnight := date.Midnight(losAngeles)
+			for _, serviceDate := range []string{
+				fmt.Sprint(plural.Data.Entry.ArrivalsAndDepartures[0].ServiceDate),
+				fmt.Sprint(midnight.UnixMilli()),
+				midnight.Format("2006-01-02"),
+			} {
+				resp, details := callAPIHandler[dstTripDetailsResponse](t, api, fmt.Sprintf(
+					"/api/where/trip-details/%s.json?key=TEST&serviceDate=%s", tripID, serviceDate))
+				require.Equal(t, 200, resp.StatusCode, serviceDate)
+				assert.Equal(t, date, servicedate.FromInstant(time.UnixMilli(details.Data.Entry.ServiceDate), losAngeles), serviceDate)
+			}
+		})
+	}
+}
+
+func TestArrivalAndDepartureForStop_PicksTheClosestLoopVisitOnDSTServiceDays(t *testing.T) {
 	losAngeles, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
 
 	files := dstFiles()
-	files["trips.txt"] += "dst-route,dst-svc,dst-loop,Loop,0\n"
-	files["stop_times.txt"] += "dst-loop,08:00:00,08:00:00,dst-stop1,1\n" +
-		"dst-loop,08:30:00,08:30:00,dst-stop2,2\n" +
-		"dst-loop,09:00:00,09:00:00,dst-stop1,3\n"
+	delete(files, "frequencies.txt")
+	files["stop_times.txt"] = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+		"dst-trip,08:00:00,08:00:00,dst-stop1,1\n" +
+		"dst-trip,08:30:00,08:30:00,dst-stop2,2\n" +
+		"dst-trip,09:00:00,09:00:00,dst-stop1,3\n"
 
 	stopID := utils.FormCombinedID("dst-agency", "dst-stop1")
-	tripID := utils.FormCombinedID("dst-agency", "dst-loop")
+	tripID := utils.FormCombinedID("dst-agency", "dst-trip")
 
 	for _, tc := range []struct {
-		name string
-		date servicedate.Date
+		name  string
+		date  servicedate.Date
+		at    time.Duration
+		visit time.Duration
 	}{
-		{name: "ordinary Sunday", date: servicedate.New(2026, time.November, 8)},
-		{name: "fall back", date: servicedate.New(2026, time.November, 1)},
-		{name: "spring forward", date: servicedate.New(2026, time.March, 8)},
+		{name: "fall back", date: servicedate.New(2026, time.November, 1), at: 8*time.Hour + 20*time.Minute, visit: 8 * time.Hour},
+		{name: "spring forward", date: servicedate.New(2026, time.March, 8), at: 8*time.Hour + 40*time.Minute, visit: 9 * time.Hour},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			start := tc.date.Start(losAngeles)
-			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(start.Add(8*time.Hour+50*time.Minute)),
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(start.Add(tc.at)),
 				fmt.Sprintf("dst-loop-%s.zip", tc.date), files)
 
 			resp, single := callAPIHandler[dstArrivalResponse](t, api, fmt.Sprintf(
 				"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d", stopID, tripID, start.UnixMilli()))
 			require.Equal(t, 200, resp.StatusCode)
-			assert.Equal(t, start.Add(9*time.Hour).UnixMilli(), single.Data.Entry.ScheduledArrivalTime, "08:50 is closest to the 09:00 visit")
+			assert.Equal(t, start.Add(tc.visit).UnixMilli(), single.Data.Entry.ScheduledArrivalTime)
 		})
 	}
 }

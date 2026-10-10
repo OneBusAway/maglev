@@ -158,6 +158,33 @@ func TestStopsForRouteIncludePolylinesFalse(t *testing.T) {
 	}
 }
 
+func TestStopsForRouteEmptyBooleanFlags(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	for _, flag := range []string{"includeReferences", "includePolylines"} {
+		t.Run(flag, func(t *testing.T) {
+			endpoint := "/api/where/stops-for-route/" + testdata.Route1.ID + ".json?key=TEST&" + flag + "="
+			resp, model := callAPIHandler[StopsForRouteResponse](t, api, endpoint)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.NotEmpty(t, model.Data.Entry.StopIds)
+			if flag == "includeReferences" {
+				assert.Empty(t, model.Data.References.Agencies)
+				assert.Empty(t, model.Data.References.Routes)
+				assert.Empty(t, model.Data.References.Stops)
+				assert.NotEmpty(t, model.Data.Entry.Polylines)
+				return
+			}
+			assert.NotEmpty(t, model.Data.References.Agencies)
+			assert.Empty(t, model.Data.Entry.Polylines)
+			require.NotEmpty(t, model.Data.Entry.StopGroupings)
+			for _, group := range model.Data.Entry.StopGroupings[0].StopGroups {
+				assert.Empty(t, group.Polylines)
+			}
+		})
+	}
+}
+
 // TestStopsForRouteTimeFilter_ActiveDate verifies that supplying a time parameter
 // restricts results to trips active on that service date.
 func TestStopsForRouteTimeFilter_ActiveDate(t *testing.T) {
@@ -477,4 +504,79 @@ func TestStopsForRouteIncludesCrossAgencyRouteOwner(t *testing.T) {
 		assert.True(t, agencyIDs[route.AgencyID],
 			"route %s has agencyId %s which is not present in references.agencies", route.ID, route.AgencyID)
 	}
+}
+
+// TestStopsForRouteKeepsStopsOfTripsWithoutDirection guards against dropping
+// stops that only trips with a NULL direction_id serve. Those trips are grouped
+// under direction "0", so their stops must appear in that group. On RABA,
+// route 15 stop 1504 is only served by such trips.
+func TestStopsForRouteKeepsStopsOfTripsWithoutDirection(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/25_15.json?key=TEST")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	assert.Contains(t, entry.StopIds, "25_1504")
+
+	require.Len(t, entry.StopGroupings, 1)
+	var direction0 []string
+	for _, group := range entry.StopGroupings[0].StopGroups {
+		if group.ID == "0" {
+			direction0 = group.StopIds
+		}
+	}
+	require.NotNil(t, direction0, "expected a direction 0 stop group")
+	assert.Contains(t, direction0, "25_1504")
+}
+
+// TestStopsForRouteOrdersStopsAcrossTripVariants guards the canonical stop
+// order of a direction group when trip variants number stop_sequence
+// differently. The full trip runs A→E numbered 1–5; the short-turn variant
+// starts at C, is numbered from 1 again, and continues past E to F. Ordering
+// by the largest stop_sequence seen per stop puts F (4) before E (5) even
+// though every trip that serves both reaches E first. The order must instead
+// follow the stop adjacency of the trips themselves.
+func TestStopsForRouteOrdersStopsAcrossTripVariants(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"A1,Agency One,http://agency1.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"r1,A1,1,Route One,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"sA,Stop A,37.7000,-122.4000\n" +
+			"sB,Stop B,37.7100,-122.4000\n" +
+			"sC,Stop C,37.7200,-122.4000\n" +
+			"sD,Stop D,37.7300,-122.4000\n" +
+			"sE,Stop E,37.7400,-122.4000\n" +
+			"sF,Stop F,37.7500,-122.4000\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"r1,svc1,full,Downtown,0\n" +
+			"r1,svc1,short,Downtown,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"full,08:00:00,08:00:00,sA,1\n" +
+			"full,08:05:00,08:05:00,sB,2\n" +
+			"full,08:10:00,08:10:00,sC,3\n" +
+			"full,08:15:00,08:15:00,sD,4\n" +
+			"full,08:20:00,08:20:00,sE,5\n" +
+			"short,09:00:00,09:00:00,sC,1\n" +
+			"short,09:05:00,09:05:00,sD,2\n" +
+			"short,09:10:00,09:10:00,sE,3\n" +
+			"short,09:15:00,09:15:00,sF,4\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "stop-order-variants.zip", files)
+
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/A1_r1.json?key=TEST")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.Entry.StopGroupings, 1)
+	require.Len(t, model.Data.Entry.StopGroupings[0].StopGroups, 1)
+
+	wantOrder := []string{"A1_sA", "A1_sB", "A1_sC", "A1_sD", "A1_sE", "A1_sF"}
+	assert.Equal(t, wantOrder, model.Data.Entry.StopGroupings[0].StopGroups[0].StopIds)
+	assert.Equal(t, wantOrder, model.Data.Entry.StopIds, "flat stopIds sort lexicographically")
 }

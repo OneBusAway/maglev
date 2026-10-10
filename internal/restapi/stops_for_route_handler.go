@@ -16,6 +16,13 @@ import (
 // stopsForRouteHandler returns all stops served by a route, grouped by direction
 // with optional encoded polyline shapes.
 func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, fieldErrors := ShouldIncludeReferences(r, nil)
+	includePolylines, fieldErrors := utils.ParseBoolParam(r.URL.Query(), "includePolylines", true, fieldErrors)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
+
 	ctx := r.Context()
 
 	// Check if context is already cancelled
@@ -67,20 +74,16 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// includePolylines defaults to true; only an explicit "false" disables it.
-	includePolylines := r.URL.Query().Get("includePolylines") != "false"
-
 	result, stopsList, err := api.processRouteStops(ctx, agencyID, routeID, serviceIDs, filterByDate, includePolylines)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
 
-	api.buildAndSendResponse(w, r, ctx, result, stopsList, currentAgency)
+	api.buildAndSendResponse(w, r, ctx, result, stopsList, currentAgency, includeReferences)
 }
 
 func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, routeID string, serviceIDs []string, filterByDate bool, includePolylines bool) (models.RouteEntry, []models.Stop, error) {
-	allStops := make(map[string]bool)
 	var stopGroupings []models.StopGrouping
 
 	var effectiveTrips []gtfsdb.Trip
@@ -99,7 +102,12 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 		return models.RouteEntry{}, nil, err
 	}
 
-	if err := processTripGroups(ctx, api, agencyID, routeID, effectiveTrips, &stopGroupings, allStops, includePolylines); err != nil {
+	sequences, stops, err := api.loadRouteStopSequences(ctx, effectiveTrips)
+	if err != nil {
+		return models.RouteEntry{}, nil, err
+	}
+
+	if err := processTripGroups(ctx, api, agencyID, effectiveTrips, &stopGroupings, sequences, includePolylines); err != nil {
 		return models.RouteEntry{}, nil, err
 	}
 
@@ -114,8 +122,7 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 		}
 	}
 
-	allStopsIds := formatStopIDs(agencyID, allStops)
-	stopsList, err := buildStopsList(ctx, api, agencyID, allStops)
+	stopsList, err := buildStopsList(ctx, api, agencyID, stops)
 	if err != nil {
 		return models.RouteEntry{}, nil, err
 	}
@@ -124,22 +131,60 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 		Polylines:     entryPolylines,
 		RouteID:       utils.FormCombinedID(agencyID, routeID),
 		StopGroupings: stopGroupings,
-		StopIds:       allStopsIds,
+		StopIds:       formatStopIDs(agencyID, stops),
 	}
 
 	return result, stopsList, nil
 }
 
-func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops map[string]bool) ([]models.Stop, error) {
+// routeStopSequences is the ordered stop list of every qualifying trip, plus
+// the coordinates of the stops those trips visit, loaded once per request.
+type routeStopSequences struct {
+	byTrip      map[string][]string
+	coordinates map[string]models.Location
+}
 
-	stopIDs := make([]string, 0, len(allStops))
-	for stopID := range allStops {
-		stopIDs = append(stopIDs, stopID)
+// loadRouteStopSequences reads the stop times of the given trips and the stops
+// they visit. It returns the per-trip stop sequences and the visited stops.
+func (api *RestAPI) loadRouteStopSequences(ctx context.Context, trips []gtfsdb.Trip) (routeStopSequences, []gtfsdb.Stop, error) {
+	tripIDs := make([]string, len(trips))
+	for i, trip := range trips {
+		tripIDs[i] = trip.ID
+	}
+	// Only the trip and stop IDs are needed. Rows arrive ordered by trip then
+	// stop_sequence, so appending preserves each trip's travel order.
+	stopTimes, err := utils.QueryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetStopIDsForTripIDs)
+	if err != nil {
+		return routeStopSequences{}, nil, err
 	}
 
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+	sequences := routeStopSequences{
+		byTrip:      make(map[string][]string, len(trips)),
+		coordinates: make(map[string]models.Location),
+	}
+	var stopIDs []string
+	for _, stopTime := range stopTimes {
+		sequences.byTrip[stopTime.TripID] = append(sequences.byTrip[stopTime.TripID], stopTime.StopID)
+		if _, seen := sequences.coordinates[stopTime.StopID]; !seen {
+			sequences.coordinates[stopTime.StopID] = models.Location{}
+			stopIDs = append(stopIDs, stopTime.StopID)
+		}
+	}
+
+	stops, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	if err != nil {
-		return nil, err
+		return routeStopSequences{}, nil, err
+	}
+	for _, stop := range stops {
+		sequences.coordinates[stop.ID] = models.Location{Lat: stop.Lat, Lon: stop.Lon}
+	}
+	return sequences, stops, nil
+}
+
+func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, stops []gtfsdb.Stop) ([]models.Stop, error) {
+	stopIDs := make([]string, 0, len(stops))
+	for _, stop := range stops {
+		stopIDs = append(stopIDs, stop.ID)
 	}
 
 	routeRows, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
@@ -185,11 +230,12 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, allStops
 	return stopsList, nil
 }
 
-func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, result models.RouteEntry, stopsList []models.Stop, currentAgency gtfsdb.Agency) {
+func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, result models.RouteEntry, stopsList []models.Stop, currentAgency gtfsdb.Agency, includeReferences bool) {
+
 	references := models.NewEmptyReferences()
 
 	// When includeReferences=false the references block is present but empty.
-	if ShouldIncludeReferences(r) {
+	if includeReferences {
 		agencyRef := models.AgencyReferenceFromDatabase(&currentAgency)
 
 		routes, err := api.BuildRouteReferences(ctx, currentAgency.ID, stopsList)
@@ -218,10 +264,9 @@ func processTripGroups(
 	ctx context.Context,
 	api *RestAPI,
 	agencyID string,
-	routeID string,
 	trips []gtfsdb.Trip,
 	stopGroupings *[]models.StopGrouping,
-	allStops map[string]bool,
+	sequences routeStopSequences,
 	includePolylines bool,
 ) error {
 	dirGroups := groupTripsByDirection(trips)
@@ -232,7 +277,7 @@ func processTripGroups(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		stopGroup, err := buildStopGroup(ctx, api, agencyID, routeID, group, allStops, includePolylines)
+		stopGroup, err := buildStopGroup(ctx, api, agencyID, group, sequences, includePolylines)
 		if err != nil {
 			return err
 		}
@@ -254,18 +299,10 @@ func processTripGroups(
 }
 
 // buildStopGroup assembles a single direction's StopGroup: its ordered stop IDs,
-// most-common headsign name, and merged polylines. It also records the group's
-// stops in allStops.
-func buildStopGroup(ctx context.Context, api *RestAPI, agencyID string, routeID string, group directionGroup, allStops map[string]bool, includePolylines bool) (models.StopGroup, error) {
-	headsignCounts, dirServiceIDs := summarizeTrips(group.Trips)
-
-	orderedStopIDs, err := orderedStopIDsForGroup(ctx, api, routeID, group, dirServiceIDs)
-	if err != nil {
-		return models.StopGroup{}, err
-	}
-	for _, stopID := range orderedStopIDs {
-		allStops[stopID] = true
-	}
+// most-common headsign name, and merged polylines.
+func buildStopGroup(ctx context.Context, api *RestAPI, agencyID string, group directionGroup, sequences routeStopSequences, includePolylines bool) (models.StopGroup, error) {
+	headsignCounts := countHeadsigns(group.Trips)
+	orderedStopIDs := orderedStopIDsForGroup(group, sequences)
 
 	// groupPolylines stays a non-nil empty slice so it serializes as [] (not null)
 	// when includePolylines is false or a group has no shapes. The polylines are
@@ -273,6 +310,7 @@ func buildStopGroup(ctx context.Context, api *RestAPI, agencyID string, routeID 
 	// getShapeIdsForStopSequenceBlock + merge.
 	groupPolylines := []models.Polyline{}
 	if includePolylines {
+		var err error
 		groupPolylines, err = api.mergePolylinesForShapeIDs(ctx, distinctShapeIDs(group.Trips))
 		if err != nil {
 			return models.StopGroup{}, err
@@ -297,45 +335,25 @@ func buildStopGroup(ctx context.Context, api *RestAPI, agencyID string, routeID 
 	}, nil
 }
 
-// summarizeTrips counts trip headsigns and collects the distinct service IDs of a
-// direction's trips (preserving first-seen order).
-func summarizeTrips(trips []gtfsdb.Trip) (map[string]int, []string) {
+// countHeadsigns counts how many of a direction's trips carry each headsign.
+func countHeadsigns(trips []gtfsdb.Trip) map[string]int {
 	headsignCounts := make(map[string]int)
-	var dirServiceIDs []string
-	seenServiceIDs := make(map[string]bool)
 	for _, trip := range trips {
 		headsignCounts[trip.TripHeadsign.String]++
-		if !seenServiceIDs[trip.ServiceID] {
-			seenServiceIDs[trip.ServiceID] = true
-			dirServiceIDs = append(dirServiceIDs, trip.ServiceID)
-		}
 	}
-	return headsignCounts, dirServiceIDs
+	return headsignCounts
 }
 
-// orderedStopIDsForGroup returns the stop IDs of a direction in route sequence.
-func orderedStopIDsForGroup(ctx context.Context, api *RestAPI, routeID string, group directionGroup, dirServiceIDs []string) ([]string, error) {
-	if !group.DirectionID.Valid {
-		/*
-			direction_id is NULL in the GTFS data. SQL NULL = NULL evaluates to
-			UNKNOWN, not TRUE, so GetOrderedStopIDsForRouteDirection would return
-			zero rows. Fall back to ordering by the group's trips directly, still
-			collecting the union of stops across all of them — otherwise stops
-			served only by trips after the first would be dropped from both the
-			flat stop list and this group.
-		*/
-		tripIDs := make([]string, len(group.Trips))
-		for i, trip := range group.Trips {
-			tripIDs[i] = trip.ID
-		}
-		return api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForTrips(ctx, tripIDs)
+// orderedStopIDsForGroup returns the stop IDs of a direction in canonical route
+// sequence, inferred from the stop sequences of the direction's trips. Stop
+// sequence numbers are only comparable within one trip, so the order is derived
+// from stop adjacency across trips rather than from stop_sequence values.
+func orderedStopIDsForGroup(group directionGroup, sequences routeStopSequences) []string {
+	tripSequences := make([][]string, 0, len(group.Trips))
+	for _, trip := range group.Trips {
+		tripSequences = append(tripSequences, sequences.byTrip[trip.ID])
 	}
-	return api.GtfsManager.GtfsDB.Queries.GetOrderedStopIDsForRouteDirection(ctx,
-		gtfsdb.GetOrderedStopIDsForRouteDirectionParams{
-			RouteID:     routeID,
-			DirectionID: group.DirectionID,
-			ServiceIds:  dirServiceIDs,
-		})
+	return utils.OrderStopsAlongRoute(tripSequences, sequences.coordinates)
 }
 
 // disambiguateGroupNames keeps direction groups distinguishable: any group whose
@@ -505,10 +523,10 @@ func (m *polylineMerger) addShape(points []gtfsdb.Shape) {
 	m.flush()
 }
 
-func formatStopIDs(agencyID string, stops map[string]bool) []string {
-	var stopIDs []string
-	for key := range stops {
-		stopIDs = append(stopIDs, utils.FormCombinedID(agencyID, key))
+func formatStopIDs(agencyID string, stops []gtfsdb.Stop) []string {
+	stopIDs := make([]string, 0, len(stops))
+	for _, stop := range stops {
+		stopIDs = append(stopIDs, utils.FormCombinedID(agencyID, stop.ID))
 	}
 	slices.Sort(stopIDs)
 

@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"database/sql"
 	"net/http"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -35,11 +36,16 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	stopID := query.Get("stopId")
 	code := query.Get("code")
 	userComment := utils.TruncateComment(query.Get("userComment"))
-	userOnVehicle := query.Get("userOnVehicle")
 	userVehicleNumber := query.Get("userVehicleNumber")
-	userLatStr := utils.ValidateNumericParam(query.Get("userLat"))
-	userLonStr := utils.ValidateNumericParam(query.Get("userLon"))
-	userLocationAccuracy := utils.ValidateNumericParam(query.Get("userLocationAccuracy"))
+	var fieldErrors map[string][]string
+	userLat, fieldErrors := utils.ParseFloatParam(query, "userLat", fieldErrors)
+	userLon, fieldErrors := utils.ParseFloatParam(query, "userLon", fieldErrors)
+	userLocationAccuracy, fieldErrors := utils.ParseFloatParam(query, "userLocationAccuracy", fieldErrors)
+	userOnVehicle, fieldErrors := utils.ParseBoolParam(query, "userOnVehicle", false, fieldErrors)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
 
 	// Log the problem report for observability
 	reqLogger.Info("problem_report_received_for_trip",
@@ -50,6 +56,11 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 		"vehicle_id", vehicleID,
 		"stop_id", stopID)
 
+	onVehicleValue := int64(0)
+	if userOnVehicle {
+		onVehicleValue = 1
+	}
+
 	// Store the problem report in the database
 	now := api.Clock.Now().UnixMilli()
 	params := gtfsdb.CreateProblemReportTripParams{
@@ -59,10 +70,10 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 		StopID:               nulls.String(stopID),
 		Code:                 nulls.String(code),
 		UserComment:          nulls.String(userComment),
-		UserLat:              gtfsdb.ParseNullFloat(userLatStr),
-		UserLon:              gtfsdb.ParseNullFloat(userLonStr),
-		UserLocationAccuracy: gtfsdb.ParseNullFloat(userLocationAccuracy),
-		UserOnVehicle:        gtfsdb.ParseNullBool(userOnVehicle),
+		UserLat:              nullableReportFloat(userLat, query.Get("userLat")),
+		UserLon:              nullableReportFloat(userLon, query.Get("userLon")),
+		UserLocationAccuracy: nullableReportFloat(userLocationAccuracy, query.Get("userLocationAccuracy")),
+		UserOnVehicle:        sql.NullInt64{Int64: onVehicleValue, Valid: query.Get("userOnVehicle") != ""},
 		UserVehicleNumber:    nulls.String(userVehicleNumber),
 		CreatedAt:            now,
 		SubmittedAt:          now,
