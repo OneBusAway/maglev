@@ -43,6 +43,29 @@ The export SHALL match supplied stop events to static trip visits and compute pr
 - **WHEN** only static scheduled trips exist with no corresponding realtime evidence
 - **THEN** the exporter does not fabricate a realtime prediction solely because those trips are scheduled
 
+### Requirement: Block schedule deviation selection
+For each block service instance, supplied updates SHALL be considered in scheduled block-trip order. The last supplied trip-level delay SHALL determine block deviation. Without a trip-level delay, deviation SHALL be predicted event time minus its scheduled time for the supplied event closest to effective request time. A future event SHALL win a tie with a past event. Absolute event time SHALL take precedence over scheduled time plus event delay.
+
+#### Scenario: Multiple trip-level delays
+- **WHEN** block trip A supplies delay +60 seconds and later block trip B supplies delay +120 seconds
+- **THEN** block deviation is +120 seconds regardless of source-feed array order or which route is requested
+
+#### Scenario: Trip-level delay takes precedence
+- **WHEN** a block supplies trip-level delay +60 seconds and a stop event implies deviation +120 seconds
+- **THEN** block deviation is +60 seconds, while the supplied stop prediction remains unchanged
+
+#### Scenario: Closest supplied event
+- **WHEN** effective request time is 10:00, a past event at 09:59 implies deviation +30 seconds, and a future event at 10:05 implies deviation +90 seconds, with no trip-level delay
+- **THEN** block deviation is +30 seconds; a future event does not win merely because it is future
+
+#### Scenario: Future event wins equal-distance tie
+- **WHEN** effective request time is 10:00, a past event at 09:59 implies deviation +30 seconds, and a future event at 10:01 implies deviation +90 seconds, with no trip-level delay
+- **THEN** block deviation is +90 seconds
+
+#### Scenario: Absolute time overrides event delay
+- **WHEN** a supplied event has scheduled time 10:10, absolute time 10:12, and delay +60 seconds
+- **THEN** its prediction is 10:12 and its deviation candidate is +120 seconds, not +60 seconds
+
 ### Requirement: Bounded filling before supplied predictions
 When a block has supplied stop predictions and a trip-level delay, missing scheduled visits SHALL receive scheduled arrival/departure plus block deviation only if predicted departure is strictly after the associated update timestamp (or request time if absent) and strictly before the earliest existing predicted event. Earliest event uses each visit's arrival when present, otherwise departure. Filling SHALL NOT overwrite supplied visits.
 
