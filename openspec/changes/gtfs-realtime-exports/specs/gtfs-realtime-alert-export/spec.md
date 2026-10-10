@@ -39,6 +39,25 @@ A route-filtered export SHALL include an agency-eligible alert if at least one a
 - **WHEN** one alert affects route A at two stops and route B at another stop, and the filter is A
 - **THEN** the alert appears once with all three selectors retained
 
+### Requirement: Legacy alert identity and replacement
+An identified alert's logical identity SHALL be its record agency plus raw upstream alert ID. The record agency SHALL be the source's first configured agency, independently of affected-selector agencies. For conflicting records with the same identity, the last successfully applied update SHALL replace the whole record before agency or route selection. Source-feed ordering and upstream timestamps SHALL NOT choose the winner; contents SHALL NOT be merged.
+
+#### Scenario: Conflicting updates from two sources
+- **WHEN** two sources use record agency 40 and raw alert ID `notice`, and the second successfully applied update changes the text, windows, and selectors
+- **THEN** the export uses only the second record's complete contents, even if its source sorts earlier or its upstream timestamp is older
+
+#### Scenario: Replacement changes affected scope
+- **WHEN** an earlier record affects route A and the last applied replacement affects only route B
+- **THEN** route A filtering does not resurrect the earlier record; route B filtering returns the replacement
+
+#### Scenario: Same raw ID in different agency namespaces
+- **WHEN** records under agencies 40 and 20 share raw upstream alert ID `notice` and both affect the requested agency
+- **THEN** both remain distinct logical alerts with entity IDs `40_notice` and `20_notice`
+
+#### Scenario: Alerts without upstream IDs
+- **WHEN** two distinct retained alerts have no upstream IDs, even if their text is identical
+- **THEN** they remain separate records with unique fallback IDs; multiple matching selectors do not duplicate either record
+
 ### Requirement: Retained alerts independent of activity time
 The export SHALL include eligible retained alerts regardless of whether their active windows are current, future, or expired. It SHALL preserve active periods in epoch seconds and all available header, description, and URL translations. The request `time` SHALL affect the header, not activity-window selection.
 
@@ -51,7 +70,7 @@ The export SHALL include eligible retained alerts regardless of whether their ac
 - **THEN** both translations survive export without requiring their array order to remain fixed
 
 ### Requirement: Alert entity identities
-An alert's existing ID SHALL be retained as its FeedEntity ID independently of payload normalization. Alerts without IDs SHALL receive count-based fallback IDs. Entity IDs SHALL be unique within the resulting feed, including when fallback IDs coexist with supplied IDs.
+An identified alert's FeedEntity ID SHALL be its qualified legacy identity `{recordAgencyID}_{rawUpstreamAlertID}`, independently of payload normalization. An existing retained ID representing that identity SHALL be preserved, not qualified twice. Alerts without IDs SHALL receive count-based fallback IDs. Entity IDs SHALL be unique within the resulting feed, including when fallback IDs coexist with identified alerts.
 
 #### Scenario: Existing qualified alert ID
 - **WHEN** an alert ID is `40_16623` and payload normalization is enabled
