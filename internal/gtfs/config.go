@@ -31,6 +31,18 @@ type Config struct {
 	EnableGTFSTidy        bool
 	StartupRetries        []time.Duration
 	Metrics               *metrics.Metrics
+	// BlockMatchLocation is the "server-local" zone legacy block matching
+	// uses for candidate dates. Nil means time.Local; tests set it so they
+	// do not depend on the machine's zone.
+	BlockMatchLocation *time.Location
+}
+
+// blockMatchLocation is the zone legacy block matching treats as server-local.
+func (config Config) blockMatchLocation() *time.Location {
+	if config.BlockMatchLocation == nil {
+		return time.Local
+	}
+	return config.BlockMatchLocation
 }
 
 // enabledFeeds returns only the enabled feeds that have at least one URL configured.
