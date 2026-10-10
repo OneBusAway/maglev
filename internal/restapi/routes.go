@@ -92,6 +92,10 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	// --- Routes with simple ID validation (agency IDs) ---
 	mux.Handle("GET /api/where/agency/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.agencyHandler))))
 	mux.Handle("GET /api/where/routes-for-agency/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.routesForAgencyHandler))))
+
+	// GTFS-RT exports: no-store is applied for the whole /api/gtfs_realtime/
+	// prefix by GtfsRealtimeCacheMiddleware, so no CacheControlMiddleware here.
+	mux.Handle("GET /api/gtfs_realtime/vehicle-positions-for-agency/{id}", rateLimitAndValidateAPIKey(api, api.vehiclePositionsForAgencyHandler))
 	mux.Handle("GET /api/where/stop-ids-for-agency/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.stopIDsForAgencyHandler))))
 	mux.Handle("GET /api/where/stops-for-agency/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.stopsForAgencyHandler))))
 	mux.Handle("GET /api/where/route-ids-for-agency/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.routeIDsForAgencyHandler))))
