@@ -14,7 +14,7 @@ The system SHALL serve GET `/api/gtfs_realtime/{export}-for-agency/{id}.{format}
 - **THEN** binary bodies decode as FeedMessage and text bodies parse as protobuf text with equivalent contents, disregarding nonsemantic ordering
 
 ### Requirement: Feed header time
-Every successful feed SHALL declare `gtfs_realtime_version="2.0"`. Its timestamp SHALL be the effective request time in epoch seconds. `time` SHALL follow Maglev's shared parsing conventions: absent/empty uses current time; epoch milliseconds, `YYYY-MM-DD`, and `YYYY-MM-DD_HH-mm-ss` are accepted. Date strings SHALL use the agency timezone. Request time SHALL NOT imply historical realtime replay.
+Every successful feed SHALL declare `gtfs_realtime_version="2.0"`. Its timestamp SHALL be the effective request time in epoch seconds. `time` SHALL follow Maglev's shared parsing conventions: absent/empty uses current time; epoch milliseconds, `YYYY-MM-DD`, and `YYYY-MM-DD_HH-mm-ss` are accepted. Date strings SHALL use the agency timezone, or UTC for unknown agencies. Request time SHALL NOT imply historical realtime replay.
 
 #### Scenario: Fixed timestamp
 - **WHEN** a valid export is requested with `time=1791581968000`
@@ -31,6 +31,10 @@ Every successful feed SHALL declare `gtfs_realtime_version="2.0"`. Its timestamp
 #### Scenario: Date-string input
 - **WHEN** `time=2026-10-09_12-00-00` is supplied for an agency in America/Los_Angeles
 - **THEN** it resolves to noon in that timezone; `time=2026-10-09` resolves to midnight in that timezone
+
+#### Scenario: Unknown-agency date input
+- **WHEN** a valid request for an unknown agency supplies `time=2026-10-09_12-00-00`
+- **THEN** its empty feed's timestamp resolves to noon UTC
 
 #### Scenario: Numeric fractional-second truncation
 - **WHEN** `time=1791581968999` is supplied
