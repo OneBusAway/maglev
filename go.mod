@@ -3,7 +3,7 @@ module maglev.onebusaway.org
 go 1.26.0
 
 require (
-	github.com/OneBusAway/go-gtfs v1.1.2-0.20260917031702-50d893a9a72e
+	github.com/OneBusAway/go-gtfs v1.2.1-0.20261010064334-b35c4efcf2d0
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.20.1
