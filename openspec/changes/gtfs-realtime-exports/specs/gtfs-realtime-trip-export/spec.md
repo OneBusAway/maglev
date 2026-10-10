@@ -40,19 +40,19 @@ Ordinary scheduled-trip block matching SHALL use the trip-update timestamp when 
 - **THEN** matching uses Tuesday 01:10; if the header timestamp is also absent, the matching reference is the Unix epoch rather than current or request time
 
 ### Requirement: Legacy candidate service dates
-On a matching-cache miss, candidate service dates SHALL use the server's local timezone. Before 04:00 they SHALL be yesterday then today; from 04:00 through 20:59:59, today only; from 21:00, today then tomorrow. This fixed window SHALL NOT expand to all possible overlapping service days or use the requested agency timezone.
+On a matching-cache miss, candidate service dates SHALL use the timezone of the matched trip's agency (its route's agency), not the server's local timezone. Before 04:00 they SHALL be yesterday then today; from 04:00 through 20:59:59, today only; from 21:00, today then tomorrow. This fixed window SHALL NOT expand to all possible overlapping service days. Legacy used the server's timezone, which matched only because legacy servers ran in the agency's timezone; agency-local dates keep matching correct on servers running in UTC or serving several timezones.
 
 #### Scenario: Overnight previous-day service
-- **WHEN** matching reference time is Tuesday 01:10 server-local and Monday's active block contains the trip with a first departure at 25:00
+- **WHEN** matching reference time is Tuesday 01:10 agency-local and Monday's active block contains the trip with a first departure at 25:00
 - **THEN** Monday is checked before Tuesday, and Monday's block is selected if its adjusted block start is positive
 
 #### Scenario: Candidate-window boundaries
-- **WHEN** reference time is 03:59:59, 04:00, 20:59:59, or 21:00 server-local
+- **WHEN** reference time is 03:59:59, 04:00, 20:59:59, or 21:00 agency-local
 - **THEN** candidates are respectively yesterday/today, today only, today only, and today/tomorrow
 
-#### Scenario: Server-local date selection
-- **WHEN** server-local reference time is Tuesday 03:00 but agency-local reference time is Tuesday 06:00
-- **THEN** the search checks Monday then Tuesday using server-local dates, rather than only the agency-local Tuesday
+#### Scenario: Agency-local date selection
+- **WHEN** the server runs in UTC and the matching reference time is Tuesday 10:00 UTC, which is Tuesday 03:00 for an agency in America/Los_Angeles
+- **THEN** the search checks Monday then Tuesday in the agency's timezone, rather than only the server-local Tuesday
 
 ### Requirement: Legacy first-match block resolution
 For each candidate date in order, matching SHALL require an active block containing the trip and a static first departure for that trip. It SHALL accept the first candidate with a positive adjusted block start, without nearest-instance scoring or a uniqueness check. Supplied ordinary-trip `start_date` and `start_time` SHALL NOT select the block instance. If no candidate qualifies, that ordinary update SHALL NOT establish an exportable block association.
@@ -226,7 +226,7 @@ Known canceled trip instances SHALL be exported once with schedule relationship 
 - **THEN** that cancellation is not exported
 
 ### Requirement: Service-instance descriptors
-Ordinary scheduled-trip descriptors SHALL identify their legacy-resolved service instance, not conflicting supplied date/start-time hints. Their resolved service date SHALL use the server-local date chosen by matching. Available schedule relationships SHALL be preserved. ADDED and DUPLICATED trips SHALL remain separate from ordinary static-trip matching and preserve their known instance date and applicable start time without server-local reinterpretation.
+Ordinary scheduled-trip descriptors SHALL identify their legacy-resolved service instance, not conflicting supplied date/start-time hints. Their resolved service date SHALL use the agency-local date chosen by matching. Available schedule relationships SHALL be preserved. ADDED and DUPLICATED trips SHALL remain separate from ordinary static-trip matching and preserve their known instance date and applicable start time without reinterpretation by the matcher.
 
 #### Scenario: Resolved ordinary descriptor
 - **WHEN** an ordinary update supplies Tuesday's service date but resolves to Monday's block instance
