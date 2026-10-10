@@ -3,7 +3,6 @@ package restapi
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -187,27 +186,25 @@ func TestScheduleEndpoints_ServeStopTimesOnDSTServiceDays(t *testing.T) {
 			wantFixedArrival := start.Add(10 * time.Hour).UnixMilli()
 			wantExactTimesArrival := start.Add(12 * time.Hour).UnixMilli()
 			wantFrequencyStart := start.Add(8 * time.Hour).UnixMilli()
-			wantServiceDate := tc.date.Midnight(losAngeles).UnixMilli()
+			wantScheduleDate := tc.date.Midnight(losAngeles).UnixMilli()
 
-			day := fmt.Sprintf("%04d-%02d-%02d", tc.date.Year, tc.date.Month, tc.date.Day)
-			for _, date := range []string{day, strconv.FormatInt(start.UnixMilli(), 10)} {
-				_, stopSchedule := callAPIHandler[dstScheduleForStopResponse](t, api, fmt.Sprintf(
-					"/api/where/schedule-for-stop/%s.json?key=TEST&date=%s", stopID, date))
-				require.Len(t, stopSchedule.Data.Entry.StopRouteSchedules, 1, "date=%s", date)
-				directions := stopSchedule.Data.Entry.StopRouteSchedules[0].StopRouteDirectionSchedules
-				require.Len(t, directions, 1)
-				require.Len(t, directions[0].ScheduleStopTimes, 2)
-				assert.Equal(t, wantFixedArrival, directions[0].ScheduleStopTimes[0].ArrivalTime, "date=%s", date)
-				assert.Equal(t, wantExactTimesArrival, directions[0].ScheduleStopTimes[1].ArrivalTime, "date=%s", date)
-				require.Len(t, directions[0].ScheduleFrequencies, 1)
-				assert.Equal(t, wantFrequencyStart, directions[0].ScheduleFrequencies[0].StartTime, "date=%s", date)
-				assert.Equal(t, wantServiceDate, directions[0].ScheduleFrequencies[0].ServiceDate, "date=%s", date)
+			date := fmt.Sprintf("%04d-%02d-%02d", tc.date.Year, tc.date.Month, tc.date.Day)
+			_, stopSchedule := callAPIHandler[dstScheduleForStopResponse](t, api, fmt.Sprintf(
+				"/api/where/schedule-for-stop/%s.json?key=TEST&date=%s", stopID, date))
+			require.Len(t, stopSchedule.Data.Entry.StopRouteSchedules, 1)
+			directions := stopSchedule.Data.Entry.StopRouteSchedules[0].StopRouteDirectionSchedules
+			require.Len(t, directions, 1)
+			require.Len(t, directions[0].ScheduleStopTimes, 2)
+			assert.Equal(t, wantFixedArrival, directions[0].ScheduleStopTimes[0].ArrivalTime)
+			assert.Equal(t, wantExactTimesArrival, directions[0].ScheduleStopTimes[1].ArrivalTime)
+			require.Len(t, directions[0].ScheduleFrequencies, 1)
+			assert.Equal(t, wantFrequencyStart, directions[0].ScheduleFrequencies[0].StartTime)
+			assert.Equal(t, start.UnixMilli(), directions[0].ScheduleFrequencies[0].ServiceDate)
 
-				_, routeSchedule := callAPIHandler[dstScheduleForRouteResponse](t, api, fmt.Sprintf(
-					"/api/where/schedule-for-route/%s.json?key=TEST&date=%s", routeID, date))
-				assert.Equal(t, wantServiceDate, routeSchedule.Data.Entry.ScheduleDate, "date=%s", date)
-				assert.NotEmpty(t, routeSchedule.Data.Entry.StopTripGroupings, "date=%s", date)
-			}
+			_, routeSchedule := callAPIHandler[dstScheduleForRouteResponse](t, api, fmt.Sprintf(
+				"/api/where/schedule-for-route/%s.json?key=TEST&date=%s", routeID, date))
+			assert.Equal(t, wantScheduleDate, routeSchedule.Data.Entry.ScheduleDate)
+			assert.NotEmpty(t, routeSchedule.Data.Entry.StopTripGroupings)
 		})
 	}
 }

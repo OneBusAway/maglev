@@ -71,7 +71,7 @@ func frequencyWindowFrom(dbFreq gtfsdb.Frequency, startOfDay time.Time) Frequenc
 
 // NewScheduleFrequencyFromDB converts a database Frequency row into a
 // ScheduleFrequency for use in schedule-for-stop responses.
-// serviceDate is local midnight on the service date; the window is measured from its Start.
+// serviceDate is local midnight on the service date; the window and the reported serviceDate are its Start.
 // serviceID and tripID must already be combined (agencyID_rawID) form.
 func NewScheduleFrequencyFromDB(
 	dbFreq gtfsdb.Frequency,
@@ -79,11 +79,11 @@ func NewScheduleFrequencyFromDB(
 	serviceID, tripID, stopHeadsign string,
 	arrivalEnabled, departureEnabled bool,
 ) ScheduleFrequency {
-	date := servicedate.Of(serviceDate)
+	start := servicedate.Of(serviceDate).Start(serviceDate.Location())
 
 	return ScheduleFrequency{
-		FrequencyWindow:  frequencyWindowFrom(dbFreq, date.Start(serviceDate.Location())),
-		ServiceDate:      NewModelTime(date.Midnight(serviceDate.Location())),
+		FrequencyWindow:  frequencyWindowFrom(dbFreq, start),
+		ServiceDate:      NewModelTime(start),
 		ServiceID:        serviceID,
 		TripID:           tripID,
 		StopHeadsign:     stopHeadsign,
