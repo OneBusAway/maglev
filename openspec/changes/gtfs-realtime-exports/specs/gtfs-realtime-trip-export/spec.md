@@ -155,12 +155,35 @@ When a block has supplied stop predictions and a trip-level delay, missing sched
 - **WHEN** update time is 10:00, trip delay is +60 seconds, and visits scheduled at 10:10 and 10:30 both supply arrival/departure predictions at 10:11 and 10:31; missing visits are scheduled at 09:59, 10:05, and 10:20 with equal arrival/departure
 - **THEN** the 10:05 visit is added at 10:06; the 09:59 visit is not added because its predicted departure equals 10:00; the 10:20 visit is not added because 10:21 exceeds the earliest supplied prediction; supplied predictions remain intact
 
+### Requirement: Legacy single-prediction mode
+After processing each block trip's supplied updates, single-prediction mode SHALL activate if the accumulated prediction collection has exactly one record and the collection's first input update in retained source order has exactly one stop update. Once active, it SHALL remain active for that block collection's traversal. Activation SHALL NOT require a trip-level delay and SHALL use available selected deviation. Counts SHALL include prediction records already reconstructed for earlier trips.
+
+#### Scenario: Mode without trip-level delay
+- **WHEN** the first input update has one stop update yielding one prediction and no supplied trip-level delay exists
+- **THEN** single-prediction mode activates using the stop-derived deviation
+
+#### Scenario: First input update prevents activation
+- **WHEN** the first input update has two stop updates, only one of which yields a prediction, and no trip-level delay exists
+- **THEN** the single accumulated prediction alone does not activate single-prediction mode
+
+#### Scenario: Mode remains active
+- **WHEN** single-prediction mode activates for trip A and subsequent processing of trip B adds more prediction records
+- **THEN** the mode remains active through B; it is not switched off because the collection now has multiple records
+
 ### Requirement: Single-prediction filling
-For a block represented by a single stop prediction from a one-stop update, missing visits SHALL also receive schedule-plus-deviation predictions after that prediction, provided predicted departure is strictly after the legacy filling-reference time and scheduled arrival does not exceed the last scheduled arrival among trips represented by supplied updates. This SHALL NOT extrapolate indefinitely into later scheduled trips without supporting bounds.
+While single-prediction mode is active, missing visits SHALL receive schedule-plus-deviation predictions when departure is strictly after the legacy filling-reference time and either before the earliest accumulated predicted event or scheduled arrival is at most the end bound. The end bound SHALL be the greatest scheduled arrival in trips processed so far having at least one supplied stop update. Delay-only updates SHALL NOT extend it. Supplied visits SHALL NOT be overwritten.
 
 #### Scenario: Fill within the represented trip's end
-- **WHEN** update time is 10:00 and the sole supplied visit is scheduled at 10:10 with arrival/departure at 10:11; the represented trip ends at scheduled arrival 10:30 and a missing visit is scheduled at 10:20
-- **THEN** deviation is +60 seconds and the missing visit is exported at 10:21
+- **WHEN** filling-reference time is 10:00, no trip-level delay exists, and the first input update's sole supplied visit is scheduled at 10:10 with arrival/departure at 10:11; the trip ends at scheduled arrival 10:30 and a missing visit is scheduled at 10:20
+- **THEN** deviation is +60 seconds and the missing visit is exported at 10:21 without requiring a trip-level delay
+
+#### Scenario: Earlier visit without trip-level delay
+- **WHEN** the same single-prediction fixture has a missing visit scheduled at 10:05
+- **THEN** it is filled at 10:06, before the supplied 10:11 prediction, despite the absence of trip-level delay
+
+#### Scenario: Delay-only downstream trip does not extend the bound
+- **WHEN** single-prediction mode is active, its represented stop-update trip ends at scheduled arrival 10:30, and a later trip supplies only a trip-level delay with no stop updates
+- **THEN** that delay-only trip does not advance the single-prediction end bound beyond 10:30
 
 #### Scenario: Do not extrapolate to an unsupported later trip
 - **WHEN** the preceding single-prediction fixture also has a later block trip beginning at 10:40 but no supplied update for it
