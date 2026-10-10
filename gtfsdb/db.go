@@ -318,6 +318,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getStopTimesForStopInWindowStmt, err = db.PrepareContext(ctx, getStopTimesForStopInWindow); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopTimesForStopInWindow: %w", err)
 	}
+	if q.getStopTimesForStopsInWindowStmt, err = db.PrepareContext(ctx, getStopTimesForStopsInWindow); err != nil {
+		return nil, fmt.Errorf("error preparing query GetStopTimesForStopsInWindow: %w", err)
+	}
 	if q.getStopTimesForTripStmt, err = db.PrepareContext(ctx, getStopTimesForTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopTimesForTrip: %w", err)
 	}
@@ -906,6 +909,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getStopTimesForStopInWindowStmt: %w", cerr)
 		}
 	}
+	if q.getStopTimesForStopsInWindowStmt != nil {
+		if cerr := q.getStopTimesForStopsInWindowStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getStopTimesForStopsInWindowStmt: %w", cerr)
+		}
+	}
 	if q.getStopTimesForTripStmt != nil {
 		if cerr := q.getStopTimesForTripStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getStopTimesForTripStmt: %w", cerr)
@@ -1198,6 +1206,7 @@ type Queries struct {
 	getStopIDsForTripStmt                     *sql.Stmt
 	getStopIDsForTripIDsStmt                  *sql.Stmt
 	getStopTimesForStopInWindowStmt           *sql.Stmt
+	getStopTimesForStopsInWindowStmt          *sql.Stmt
 	getStopTimesForTripStmt                   *sql.Stmt
 	getStopTimesForTripIDsStmt                *sql.Stmt
 	getStopsByCodeStmt                        *sql.Stmt
@@ -1333,6 +1342,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getStopIDsForTripStmt:                     q.getStopIDsForTripStmt,
 		getStopIDsForTripIDsStmt:                  q.getStopIDsForTripIDsStmt,
 		getStopTimesForStopInWindowStmt:           q.getStopTimesForStopInWindowStmt,
+		getStopTimesForStopsInWindowStmt:          q.getStopTimesForStopsInWindowStmt,
 		getStopTimesForTripStmt:                   q.getStopTimesForTripStmt,
 		getStopTimesForTripIDsStmt:                q.getStopTimesForTripIDsStmt,
 		getStopsByCodeStmt:                        q.getStopsByCodeStmt,
