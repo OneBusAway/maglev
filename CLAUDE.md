@@ -357,9 +357,20 @@ Common nullable fields: `ShortName`, `LongName`, `Desc`, `Url`, `Color`, `TextCo
 
 ## Testing
 
-- Run single test: `go test ./path/to/package -run TestName`
-- Run tests with verbose output: `go test -v ./...`
-- Generate coverage: `make coverage` (opens HTML report in browser)
+Choose one of the two supported SQLite modes. Prefer **CGO (fast mode)** when a working C compiler (GCC/Clang) is available; this matches CI's main test job. If no C compiler is available or CGO cannot be configured, use **pure Go (compatible mode)** instead. Do not use untagged `go test`: the default SQLite driver requires FTS5 for database migrations.
+
+| Task | CGO / fast mode (C compiler required) | Pure Go / compatible mode (no C compiler required) |
+| --- | --- | --- |
+| All tests | `make test` | `make test-pure` |
+| All tests, direct command | `CGO_ENABLED=1 go test -tags "sqlite_fts5 sqlite_math_functions" ./...` | `CGO_ENABLED=0 go test -tags purego ./...` |
+| One test or matching tests | `CGO_ENABLED=1 go test -tags "sqlite_fts5 sqlite_math_functions" ./path/to/package -run TestName` | `CGO_ENABLED=0 go test -tags purego ./path/to/package -run TestName` |
+| Verbose tests | `CGO_ENABLED=1 go test -tags "sqlite_fts5 sqlite_math_functions" -v ./...` | `CGO_ENABLED=0 go test -tags purego -v ./...` |
+| Coverage file | `CGO_ENABLED=1 go test -tags "sqlite_fts5 sqlite_math_functions" -coverprofile=coverage.out ./...` | `CGO_ENABLED=0 go test -tags purego -coverprofile=coverage.out ./...` |
+
+- Add `-count=1` to direct commands when rerunning validation to bypass cached test results.
+- `make coverage` generates and opens an HTML coverage report in CGO mode. For either mode's coverage file above, use `go tool cover -html=coverage.out` to view it.
+- For agents: if a run fails because a C compiler is missing, retry with the pure-Go equivalent and report which mode actually ran. A pure-Go pass does not establish CGO-specific coverage.
+- If setup fails with `no such module: fts5`, check the build tags before diagnosing missing GTFS fixtures. Retry with the appropriate tagged command above; do not dismiss assertion failures as environment problems.
 
 Test files follow Go conventions with `_test.go` suffix and are co-located with the code they test.
 
