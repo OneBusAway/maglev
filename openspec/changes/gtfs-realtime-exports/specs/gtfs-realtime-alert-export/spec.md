@@ -33,11 +33,30 @@ An informed-entity selector SHALL identify one affected scope; fields within it 
 - **THEN** no agency ID is invented for that selector
 
 ### Requirement: Whole-alert route selection and deduplication
-A route-filtered export SHALL include an agency-eligible alert if at least one affected route matches the raw filter. Each selected logical alert SHALL appear once, retaining all its informed-entity selectors, including nonmatching routes or other agencies. Multiple matching selectors SHALL NOT produce duplicate entities.
+A route-filtered export SHALL include an agency-eligible alert if at least one selector's legacy route-filter candidate matches the raw filter. Each selected logical alert SHALL appear once, retaining all its informed-entity selectors, including nonmatching routes or other agencies. Multiple matching selectors SHALL NOT produce duplicate entities.
 
 #### Scenario: Multiple route matches
 - **WHEN** one alert affects route A at two stops and route B at another stop, and the filter is A
 - **THEN** the alert appears once with all three selectors retained
+
+### Requirement: Legacy alert route-filter candidates
+A selector's route-filter candidate SHALL be its explicit `route_id`, except that a `trip` selector without a `trip_id` and with a supplied `route_id` SHALL use that trip route instead. Route filtering SHALL NOT infer a candidate from a trip ID, stop ID, agency ID, or static lookup. Ownership lookup for affected-agency selection and selector enrichment SHALL NOT create a route-filter candidate.
+
+#### Scenario: Trip-only selector
+- **WHEN** an agency-eligible alert contains only a trip ID whose static route is A
+- **THEN** it appears unfiltered but does not match route filter A solely because of that static association
+
+#### Scenario: Stop-only or agency-only selector
+- **WHEN** an agency-eligible alert has only a stop selector served by route A or an agency-wide selector
+- **THEN** neither selector independently qualifies it for route filter A
+
+#### Scenario: Route in a trip selector
+- **WHEN** a selector supplies `trip.route_id=A` without a `trip_id`
+- **THEN** its route-filter candidate is A; if that selector also has top-level `route_id=B`, A takes precedence as in legacy conversion
+
+#### Scenario: Named trip with route hint
+- **WHEN** a selector names a `trip_id`, includes `trip.route_id=A`, and has no top-level `route_id`
+- **THEN** it has no route-filter candidate; if it also explicitly supplies top-level `route_id=B`, its candidate is B
 
 ### Requirement: Alert record-agency resolution
 The record agency SHALL be the first entry in the source's nonempty `agency-ids` list. When that list is absent or empty, the source's optional `fallback-alert-record-agency-id` SHALL supply the record agency if nonempty.
