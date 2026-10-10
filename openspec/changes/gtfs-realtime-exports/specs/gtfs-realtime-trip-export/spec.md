@@ -28,6 +28,69 @@ The export SHALL include predictions for distinct trips represented in the eligi
 - **WHEN** retained realtime information represents predictions for the active trip and a later trip on the same block
 - **THEN** eligible updates for both trips are exported with their own stop predictions
 
+### Requirement: Legacy scheduled-trip matching reference
+Ordinary scheduled-trip block matching SHALL use the trip-update timestamp when supplied, otherwise the trip-feed header timestamp (zero when absent). For updates grouped by vehicle, the first update in retained source order SHALL supply the matching trip and reference time. Export request time SHALL NOT reassign retained block associations. Matching SHALL occur before route filtering.
+
+#### Scenario: Update timestamp takes precedence
+- **WHEN** an ordinary update timestamp is Tuesday 01:10, its feed header timestamp is Tuesday 12:00, and the export request time is Wednesday 12:00
+- **THEN** initial block matching uses Tuesday 01:10, not the header or export request time
+
+#### Scenario: Feed timestamp fallback
+- **WHEN** an ordinary update has no timestamp and its feed header timestamp is Tuesday 01:10
+- **THEN** matching uses Tuesday 01:10; if the header timestamp is also absent, the matching reference is the Unix epoch rather than current or request time
+
+### Requirement: Legacy candidate service dates
+On a matching-cache miss, candidate service dates SHALL use the server's local timezone. Before 04:00 they SHALL be yesterday then today; from 04:00 through 20:59:59, today only; from 21:00, today then tomorrow. This fixed window SHALL NOT expand to all possible overlapping service days or use the requested agency timezone.
+
+#### Scenario: Overnight previous-day service
+- **WHEN** matching reference time is Tuesday 01:10 server-local and Monday's active block contains the trip with a first departure at 25:00
+- **THEN** Monday is checked before Tuesday, and Monday's block is selected if its adjusted block start is positive
+
+#### Scenario: Candidate-window boundaries
+- **WHEN** reference time is 03:59:59, 04:00, 20:59:59, or 21:00 server-local
+- **THEN** candidates are respectively yesterday/today, today only, today only, and today/tomorrow
+
+#### Scenario: Server-local date selection
+- **WHEN** server-local reference time is Tuesday 03:00 but agency-local reference time is Tuesday 06:00
+- **THEN** the search checks Monday then Tuesday using server-local dates, rather than only the agency-local Tuesday
+
+### Requirement: Legacy first-match block resolution
+For each candidate date in order, matching SHALL require an active block containing the trip and a static first departure for that trip. It SHALL accept the first candidate with a positive adjusted block start, without nearest-instance scoring or a uniqueness check. Supplied ordinary-trip `start_date` and `start_time` SHALL NOT select the block instance. If no candidate qualifies, that ordinary update SHALL NOT establish an exportable block association.
+
+#### Scenario: Overlapping active days
+- **WHEN** reference time is Tuesday 01:10 and both Monday and Tuesday have qualifying blocks for the ordinary trip
+- **THEN** Monday wins even if Tuesday is closer to a supplied stop-event time
+
+#### Scenario: Supplied descriptor does not override matching
+- **WHEN** an ordinary update supplies Tuesday's `start_date` and a different `start_time`, but Monday is the first qualifying candidate
+- **THEN** its block association and reconstruction use Monday's resolved instance, not the supplied hints
+
+#### Scenario: Unmatched ordinary trip
+- **WHEN** the trip is absent from static data or no candidate date has a qualifying active block
+- **THEN** the update does not establish an ordinary block association, even if it contains absolute stop-event times; unrelated eligible updates remain exportable
+
+### Requirement: Legacy static block-start derivation
+Matching SHALL take the trip's first static departure as its trip start. Adjusted block start SHALL equal the block's first departure plus this trip start minus the matching block-trip's first departure. A negative result SHALL fall back to the block's first departure; a resulting zero or negative value SHALL NOT qualify. An incoming ordinary-trip start time SHALL NOT provide a frequency-instance offset.
+
+#### Scenario: Zero block start
+- **WHEN** a candidate's adjusted block start is exactly zero
+- **THEN** that candidate is rejected and the next candidate, if any, is checked
+
+#### Scenario: Frequency start hint ignored
+- **WHEN** an ordinary frequency-based trip supplies a start time different from its first static departure
+- **THEN** block matching uses the static departure rather than deriving a distinct departure instance from that hint
+
+### Requirement: Legacy matching-cache lifecycle
+Matching SHALL maintain a per-source cache keyed only by qualified static trip ID, not service date, start time, or vehicle ID. The first result, including an unresolved result, SHALL be reused for 30 minutes from insertion without extending expiry on reads. Static GTFS replacement SHALL clear this cache. Retained associations SHALL be published immutably; export reads SHALL NOT rematch them against request time.
+
+#### Scenario: Cached association across date-window change
+- **WHEN** an ordinary trip resolves to Monday at Tuesday 03:59 and the same source applies another update for it at Tuesday 04:01 before cache expiry
+- **THEN** Monday's cached association is reused rather than rerunning the today-only search
+
+#### Scenario: Cached failure and invalidation
+- **WHEN** matching fails for a trip and a later update arrives before the cached result expires
+- **THEN** the unresolved result is reused; after expiry or static GTFS replacement, a subsequent update reruns matching
+
 ### Requirement: Sparse prediction reconstruction
 The export SHALL match supplied stop events to static trip visits and compute predictions from absolute event times or scheduled times plus event delay. Missing predictions SHALL be filled only within the rules below using the block's available schedule deviation. Service instances and stop sequences SHALL remain distinct. Static schedules alone SHALL NOT establish realtime evidence.
 
@@ -99,7 +162,7 @@ When eligible active-trip status has no timepoint predictions, the export SHALL 
 - **THEN** its update includes the delay and next-stop departure at request time plus 90 seconds
 
 ### Requirement: Stop events and standard field fidelity
-Available arrival and departure predictions SHALL be exported as epoch-second stop events. Unavailable events SHALL be omitted, not serialized as sentinel timestamps. Service-instance descriptors, stop sequences/relationships, trip/event delays, event times, and uncertainty already retained by current models SHALL survive export, subject to normalization, cancellation reconciliation, and reconstruction. Additional standard-field ingestion expansion is deferred.
+Available arrival/departure predictions SHALL be exported as epoch-second events; unavailable events SHALL be omitted, not sentinel timestamps. Retained instance descriptors, stop sequences/relationships, trip/event delays, event times, and uncertainty SHALL survive export, subject to normalization, legacy scheduled-trip instance resolution, cancellation reconciliation, and reconstruction. Additional standard-field retention is deferred.
 
 #### Scenario: Arrival-only prediction
 - **WHEN** a stop has a valid arrival prediction but no departure prediction
@@ -121,7 +184,11 @@ Known canceled trip instances SHALL be exported once with schedule relationship 
 - **THEN** that cancellation is not exported
 
 ### Requirement: Service-instance descriptors
-Trip descriptors SHALL preserve available service-date, start-time, and schedule-relationship information. ADDED trips SHALL include their known service date and applicable start time. Formatting SHALL identify the actual service instance rather than depend accidentally on the server's local time zone.
+Ordinary scheduled-trip descriptors SHALL identify their legacy-resolved service instance, not conflicting supplied date/start-time hints. Their resolved service date SHALL use the server-local date chosen by matching. Available schedule relationships SHALL be preserved. ADDED and DUPLICATED trips SHALL remain separate from ordinary static-trip matching and preserve their known instance date and applicable start time without server-local reinterpretation.
+
+#### Scenario: Resolved ordinary descriptor
+- **WHEN** an ordinary update supplies Tuesday's service date but resolves to Monday's block instance
+- **THEN** any exported service date identifies Monday, and any exported start time comes from the resolved static instance rather than the conflicting hint
 
 #### Scenario: Added trip across midnight
 - **WHEN** an added trip has a known service date and a start after midnight in its service instance
@@ -139,7 +206,7 @@ Trip-update entity IDs SHALL use qualified trip ID plus `_` plus effective reque
 - **THEN** its entity ID changes with that time rather than being replaced by a stable-ID convention
 
 #### Scenario: Colliding service instances
-- **WHEN** two eligible instances share a trip ID but differ in service date or start time
+- **WHEN** two eligible resolved instances share a trip ID but differ in service date or start time, such as independently resolved sources or added/duplicated instances; differing supplied hints alone do not create distinct ordinary instances
 - **THEN** both are exported with distinct service-instance suffixes on their otherwise colliding entity IDs, and their predictions and cancellation states remain separate
 
 ### Requirement: OBA headsign extensions

@@ -140,7 +140,7 @@ Successful binary responses SHALL use `application/x-google-protobuf`; text resp
 - **THEN** a successful response contains the newly built feed and `Cache-Control: no-store`, rather than relying on a cached feed or a required 304 response
 
 ### Requirement: Available standard fields
-Exports SHALL preserve applicable standard field values already retained by the current realtime models when their records are selected. Missing values SHALL NOT be invented. Fields currently discarded by ingestion are deferred; this feature SHALL NOT require standard-field model expansion. Normalization, selection, reconciliation, prediction reconstruction, and OBA headsign requirements remain in scope; these endpoints SHALL NOT be raw upstream-feed proxies.
+Exports SHALL preserve applicable retained standard values, subject to endpoint selection, normalization, reconciliation, and reconstruction rules, including legacy ordinary-trip instance resolution. Missing values SHALL NOT be invented except for explicitly required derived predictions and descriptors. Additional standard-field retention is deferred; required local matching/identity metadata and OBA headsigns remain in scope. Exports SHALL NOT be raw upstream-feed proxies.
 
 #### Scenario: Retained standard fields
 - **WHEN** selected realtime records retain bearing, speed, occupancy, cause, or effect values
@@ -151,5 +151,9 @@ Exports SHALL preserve applicable standard field values already retained by the 
 - **THEN** severity is omitted from this export; retaining that field is deferred to a separate feature
 
 #### Scenario: Missing values
-- **WHEN** an optional field is unavailable
+- **WHEN** an optional field is unavailable and no endpoint rule explicitly requires a derived value
 - **THEN** the exporter does not fabricate a value merely to populate it
+
+#### Scenario: Resolved ordinary-trip identity exception
+- **WHEN** retained ordinary-trip date/start-time hints conflict with the instance selected by the legacy matcher
+- **THEN** exported instance descriptors follow the resolved identity rather than preserving the conflicting hints; unrelated retained standard values remain subject to their normal preservation rules
