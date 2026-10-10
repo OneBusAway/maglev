@@ -79,6 +79,36 @@ An identified alert's logical identity SHALL be its record agency plus raw upstr
 - **WHEN** two distinct retained alerts have no upstream IDs, even if their text is identical
 - **THEN** they remain separate records with unique fallback IDs; multiple matching selectors do not duplicate either record
 
+### Requirement: Legacy alert refresh lifecycle
+A successfully applied alert refresh with a supplied feed-header timestamp SHALL remove identified records omitted by that source only when the currently retained winner was last applied by that source. Omission SHALL NOT restore an older competing record or remove another source's winner. A successful empty refresh SHALL apply the same cleanup. Refresh failure or an absent header timestamp SHALL leave retained records unchanged.
+
+#### Scenario: Winning source omits an alert
+- **WHEN** source A applies `40_notice`, source B replaces it, and B later successfully applies a timestamped feed omitting that ID
+- **THEN** the alert disappears; A's older retained source copy is not resurrected
+
+#### Scenario: Losing source omits an alert
+- **WHEN** B owns the current replacement for `40_notice` and A successfully applies a timestamped feed omitting it
+- **THEN** B's current record remains unchanged
+
+#### Scenario: Successful empty refresh
+- **WHEN** B successfully applies an empty feed with a supplied header timestamp
+- **THEN** identified records currently owned by B are removed, while other sources' winners remain
+
+#### Scenario: Failure or missing header timestamp
+- **WHEN** B's alert refresh fails or its feed omits the header timestamp
+- **THEN** no replacement or omission cleanup is applied and retained alert state is preserved
+
+### Requirement: Legacy identified-alert deletion
+An explicit deletion of an identified alert in an accepted timestamped refresh SHALL remove its record-agency/raw-ID key globally, even if another source currently owns the winner. Deletion SHALL NOT restore an older competing record. Only a subsequent successfully applied record for that key can recreate it. These removal rules SHALL NOT change existing JSON API behavior.
+
+#### Scenario: Cross-source explicit deletion
+- **WHEN** B owns `40_notice` and A successfully applies a timestamped deletion for that same key
+- **THEN** `40_notice` is removed globally rather than reverting to either source's earlier contents
+
+#### Scenario: Later reapplication
+- **WHEN** a removed key subsequently receives a successfully applied alert record
+- **THEN** that new application recreates the record; merely retaining an older per-source copy does not
+
 ### Requirement: Retained alerts independent of activity time
 The export SHALL include eligible retained alerts regardless of whether their active windows are current, future, or expired. It SHALL preserve active periods in epoch seconds and all available header, description, and URL translations. The request `time` SHALL affect the header, not activity-window selection.
 
