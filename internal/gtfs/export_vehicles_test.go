@@ -90,8 +90,6 @@ func newRabaExportManager(t *testing.T, tripUpdates []byte) *Manager {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
-	losAngeles, err := time.LoadLocation("America/Los_Angeles")
-	require.NoError(t, err)
 	feed := RTFeedConfig{
 		ID:                  "raba",
 		AgencyIDs:           []string{"25"},
@@ -102,10 +100,9 @@ func newRabaExportManager(t *testing.T, tripUpdates []byte) *Manager {
 	}
 	// InitGTFSManager fetches every enabled feed once before returning.
 	manager, err := InitGTFSManager(context.Background(), Config{
-		GtfsURL:            filepath.Join("../../testdata", "raba.zip"),
-		GTFSDataPath:       ":memory:",
-		RTFeeds:            []RTFeedConfig{feed},
-		BlockMatchLocation: losAngeles,
+		GtfsURL:      filepath.Join("../../testdata", "raba.zip"),
+		GTFSDataPath: ":memory:",
+		RTFeeds:      []RTFeedConfig{feed},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })

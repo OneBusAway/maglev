@@ -46,9 +46,18 @@ var blockMatcherFeed = map[string]string{
 		"T_SECOND,07:00:00,07:00:00,S1,1\nT_SECOND,07:20:00,07:20:00,S2,2\n",
 }
 
+// matcherZone is the fixture agency's timezone, which candidate dates use.
+var matcherZone = func() *time.Location {
+	zone, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		panic(err)
+	}
+	return zone
+}()
+
 var (
-	matcherMonday  = time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
-	matcherTuesday = time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	matcherMonday  = time.Date(2026, 10, 5, 0, 0, 0, 0, matcherZone)
+	matcherTuesday = time.Date(2026, 10, 6, 0, 0, 0, 0, matcherZone)
 )
 
 func zipGTFSFiles(t *testing.T, files map[string]string) []byte {
@@ -74,13 +83,13 @@ func newTestBlockMatcher(t *testing.T, now func() time.Time) *blockMatcher {
 	require.NoError(t, err)
 	_, err = client.StoreGtfsData(context.Background(), parsed)
 	require.NoError(t, err)
-	return newBlockMatcher(client.Queries, time.UTC, now)
+	return newBlockMatcher(client.Queries, now)
 }
 
 func fixedNow(t time.Time) func() time.Time { return func() time.Time { return t } }
 
 func TestCandidateServiceDates(t *testing.T) {
-	day := func(d int, hh, mm, ss int) time.Time { return time.Date(2026, 10, d, hh, mm, ss, 0, time.UTC) }
+	day := func(d int, hh, mm, ss int) time.Time { return time.Date(2026, 10, d, hh, mm, ss, 0, matcherZone) }
 	tests := []struct {
 		name      string
 		reference time.Time
@@ -98,21 +107,24 @@ func TestCandidateServiceDates(t *testing.T) {
 	}
 }
 
-func TestCandidateServiceDatesUseServerZone(t *testing.T) {
-	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+// The fixture agency runs on America/Los_Angeles while newTestBlockMatcher's
+// clock is UTC. Tuesday 10:00 UTC is 03:00 Tuesday for the agency, so the
+// agency-local window checks Monday then Tuesday and finds Monday's 25:00
+// trip; a UTC window would check Tuesday only and miss it.
+func TestBlockMatcherUsesAgencyTimezone(t *testing.T) {
+	reference := time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC)
+	matcher := newTestBlockMatcher(t, fixedNow(reference))
+
+	match, err := matcher.Match(context.Background(), "feed", "T_LATE", reference)
+
 	require.NoError(t, err)
-	// 03:00 in the server's zone is 06:00 for an East Coast agency; the
-	// server-local hour decides the window.
-	reference := time.Date(2026, 10, 6, 3, 0, 0, 0, losAngeles)
-	got := candidateServiceDates(reference)
-	require.Len(t, got, 2)
-	assert.Equal(t, "20261005", got[0].Format("20060102"))
-	assert.Equal(t, "20261006", got[1].Format("20060102"))
+	require.NotNil(t, match)
+	assert.Equal(t, matcherMonday, match.ServiceDate)
 }
 
 func TestBlockMatcherMatch(t *testing.T) {
 	ctx := context.Background()
-	tuesday0110 := time.Date(2026, 10, 6, 1, 10, 0, 0, time.UTC)
+	tuesday0110 := time.Date(2026, 10, 6, 1, 10, 0, 0, matcherZone)
 
 	tests := []struct {
 		name          string
@@ -126,10 +138,10 @@ func TestBlockMatcherMatch(t *testing.T) {
 		{"overnight previous-day service", "T_LATE", tuesday0110, matcherMonday, "B1", 25 * time.Hour, false},
 		{"first qualifying day wins", "T_DAILY", tuesday0110, matcherMonday, "B2", 30 * time.Minute, false},
 		{"zero block start never qualifies", "T_ZERO", tuesday0110, time.Time{}, "", 0, true},
-		{"trip without block", "T_NOBLOCK", time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC), matcherTuesday, "T_NOBLOCK", 9 * time.Hour, false},
-		{"later trip in shared block", "T_SECOND", time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC), matcherTuesday, "B5", 7 * time.Hour, false},
+		{"trip without block", "T_NOBLOCK", time.Date(2026, 10, 6, 12, 0, 0, 0, matcherZone), matcherTuesday, "T_NOBLOCK", 9 * time.Hour, false},
+		{"later trip in shared block", "T_SECOND", time.Date(2026, 10, 6, 12, 0, 0, 0, matcherZone), matcherTuesday, "B5", 7 * time.Hour, false},
 		{"unknown static trip", "T_MISSING", tuesday0110, time.Time{}, "", 0, true},
-		{"epoch reference finds no service", "T_DAILY", time.Unix(0, 0).UTC(), time.Time{}, "", 0, true},
+		{"epoch reference finds no service", "T_DAILY", time.Unix(0, 0), time.Time{}, "", 0, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -153,8 +165,8 @@ func TestBlockMatcherMatch(t *testing.T) {
 
 func TestBlockMatcherCache(t *testing.T) {
 	ctx := context.Background()
-	tuesday0359 := time.Date(2026, 10, 6, 3, 59, 0, 0, time.UTC)
-	tuesday0401 := time.Date(2026, 10, 6, 4, 1, 0, 0, time.UTC)
+	tuesday0359 := time.Date(2026, 10, 6, 3, 59, 0, 0, matcherZone)
+	tuesday0401 := time.Date(2026, 10, 6, 4, 1, 0, 0, matcherZone)
 
 	t.Run("cached association survives a date-window change", func(t *testing.T) {
 		matcher := newTestBlockMatcher(t, fixedNow(tuesday0359))
@@ -209,7 +221,7 @@ func TestBlockMatcherCache(t *testing.T) {
 
 func TestBlockMatcherDoesNotCacheQueryFailures(t *testing.T) {
 	ctx := context.Background()
-	reference := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	reference := time.Date(2026, 10, 6, 12, 0, 0, 0, matcherZone)
 	matcher := newTestBlockMatcher(t, fixedNow(reference))
 
 	canceled, cancel := context.WithCancel(ctx)

@@ -163,7 +163,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedFilteredOutVehicles: make(map[string][]gtfs.Vehicle),
 		// Built before the startup realtime fetch below, which already
 		// matches blocks.
-		blockMatcher: newBlockMatcher(gtfsDB.Queries, config.blockMatchLocation(), time.Now),
+		blockMatcher: newBlockMatcher(gtfsDB.Queries, time.Now),
 	}
 
 	var attemptsMade int
