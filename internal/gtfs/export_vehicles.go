@@ -92,21 +92,27 @@ func firstTripUpdateByVehicle(refs []tripUpdateRef) map[string]tripUpdateRef {
 	return byVehicle
 }
 
-// newExportVehicle takes the active trip and block from the first trip update
-// naming the vehicle, as legacy grouping does. Legacy never block-matches a
-// vehicle position that carries a vehicle ID, so a position-only vehicle
-// keeps its own trip descriptor but has no block.
+// newExportVehicle takes the block from the first trip update naming the
+// vehicle, as legacy grouping does; legacy never block-matches a vehicle
+// position that carries a vehicle ID. The active trip is the position's own
+// trip, because a vehicle's later updates can describe trips further along
+// its block; a position without a trip falls back to that first update.
 func newExportVehicle(vehicle gtfs.Vehicle, tripByVehicle map[string]tripUpdateRef, tripUpdateBlocks map[string]*BlockMatch) ExportVehicle {
 	export := ExportVehicle{Vehicle: vehicle}
-	if ref, ok := tripByVehicle[vehicle.ID.ID]; ok {
-		export.ActiveTripID = ref.TripID
-		export.ActiveRouteID = ref.RouteID
+	ref, hasTripUpdate := tripByVehicle[vehicle.ID.ID]
+	if hasTripUpdate {
 		export.Block = tripUpdateBlocks[ref.TripID]
-	} else if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
+	}
+	switch {
+	case vehicle.Trip != nil && vehicle.Trip.ID.ID != "":
 		export.ActiveTripID = vehicle.Trip.ID.ID
 		export.ActiveRouteID = vehicle.Trip.ID.RouteID
+	case hasTripUpdate:
+		export.ActiveTripID = ref.TripID
+		export.ActiveRouteID = ref.RouteID
 	}
-	if export.ActiveRouteID == "" && export.Block != nil {
+	isBlockTrip := export.Block != nil && export.Block.TripID == export.ActiveTripID
+	if export.ActiveRouteID == "" && isBlockTrip {
 		export.ActiveRouteID = export.Block.RouteID
 	}
 	return export
