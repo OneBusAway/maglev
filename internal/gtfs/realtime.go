@@ -403,15 +403,16 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	// Block matching queries static data, so it runs before realTimeMutex is
 	// taken, and on the unfiltered feed because the export keeps what the
 	// agency filter drops.
+	var unfilteredVehicles []gtfs.Vehicle
+	if vehicleData != nil && vehicleErr == nil {
+		unfilteredVehicles = vehicleData.Vehicles
+	}
 	var tripRefs []tripUpdateRef
 	var tripUpdateBlocks map[string]*BlockMatch
 	if tripData != nil && tripErr == nil {
 		tripRefs = tripUpdateRefsInFeedOrder(tripData.Trips)
+		tripRefs = manager.assignTripUpdateVehicles(ctx, feedID, tripRefs, unfilteredVehicles)
 		tripUpdateBlocks = manager.tripUpdateBlockMatches(ctx, feedID, tripRefs, tripData.CreatedAt)
-	}
-	var unfilteredVehicles []gtfs.Vehicle
-	if vehicleData != nil && vehicleErr == nil {
-		unfilteredVehicles = vehicleData.Vehicles
 	}
 
 	// Apply agency-based filtering if configured for this feed.

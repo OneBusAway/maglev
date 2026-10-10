@@ -3,11 +3,14 @@ package gtfs
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"slices"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // ExportVehicle is a retained vehicle plus the ownership evidence the
@@ -142,4 +145,91 @@ func (manager *Manager) storeFilteredOutVehiclesLocked(feedID string, filteredOu
 		manager.feedFilteredOutVehicles = make(map[string][]gtfs.Vehicle)
 	}
 	manager.feedFilteredOutVehicles[feedID] = filteredOut
+}
+
+// assignTripUpdateVehicles gives trip updates that name no vehicle to the
+// vehicle running on the same static block, so feeds whose trip updates
+// omit vehicle descriptors still group updates by vehicle.
+func (manager *Manager) assignTripUpdateVehicles(ctx context.Context, feedID string, refs []tripUpdateRef, vehicles []gtfs.Vehicle) []tripUpdateRef {
+	tripIDs := anonymousAssignmentTripIDs(refs, vehicles)
+	if len(tripIDs) == 0 || manager.GtfsDB == nil {
+		return refs
+	}
+	trips, err := utils.QueryInBatches(ctx, tripIDs, manager.GtfsDB.Queries.GetTripsByIDs)
+	if err != nil {
+		logging.LogError(logging.ForComponent(ctx, "gtfs_realtime"), "Error loading blocks for trip update assignment", err,
+			slog.String("feed", feedID))
+		return refs
+	}
+	blockKeys := make(map[string]string, len(trips))
+	for _, trip := range trips {
+		blockKeys[trip.ID] = tripBlockKey(trip)
+	}
+	return assignAnonymousTripUpdates(refs, vehicles, blockKeys)
+}
+
+// anonymousAssignmentTripIDs lists the trips whose blocks assignment needs:
+// those of updates without a vehicle, plus those vehicle positions name. It
+// is empty when every update already names its vehicle.
+func anonymousAssignmentTripIDs(refs []tripUpdateRef, vehicles []gtfs.Vehicle) []string {
+	tripIDs := make(map[string]struct{})
+	for _, ref := range refs {
+		if ref.VehicleID == "" && ref.TripID != "" {
+			tripIDs[ref.TripID] = struct{}{}
+		}
+	}
+	if len(tripIDs) == 0 {
+		return nil
+	}
+	for _, vehicle := range vehicles {
+		if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
+			tripIDs[vehicle.Trip.ID.ID] = struct{}{}
+		}
+	}
+	return slices.Sorted(maps.Keys(tripIDs))
+}
+
+// assignAnonymousTripUpdates ports legacy assignment: an update without a
+// vehicle descriptor belongs to the vehicle whose position names a trip on
+// the same static block. Legacy lets the last position in the feed win a
+// shared block; go-gtfs does not keep position order, so the smallest
+// vehicle ID wins instead. refs is not modified.
+func assignAnonymousTripUpdates(refs []tripUpdateRef, vehicles []gtfs.Vehicle, blockKeys map[string]string) []tripUpdateRef {
+	vehicleByBlock := preferredVehicleByBlock(vehicles, blockKeys)
+	assigned := slices.Clone(refs)
+	for i, ref := range assigned {
+		if ref.VehicleID != "" {
+			continue
+		}
+		if blockKey, ok := blockKeys[ref.TripID]; ok {
+			assigned[i].VehicleID = vehicleByBlock[blockKey]
+		}
+	}
+	return assigned
+}
+
+func preferredVehicleByBlock(vehicles []gtfs.Vehicle, blockKeys map[string]string) map[string]string {
+	vehicleByBlock := make(map[string]string)
+	for _, vehicle := range vehicles {
+		if vehicle.ID == nil || vehicle.ID.ID == "" || vehicle.Trip == nil {
+			continue
+		}
+		blockKey, ok := blockKeys[vehicle.Trip.ID.ID]
+		if !ok {
+			continue
+		}
+		if current, taken := vehicleByBlock[blockKey]; !taken || vehicle.ID.ID < current {
+			vehicleByBlock[blockKey] = vehicle.ID.ID
+		}
+	}
+	return vehicleByBlock
+}
+
+// tripBlockKey is the static block a trip runs on. A trip without a
+// block_id is its own block, as in blockMatcher.
+func tripBlockKey(trip gtfsdb.Trip) string {
+	if trip.BlockID.Valid && trip.BlockID.String != "" {
+		return trip.BlockID.String
+	}
+	return trip.ID
 }
