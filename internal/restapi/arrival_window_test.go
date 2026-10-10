@@ -13,6 +13,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -26,6 +27,13 @@ func frequencyWindowArrivals(t *testing.T, api *RestAPI, endpoint string, params
 		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
 			arrivalsAndDeparturesURL(utils.FormCombinedID(freqAgencyID, freqStopAID), params))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
+		if len(model.Data.Entry.ArrivalsAndDepartures) == 0 {
+			assert.Empty(t, model.Data.Entry.NearbyStopIDs)
+			assert.Empty(t, model.Data.Entry.SituationIDs)
+			assert.Empty(t, model.Data.References.Stops)
+			assert.Empty(t, model.Data.References.Routes)
+			assert.Empty(t, model.Data.References.Trips)
+		}
 		return model.Data.Entry.ArrivalsAndDepartures
 	}
 	q := url.Values{"key": {"TEST"}, "lat": {"37.7749"}, "lon": {"-122.4194"}, "radius": {"100"}}
@@ -166,7 +174,7 @@ func TestArrivalFrequencyWindowScheduledDeparture(t *testing.T) {
 }
 
 func TestParseArrivalFrequencyWindows(t *testing.T) {
-	api := &RestAPI{Clock: clock.NewMockClock(frequencyFixtureClock)}
+	api := &RestAPI{Application: &app.Application{Clock: clock.NewMockClock(frequencyFixtureClock)}}
 	tests := []struct {
 		name          string
 		params        url.Values

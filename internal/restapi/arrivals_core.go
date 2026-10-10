@@ -99,10 +99,6 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 	if len(allActiveStopTimes) == 0 {
 		return result, nil
 	}
-	result.Matched = true
-
-	acc.stopIDs[in.StopCode] = true
-
 	routesLookup, tripsLookup, tripStopCountMap, freqMap, err := api.batchArrivalEntities(ctx, allActiveStopTimes)
 	if err != nil {
 		return result, err
@@ -114,6 +110,17 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 		}
 
 		st := ast.GetStopTimesForStopInWindowRow
+
+		before, after := in.Before, in.After
+		if len(freqMap[st.TripID]) > 0 {
+			before, after = in.FrequencyBefore, in.FrequencyAfter
+		}
+		if !api.stopTimeInArrivalWindow(ctx, ast, in.Location, in.QueryTime, before, after) {
+			continue
+		}
+
+		result.Matched = true
+		acc.stopIDs[in.StopCode] = true
 
 		route, routeExists := routesLookup[st.RouteID]
 		if !routeExists {
@@ -132,14 +139,6 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 		}
 
 		if !isRouteTypeAllowed(route.Type, in.RouteTypes) {
-			continue
-		}
-
-		before, after := in.Before, in.After
-		if len(freqMap[st.TripID]) > 0 {
-			before, after = in.FrequencyBefore, in.FrequencyAfter
-		}
-		if !api.stopTimeInArrivalWindow(ctx, ast, in.Location, in.QueryTime, before, after) {
 			continue
 		}
 
