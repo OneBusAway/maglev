@@ -136,11 +136,15 @@ Successful binary responses SHALL use `application/x-google-protobuf`; text resp
 - **THEN** a successful response contains the newly built feed and `Cache-Control: no-store`, rather than relying on a cached feed or a required 304 response
 
 ### Requirement: Available standard fields
-For the supported standard fields listed in endpoint specs, supplied upstream values SHALL be retained through ingestion and exported when their records are selected. DTO omissions SHALL NOT excuse losing a supplied supported field. Missing values SHALL NOT be invented. Normalization, selection, reconciliation, and prediction reconstruction SHALL still apply; these endpoints SHALL NOT be raw upstream-feed proxies.
+Exports SHALL preserve applicable standard field values already retained by the current realtime models when their records are selected. Missing values SHALL NOT be invented. Fields currently discarded by ingestion are deferred; this feature SHALL NOT require standard-field model expansion. Normalization, selection, reconciliation, prediction reconstruction, and OBA headsign requirements remain in scope; these endpoints SHALL NOT be raw upstream-feed proxies.
 
-#### Scenario: Rich upstream fields
-- **WHEN** an ingested vehicle or alert supplies supported bearing, speed, occupancy, cause, effect, or severity values
-- **THEN** the corresponding values survive ingestion and export, even if current DTOs require extending
+#### Scenario: Retained standard fields
+- **WHEN** selected realtime records retain bearing, speed, occupancy, cause, or effect values
+- **THEN** the corresponding applicable fields are exported rather than deliberately omitted to imitate legacy
+
+#### Scenario: Deferred ingestion losses
+- **WHEN** an upstream alert supplies severity but current ingestion does not retain it
+- **THEN** severity is omitted from this export; retaining that field is deferred to a separate feature
 
 #### Scenario: Missing values
 - **WHEN** an optional field is unavailable

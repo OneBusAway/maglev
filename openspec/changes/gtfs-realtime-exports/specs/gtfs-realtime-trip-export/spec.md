@@ -76,15 +76,15 @@ When eligible active-trip status has no timepoint predictions, the export SHALL 
 - **THEN** its update includes the delay and next-stop departure at request time plus 90 seconds
 
 ### Requirement: Stop events and standard field fidelity
-Available arrival and departure predictions SHALL be exported as epoch-second stop events. Unavailable events SHALL be omitted, not serialized as sentinel timestamps. Supplied service-instance descriptors, stop sequences/relationships, trip/event delays, event times, and uncertainty SHALL survive ingestion and export, subject to normalization, cancellation reconciliation, and the specified reconstruction rules.
+Available arrival and departure predictions SHALL be exported as epoch-second stop events. Unavailable events SHALL be omitted, not serialized as sentinel timestamps. Service-instance descriptors, stop sequences/relationships, trip/event delays, event times, and uncertainty already retained by current models SHALL survive export, subject to normalization, cancellation reconciliation, and reconstruction. Additional standard-field ingestion expansion is deferred.
 
 #### Scenario: Arrival-only prediction
 - **WHEN** a stop has a valid arrival prediction but no departure prediction
 - **THEN** arrival time is exported and no sentinel departure time is emitted
 
 #### Scenario: Standard stop metadata
-- **WHEN** an upstream update supplies a stop sequence, schedule relationship, event delay/time, and uncertainty
-- **THEN** those fields survive ingestion and export rather than being lost through DTO omissions
+- **WHEN** a selected retained update contains a stop sequence, schedule relationship, event delay/time, and uncertainty
+- **THEN** those values survive export without requiring retention of additional standard fields during ingestion
 
 ### Requirement: Cancellation reconciliation
 Known canceled trip instances SHALL be exported once with schedule relationship CANCELED, their trip and route IDs, and available service date. The same trip instance SHALL NOT also receive a contradictory SCHEDULED update. Cancellation selection SHALL obey the own-trip agency and route filter rules.

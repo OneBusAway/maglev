@@ -62,8 +62,8 @@ An alert's existing ID SHALL be retained as its FeedEntity ID independently of p
 - **THEN** every entity receives an ID and fallback allocation avoids collisions with supplied IDs
 
 ### Requirement: Alert field fidelity
-The export SHALL retain and export supplied cause, effect, severity, header/description/URL translations, active periods, and informed-entity selector fields. Selector route, trip, and stop IDs SHALL obey the shared normalization switch, while explicit or resolved agency IDs remain intact. Current ingestion or DTO omissions SHALL NOT justify losing these supplied values.
+The export SHALL preserve cause, effect, header/description/URL translations, active periods, and informed-entity selector values retained by the current alert model. Selector route, trip, and stop IDs SHALL obey normalization, while explicit or resolved agency IDs remain intact. Alert severity and other standard fields not retained by current ingestion are deferred; they SHALL NOT be fabricated or require model expansion for this feature.
 
 #### Scenario: Rich alert export
-- **WHEN** an upstream alert supplies cause CONSTRUCTION, effect DETOUR, and severity SEVERE
-- **THEN** all three survive ingestion and export rather than disappear through DTO omissions
+- **WHEN** a selected retained alert has cause CONSTRUCTION, effect DETOUR, translations, active periods, and selectors
+- **THEN** those values are preserved in export, while unavailable severity remains absent
