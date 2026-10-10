@@ -88,7 +88,7 @@ An authorized, valid request for an unknown agency, an agency without retained m
 - **THEN** it returns 200 and a valid empty FeedMessage
 
 ### Requirement: Payload ID normalization
-Payload trip, route, vehicle, and stop IDs SHALL default to their raw IDs, removing only known agency qualification. `removeAgencyIds=false` SHALL emit `{owningAgencyID}_{rawID}` consistently across all exports. Known qualified inputs SHALL NOT be double-prefixed. Arbitrary underscores in raw IDs SHALL NOT be stripped. Alert selector agency IDs SHALL remain intact; entity IDs follow their separate conventions.
+Payload trip, route, and stop IDs SHALL default to raw IDs, removing only known agency qualification and preserving arbitrary raw underscores. `removeAgencyIds=false` SHALL emit `{owningAgencyID}_{rawID}` without double-prefixing known qualified inputs. Vehicle IDs SHALL use the separate legacy interpretation requirement. Alert selector agency IDs SHALL remain intact; entity IDs follow their separate conventions.
 
 #### Scenario: First underscore only
 - **WHEN** a payload ID is `40_trip_with_underscores` and normalization is enabled
@@ -105,6 +105,21 @@ Payload trip, route, vehicle, and stop IDs SHALL default to their raw IDs, remov
 #### Scenario: Prefix preservation
 - **WHEN** `removeAgencyIds=false` is supplied to each export
 - **THEN** resolvable payload IDs use their own agency qualification, including alert route, trip, and stop IDs; the requested agency does not replace another affected entity's owner
+
+### Requirement: Legacy vehicle ID normalization
+Vehicle IDs in all exports SHALL split at the first underscore into agency and vehicle ID. Without an underscore, the matched block's agency SHALL qualify the ID; feed agency membership SHALL NOT substitute. Default output SHALL omit the resolved agency prefix; `removeAgencyIds=false` SHALL preserve it without double-prefixing. Underscores after the first SHALL remain intact. A vehicle identity unresolved by these rules SHALL NOT be invented.
+
+#### Scenario: Prefixed vehicle ID
+- **WHEN** vehicle ID `40_bus_A` is exported
+- **THEN** default payload ID is `bus_A` and `removeAgencyIds=false` emits `40_bus_A`
+
+#### Scenario: Raw-looking vehicle ID with underscore
+- **WHEN** upstream vehicle ID `bus_A` is exported
+- **THEN** default payload ID is `A` and `removeAgencyIds=false` emits `bus_A`, because legacy interprets `bus` as the agency
+
+#### Scenario: Unprefixed vehicle ID with matched block
+- **WHEN** vehicle ID `1234` is associated with a matched block belonging to agency 40
+- **THEN** default payload ID is `1234` and `removeAgencyIds=false` emits `40_1234`
 
 ### Requirement: Raw route filtering
 Absent `routeFilterId` SHALL select agency-wide output. A present filter SHALL match the raw route ID, not its agency-qualified representation. Endpoint-specific selection SHALL occur without changing the exported record's identity or trimming alert selectors.
