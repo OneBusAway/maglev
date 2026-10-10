@@ -186,10 +186,11 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config, logger *slog.Log
 	// Apply API-specific middleware closest to the routes. Both middlewares
 	// guard on the "/api/" path prefix internally, so wrapping the whole mux
 	// leaves web UI and other endpoints untouched.
-	// Order (innermost to outermost): expiry -> version.
+	// Order (innermost to outermost): expiry -> version -> GTFS-RT no-store.
 	var apiHandler http.Handler = mux
 	apiHandler = restapi.GtfsExpiryMiddleware(api.GtfsManager)(apiHandler)
 	apiHandler = api.VersionValidationMiddleware(apiHandler)
+	apiHandler = restapi.GtfsRealtimeCacheMiddleware(apiHandler)
 
 	// Apply compression around apiHandler (the mux plus API-specific middleware)
 	compressedMux := restapi.CompressionMiddleware(apiHandler)
