@@ -129,15 +129,34 @@ For each block service instance, supplied updates SHALL be considered in schedul
 - **WHEN** a supplied event has scheduled time 10:10, absolute time 10:12, and delay +60 seconds
 - **THEN** its prediction is 10:12 and its deviation candidate is +120 seconds, not +60 seconds
 
+### Requirement: Legacy prediction-filling reference time
+Before filling each block trip, updates through that trip SHALL be scanned in scheduled block-trip order and retained source order within each trip. Every supplied update timestamp SHALL replace the carried timestamp, including zero. The last carried nonzero timestamp SHALL bound filling; otherwise the originating trip-feed header time (zero when absent) SHALL apply. Later trips SHALL NOT retroactively change this bound. Export request time SHALL NOT substitute.
+
+#### Scenario: Carry an earlier update timestamp
+- **WHEN** trip A supplies timestamp 09:00 and delay +60 seconds, and later trip B supplies predictions but no timestamp, with a missing visit predicted at 10:06 before B's earliest supplied event
+- **THEN** B's filling uses 09:00, so that visit qualifies even if export request time is 10:20
+
+#### Scenario: Current trip timestamp replaces carried time
+- **WHEN** the same fixture gives B timestamp 10:07
+- **THEN** B's missing visit predicted at 10:06 is not filled because B's timestamp replaces A's 09:00
+
+#### Scenario: Later trip does not change an earlier bound
+- **WHEN** B is filled using 09:00 and later trip C supplies timestamp 11:00
+- **THEN** C's timestamp does not remove B's already-qualified reconstructed visit
+
+#### Scenario: Zero resets to feed time
+- **WHEN** A supplies timestamp 09:00, B supplies timestamp zero, and the originating trip-feed header time is 10:07
+- **THEN** B's filling uses 10:07 rather than retaining A's 09:00; if the header timestamp is absent, the bound is the Unix epoch
+
 ### Requirement: Bounded filling before supplied predictions
-When a block has supplied stop predictions and a trip-level delay, missing scheduled visits SHALL receive scheduled arrival/departure plus block deviation only if predicted departure is strictly after the associated update timestamp (or request time if absent) and strictly before the earliest existing predicted event. Earliest event uses each visit's arrival when present, otherwise departure. Filling SHALL NOT overwrite supplied visits.
+When a block has supplied stop predictions and a trip-level delay, missing scheduled visits SHALL receive scheduled arrival/departure plus block deviation only if predicted departure is strictly after that trip's legacy filling-reference time and strictly before the earliest existing predicted event. Earliest event uses each visit's arrival when present, otherwise departure. Filling SHALL NOT overwrite supplied visits.
 
 #### Scenario: Fill an earlier missing visit but not a later one
 - **WHEN** update time is 10:00, trip delay is +60 seconds, and visits scheduled at 10:10 and 10:30 both supply arrival/departure predictions at 10:11 and 10:31; missing visits are scheduled at 09:59, 10:05, and 10:20 with equal arrival/departure
 - **THEN** the 10:05 visit is added at 10:06; the 09:59 visit is not added because its predicted departure equals 10:00; the 10:20 visit is not added because 10:21 exceeds the earliest supplied prediction; supplied predictions remain intact
 
 ### Requirement: Single-prediction filling
-For a block represented by a single stop prediction from a one-stop update, missing visits SHALL also receive schedule-plus-deviation predictions after that prediction, provided predicted departure is strictly after update/request time and scheduled arrival does not exceed the last scheduled arrival among trips represented by supplied updates. This SHALL NOT extrapolate indefinitely into later scheduled trips without supporting bounds.
+For a block represented by a single stop prediction from a one-stop update, missing visits SHALL also receive schedule-plus-deviation predictions after that prediction, provided predicted departure is strictly after the legacy filling-reference time and scheduled arrival does not exceed the last scheduled arrival among trips represented by supplied updates. This SHALL NOT extrapolate indefinitely into later scheduled trips without supporting bounds.
 
 #### Scenario: Fill within the represented trip's end
 - **WHEN** update time is 10:00 and the sole supplied visit is scheduled at 10:10 with arrival/departure at 10:11; the represented trip ends at scheduled arrival 10:30 and a missing visit is scheduled at 10:20
