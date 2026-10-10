@@ -31,8 +31,14 @@ func TestNewExportVehicleActiveTrip(t *testing.T) {
 	tripByVehicle := map[string]tripUpdateRef{"V1": {TripID: "T_TU", VehicleID: "V1"}}
 	tripUpdateBlocks := map[string]*BlockMatch{"T_TU": tripUpdateBlock}
 
-	t.Run("trip update naming the vehicle supplies trip and block", func(t *testing.T) {
+	t.Run("vehicle's own trip is active; its first trip update supplies the block", func(t *testing.T) {
 		got := newExportVehicle(vehicleWithTrip("V1", "T_VP", "R_VP"), tripByVehicle, tripUpdateBlocks)
+		assert.Equal(t, "T_VP", got.ActiveTripID, "a later update on the block does not replace the position's trip")
+		assert.Equal(t, "R_VP", got.ActiveRouteID)
+		assert.Same(t, tripUpdateBlock, got.Block, "ownership still comes from the first trip update")
+	})
+	t.Run("tripless position takes the trip update's trip", func(t *testing.T) {
+		got := newExportVehicle(vehicleWithTrip("V1", "", ""), tripByVehicle, tripUpdateBlocks)
 		assert.Equal(t, "T_TU", got.ActiveTripID)
 		assert.Equal(t, "R_STATIC", got.ActiveRouteID, "missing realtime route falls back to the matched static route")
 		assert.Same(t, tripUpdateBlock, got.Block)
