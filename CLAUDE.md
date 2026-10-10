@@ -175,6 +175,7 @@ All endpoints are registered in `internal/restapi/routes.go`:
 | `/api/where/arrivals-and-departures-for-stop/{id}` | `arrival_and_departure_for_stop_handler.go` | All arrivals |
 | `/api/where/report-problem-with-trip/{id}` | `report_problem_with_trip_handler.go` | Report trip issue |
 | `/api/where/report-problem-with-stop/{id}` | `report_problem_with_stop_handler.go` | Report stop issue |
+| `/api/gtfs_realtime/vehicle-positions-for-agency/{id}.pb\|.pbtext` | `vehicle_positions_for_agency_handler.go` | GTFS-RT vehicle positions for an agency |
 
 ## Middleware Components
 
