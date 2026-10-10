@@ -7,7 +7,7 @@ Export retained service alerts for the agencies they affect, preserving enough s
 ## ADDED Requirements
 
 ### Requirement: Affected-agency selection
-An alert SHALL qualify for an agency export when an affected selector belongs to the requested agency, including agency ownership resolved from affected routes, trips, or stops. Selection SHALL NOT depend merely on the originating feed or alert record's owning agency. Available explicit selector agency IDs SHALL be preserved.
+An alert with a resolved record agency SHALL qualify for an agency export when an affected selector belongs to the requested agency, including agency ownership resolved from affected routes, trips, or stops. Selection SHALL NOT depend merely on the originating feed or alert record's owning agency. Available explicit selector agency IDs SHALL be preserved.
 
 #### Scenario: Cross-agency alert ownership
 - **WHEN** a record owned by agency A contains selectors affecting agency B
@@ -39,8 +39,29 @@ A route-filtered export SHALL include an agency-eligible alert if at least one a
 - **WHEN** one alert affects route A at two stops and route B at another stop, and the filter is A
 - **THEN** the alert appears once with all three selectors retained
 
+### Requirement: Alert record-agency resolution
+The record agency SHALL be the first entry in the source's nonempty `agency-ids` list. When that list is absent or empty, the source's optional `fallback-alert-record-agency-id` SHALL supply the record agency if nonempty.
+
+#### Scenario: Configured agency takes precedence
+- **WHEN** a source has `agency-ids=["40", "20"]` and `fallback-alert-record-agency-id="30"`
+- **THEN** its record agency is 40; the fallback does not override the list or alter its existing ingestion filtering
+
+### Requirement: Identity-only alert fallback
+The fallback SHALL determine alert identity only: it SHALL NOT enable or change ingestion filtering, affected-agency selection, or selector enrichment. Record agency SHALL NOT be inferred from affected selectors, the requested agency, source-feed ID, or static-feed agency membership.
+
+#### Scenario: Fallback without agency filtering
+- **WHEN** a source's `agency-ids` is absent or empty and `fallback-alert-record-agency-id="40"`, and its alert `notice` affects agency 20
+- **THEN** no agency ingestion filter is enabled by the fallback; the alert qualifies for agency 20's export with entity ID `40_notice`, and selector agencies are resolved independently of the fallback
+
+### Requirement: Unresolved alert record agency
+If neither configuration supplies a record agency, all alerts from that source, including anonymous alerts, SHALL be excluded from GTFS-RT alert exports and a configuration warning SHALL identify the source and missing record-agency configuration. This exclusion SHALL NOT change existing ingestion or JSON API behavior.
+
+#### Scenario: Missing record-agency configuration
+- **WHEN** a source's `agency-ids` is absent or empty and its fallback is absent or empty, even if alert selectors unambiguously identify agency 20
+- **THEN** its identified and anonymous alerts are excluded from GTFS-RT alert exports, a configuration warning identifies the source, and existing ingestion and JSON API behavior remain unchanged
+
 ### Requirement: Legacy alert identity and replacement
-An identified alert's logical identity SHALL be its record agency plus raw upstream alert ID. The record agency SHALL be the source's first configured agency, independently of affected-selector agencies. For conflicting records with the same identity, the last successfully applied update SHALL replace the whole record before agency or route selection. Source-feed ordering and upstream timestamps SHALL NOT choose the winner; contents SHALL NOT be merged.
+An identified alert's logical identity SHALL be its record agency plus raw upstream alert ID. The record agency SHALL follow the record-agency resolution requirement, independently of affected-selector agencies. For conflicting records with the same identity, the last successfully applied update SHALL replace the whole record before agency or route selection. Source-feed ordering and upstream timestamps SHALL NOT choose the winner; contents SHALL NOT be merged.
 
 #### Scenario: Conflicting updates from two sources
 - **WHEN** two sources use record agency 40 and raw alert ID `notice`, and the second successfully applied update changes the text, windows, and selectors
