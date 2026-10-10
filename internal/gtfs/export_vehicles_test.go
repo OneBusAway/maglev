@@ -203,3 +203,29 @@ func TestExportVehiclesAssignsAnonymousTripUpdatesByBlock(t *testing.T) {
 	assert.Equal(t, "25", matched.Block.AgencyID)
 	assert.Equal(t, "28c61524-6da8-4506-9a92-22f2f6e91872", matched.ActiveTripID)
 }
+
+// The JSON view keeps a vehicle's last on-trip record for 15 minutes after
+// the agency filter starts dropping it; the export must not also emit the
+// vehicle's current filtered-out record as a second entity.
+func TestBuildExportVehiclesPrefersCurrentFilteredOutRecord(t *testing.T) {
+	earlier := time.Unix(1000, 0)
+	later := time.Unix(1030, 0)
+	retainedOnTrip := vehicleWithTrip("V1", "trip1", "R1")
+	retainedOnTrip.Timestamp = &earlier
+	currentTripless := vehicleWithTrip("V1", "", "")
+	currentTripless.Timestamp = &later
+	manager := &Manager{
+		feedVehicles:            map[string][]gtfs.Vehicle{"feed-0": {retainedOnTrip, vehicleWithTrip("V2", "trip2", "R2")}},
+		feedFilteredOutVehicles: map[string][]gtfs.Vehicle{"feed-0": {currentTripless}},
+	}
+
+	got := manager.buildExportVehiclesLocked([]string{"feed-0"})
+
+	require.Len(t, got, 2)
+	byID := map[string]ExportVehicle{}
+	for _, vehicle := range got {
+		byID[vehicle.Vehicle.ID.ID] = vehicle
+	}
+	assert.Nil(t, byID["V1"].Vehicle.Trip, "the current tripless record wins over the retained on-trip copy")
+	assert.Equal(t, later, *byID["V1"].Vehicle.Timestamp)
+}
