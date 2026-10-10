@@ -2,6 +2,7 @@ package gtfs
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,8 +11,11 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+	"maglev.onebusaway.org/gtfsdb"
 )
 
 func vehicleWithTrip(vehicleID, tripID, routeID string) gtfs.Vehicle {
@@ -67,17 +71,16 @@ func TestVehiclesMissingFrom(t *testing.T) {
 // TestExportVehiclesFromRabaFeeds runs real ingestion against matching RABA
 // static and realtime fixtures with an agency filter, so it covers vehicles
 // the JSON view drops as well as legacy block matching.
-func TestExportVehiclesFromRabaFeeds(t *testing.T) {
+// newRabaExportManager runs real ingestion with an agency filter against
+// the matching RABA static and realtime fixtures, serving tripUpdates in
+// place of the trip-update fixture.
+func newRabaExportManager(t *testing.T, tripUpdates []byte) *Manager {
+	t.Helper()
+	vehiclePositions, err := os.ReadFile(filepath.Join("../../testdata", "raba-vehicle-positions.pb"))
+	require.NoError(t, err)
 	mux := http.NewServeMux()
-	serveFixture := func(path, file string) {
-		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
-			data, err := os.ReadFile(filepath.Join("../../testdata", file))
-			require.NoError(t, err)
-			_, _ = w.Write(data)
-		})
-	}
-	serveFixture("/trip-updates", "raba-trip-updates.pb")
-	serveFixture("/vehicle-positions", "raba-vehicle-positions.pb")
+	mux.HandleFunc("/trip-updates", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(tripUpdates) })
+	mux.HandleFunc("/vehicle-positions", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(vehiclePositions) })
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
@@ -91,6 +94,7 @@ func TestExportVehiclesFromRabaFeeds(t *testing.T) {
 		RefreshInterval:     3600,
 		Enabled:             true,
 	}
+	// InitGTFSManager fetches every enabled feed once before returning.
 	manager, err := InitGTFSManager(context.Background(), Config{
 		GtfsURL:            filepath.Join("../../testdata", "raba.zip"),
 		GTFSDataPath:       ":memory:",
@@ -99,12 +103,25 @@ func TestExportVehiclesFromRabaFeeds(t *testing.T) {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
+	return manager
+}
 
-	// InitGTFSManager fetches every enabled feed once before returning.
+func exportVehiclesByID(manager *Manager) map[string]ExportVehicle {
 	byID := make(map[string]ExportVehicle)
 	for _, vehicle := range manager.ExportVehicles() {
 		byID[vehicle.Vehicle.ID.ID] = vehicle
 	}
+	return byID
+}
+
+// TestExportVehiclesFromRabaFeeds covers vehicles the JSON view drops as
+// well as legacy block matching.
+func TestExportVehiclesFromRabaFeeds(t *testing.T) {
+	tripUpdates, err := os.ReadFile(filepath.Join("../../testdata", "raba-trip-updates.pb"))
+	require.NoError(t, err)
+	manager := newRabaExportManager(t, tripUpdates)
+
+	byID := exportVehiclesByID(manager)
 	matched := byID["5701"]
 	require.NotNil(t, matched.Block, "vehicle 5701's trip update resolves a RABA block")
 	assert.Equal(t, "25", matched.Block.AgencyID)
@@ -128,4 +145,61 @@ func TestBuildExportVehiclesSkipsVehiclesWithoutID(t *testing.T) {
 
 	require.Len(t, got, 1, "a vehicle without an ID has no identity to export")
 	assert.Equal(t, "V1", got[0].Vehicle.ID.ID)
+}
+
+func TestAssignAnonymousTripUpdates(t *testing.T) {
+	refs := []tripUpdateRef{
+		{TripID: "T_NAMED", VehicleID: "V_NAMED"},
+		{TripID: "T_ON_B1"},
+		{TripID: "T_UNKNOWN_BLOCK"},
+		{TripID: "T_ON_B2"},
+	}
+	vehicles := []gtfs.Vehicle{
+		vehicleWithTrip("V_B1_LATER", "T_OTHER_ON_B1", ""),
+		vehicleWithTrip("V_B1", "T_VP_ON_B1", ""),
+		vehicleWithTrip("V_TRIPLESS", "", ""),
+	}
+	blockKeys := map[string]string{
+		"T_ON_B1":       "B1",
+		"T_ON_B2":       "B2",
+		"T_VP_ON_B1":    "B1",
+		"T_OTHER_ON_B1": "B1",
+	}
+
+	got := assignAnonymousTripUpdates(refs, vehicles, blockKeys)
+
+	assert.Equal(t, "V_NAMED", got[0].VehicleID, "a named vehicle is kept")
+	assert.Equal(t, "V_B1", got[1].VehicleID, "smallest vehicle ID wins a shared block")
+	assert.Empty(t, got[2].VehicleID, "an update whose block is unknown stays anonymous")
+	assert.Empty(t, got[3].VehicleID, "no vehicle position is on block B2")
+	assert.Empty(t, refs[1].VehicleID, "the input refs are not modified")
+}
+
+func TestTripBlockKey(t *testing.T) {
+	assert.Equal(t, "B1", tripBlockKey(gtfsdb.Trip{ID: "T1", BlockID: sql.NullString{String: "B1", Valid: true}}))
+	assert.Equal(t, "T2", tripBlockKey(gtfsdb.Trip{ID: "T2"}), "a trip without a block is its own block")
+}
+
+// Feeds such as OneBusAway's own trip-update export omit vehicle
+// descriptors; legacy then assigns each update to the vehicle running on
+// its block.
+func TestExportVehiclesAssignsAnonymousTripUpdatesByBlock(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("../../testdata", "raba-trip-updates.pb"))
+	require.NoError(t, err)
+	var message gtfsrt.FeedMessage
+	require.NoError(t, proto.Unmarshal(raw, &message))
+	for _, entity := range message.GetEntity() {
+		if entity.GetTripUpdate() != nil {
+			entity.TripUpdate.Vehicle = nil
+		}
+	}
+	tripUpdates, err := proto.Marshal(&message)
+	require.NoError(t, err)
+
+	manager := newRabaExportManager(t, tripUpdates)
+
+	matched := exportVehiclesByID(manager)["5701"]
+	require.NotNil(t, matched.Block, "the anonymous update on 5701's block supplies its block match")
+	assert.Equal(t, "25", matched.Block.AgencyID)
+	assert.Equal(t, "28c61524-6da8-4506-9a92-22f2f6e91872", matched.ActiveTripID)
 }
