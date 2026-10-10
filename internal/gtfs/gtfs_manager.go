@@ -64,6 +64,14 @@ type Manager struct {
 	// be resolved to any agency. Kept out of the merged view, but the metrics
 	// endpoint reports them as that feed's unmatched records.
 	feedUnattributedTrips map[string][]gtfs.Trip
+	// GTFS-RT export state, per feed. Trip-update refs are the unfiltered
+	// updates in feed order; the block map holds legacy matches keyed
+	// by trip ID; filtered-out vehicles are the ones the agency filter keeps
+	// out of feedVehicles that the vehicle export still serves.
+	feedTripUpdateRefs      map[string][]tripUpdateRef
+	feedTripUpdateBlocks    map[string]map[string]*BlockMatch
+	feedFilteredOutVehicles map[string][]gtfs.Vehicle
+	blockMatcher            *blockMatcher
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
 	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
 	// No lock is required for reads.
@@ -91,6 +99,9 @@ func (manager *Manager) clearFeedData(feedID string) {
 
 	manager.feedTrips[feedID] = nil
 	delete(manager.feedUnattributedTrips, feedID)
+	delete(manager.feedTripUpdateRefs, feedID)
+	delete(manager.feedTripUpdateBlocks, feedID)
+	delete(manager.feedFilteredOutVehicles, feedID)
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
 
@@ -146,6 +157,13 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 		feedVehicleTimestamp: make(map[string]uint64),
 		Metrics:              config.Metrics,
+
+		feedTripUpdateRefs:      make(map[string][]tripUpdateRef),
+		feedTripUpdateBlocks:    make(map[string]map[string]*BlockMatch),
+		feedFilteredOutVehicles: make(map[string][]gtfs.Vehicle),
+		// Built before the startup realtime fetch below, which already
+		// matches blocks.
+		blockMatcher: newBlockMatcher(gtfsDB.Queries, config.blockMatchLocation(), time.Now),
 	}
 
 	var attemptsMade int
