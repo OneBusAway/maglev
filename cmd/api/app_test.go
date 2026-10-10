@@ -665,6 +665,33 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 	require.True(t, ok, "exempt-api-keys should be a string")
 	assert.Contains(t, exemptApiKeysStr, "REDACTED", "Exempt API keys should be redacted")
 
+	protectedApiKeysStr, ok := parsed["protected-api-keys"].(string)
+	require.True(t, ok, "protected-api-keys should be a string")
+	assert.Equal(t, "***REDACTED*** (1 keys)", protectedApiKeysStr)
+	assert.NotContains(t, output, "your-secure-test-key-here")
+
 	assert.NotEqual(t, "", rtFeed["trip-updates-url"])
 	assert.Equal(t, gtfsCfg.GTFSDataPath, parsed["data-path"])
+}
+
+func TestDumpConfigJSON_WithNoProtectedAPIKeys(t *testing.T) {
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+	r, w, err := os.Pipe()
+	require.NoError(t, err, "Failed to create OS Pipe")
+	defer r.Close()
+	os.Stdout = w
+
+	dumpConfigJSON(appconf.Config{}, gtfs.Config{})
+
+	require.NoError(t, w.Close())
+	os.Stdout = oldStdout
+
+	var output bytes.Buffer
+	_, err = io.Copy(&output, r)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &parsed))
+	assert.Equal(t, "***REDACTED*** (0 keys)", parsed["protected-api-keys"])
 }
