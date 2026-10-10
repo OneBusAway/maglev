@@ -23,6 +23,94 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+func TestSortArrivalsByBestTime(t *testing.T) {
+	base := time.Date(2026, 3, 8, 10, 0, 0, 0, time.UTC)
+	late := models.ArrivalAndDeparture{
+		TripID:               "agency_late",
+		ScheduledArrivalTime: models.NewModelTime(base),
+		PredictedArrivalTime: models.NewModelTime(base.Add(30 * time.Minute)),
+		Predicted:            true,
+		StopSequence:         1,
+	}
+	onTime := models.ArrivalAndDeparture{
+		TripID:               "agency_ontime",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(10 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         1,
+	}
+	// A stored prediction must not win when the row is not predicted.
+	scheduledOnly := models.ArrivalAndDeparture{
+		TripID:               "agency_scheduled",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(5 * time.Minute)),
+		PredictedArrivalTime: models.NewModelTime(base.Add(90 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         2,
+	}
+	sameTimeEarlierTrip := models.ArrivalAndDeparture{
+		TripID:               "agency_a",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(40 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         4,
+	}
+	sameTimeLaterTrip := models.ArrivalAndDeparture{
+		TripID:               "agency_b",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(40 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         1,
+	}
+	// Same best time and trip, inserted with the later stop first.
+	sameTripLaterStop := models.ArrivalAndDeparture{
+		TripID:               "agency_same",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(40 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         2,
+	}
+	sameTripEarlierStop := models.ArrivalAndDeparture{
+		TripID:               "agency_same",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(40 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         1,
+	}
+
+	arrivals := []models.ArrivalAndDeparture{
+		sameTimeLaterTrip, late, sameTimeEarlierTrip, sameTripLaterStop, sameTripEarlierStop, onTime, scheduledOnly,
+	}
+	sortArrivalsByBestTime(arrivals)
+
+	got := make([]string, len(arrivals))
+	gotStopSequences := make([]int, len(arrivals))
+	for i, a := range arrivals {
+		got[i] = a.TripID
+		gotStopSequences[i] = a.StopSequence
+	}
+	assert.Equal(t, []string{
+		"agency_scheduled",
+		"agency_ontime",
+		"agency_late",
+		"agency_a",
+		"agency_b",
+		"agency_same",
+		"agency_same",
+	}, got)
+	assert.Equal(t, []int{2, 1, 1, 4, 1, 1, 2}, gotStopSequences)
+}
+
+func assertArrivalsSortedByBestTime(t *testing.T, arrivals []models.ArrivalAndDeparture) {
+	t.Helper()
+	for i := 1; i < len(arrivals); i++ {
+		prev, curr := arrivals[i-1], arrivals[i]
+		prevBest, currBest := bestArrivalMillis(prev), bestArrivalMillis(curr)
+		if prevBest == currBest {
+			assert.LessOrEqual(t, prev.TripID, curr.TripID, "arrival[%d] trip ID", i)
+			if prev.TripID == curr.TripID {
+				assert.LessOrEqual(t, prev.StopSequence, curr.StopSequence, "arrival[%d] stop sequence", i)
+			}
+			continue
+		}
+		assert.Less(t, prevBest, currBest, "arrival[%d] best time", i)
+	}
+}
+
 func arrivalsAndDeparturesURL(stopID string, params ...url.Values) string {
 	q := url.Values{"key": {"TEST"}}
 	for _, p := range params {
@@ -80,7 +168,8 @@ func TestArrivalsAndDeparturesForStopHandlerEndToEnd(t *testing.T) {
 	assert.NotNil(t, entry.SituationIDs)
 
 	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
-	require.NotEmpty(t, entry.ArrivalsAndDepartures, "Stop4062 should have at least one scheduled arrival in the test window")
+	require.Greater(t, len(entry.ArrivalsAndDepartures), 1, "Stop4062 should have more than one arrival in the wide window")
+	assertArrivalsSortedByBestTime(t, entry.ArrivalsAndDepartures)
 
 	// TripHeadsign is intentionally not asserted here: RABA's route 25_154 trips have
 	// empty trip_headsign in the static feed, and the spec does not require a non-empty value.
