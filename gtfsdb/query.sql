@@ -1361,6 +1361,22 @@ SELECT trip_id, stop_id FROM stop_times
 WHERE trip_id IN (sqlc.slice('trip_ids'))
 ORDER BY trip_id ASC, stop_sequence ASC;
 
+-- name: GetFirstDeparturesForTripIDs :many
+SELECT
+    st.trip_id,
+    st.departure_time
+FROM
+    stop_times st
+WHERE
+    st.trip_id IN (sqlc.slice('trip_ids'))
+    AND st.stop_sequence = (
+        SELECT MIN(first_stop.stop_sequence)
+        FROM stop_times first_stop
+        WHERE first_stop.trip_id = st.trip_id
+    )
+ORDER BY
+    st.trip_id;
+
 -- name: GetTripsByBlockIDs :many
 SELECT
     t.id,

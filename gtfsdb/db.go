@@ -201,6 +201,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getFeedEndDateStmt, err = db.PrepareContext(ctx, getFeedEndDate); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFeedEndDate: %w", err)
 	}
+	if q.getFirstDeparturesForTripIDsStmt, err = db.PrepareContext(ctx, getFirstDeparturesForTripIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFirstDeparturesForTripIDs: %w", err)
+	}
 	if q.getFirstStopOfNextTripInBlockStmt, err = db.PrepareContext(ctx, getFirstStopOfNextTripInBlock); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFirstStopOfNextTripInBlock: %w", err)
 	}
@@ -714,6 +717,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getFeedEndDateStmt: %w", cerr)
 		}
 	}
+	if q.getFirstDeparturesForTripIDsStmt != nil {
+		if cerr := q.getFirstDeparturesForTripIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFirstDeparturesForTripIDsStmt: %w", cerr)
+		}
+	}
 	if q.getFirstStopOfNextTripInBlockStmt != nil {
 		if cerr := q.getFirstStopOfNextTripInBlockStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFirstStopOfNextTripInBlockStmt: %w", cerr)
@@ -1167,6 +1175,7 @@ type Queries struct {
 	getCalendarByServiceIDStmt                *sql.Stmt
 	getCalendarDateExceptionsForServiceIDStmt *sql.Stmt
 	getFeedEndDateStmt                        *sql.Stmt
+	getFirstDeparturesForTripIDsStmt          *sql.Stmt
 	getFirstStopOfNextTripInBlockStmt         *sql.Stmt
 	getFrequenciesForTripStmt                 *sql.Stmt
 	getFrequenciesForTripsStmt                *sql.Stmt
@@ -1303,6 +1312,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getCalendarByServiceIDStmt:                q.getCalendarByServiceIDStmt,
 		getCalendarDateExceptionsForServiceIDStmt: q.getCalendarDateExceptionsForServiceIDStmt,
 		getFeedEndDateStmt:                        q.getFeedEndDateStmt,
+		getFirstDeparturesForTripIDsStmt:          q.getFirstDeparturesForTripIDsStmt,
 		getFirstStopOfNextTripInBlockStmt:         q.getFirstStopOfNextTripInBlockStmt,
 		getFrequenciesForTripStmt:                 q.getFrequenciesForTripStmt,
 		getFrequenciesForTripsStmt:                q.getFrequenciesForTripsStmt,
