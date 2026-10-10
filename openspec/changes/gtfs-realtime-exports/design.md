@@ -14,7 +14,7 @@ Legacy reference: OneBusAway application modules tag `v2.7.1`, revision `095bf1a
 
 The relevant legacy pipeline is incoming realtime updates → block processing and conditional prediction filling → trip status → export. The serializer itself does not generate downstream predictions, but reproducing only serialization would miss output generated earlier in this same pipeline.
 
-Existing `go-gtfs` normalized vehicles retain bearing, speed, occupancy, and other useful standard fields. Their vehicle descriptor has ID, label, and license plate but no explicit agency field. Normalized alerts retain cause/effect and translations, but the inspected dependency's alert model has no severity field. The enumerated supported fields must survive ingestion even where current DTOs omit them. Field fidelity and agency ownership therefore require deliberate handling rather than assuming every needed value exists in a convenience DTO. Source references below support the investigation; the specs contain the behavior and worked examples needed to implement it.
+Existing `go-gtfs` normalized vehicles retain bearing, speed, occupancy, and other useful standard fields. Their vehicle descriptor has ID, label, and license plate but no explicit agency field. Normalized alerts retain cause/effect and translations, but the inspected dependency's alert model has no severity field. Export the applicable standard values these models already retain; adding retention for discarded standard fields such as alert severity is deferred. Agency ownership provenance is a separate selection requirement and remains in scope. Source references below support the investigation; the specs contain the behavior and worked examples needed to implement it.
 
 ## Goals / Non-Goals
 
@@ -22,7 +22,7 @@ Existing `go-gtfs` normalized vehicles retain bearing, speed, occupancy, and oth
 
 - One shared request and serialization boundary, with independently understandable vehicle, alert, and trip builders.
 - Reuse existing realtime/schedule reasoning while avoiding accidental changes to JSON endpoint behavior.
-- Preserve protobuf field presence and OBA extension wire compatibility.
+- Preserve standard values and optional presence already retained in the current models, plus OBA extension wire compatibility.
 - Make trip reconstruction and intentional legacy departures testable with small controlled fixtures.
 
 **Non-Goals**
@@ -30,14 +30,15 @@ Existing `go-gtfs` normalized vehicles retain bearing, speed, occupancy, and oth
 - A raw upstream-feed proxy, a historical realtime archive, or a new statistical forecasting engine.
 - Byte-for-byte Java protobuf text formatting, legacy HTTP defects, or reproduction of unapproved prediction quirks.
 - Response caching or a deployment-specific CDN configuration.
+- Expanding standard-field ingestion/model coverage, including alert severity. This does not exclude required agency provenance or locally generated OBA headsign bindings.
 
 ## Decisions
 
 ### Shared request boundary; endpoint-specific selection
 
-Use a shared export request representation for the agency ID, effective time, raw route filter, normalization option, and output format. Reuse existing API-key, rate-limit, version, and error mechanisms. Apply `Cache-Control: no-store` at a boundary that also covers rejected export requests. Use `VersionValidationMiddleware` and `utils.ParseTimeParameter` rather than separate export parsers for version/time. Shared time parsing accepts epoch milliseconds and two date-string forms, defaults absent/empty values to the injected clock, treats zero as the epoch, and truncates numeric fractional seconds. Apply the additional pre-epoch 400 guard before encoding an unsigned feed timestamp. Parse `removeAgencyIds` with an absent/empty default of true, case-insensitive true/false, and 400 for other values.
+Use a shared export request representation for the agency ID, effective time, raw route filter, normalization option, and output format. Reuse existing API-key, rate-limit, version, and error mechanisms. Apply `Cache-Control: no-store` at a boundary that also covers rejected export requests. Use `VersionValidationMiddleware` and `utils.ParseTimeParameter` rather than separate export parsers for version/time. Resolve date strings in the requested agency's timezone, or UTC when the agency is unknown. Shared time parsing accepts epoch milliseconds and two date-string forms, defaults absent/empty values to the injected clock, treats zero as the epoch, and truncates numeric fractional seconds. Apply the additional pre-epoch 400 guard before encoding an unsigned feed timestamp. Parse `removeAgencyIds` with an absent/empty default of true, case-insensitive true/false, and 400 for other values.
 
-Keep raw ID plus resolved owning agency as an identity pair through selection and reconstruction. Add qualification when requested or remove only qualification known from provenance; never interpret the first underscore of an arbitrary upstream ID as an agency boundary. Normalize only when building payloads.
+Keep raw ID plus resolved owning agency as an identity pair through selection and reconstruction. For trip, route, and stop IDs, add qualification when requested or remove only known qualification; preserve arbitrary raw underscores. Vehicle IDs deliberately follow the legacy exception in all exports: split at the first underscore, or use the matched block's agency when there is no underscore. Normalize only when building payloads. Do not introduce a feed setting for vehicle-ID qualification.
 
 **Rationale:** this keeps query semantics identical across all six routes and prevents stripping agency information before ownership checks.
 
@@ -45,7 +46,7 @@ Keep raw ID plus resolved owning agency as an identity pair through selection an
 
 ### One feed builder per endpoint; two serializers
 
-Each endpoint builds a complete protobuf FeedMessage; binary and text serializers consume that same message. Use the existing Go protobuf runtime for standard serialization. Retain the enumerated supported upstream fields and their optional presence through ingestion, extending DTOs or narrow typed snapshot metadata where needed. Do not synthesize optional zero values just because a DTO uses a scalar default.
+Each endpoint builds a complete protobuf FeedMessage; binary and text serializers consume that same message. Use the existing Go protobuf runtime for standard serialization. Map applicable standard values and optional presence already retained by the current models. Do not expand ingestion DTOs or add raw-field storage merely to retain additional standard fields in this feature. Do not synthesize optional zero values just because a DTO uses a scalar default.
 
 **Rationale:** text becomes a debugging representation of the same behavior, not a separate implementation. Assembling the message before writing also prevents a serialization error from leaving a partial successful response.
 
@@ -55,11 +56,15 @@ Each endpoint builds a complete protobuf FeedMessage; binary and text serializer
 
 Build against one consistent realtime view and use batched static lookups for missing route, trip, stop, and agency associations. Do not mutate published snapshots or acquire writer locks while performing schedule queries. Avoid per-entity SQL lookups when batch access exists.
 
-Vehicle selection must not simply reuse `VehiclesForAgencyID`: that helper selects by serving route and excludes tripless vehicles, whereas this contract uses vehicle ownership. Preserve or resolve genuine ownership from qualified vehicle identity and source provenance; do not silently reinterpret route agency as ownership. A single-agency source can establish ownership for a raw vehicle ID; a multi-agency source alone cannot. Exclude unresolved vehicles, and exclude vehicles without an update timestamp instead of assigning ingestion or request time. If current ingestion loses necessary provenance, extend the retained representation narrowly.
+Vehicle selection must not simply reuse `VehiclesForAgencyID`: that helper selects by serving route and excludes tripless vehicles. Use legacy-resolved identity instead: the prefix before the first underscore determines the vehicle agency, even when the upstream source intended the full string as a raw ID. Only when the ID has no underscore, use the matched block's agency. The ID prefix takes precedence over the active route or block agency; source-feed agency membership does not substitute for an absent block association. An eligible tripless vehicle with a resolvable agency-prefixed ID can appear unfiltered, but never under a route filter. Exclude unresolved vehicles and vehicles without update timestamps rather than assigning source agency or ingestion/request time. Retain the original identity and required block associations in Maglev-local immutable state, including vehicles otherwise discarded by route-based ingestion filtering. Do not require a `go-gtfs` model change or alter existing JSON selection behavior.
 
 Similarly, alert selection cannot rely only on an agency-only alert index: route-, trip-, and stop-specific selectors can establish affected agency. Resolve selector ownership before normalization, and fill a missing `agency_id` only when that ownership is unambiguous. Preserve explicit agency IDs and retain entity-specific selector fields; adding agency context must not broaden a route/stop selector into an agency-only notice. This supports the inspected iOS decoder, which requires an agency ID. Select and deduplicate whole records while preserving complete selector scope, including other agencies' selectors.
 
-**Alternative:** reuse convenience indexes without checking their semantics. That would violate tripless-vehicle and affected-agency behavior.
+Resolve identified alert conflicts before affected-agency or route selection. The legacy logical key is the source's first configured agency plus raw upstream alert ID, not an affected selector's agency and not the source-feed ID. Retain that identity and the order of successful application in Maglev-local state. The last successfully applied update replaces the entire record for its key; do not rank sources lexicographically, choose by upstream timestamp, merge content, or resurrect an older record when the replacement fails a filter. Preserve separate records when the same raw ID occurs in different agency namespaces. Anonymous retained alerts remain separate even when their text is identical.
+
+Source evidence at the pinned legacy revision: `GtfsRealtimeSource.createId` assigns the first configured agency, `ServiceAlertsServiceImpl.updateReferences` replaces the record by agency-and-ID, and `ServiceAlertsCacheInMemoryImpl.putServiceAlert` overwrites the complete cached value. This is processing-order replacement, not a guarantee that the greatest feed timestamp wins.
+
+**Alternative:** reuse convenience indexes without checking their semantics. That would violate tripless-vehicle and affected-agency behavior; per-feed concatenation alone would also fail legacy cross-feed alert replacement.
 
 ### Reconstruct predictions using shared schedule and delay reasoning
 
@@ -71,7 +76,7 @@ Use Maglev's existing helpers as the starting point, not as proof that all legac
 
 Separate prediction calculation from HTTP response construction where necessary. The export needs a per-trip/per-stop prediction collection; repeatedly issuing JSON requests or wrapping JSON payloads is not an appropriate adapter.
 
-Implement the filling rules and worked examples in the trip spec directly; legacy code is supporting evidence, not a substitute for those requirements. Assemble supplied predictions by block-trip order, matching stops by service instance and visit. Absolute event time takes precedence over schedule plus event delay. For block deviation, reuse the established ordering: the last supplied trip-level delay wins; without one, derive deviation from the stop prediction closest to the reference time, preferring a future prediction on a tie.
+Implement the filling rules and worked examples in the trip spec directly; legacy code is supporting evidence, not a substitute for those requirements. Assemble supplied predictions by block-trip order, matching stops by service instance and visit. Absolute event time takes precedence over schedule plus event delay. For each block service instance, consider supplied updates in scheduled block-trip order: the last supplied trip-level delay determines deviation, regardless of source-array order or requested route. Without a trip-level delay, use predicted event time minus its scheduled time for the supplied event closest to effective request time. Prefer a future event over a past event only when their distances tie. Absolute time takes precedence over event delay, and the chosen block deviation does not overwrite supplied stop predictions. These rules and worked acceptance scenarios now live in the trip spec, not only in this design.
 
 With supplied predictions and a trip-level delay, fill missing visits at scheduled times plus deviation only where predicted departure is after the update/reference time and before the earliest existing predicted event. The single-prediction case additionally allows filling later visits within the schedule end bound represented by supplied updates. Match missing visits by trip and sequence rather than a bare stop ID, so loop visits are not accidentally collapsed. Static membership alone does not justify unconstrained downstream extrapolation.
 
@@ -98,7 +103,7 @@ Do not substitute ordinary custom fields in the standard schema or assume that a
 
 ### Legacy entity-ID conventions, separate from reconciliation identity
 
-Keep entity IDs as specified, but use richer internal service-instance keys for cancellation reconciliation and prediction grouping. Request-time entity IDs do not themselves distinguish multiple service instances of the same trip. Deduplicate logical alerts before allocating fallback IDs, and reserve existing alert IDs before allocating count-based fallback values.
+Keep entity IDs as specified, but use richer internal service-instance keys for cancellation reconciliation and prediction grouping. Request-time entity IDs do not themselves distinguish multiple service instances of the same trip. Reconcile identified alerts by the legacy record-agency/raw-upstream-ID key before selection. Use that key's qualified identity as the FeedEntity ID, preserving an existing retained representation without double-prefixing. The same raw ID in different record agencies remains distinct even when both alerts affect the requested agency. Keep anonymous retained records separate, and reserve identified entity IDs before allocating count-based fallback values.
 
 The ordinary trip ID convention is preserved; do not quietly replace it with stable IDs. When distinct service instances would produce the same entity ID, append deterministic service-instance suffixes to the colliding IDs only. Use available service date and start time to distinguish those instances; normal IDs remain unchanged.
 
@@ -115,7 +120,7 @@ The following source-inspected candidates distinguish direct reuse from adaptati
 | Authorization and version | `internal/restapi/routes.go`: `rateLimitAndValidateAPIKey`; `version_middleware.go`: `VersionValidationMiddleware`; `errors.go` | Reuse request protection and normal error handling. Preserve auth-before-rate-limit ordering. Ensure the no-store boundary covers globally rejected export requests too. |
 | Time and timezone | `internal/utils/api.go`: `ParseTimeParameter`; `internal/restapi/timezone_helper.go`: `loadAgencyLocation` | Direct reuse with the export's additional pre-epoch guard. Use the injected clock and resolved agency timezone; do not introduce a Java-specific date parser. |
 | Boolean parsing | `internal/utils/api.go`: `ParseBoolParam` | Reuse case-insensitive true/false validation, but adapt the empty-value case locally: this helper returns false for empty input, whereas the export contract defaults empty to true. Do not change existing callers' semantics. |
-| ID qualification and path extraction | `internal/utils/api.go`: `FormCombinedID`, `ExtractAgencyIDAndCodeID`; `internal/utils/http.go`: `ExtractIDFromParams`; `internal/restapi/id_helpers.go` | Construct qualified identities with existing utilities; split only IDs known to be qualified. Path extraction currently strips `.json`, not `.pb`/`.pbtext`; add format-aware extraction before shared ID validation, or register paths with agency/format separated. The endpoint path uses a plain agency ID, not a combined entity ID. |
+| ID qualification and path extraction | `internal/utils/api.go`: `FormCombinedID`, `ExtractAgencyIDAndCodeID`; `internal/utils/http.go`: `ExtractIDFromParams`; `internal/restapi/id_helpers.go` | Construct qualified identities with existing utilities. Split trip, route, and stop IDs only when known to be qualified; vehicle IDs intentionally use legacy first-underscore parsing with matched-block fallback. Path extraction currently strips `.json`, not `.pb`/`.pbtext`; add format-aware extraction before shared ID validation, or register paths with agency/format separated. The endpoint path uses a plain agency ID, not a combined entity ID. |
 | Cache policy | `internal/restapi/caching_middleware.go`: `CacheControlMiddleware` | A nonpositive duration already supplies `no-cache, no-store, must-revalidate`, including errors; this satisfies the no-store policy without duplicating caching logic. Do not add `etagStatic` or `ETagMiddleware` to export routes. |
 | Realtime reads | `internal/gtfs/realtime.go`: immutable merged snapshot, `GetRealTimeTrips`, `GetRealTimeVehicles`; `gtfs_manager.go`: `GetAllTripUpdates` | Preserve the snapshot publication model. Separate accessor calls can observe different refreshes, so consider a narrow read-only snapshot accessor for one consistent export view, including full alert records and provenance. Avoid trip-ID-only lookups for instance grouping. |
 | Agency resolution | `internal/gtfs/realtime.go`: `buildRouteAgencyMap`, `tripAgencyIDs`, `informedEntityMatchesAgency` | Reuse batch route/trip resolution patterns rather than duplicate SQL. These are package-private ingestion helpers: extraction/shared placement may be needed. Existing alert matching handles agency/route and trip route, not stop-only ownership or static lookup for a trip selector without route; complete those gaps for export selection and enrichment. |
@@ -128,7 +133,7 @@ Do not force-fit these superficially related helpers:
 
 - `VehiclesForAgencyID` and ingestion `filterVehiclesByAgency` select by active route and omit tripless vehicles, not by the required vehicle ownership.
 - `StaleDetector` uses an absolute gap greater than 15 minutes and can accept a missing timestamp when position exists. It is not the export's one-sided, epoch-second 600-second eligibility check.
-- `BuildSituationReferences` in `reference_utils.go` produces a JSON model, keeps only the first translation, and derives severity from effect. It cannot preserve protobuf alert translations or supplied severity.
+- `BuildSituationReferences` in `reference_utils.go` produces a JSON model, keeps only the first translation, and derives severity from effect. It cannot preserve all retained protobuf alert translations, and its effect-derived severity must not be used to fabricate the unavailable standard severity field.
 - The current alert index skips empty alert IDs and is not a full-record export source; fallback-ID handling needs access to retained records rather than only indexed results.
 
 No reusable outbound FeedMessage builder or OBA headsign extension encoder was found in the inspected application code. Existing `go-gtfs/proto` messages and the protobuf runtime remain reusable foundations; endpoint mapping, bounded prediction assembly, instance cancellation reconciliation, and extension-aware serialization are the new integration work.
@@ -145,18 +150,18 @@ The boundaries are recommendations, not a mandatory PR count. Further split tigh
 
 ## Risks / Trade-offs
 
-- [DTO field loss] → Audit normalized-field coverage; preserve needed source information through a narrow typed representation. Do not proxy raw feeds to solve selection or fidelity.
-- [Vehicle ownership unavailable in current state] → Preserve ownership provenance through ingestion; do not infer ownership from active route alone. Tripless and cross-agency fixtures must exercise the export path independently of ingestion filtering.
+- [DTO field loss] → Export applicable values already retained and explicitly defer other standard fields, including severity, to a later retention feature. Do not proxy raw feeds or fabricate lost values.
+- [Legacy vehicle parsing misinterprets raw underscores] → This is an accepted compatibility choice: `bus_A` resolves to agency `bus`, ID `A`. Test prefix precedence, matched-block fallback for underscore-free IDs, and exclusion when neither resolves ownership. Do not introduce source-feed fallback or a qualification setting; keep these semantics confined to exports.
 - [Prediction fill differs from existing REST helpers] → Controlled sparse/block fixtures must compare expected predictions against pinned legacy behavior, with intentional departures documented. Broad helper reuse without semantic comparison is insufficient.
 - [Request time changes header and trip entity IDs] → No response caching; fixed-time fixtures make comparisons reproducible. Request time does not recreate earlier retained state.
-- [Multi-feed conflicts or repeated trip instances] → Reconcile by logical alert/trip-instance identity before serialization; apply the collision-only entity-ID suffix exception rather than overwrite records.
-- [Optional scalar defaults masquerade as supplied data] → Retain supplied supported fields and their presence through ingestion; do not silently omit a value because the current DTO discarded it.
+- [Multi-feed conflicts or repeated trip instances] → For alerts, apply whole-record last-successfully-applied replacement by record agency and raw alert ID before filters; retain application order and avoid cross-agency collapse. For trips, reconcile by service-instance identity and use collision-only entity-ID suffixes without losing distinct instances.
+- [Optional scalar defaults masquerade as supplied data] → Preserve existing optional presence where available; do not invent values or expand ingestion solely to recover presence currently lost.
 - [Agency-wide reconstruction cost] → Batch schedule lookups and build each block's prediction collection once per response; do not hold realtime writer locks during that work.
 - [Legacy source behavior exceeds tested coverage] → Separate source-supported scenarios from controlled live evidence. Added trips, multi-zone service, and isolated downstream fixtures need targeted tests, not assumptions from the public feed.
 
 ## Migration Plan
 
-This adds routes without replacing existing JSON APIs. No destructive database migration is proposed. Add narrow provenance/field-retention changes only if needed for the contract; verify that JSON outputs and feed ingestion continue to behave as before. Each delivered endpoint must pass its shared-contract and endpoint-specific scenarios before deployment.
+This adds routes without replacing existing JSON APIs. No destructive database migration is proposed. Add narrow agency-provenance changes if needed for ownership selection; do not broaden standard-field retention in this feature. Verify that JSON outputs and existing feed ingestion behavior remain unchanged apart from required provenance support. Each delivered endpoint must pass its shared-contract and endpoint-specific scenarios before deployment.
 
 Use controlled matching GTFS/GTFS-RT fixtures for freshness, sparse updates, interlining, cancellations, translations, and extensions. Parse binary and text outputs semantically; do not assert unstable ordering or Java-specific whitespace. Public CDN cache hits are not evidence of origin filtering or authorization. Production/legacy response comparisons should distinguish intentional departures from regressions.
 
@@ -164,4 +169,4 @@ Rollback is reverting the new route registration and implementation; preserve ex
 
 ## Open Questions
 
-- Where should narrowly scoped ownership/field-retention support live: within Maglev or in the shared `go-gtfs` dependency? Either placement must meet the same contract and preserve existing consumers.
+None. Vehicle identity/block associations and alert identity/application-order metadata will live in Maglev-local retained state. Vehicle IDs follow legacy first-underscore parsing and matched-block fallback without a new feed setting. Alert conflicts use whole-record last-applied replacement before filtering. Additional standard-field retention remains deferred; unknown-agency date strings use UTC.
