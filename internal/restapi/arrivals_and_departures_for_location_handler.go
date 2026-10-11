@@ -73,7 +73,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
-	sortArrivalsByTime(arrivals)
+	sortArrivalsByBestTime(arrivals)
 
 	nearby, err := api.nearbyStopsForLocation(ctx, stops, agencies, params)
 	if err != nil {
@@ -525,20 +525,6 @@ func (api *RestAPI) stopsServingRouteTypes(ctx context.Context, stopIDs []string
 		matching[row.StopID] = true
 	}
 	return matching, nil
-}
-
-// sortArrivalsByTime orders arrivals by when a rider would actually see them,
-// preferring the predicted time when one exists.
-func sortArrivalsByTime(arrivals []models.ArrivalAndDeparture) {
-	effectiveTime := func(a models.ArrivalAndDeparture) int64 {
-		if a.PredictedArrivalTime.UnixMilli() > 0 {
-			return a.PredictedArrivalTime.UnixMilli()
-		}
-		return a.ScheduledArrivalTime.UnixMilli()
-	}
-	sort.SliceStable(arrivals, func(i, j int) bool {
-		return effectiveTime(arrivals[i]) < effectiveTime(arrivals[j])
-	})
 }
 
 // truncateSlice trims items to maxCount, reporting whether anything was dropped

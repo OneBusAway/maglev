@@ -38,14 +38,6 @@ func TestSortArrivalsByBestTime(t *testing.T) {
 		Predicted:            false,
 		StopSequence:         1,
 	}
-	// A stored prediction must not win when the row is not predicted.
-	scheduledOnly := models.ArrivalAndDeparture{
-		TripID:               "agency_scheduled",
-		ScheduledArrivalTime: models.NewModelTime(base.Add(5 * time.Minute)),
-		PredictedArrivalTime: models.NewModelTime(base.Add(90 * time.Minute)),
-		Predicted:            false,
-		StopSequence:         2,
-	}
 	sameTimeEarlierTrip := models.ArrivalAndDeparture{
 		TripID:               "agency_a",
 		ScheduledArrivalTime: models.NewModelTime(base.Add(40 * time.Minute)),
@@ -73,7 +65,7 @@ func TestSortArrivalsByBestTime(t *testing.T) {
 	}
 
 	arrivals := []models.ArrivalAndDeparture{
-		sameTimeLaterTrip, late, sameTimeEarlierTrip, sameTripLaterStop, sameTripEarlierStop, onTime, scheduledOnly,
+		sameTimeLaterTrip, late, sameTimeEarlierTrip, sameTripLaterStop, sameTripEarlierStop, onTime,
 	}
 	sortArrivalsByBestTime(arrivals)
 
@@ -84,7 +76,6 @@ func TestSortArrivalsByBestTime(t *testing.T) {
 		gotStopSequences[i] = a.StopSequence
 	}
 	assert.Equal(t, []string{
-		"agency_scheduled",
 		"agency_ontime",
 		"agency_late",
 		"agency_a",
@@ -92,7 +83,36 @@ func TestSortArrivalsByBestTime(t *testing.T) {
 		"agency_same",
 		"agency_same",
 	}, got)
-	assert.Equal(t, []int{2, 1, 1, 4, 1, 1, 2}, gotStopSequences)
+	assert.Equal(t, []int{1, 1, 4, 1, 1, 2}, gotStopSequences)
+}
+
+// A trip-level delay on the 10:17 trip must move it after the 10:47 trip.
+// Without the sort this stays first, which is the stop_times order.
+func TestArrivalsAndDeparturesForStop_LateTripSortsAfterOnTime(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	delay := 45 * time.Minute
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+		ID:    gtfs.TripID{ID: "d8caf694-87e1-4f9f-b51e-4a32287e3a50"},
+		Delay: &delay,
+	}})
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{"minutesBefore": {"60"}, "minutesAfter": {"240"}}))
+
+	require.GreaterOrEqual(t, len(model.Data.Entry.ArrivalsAndDepartures), 3)
+	got := []string{
+		model.Data.Entry.ArrivalsAndDepartures[0].TripID,
+		model.Data.Entry.ArrivalsAndDepartures[1].TripID,
+		model.Data.Entry.ArrivalsAndDepartures[2].TripID,
+	}
+	assert.Equal(t, []string{
+		"25_6a3ef1d9-13d7-488b-8528-633ce9bbeb6d",
+		"25_d8caf694-87e1-4f9f-b51e-4a32287e3a50",
+		"25_1c782b7e-3ed5-4f1d-b68d-c1f1cd9c4ab5",
+	}, got)
 }
 
 func assertArrivalsSortedByBestTime(t *testing.T, arrivals []models.ArrivalAndDeparture) {

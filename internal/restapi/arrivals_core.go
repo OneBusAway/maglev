@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"sort"
 	"strconv"
 	"time"
 
@@ -739,6 +740,34 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 // the row whose window contains queryTime. A trip with no frequency rows
 // leaves Frequency nil — selectFrequency panics on an empty slice, so this
 // guard is load-bearing, not defensive filler.
+// bestArrivalMillis is the instant Java's ArrivalAndDepartureComparator sorts
+// on. A positive predicted arrival is hasPredictedArrivalTime(); otherwise
+// the scheduled arrival is used.
+func bestArrivalMillis(a models.ArrivalAndDeparture) int64 {
+	if a.PredictedArrivalTime.UnixMilli() > 0 {
+		return a.PredictedArrivalTime.UnixMilli()
+	}
+	return a.ScheduledArrivalTime.UnixMilli()
+}
+
+// sortArrivalsByBestTime orders arrivals by bestArrivalMillis, then by trip ID
+// and stop sequence so equal times come out the same on every request.
+// Both arrivals-and-departures-for-stop and arrivals-and-departures-for-location
+// use it.
+func sortArrivalsByBestTime(arrivals []models.ArrivalAndDeparture) {
+	sort.SliceStable(arrivals, func(i, j int) bool {
+		left := bestArrivalMillis(arrivals[i])
+		right := bestArrivalMillis(arrivals[j])
+		if left != right {
+			return left < right
+		}
+		if arrivals[i].TripID != arrivals[j].TripID {
+			return arrivals[i].TripID < arrivals[j].TripID
+		}
+		return arrivals[i].StopSequence < arrivals[j].StopSequence
+	})
+}
+
 func applyFrequency(arrival *models.ArrivalAndDeparture, freqs []gtfsdb.Frequency, serviceStart, queryTime time.Time) {
 	if len(freqs) == 0 {
 		return
