@@ -34,6 +34,11 @@ func (manager *Manager) ExportVehicles() []ExportVehicle {
 // tripUpdateBlockMatches resolves every trip-update trip in source order, so
 // the first update for a trip supplies its matching reference.
 func (manager *Manager) tripUpdateBlockMatches(ctx context.Context, feedID string, refs []tripUpdateRef, feedCreatedAt time.Time) map[string]*BlockMatch {
+	// ReloadStatic replaces the DB before clearing the matcher's cache under
+	// staticMutex, so holding it keeps a match against the old data from
+	// being cached after that clear.
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
 	matches := make(map[string]*BlockMatch)
 	for _, ref := range refs {
 		if _, seen := matches[ref.TripID]; seen || ref.TripID == "" {
@@ -51,6 +56,10 @@ func (manager *Manager) resolveStaticTripRoutes(ctx context.Context, feedID stri
 	if manager.GtfsDB == nil {
 		return
 	}
+	// Holding staticMutex keeps a route read before a static reload from
+	// being cached after the reload clears the cache.
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
 	tripIDs := manager.staticTripRoutes.missing(realtimeTripIDs(refs, vehicles))
 	if len(tripIDs) == 0 {
 		return
