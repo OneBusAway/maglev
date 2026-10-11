@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"maps"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
@@ -135,13 +137,32 @@ func TestArrivalsAndDeparturesForLocationEndToEnd(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.Trips)
 }
 
-func TestArrivalsAndDeparturesForLocationSortsArrivalsByTime(t *testing.T) {
+// stopIds come nearest first so maxCount truncation drops the farthest
+// stops; arrivals group by stop in the same order with best-arrival-time
+// order inside each stop.
+func TestArrivalsAndDeparturesForLocationOrdersNearestStopFirst(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
 
 	_, model := callArrivalsForLocation(t, api)
-	arrivals := model.Data.Entry.ArrivalsAndDepartures
-	require.Greater(t, len(arrivals), 1, "need at least two arrivals to check ordering")
+	entry := model.Data.Entry
+	require.Greater(t, len(entry.StopIDs), 1, "need at least two stops to check ordering")
+	require.Greater(t, len(entry.ArrivalsAndDepartures), 1, "need at least two arrivals to check ordering")
+
+	coords := make(map[string]models.Stop, len(model.Data.References.Stops))
+	for _, s := range model.Data.References.Stops {
+		coords[s.ID] = s
+	}
+	distance := func(id string) float64 {
+		s, ok := coords[id]
+		require.True(t, ok, "stop %s must resolve in references.stops", id)
+		return utils.Distance(40.539367, -122.34952, s.Lat, s.Lon)
+	}
+
+	for i := 1; i < len(entry.StopIDs); i++ {
+		assert.LessOrEqual(t, distance(entry.StopIDs[i-1]), distance(entry.StopIDs[i]),
+			"stopIds must be ordered nearest first")
+	}
 
 	effective := func(a models.ArrivalAndDeparture) int64 {
 		if a.PredictedArrivalTime.UnixMilli() > 0 {
@@ -149,9 +170,16 @@ func TestArrivalsAndDeparturesForLocationSortsArrivalsByTime(t *testing.T) {
 		}
 		return a.ScheduledArrivalTime.UnixMilli()
 	}
+	arrivals := entry.ArrivalsAndDepartures
 	for i := 1; i < len(arrivals); i++ {
-		assert.LessOrEqual(t, effective(arrivals[i-1]), effective(arrivals[i]),
-			"arrivals must be ordered by effective arrival time")
+		prev, curr := arrivals[i-1], arrivals[i]
+		if prev.StopID == curr.StopID {
+			assert.LessOrEqual(t, effective(prev), effective(curr),
+				"arrivals at one stop must be ordered by best arrival time")
+		} else {
+			assert.LessOrEqual(t, distance(prev.StopID), distance(curr.StopID),
+				"arrivals must be grouped nearest stop first")
+		}
 	}
 }
 
@@ -414,6 +442,32 @@ func TestParseArrivalsForLocationMaxCountClampsToCeiling(t *testing.T) {
 	assert.Equal(t, models.MaxCountForArrivalsForLocation,
 		parseArrivalsForLocationMaxCount(url.Values{"maxCount": {"5000"}}, addError))
 	assert.Empty(t, collected, "clamping above the ceiling must not error")
+}
+
+// A neighbour near the corner of the 100 m square box is inside the box on
+// both axes but over 100 m away in a straight line. Java still counts it as
+// nearby; a straight-line circle check would wrongly drop it.
+func TestNearbyCandidateIDsIncludesBoxCornerNeighbor(t *testing.T) {
+	center := gtfsdb.Stop{ID: "center", Lat: 40.0, Lon: -122.0}
+	corner := gtfsdb.Stop{ID: "corner",
+		Lat: 40.0 + 90.0/111320.0,
+		// cos(40°) ≈ 0.766 corrects the longitude scale.
+		Lon: -122.0 + 90.0/(111320.0*0.766),
+	}
+	far := gtfsdb.Stop{ID: "far",
+		Lat: 40.0 + 150.0/111320.0,
+		Lon: -122.0 + 150.0/(111320.0*0.766),
+	}
+
+	require.Greater(t, utils.Distance(center.Lat, center.Lon, corner.Lat, corner.Lon), 100.0,
+		"corner neighbour must be outside a 100 m circle for the test to mean anything")
+
+	nearIDs, err := nearbyCandidateIDs(context.Background(),
+		[]gtfsdb.Stop{corner, far, center}, []gtfsdb.Stop{center})
+	require.NoError(t, err)
+	assert.True(t, nearIDs["corner"], "box-corner neighbour must be nearby")
+	assert.False(t, nearIDs["far"], "stop outside the box must not be nearby")
+	assert.False(t, nearIDs["center"], "a stop must never be nearby to itself")
 }
 
 // minutes=153722868 would overflow time.Duration(minutes)*time.Minute into a

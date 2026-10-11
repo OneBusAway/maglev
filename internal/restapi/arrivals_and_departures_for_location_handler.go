@@ -1,8 +1,10 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,6 +61,10 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
+	// Nearest stop first: truncation below drops entries from the end, so the
+	// farthest stops must sort last.
+	sortStopsByDistance(stops, params.Location)
+
 	acc := newArrivalsAccumulator("")
 	arrivals, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
 		Stops:      stops,
@@ -73,7 +79,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
-	sortArrivalsByTime(arrivals)
+	sortArrivalsByStopDistance(arrivals, stopDistances(stops, agencies, params.Location))
 
 	nearby, err := api.nearbyStopsForLocation(ctx, stops, agencies, params)
 	if err != nil {
@@ -236,14 +242,15 @@ func (api *RestAPI) sendEmptyArrivalsForLocation(w http.ResponseWriter, r *http.
 	api.sendResponse(w, r, models.NewEmptyArrivalsAndDeparturesForLocationResponse(api.Clock))
 }
 
-// nearbyRadiusMeters is the Java nearby-stops radius: the union of the stops
-// within 100 m of each matched stop (each excluding itself).
-const nearbyRadiusMeters = 100.0
+// nearbyBoxHalfSizeMeters is the Java nearby-stops half box: the union of the
+// stops within a 100 m square box around each matched stop (each excluding
+// itself).
+const nearbyBoxHalfSizeMeters = 100.0
 
 // nearbyStopsForLocation mirrors the Java nearby-stops rule: the union of the
-// stops within 100 m of each matched stop (each excluding itself), limited to
-// stops served by a route running on the query date, measured against the
-// centre of the search area and ordered nearest first.
+// stops within a 100 m square box around each matched stop (each excluding
+// itself), limited to stops served by a route running on the query date,
+// measured against the centre of the search area and ordered nearest first.
 //
 // It is deliberately not "every stop in the bounding box" — a matched stop with
 // no neighbour within 100 m does not appear, while a stop just outside the box
@@ -301,9 +308,16 @@ func (api *RestAPI) nearbyStopsForLocation(
 	return buildNearbyResults(nearbyStops, servesRouteType, activeOnDate, combinedByBare, params.Location), nil
 }
 
-// nearbyCandidateIDs returns the union of the stops within 100 m of a matched
-// stop, excluding each stop itself.
+// nearbyCandidateIDs returns the union of the stops within a 100 m square box
+// around a matched stop, excluding each stop itself.
 func nearbyCandidateIDs(ctx context.Context, candidates, stops []gtfsdb.Stop) (map[string]bool, error) {
+	boxes := make(map[string]utils.CoordinateBounds, len(stops))
+	for _, stop := range stops {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		boxes[stop.ID] = utils.CalculateBounds(stop.Lat, stop.Lon, nearbyBoxHalfSizeMeters)
+	}
 	nearIDs := make(map[string]bool)
 	for _, candidate := range candidates {
 		if ctx.Err() != nil {
@@ -313,7 +327,7 @@ func nearbyCandidateIDs(ctx context.Context, candidates, stops []gtfsdb.Stop) (m
 			if stop.ID == candidate.ID {
 				continue
 			}
-			if utils.Distance(candidate.Lat, candidate.Lon, stop.Lat, stop.Lon) <= nearbyRadiusMeters {
+			if utils.BoundsContain(boxes[stop.ID], candidate.Lat, candidate.Lon) {
 				nearIDs[candidate.ID] = true
 				break
 			}
@@ -391,11 +405,11 @@ func expandLocationForNearby(loc *internalgtfs.LocationParams) *internalgtfs.Loc
 		if radius <= 0 {
 			radius = models.DefaultSearchRadiusInMeters
 		}
-		expanded.Radius = radius + nearbyRadiusMeters
+		expanded.Radius = radius + nearbyBoxHalfSizeMeters
 		return &expanded
 	}
 
-	margin := utils.CalculateBounds(loc.Lat, loc.Lon, nearbyRadiusMeters)
+	margin := utils.CalculateBounds(loc.Lat, loc.Lon, nearbyBoxHalfSizeMeters)
 	expanded.LatSpan = loc.LatSpan + (margin.MaxLat - margin.MinLat)
 	expanded.LonSpan = loc.LonSpan + (margin.MaxLon - margin.MinLon)
 	return &expanded
@@ -527,18 +541,46 @@ func (api *RestAPI) stopsServingRouteTypes(ctx context.Context, stopIDs []string
 	return matching, nil
 }
 
-// sortArrivalsByTime orders arrivals by when a rider would actually see them,
-// preferring the predicted time when one exists.
-func sortArrivalsByTime(arrivals []models.ArrivalAndDeparture) {
-	effectiveTime := func(a models.ArrivalAndDeparture) int64 {
-		if a.PredictedArrivalTime.UnixMilli() > 0 {
-			return a.PredictedArrivalTime.UnixMilli()
+// sortStopsByDistance orders stops nearest the search centre first, breaking
+// ties on bare stop ID so the order is deterministic.
+func sortStopsByDistance(stops []gtfsdb.Stop, loc *internalgtfs.LocationParams) {
+	slices.SortStableFunc(stops, func(a, b gtfsdb.Stop) int {
+		if d := utils.Distance(loc.Lat, loc.Lon, a.Lat, a.Lon) - utils.Distance(loc.Lat, loc.Lon, b.Lat, b.Lon); d != 0 {
+			return cmp.Compare(d, 0)
 		}
-		return a.ScheduledArrivalTime.UnixMilli()
-	}
-	sort.SliceStable(arrivals, func(i, j int) bool {
-		return effectiveTime(arrivals[i]) < effectiveTime(arrivals[j])
+		return strings.Compare(a.ID, b.ID)
 	})
+}
+
+// stopDistances maps each matched stop's combined ID to its distance from the
+// search centre, so arrivals sort by how near their stop is.
+func stopDistances(stops []gtfsdb.Stop, agencies *stopAgencyIndex, loc *internalgtfs.LocationParams) map[string]float64 {
+	distances := make(map[string]float64, len(stops))
+	for _, stop := range stops {
+		combined := utils.FormCombinedID(agencies.agencyIDFor(stop.ID), stop.ID)
+		distances[combined] = utils.Distance(loc.Lat, loc.Lon, stop.Lat, stop.Lon)
+	}
+	return distances
+}
+
+// sortArrivalsByStopDistance orders arrivals by stop distance from the search
+// centre, keeping best-arrival-time order within each stop.
+func sortArrivalsByStopDistance(arrivals []models.ArrivalAndDeparture, distances map[string]float64) {
+	slices.SortStableFunc(arrivals, func(a, b models.ArrivalAndDeparture) int {
+		if d := distances[a.StopID] - distances[b.StopID]; d != 0 {
+			return cmp.Compare(d, 0)
+		}
+		return cmp.Compare(effectiveArrivalTime(a), effectiveArrivalTime(b))
+	})
+}
+
+// effectiveArrivalTime is when a rider would actually see the arrival,
+// preferring the predicted time when one exists.
+func effectiveArrivalTime(a models.ArrivalAndDeparture) int64 {
+	if a.PredictedArrivalTime.UnixMilli() > 0 {
+		return a.PredictedArrivalTime.UnixMilli()
+	}
+	return a.ScheduledArrivalTime.UnixMilli()
 }
 
 // truncateSlice trims items to maxCount, reporting whether anything was dropped
