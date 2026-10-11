@@ -155,6 +155,20 @@ func isVehicleStale(existing, incoming gtfs.Vehicle) bool {
 	return incoming.Timestamp.Before(*existing.Timestamp)
 }
 
+// setTripVehicle records vehicles[index] as the vehicle serving its trip,
+// unless the trip already has a vehicle with a newer report. Vehicles retained
+// after dropping out of their feed come after the live ones, so without this
+// check a retained vehicle would hide the live vehicle now serving its trip.
+func setTripVehicle(vehicleLookupByTrip map[string]int, vehicles []gtfs.Vehicle, index int) {
+	tripID := vehicles[index].Trip.ID.ID
+	existing, found := vehicleLookupByTrip[tripID]
+	existingIsNewer := found && isVehicleStale(vehicles[existing], vehicles[index])
+	if existingIsNewer {
+		return
+	}
+	vehicleLookupByTrip[tripID] = index
+}
+
 // vehicleKey identifies a vehicle across feed updates. Exactly one field is
 // set, recording which descriptor field the identity came from, so a real ID
 // never equals a label or license plate with the same text.
@@ -875,7 +889,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	vehiclesByRoute := make(map[string][]gtfs.Vehicle)
 	for i, vehicle := range allVehicles {
 		if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
-			vehicleLookupByTrip[vehicle.Trip.ID.ID] = i
+			setTripVehicle(vehicleLookupByTrip, allVehicles, i)
 		}
 		if vehicle.Trip != nil && vehicle.Trip.ID.RouteID != "" {
 			vehiclesByRoute[vehicle.Trip.ID.RouteID] = append(vehiclesByRoute[vehicle.Trip.ID.RouteID], vehicle)

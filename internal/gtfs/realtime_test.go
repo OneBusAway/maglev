@@ -755,6 +755,73 @@ func TestVehicleMerge_LabelOnlyVehicleRetained(t *testing.T) {
 	assert.InDelta(t, 47.2, *byLabel["102"].Position.Latitude, 0.001)
 }
 
+// positionOnTrip builds a VehiclePosition for a vehicle serving the given trip.
+func positionOnTrip(vehicleID, tripID string, latitude float32, timestamp time.Time) *gtfsrt.VehiclePosition {
+	return &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String(vehicleID)},
+		Trip:      &gtfsrt.TripDescriptor{TripId: proto.String(tripID)},
+		Position:  &gtfsrt.Position{Latitude: proto.Float32(latitude), Longitude: proto.Float32(-122.3)},
+		Timestamp: proto.Uint64(uint64(timestamp.Unix())),
+	}
+}
+
+// TestVehicleMerge_RetainedVehicleDoesNotReplaceLiveVehicleOnTrip checks that
+// when a vehicle drops out of the feed and another vehicle takes over its
+// trip, the trip resolves to the live vehicle while the old one is retained.
+func TestVehicleMerge_RetainedVehicleDoesNotReplaceLiveVehicleOnTrip(t *testing.T) {
+	manager := newTestManager()
+	now := time.Now().Truncate(time.Second)
+
+	firstFeed := serveVehicleFeed(t, now.Add(-30*time.Second), []*gtfsrt.VehiclePosition{
+		positionOnTrip("V1", "trip-x", 47.1, now.Add(-30*time.Second)),
+	})
+	manager.updateFeedRealtime(context.Background(), firstFeed)
+
+	secondFeed := serveVehicleFeed(t, now, []*gtfsrt.VehiclePosition{
+		positionOnTrip("V2", "trip-x", 47.4, now),
+	})
+	manager.updateFeedRealtime(context.Background(), secondFeed)
+
+	vehicle := manager.GetVehicleForTrip(context.Background(), "trip-x")
+	require.NotNil(t, vehicle)
+	assert.Equal(t, "V2", vehicle.ID.ID)
+	assert.InDelta(t, 47.4, *vehicle.Position.Latitude, 0.001)
+	assert.Len(t, manager.GetRealTimeVehicles(), 2, "V1 should still be retained within the stale-vehicle window")
+}
+
+func TestSetTripVehicle(t *testing.T) {
+	older := time.Date(2026, 10, 11, 10, 0, 0, 0, time.UTC)
+	newer := older.Add(30 * time.Second)
+	vehicleAt := func(id string, timestamp *time.Time) gtfs.Vehicle {
+		return gtfs.Vehicle{
+			ID:        &gtfs.VehicleID{ID: id},
+			Trip:      &gtfs.Trip{ID: gtfs.TripID{ID: "trip-x"}},
+			Timestamp: timestamp,
+		}
+	}
+
+	tests := []struct {
+		name     string
+		vehicles []gtfs.Vehicle
+		wantID   string
+	}{
+		{"later newer vehicle replaces earlier", []gtfs.Vehicle{vehicleAt("A", &older), vehicleAt("B", &newer)}, "B"},
+		{"later older vehicle keeps earlier", []gtfs.Vehicle{vehicleAt("A", &newer), vehicleAt("B", &older)}, "A"},
+		{"equal timestamps keep last vehicle", []gtfs.Vehicle{vehicleAt("A", &older), vehicleAt("B", &older)}, "B"},
+		{"missing timestamp keeps last vehicle", []gtfs.Vehicle{vehicleAt("A", &newer), vehicleAt("B", nil)}, "B"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			vehicleLookupByTrip := make(map[string]int)
+			for i := range tc.vehicles {
+				setTripVehicle(vehicleLookupByTrip, tc.vehicles, i)
+			}
+			assert.Equal(t, tc.wantID, tc.vehicles[vehicleLookupByTrip["trip-x"]].ID.ID)
+		})
+	}
+}
+
 // TestIsVehicleStale verifies the isVehicleStale function correctly compares
 // vehicle timestamps to determine staleness.
 func TestIsVehicleStale(t *testing.T) {
