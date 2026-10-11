@@ -39,9 +39,8 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
-	// One snapshot cache for the whole request: BuildTripStatus runs once per
-	// arrival row across every stop in the box, and without sharing the cache
-	// the block computation is repeated for each of them.
+	// One snapshot cache for the whole request. Trip status runs only for the
+	// arrivals that survive maxCount, and those rows still share block snapshots.
 	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
 
 	// Uncapped and clamped: Java computes arrivals for every stop in the box and
@@ -60,7 +59,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	}
 
 	acc := newArrivalsAccumulator("")
-	arrivals, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
+	pending, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
 		Stops:      stops,
 		Agencies:   agencies,
 		QueryTime:  params.QueryTime,
@@ -73,7 +72,13 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
-	sortArrivalsByTime(arrivals)
+	// Sort on predicted or scheduled time, which does not need trip status,
+	// then keep only maxCount rows before building that status.
+	sortStatusPendingArrivals(pending.Arrivals)
+	arrivals := make([]models.ArrivalAndDeparture, len(pending.Arrivals))
+	for i := range pending.Arrivals {
+		arrivals[i] = pending.Arrivals[i].arrival
+	}
 
 	nearby, err := api.nearbyStopsForLocation(ctx, stops, agencies, params)
 	if err != nil {
@@ -86,6 +91,11 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		arrivals: arrivals,
 		nearby:   nearby,
 	}, params.MaxCount)
+
+	if err := api.finishRetainedLocationArrivals(ctx, lists, pending, stops, agencies, acc); err != nil {
+		api.sendArrivalsForLocationError(w, r, ctx, err)
+		return
+	}
 
 	if len(lists.arrivals) == 0 && len(lists.stopIDs) == 0 {
 		api.sendEmptyArrivalsForLocation(w, r, params)
@@ -121,6 +131,26 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		lists.limitExceeded,
 		api.Clock,
 	))
+}
+
+// finishRetainedLocationArrivals builds trip status for the arrivals that
+// survived maxCount, then records stop-level alerts when the window matched
+// any stop_time. Dropped rows never reach BuildTripStatus.
+func (api *RestAPI) finishRetainedLocationArrivals(
+	ctx context.Context,
+	lists locationLists,
+	pending multiStopArrivalsResult,
+	stops []gtfsdb.Stop,
+	agencies *stopAgencyIndex,
+	acc *arrivalsAccumulator,
+) error {
+	if err := api.finishArrivalTripStatus(ctx, lists.arrivals, pending.Arrivals[:len(lists.arrivals)], acc); err != nil {
+		return err
+	}
+	if !pending.Matched {
+		return nil
+	}
+	return api.addStopLevelArrivalAlerts(ctx, stops, agencies, acc)
 }
 
 // sendArrivalsForLocationError distinguishes the client hanging up from a
@@ -527,17 +557,21 @@ func (api *RestAPI) stopsServingRouteTypes(ctx context.Context, stopIDs []string
 	return matching, nil
 }
 
-// sortArrivalsByTime orders arrivals by when a rider would actually see them,
-// preferring the predicted time when one exists.
-func sortArrivalsByTime(arrivals []models.ArrivalAndDeparture) {
-	effectiveTime := func(a models.ArrivalAndDeparture) int64 {
-		if a.PredictedArrivalTime.UnixMilli() > 0 {
-			return a.PredictedArrivalTime.UnixMilli()
-		}
-		return a.ScheduledArrivalTime.UnixMilli()
+// arrivalEffectiveMillis is the time a rider would actually see: the predicted
+// arrival when one exists, otherwise the scheduled arrival.
+func arrivalEffectiveMillis(a models.ArrivalAndDeparture) int64 {
+	if a.PredictedArrivalTime.UnixMilli() > 0 {
+		return a.PredictedArrivalTime.UnixMilli()
 	}
+	return a.ScheduledArrivalTime.UnixMilli()
+}
+
+// sortStatusPendingArrivals orders arrivals before trip status is built.
+// Predicted and scheduled times are already set, so the trim does not need
+// BuildTripStatus.
+func sortStatusPendingArrivals(arrivals []statusPendingArrival) {
 	sort.SliceStable(arrivals, func(i, j int) bool {
-		return effectiveTime(arrivals[i]) < effectiveTime(arrivals[j])
+		return arrivalEffectiveMillis(arrivals[i].arrival) < arrivalEffectiveMillis(arrivals[j].arrival)
 	})
 }
 

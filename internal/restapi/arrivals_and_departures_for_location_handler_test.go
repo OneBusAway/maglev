@@ -228,6 +228,22 @@ func TestArrivalsAndDeparturesForLocationMaxCount(t *testing.T) {
 	for stopID := range retainedStops {
 		assert.True(t, referencedStops[stopID], "retained stop %s must resolve in references.stops", stopID)
 	}
+
+	// Trip status is built after the trim. The one arrival that survives must
+	// still match the same row from the untrimmed response.
+	require.NotEmpty(t, entry.ArrivalsAndDepartures)
+	require.NotEmpty(t, full.Data.Entry.ArrivalsAndDepartures)
+	kept := entry.ArrivalsAndDepartures[0]
+	first := full.Data.Entry.ArrivalsAndDepartures[0]
+	assert.Equal(t, first.TripID, kept.TripID)
+	assert.Equal(t, first.StopID, kept.StopID)
+	assert.Equal(t, first.ScheduledArrivalTime, kept.ScheduledArrivalTime)
+	require.NotNil(t, kept.TripStatus, "trip status is built for arrivals that survive maxCount")
+	assert.Equal(t, first.TripStatus, kept.TripStatus)
+	assert.Equal(t, first.DistanceFromStop, kept.DistanceFromStop)
+	assert.Equal(t, first.NumberOfStopsAway, kept.NumberOfStopsAway)
+	assert.Equal(t, first.BlockTripSequence, kept.BlockTripSequence)
+	assert.Equal(t, first.SituationIDs, kept.SituationIDs)
 }
 
 // maxCount above the endpoint ceiling clamps rather than erroring, matching the

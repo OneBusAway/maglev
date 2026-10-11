@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"maglev.onebusaway.org/internal/clock"
@@ -46,6 +47,48 @@ func BenchmarkArrivalsAndDeparturesForStop(b *testing.B) {
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
 	}
+}
+
+// Benchmark arrivals-and-departures-for-location on the same RABA window as
+// the for-stop benchmark. maxCount is 1 so the measured call trims arrivals
+// and skips trip status for the rows it drops.
+func BenchmarkArrivalsAndDeparturesForLocation(b *testing.B) {
+	api, cleanup := createTestApiWithRealTimeData(b, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+	unlimited := httptest.NewRequest(http.MethodGet, arrivalsForLocationURL(arrivalsForLocationCenter), nil)
+	limited := httptest.NewRequest(http.MethodGet, arrivalsForLocationURL(arrivalsForLocationCenter, url.Values{"maxCount": {"1"}}), nil)
+
+	unlimitedResp := readArrivalsForLocation(b, mux, unlimited)
+	limitedResp := readArrivalsForLocation(b, mux, limited)
+	if len(unlimitedResp.Data.Entry.ArrivalsAndDepartures) <= len(limitedResp.Data.Entry.ArrivalsAndDepartures) {
+		b.Fatalf("maxCount=1 must drop arrivals: unlimited %d, limited %d",
+			len(unlimitedResp.Data.Entry.ArrivalsAndDepartures),
+			len(limitedResp.Data.Entry.ArrivalsAndDepartures))
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, limited)
+	}
+}
+
+func readArrivalsForLocation(b *testing.B, mux *http.ServeMux, req *http.Request) ArrivalsAndDeparturesForLocationResponse {
+	b.Helper()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		b.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp ArrivalsAndDeparturesForLocationResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		b.Fatalf("decode response: %v", err)
+	}
+	return resp
 }
 
 // Benchmark stops-for-location (high-traffic lookup).
