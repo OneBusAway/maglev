@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,6 +25,7 @@ func TestNew(t *testing.T) {
 	assert.NotNil(t, m.DBConnectionsIdle)
 	assert.NotNil(t, m.DBWaitSecondsTotal)
 	assert.NotNil(t, m.DBQueryTotal)
+	assert.NotNil(t, m.DBQueryDuration)
 
 	// GTFS-RT metrics
 	assert.NotNil(t, m.FeedLastSuccessfulFetchTime)
@@ -221,7 +223,104 @@ func TestRecordDBQuery(t *testing.T) {
 	assert.Equal(t, float64(1), unknownTotal)
 }
 
+func TestRecordDBQueryDuration(t *testing.T) {
+	m := New()
+
+	m.RecordDBQueryDuration("SlowExec", "exec", 10*time.Millisecond, nil)
+	m.RecordDBQueryDuration("SlowExec", "exec", 20*time.Millisecond, assert.AnError)
+	m.RecordDBQueryDuration("", "", 5*time.Millisecond, nil)
+
+	families, err := m.Registry.Gather()
+	require.NoError(t, err)
+
+	seen := make(map[string]bool)
+
+	for _, family := range families {
+		if family.GetName() != "maglev_db_query_duration_seconds" {
+			continue
+		}
+
+		for _, metric := range family.Metric {
+			labels := make(map[string]string)
+
+			for _, label := range metric.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+
+			switch {
+			case labels["query_name"] == "SlowExec" &&
+				labels["op"] == "exec" &&
+				labels["status"] == "ok":
+
+				seen["SlowExec/exec/ok"] = true
+
+				histogram := metric.GetHistogram()
+				require.NotNil(t, histogram)
+				assert.Equal(t, uint64(1), histogram.GetSampleCount())
+				assert.InDelta(t, 0.01, histogram.GetSampleSum(), 0.001)
+
+			case labels["query_name"] == "SlowExec" &&
+				labels["op"] == "exec" &&
+				labels["status"] == "error":
+
+				seen["SlowExec/exec/error"] = true
+
+				histogram := metric.GetHistogram()
+				require.NotNil(t, histogram)
+				assert.Equal(t, uint64(1), histogram.GetSampleCount())
+				assert.InDelta(t, 0.02, histogram.GetSampleSum(), 0.001)
+
+			case labels["query_name"] == "unknown" &&
+				labels["op"] == "unknown" &&
+				labels["status"] == "ok":
+
+				seen["unknown/unknown/ok"] = true
+
+				histogram := metric.GetHistogram()
+				require.NotNil(t, histogram)
+				assert.Equal(t, uint64(1), histogram.GetSampleCount())
+				assert.InDelta(t, 0.005, histogram.GetSampleSum(), 0.001)
+			}
+		}
+	}
+
+	assert.True(t, seen["SlowExec/exec/ok"])
+	assert.True(t, seen["SlowExec/exec/error"])
+	assert.True(t, seen["unknown/unknown/ok"])
+}
+
 func TestRecordDBQuery_NilReceiverNoPanic(t *testing.T) {
 	var m *Metrics
 	m.RecordDBQuery("GetTrip", "query", nil)
+}
+
+func TestRecordDBQueryDuration_NilReceiverNoPanic(t *testing.T) {
+	var m *Metrics
+	m.RecordDBQueryDuration("SlowExec", "exec", 10*time.Millisecond, nil)
+}
+
+func TestRecordDBQuery_PartialInitNoPanic(t *testing.T) {
+	m := &Metrics{
+		DBQueryTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "test_db_query_total",
+				Help: "Test DB query counter",
+			},
+			[]string{"query_name", "op", "status"},
+		),
+		// DBQueryDuration intentionally nil.
+	}
+
+	assert.NotPanics(t, func() {
+		m.RecordDBQuery("GetTrip", "query", nil)
+		m.RecordDBQueryDuration("SlowExec", "exec", 10*time.Millisecond, nil)
+	})
+
+	assert.Equal(
+		t,
+		float64(1),
+		testutil.ToFloat64(
+			m.DBQueryTotal.WithLabelValues("GetTrip", "query", "ok"),
+		),
+	)
 }
