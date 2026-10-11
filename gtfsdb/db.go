@@ -225,12 +225,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getNextStopInTripStmt, err = db.PrepareContext(ctx, getNextStopInTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetNextStopInTrip: %w", err)
 	}
-	if q.getOrderedStopIDsForRouteDirectionStmt, err = db.PrepareContext(ctx, getOrderedStopIDsForRouteDirection); err != nil {
-		return nil, fmt.Errorf("error preparing query GetOrderedStopIDsForRouteDirection: %w", err)
-	}
-	if q.getOrderedStopIDsForTripStmt, err = db.PrepareContext(ctx, getOrderedStopIDsForTrip); err != nil {
-		return nil, fmt.Errorf("error preparing query GetOrderedStopIDsForTrip: %w", err)
-	}
 	if q.getProblemReportsByStopStmt, err = db.PrepareContext(ctx, getProblemReportsByStop); err != nil {
 		return nil, fmt.Errorf("error preparing query GetProblemReportsByStop: %w", err)
 	}
@@ -754,16 +748,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getNextStopInTripStmt: %w", cerr)
 		}
 	}
-	if q.getOrderedStopIDsForRouteDirectionStmt != nil {
-		if cerr := q.getOrderedStopIDsForRouteDirectionStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getOrderedStopIDsForRouteDirectionStmt: %w", cerr)
-		}
-	}
-	if q.getOrderedStopIDsForTripStmt != nil {
-		if cerr := q.getOrderedStopIDsForTripStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getOrderedStopIDsForTripStmt: %w", cerr)
-		}
-	}
 	if q.getProblemReportsByStopStmt != nil {
 		if cerr := q.getProblemReportsByStopStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getProblemReportsByStopStmt: %w", cerr)
@@ -1175,8 +1159,6 @@ type Queries struct {
 	getInServiceTripIDsForStopsStmt           *sql.Stmt
 	getNextAndPreviousTripsInBlockStmt        *sql.Stmt
 	getNextStopInTripStmt                     *sql.Stmt
-	getOrderedStopIDsForRouteDirectionStmt    *sql.Stmt
-	getOrderedStopIDsForTripStmt              *sql.Stmt
 	getProblemReportsByStopStmt               *sql.Stmt
 	getProblemReportsByTripStmt               *sql.Stmt
 	getRouteStmt                              *sql.Stmt
@@ -1311,8 +1293,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getInServiceTripIDsForStopsStmt:           q.getInServiceTripIDsForStopsStmt,
 		getNextAndPreviousTripsInBlockStmt:        q.getNextAndPreviousTripsInBlockStmt,
 		getNextStopInTripStmt:                     q.getNextStopInTripStmt,
-		getOrderedStopIDsForRouteDirectionStmt:    q.getOrderedStopIDsForRouteDirectionStmt,
-		getOrderedStopIDsForTripStmt:              q.getOrderedStopIDsForTripStmt,
 		getProblemReportsByStopStmt:               q.getProblemReportsByStopStmt,
 		getProblemReportsByTripStmt:               q.getProblemReportsByTripStmt,
 		getRouteStmt:                              q.getRouteStmt,
