@@ -162,11 +162,22 @@ func isVehicleStale(existing, incoming gtfs.Vehicle) bool {
 func setTripVehicle(vehicleLookupByTrip map[string]int, vehicles []gtfs.Vehicle, index int) {
 	tripID := vehicles[index].Trip.ID.ID
 	existing, found := vehicleLookupByTrip[tripID]
-	existingIsNewer := found && isVehicleStale(vehicles[existing], vehicles[index])
-	if existingIsNewer {
+	if found && hasNewerReport(vehicles[existing], vehicles[index]) {
 		return
 	}
 	vehicleLookupByTrip[tripID] = index
+}
+
+// hasNewerReport reports whether existing should stay the trip's vehicle over
+// incoming. A timestamped report beats one without a timestamp, so a missing
+// timestamp can't let an older report replace the newest known one. Between
+// two timestamped reports the newer wins; ties and two missing timestamps go
+// to incoming.
+func hasNewerReport(existing, incoming gtfs.Vehicle) bool {
+	if incoming.Timestamp == nil {
+		return existing.Timestamp != nil
+	}
+	return existing.Timestamp != nil && incoming.Timestamp.Before(*existing.Timestamp)
 }
 
 // vehicleKey identifies a vehicle across feed updates. Exactly one field is

@@ -808,7 +808,10 @@ func TestSetTripVehicle(t *testing.T) {
 		{"later newer vehicle replaces earlier", []gtfs.Vehicle{vehicleAt("A", &older), vehicleAt("B", &newer)}, "B"},
 		{"later older vehicle keeps earlier", []gtfs.Vehicle{vehicleAt("A", &newer), vehicleAt("B", &older)}, "A"},
 		{"equal timestamps keep last vehicle", []gtfs.Vehicle{vehicleAt("A", &older), vehicleAt("B", &older)}, "B"},
-		{"missing timestamp keeps last vehicle", []gtfs.Vehicle{vehicleAt("A", &newer), vehicleAt("B", nil)}, "B"},
+		{"timestamped vehicle beats later missing timestamp", []gtfs.Vehicle{vehicleAt("A", &newer), vehicleAt("B", nil)}, "A"},
+		{"later timestamped vehicle beats missing timestamp", []gtfs.Vehicle{vehicleAt("A", nil), vehicleAt("B", &older)}, "B"},
+		{"two missing timestamps keep last vehicle", []gtfs.Vehicle{vehicleAt("A", nil), vehicleAt("B", nil)}, "B"},
+		{"missing timestamp between reports keeps newest", []gtfs.Vehicle{vehicleAt("A", &newer), vehicleAt("B", nil), vehicleAt("C", &older)}, "A"},
 	}
 
 	for _, tc := range tests {
