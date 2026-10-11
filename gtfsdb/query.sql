@@ -1375,7 +1375,7 @@ WHERE
         WHERE first_stop.trip_id = st.trip_id
     )
 ORDER BY
-    st.trip_id;
+    st.trip_id ASC;
 
 -- name: GetTripsByBlockIDs :many
 SELECT
