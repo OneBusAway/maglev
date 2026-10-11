@@ -16,6 +16,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -317,6 +318,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				reqLogger.Warn("BuildTripStatus failed", "trip_id", tripID, "error", statusErr)
 				status = nil
 			}
+			// BuildTripStatus still reports local midnight. The entry reports the
+			// service-day start, so keep status.serviceDate on that same instant.
+			if status != nil {
+				startTripStatusAtServiceStart(status, freqMap, tripID, servicedate.OffsetBase(activeServiceDate), currentTime)
+			}
 		}
 
 		frequency, freqErr := api.frequencyForEntry(ctx, freqMap, entryTripID, entryServiceDate, currentTime)
@@ -329,7 +335,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Frequency:    frequency,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  entryServiceDate.UnixMilli(),
+			ServiceDate:  servicedate.OffsetBase(entryServiceDate).UnixMilli(),
 			SituationIds: situations.addRefs(api.tripSituationRefs(ctx, entryTripID, tripsByID, routeAgencyMap)),
 			TripId:       utils.FormCombinedID(entryAgencyID, entryTripID),
 		}
@@ -377,8 +383,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		// If the base trip's window overlaps yesterday's range, use yesterday.
 		if serviceDate.Equal(routeToday.midnight) && resolved &&
 			tripWindowOverlapsRange(baseTrip,
-				time.Duration(routeYesterday.sinceMidnightNs)-runningLate,
-				time.Duration(routeYesterday.sinceMidnightNs)+runningEarly) {
+				time.Duration(routeYesterday.sinceStartNs)-runningLate,
+				time.Duration(routeYesterday.sinceStartNs)+runningEarly) {
 			serviceDate = routeYesterday.midnight
 		}
 
@@ -400,6 +406,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				reqLogger.Warn("BuildTripStatus failed for DUPLICATED trip", "trip_id", baseTripID, "error", statusErr)
 				status = nil
 			}
+			if status != nil {
+				startTripStatusAtServiceStart(status, freqMap, baseTripID, servicedate.OffsetBase(serviceDate), currentTime)
+			}
 		}
 
 		frequency, freqErr := api.frequencyForEntry(ctx, freqMap, baseTripID, serviceDate, currentTime)
@@ -412,7 +421,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			Frequency:    frequency,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  serviceDate.UnixMilli(),
+			ServiceDate:  servicedate.OffsetBase(serviceDate).UnixMilli(),
 			SituationIds: situations.addRefs(api.tripSituationRefs(ctx, baseTripID, tripsByID, routeAgencyMap)),
 			TripId:       utils.FormCombinedID(agencyID, dupTripID),
 		}
@@ -842,20 +851,20 @@ func (api *RestAPI) serviceDateResolverForZone(
 	location *time.Location,
 	currentTime time.Time,
 ) (*serviceDateResolver, error) {
-	queryDayMidnight := serviceDateMidnight(currentTime, location)
-	queryDay, err := api.activeServiceIDsForDate(ctx, queryDayMidnight)
+	queryDay := servicedate.FromInstant(currentTime, location)
+	queryIDs, err := api.activeServiceIDsForServiceDate(ctx, queryDay)
 	if err != nil {
 		return nil, err
 	}
-	previousDay, err := api.activeServiceIDsForDate(ctx, queryDayMidnight.AddDate(0, 0, -1))
+	previousDay, err := api.activeServiceIDsForServiceDate(ctx, queryDay.AddDays(-1))
 	if err != nil {
 		logging.ForComponent(ctx, "http_server").Warn("trips-for-route: previous service day unavailable",
 			"zone", location.String(), "error", err)
 		previousDay = nil
 	}
 
-	return newServiceDateResolverFor(queryDayMidnight, currentTime.In(location), serviceIDsByDay{
-		QueryDay:    queryDay,
+	return newServiceDateResolverFor(queryDay, location, currentTime.In(location), serviceIDsByDay{
+		QueryDay:    queryIDs,
 		PreviousDay: previousDay,
 	}), nil
 }
@@ -979,7 +988,7 @@ func (api *RestAPI) resolveBlockInZone(
 	zoneTrips, zoneServiceDays, err := api.resolveTripsForRouteBlocks(ctx, []tripsForRouteServiceDay{{
 		blockIDs:      []string{block.blockID},
 		serviceIDs:    day.serviceIDs,
-		sinceMidnight: time.Duration(day.sinceMidnightNs),
+		sinceMidnight: time.Duration(day.sinceStartNs),
 		midnight:      day.midnight,
 	}}, block.currentTime)
 	if err != nil {
@@ -1030,7 +1039,7 @@ func zoneBlockCoversTime(
 		found = true
 	}
 
-	return found && first <= day.sinceMidnightNs && day.sinceMidnightNs <= last
+	return found && first <= day.sinceStartNs && day.sinceStartNs <= last
 }
 
 // blockCandidateZones lists the zones a block's trips belong to, the queried route's
@@ -1138,8 +1147,8 @@ func tripInServiceOn(trip gtfsdb.GetTripsByBlockIDsRow, day serviceDay) bool {
 		return false
 	}
 	return trip.MinArrivalTime.Valid && trip.MaxDepartureTime.Valid &&
-		trip.MinArrivalTime.Int64 <= day.sinceMidnightNs &&
-		trip.MaxDepartureTime.Int64 >= day.sinceMidnightNs
+		trip.MinArrivalTime.Int64 <= day.sinceStartNs &&
+		trip.MaxDepartureTime.Int64 >= day.sinceStartNs
 }
 
 // routeBlocksAndTripsInService returns the route's blocks and null-block trips
@@ -1150,8 +1159,8 @@ func (api *RestAPI) routeBlocksAndTripsInService(ctx context.Context, routeID st
 	}
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	queries := api.GtfsManager.GtfsDB.Queries
-	windowStart := day.sinceMidnightNs - int64(runningLate)
-	windowEnd := day.sinceMidnightNs + int64(runningEarly)
+	windowStart := day.sinceStartNs - int64(runningLate)
+	windowEnd := day.sinceStartNs + int64(runningEarly)
 
 	var blockIDs []string
 	indexIDs, err := queries.GetBlockTripIndexIDsForRoute(ctx, gtfsdb.GetBlockTripIndexIDsForRouteParams{

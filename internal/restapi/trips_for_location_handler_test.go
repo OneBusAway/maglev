@@ -18,6 +18,7 @@ import (
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -1316,7 +1317,7 @@ func TestInServiceTripIDs_BatchesLargeStopSets(t *testing.T) {
 		0, 0, 0, 0, currentTime.Location())
 	// PreviousDay is left empty so inServiceTripIDs' second service-day layer is
 	// skipped, isolating this test to the one query being batched.
-	resolver := newServiceDateResolverFor(queryDayMidnight, currentTime, serviceIDsByDay{QueryDay: serviceIDs})
+	resolver := newServiceDateResolverFor(servicedate.Of(queryDayMidnight), currentTime.Location(), currentTime, serviceIDsByDay{QueryDay: serviceIDs})
 
 	stops, err := api.GtfsManager.GtfsDB.Queries.ListStops(ctx)
 	require.NoError(t, err)

@@ -14,6 +14,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -381,8 +382,8 @@ func (api *RestAPI) inServiceTripIDs(
 			continue
 		}
 
-		windowStart := day.sinceMidnightNs - int64(runningLate)
-		windowEnd := day.sinceMidnightNs + int64(runningEarly)
+		windowStart := day.sinceStartNs - int64(runningLate)
+		windowEnd := day.sinceStartNs + int64(runningEarly)
 		// Reserve room for the two window scalars and the ServiceIds slice this
 		// statement also binds — utils.QueryInBatches alone would size the StopIds
 		// batch as if it were the only bind, and a day with enough active
@@ -507,7 +508,7 @@ func (api *RestAPI) blockedScheduledTripIDsInBounds(
 		seenActiveTrip:    make(map[string]struct{}),
 	}
 	ctx = WithSnapshotCache(ctx, newSnapshotCache())
-	serviceDateForDay := []time.Time{serviceDates.queryDayMidnight, serviceDates.queryDayMidnight.AddDate(0, 0, -1)}
+	serviceDateForDay := []time.Time{serviceDates.queryDayMidnight, serviceDates.previousDayMidnight}
 
 	var visible []string
 	for dayIndex, day := range serviceDates.ServiceDays() {
@@ -549,8 +550,8 @@ func (api *RestAPI) blockedTripIDsForServiceDay(
 		return nil, err
 	}
 
-	windowStart := day.sinceMidnightNs - int64(runningLate)
-	windowEnd := day.sinceMidnightNs + int64(runningEarly)
+	windowStart := day.sinceStartNs - int64(runningLate)
+	windowEnd := day.sinceStartNs + int64(runningEarly)
 
 	var visible []string
 	for _, anchor := range selectBlockAnchors(spans, windowStart, windowEnd) {
@@ -771,15 +772,15 @@ func (api *RestAPI) buildTripsForLocationEntries(
 	serviceDatesByAgency := make(map[string]*serviceDateResolver, len(agencyIDs))
 	for agencyID := range agencyIDs {
 		agencyLocation := request.AgencyLocations[agencyID]
-		queryDayMidnight := serviceDateMidnight(request.CurrentTime, agencyLocation)
-		days, err := api.serviceIDsForDays(ctx, queryDayMidnight)
+		queryDay := servicedate.FromInstant(request.CurrentTime, agencyLocation)
+		days, err := api.serviceIDsForDays(ctx, queryDay)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return nil, nil
 		}
 		services[agencyID] = days
 		serviceDatesByAgency[agencyID] = newServiceDateResolverFor(
-			queryDayMidnight, request.CurrentTime.In(agencyLocation), days)
+			queryDay, agencyLocation, request.CurrentTime.In(agencyLocation), days)
 	}
 
 	stopTimesMap := make(map[string][]gtfsdb.StopTime)
@@ -919,6 +920,11 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				reqLogger.Warn("BuildTripStatus failed", "tripID", tripID, "error", statusErr)
 				status = nil
 			}
+			// BuildTripStatus still reports local midnight. The entry reports the
+			// service-day start, so keep status.serviceDate on that same instant.
+			if status != nil {
+				startTripStatusAtServiceStart(status, freqMap, tripID, servicedate.OffsetBase(serviceDate), request.CurrentTime)
+			}
 		}
 
 		// The trip's route and agency are already resolved here, so the alerts
@@ -931,7 +937,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			Frequency:    frequency,
 			Schedule:     schedule,
 			Status:       status,
-			ServiceDate:  serviceDate.UnixMilli(),
+			ServiceDate:  servicedate.OffsetBase(serviceDate).UnixMilli(),
 			SituationIds: situations.add(alerts, agencyID),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
@@ -945,10 +951,11 @@ type blockTripsKey struct {
 	blockID  string
 }
 
-// serviceDateMidnight returns the start of the service day in an agency's timezone.
+// serviceDateMidnight returns local midnight of the service date currentTime falls on.
+// Callers that add GTFS offsets use servicedate.OffsetBase; this midnight keeps the
+// calendar date BuildTripStatus still reads off the instant.
 func serviceDateMidnight(currentTime time.Time, agencyLocation *time.Location) time.Time {
-	_, midnight := utils.ServiceDateMidnight(nil, currentTime.In(agencyLocation))
-	return midnight
+	return servicedate.FromInstant(currentTime, agencyLocation).Midnight(agencyLocation)
 }
 
 // agencyLocationsByID maps each agency ID to the agency's time zone.
@@ -981,12 +988,12 @@ func (api *RestAPI) serviceDateResolversByZone(
 		if _, ok := resolvers[zoneName]; ok {
 			continue
 		}
-		queryDayMidnight := serviceDateMidnight(currentTime, location)
-		days, err := api.serviceIDsForDays(ctx, queryDayMidnight)
+		queryDay := servicedate.FromInstant(currentTime, location)
+		days, err := api.serviceIDsForDays(ctx, queryDay)
 		if err != nil {
 			return nil, err
 		}
-		resolvers[zoneName] = newServiceDateResolverFor(queryDayMidnight, currentTime.In(location), days)
+		resolvers[zoneName] = newServiceDateResolverFor(queryDay, location, currentTime.In(location), days)
 	}
 	return resolvers, nil
 }
