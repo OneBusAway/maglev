@@ -887,6 +887,64 @@ func TestGetMetrics_ScheduledTripsCountWithSeveralActiveServices(t *testing.T) {
 	assert.Equal(t, 1, snapshot.ScheduledTripsCount["A"])
 }
 
+// TestGetMetrics_ScheduledTripsCountUsesEachAgencysServiceDay guards the
+// service ID cache key: at metricsTestNow (12:00 UTC on June 15) it's already
+// June 16 in Pacific/Kiritimati (UTC+14), so the two agencies need different
+// days' service IDs and must not share one cached lookup.
+func TestGetMetrics_ScheduledTripsCountUsesEachAgencysServiceDay(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"RA": {Id: "RA", Agency: &gtfs.Agency{Id: "A"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+	ctx := context.Background()
+
+	_, err := manager.GtfsDB.Queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{ID: "K", Timezone: "Pacific/Kiritimati"})
+	require.NoError(t, err)
+	_, err = manager.GtfsDB.Queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{ID: "RK", AgencyID: "K"})
+	require.NoError(t, err)
+
+	mustCreateSingleDayService(t, manager, "JUNE_15_ONLY", "20250615")
+	mustCreateSingleDayService(t, manager, "JUNE_16_ONLY", "20250616")
+	for _, trip := range []struct{ id, routeID, serviceID string }{
+		{"TA", "RA", "JUNE_15_ONLY"},
+		{"TK", "RK", "JUNE_16_ONLY"},
+	} {
+		_, err := manager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               trip.id,
+			RouteID:          trip.routeID,
+			ServiceID:        trip.serviceID,
+			MinArrivalTime:   sql.NullInt64{Int64: 0, Valid: true},
+			MaxDepartureTime: sql.NullInt64{Int64: (24 * time.Hour).Nanoseconds(), Valid: true},
+		})
+		require.NoError(t, err)
+	}
+
+	snapshot, err := manager.GetMetrics(ctx, metricsTestNow)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, snapshot.ScheduledTripsCount["A"], "agency A is on June 15 service")
+	assert.Equal(t, 1, snapshot.ScheduledTripsCount["K"], "agency K is already on June 16 service")
+}
+
+// mustCreateSingleDayService inserts a service that runs only on date
+// (YYYYMMDD), via a calendar_dates addition to a calendar with no weekdays.
+func mustCreateSingleDayService(t *testing.T, manager *Manager, serviceID, date string) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := manager.GtfsDB.Queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:        serviceID,
+		StartDate: "20240101",
+		EndDate:   "20291231",
+	})
+	require.NoError(t, err)
+	_, err = manager.GtfsDB.Queries.CreateCalendarDate(ctx, gtfsdb.CreateCalendarDateParams{
+		ServiceID:     serviceID,
+		Date:          date,
+		ExceptionType: 1,
+	})
+	require.NoError(t, err)
+}
+
 // TestGetMetrics_ScheduledTripsCountTreatsImportedBlocklessTripsSeparately
 // guards the blockless-trip fallback against how the importer actually stores
 // a missing block_id: as a valid empty string, not NULL. Each such trip must
