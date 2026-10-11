@@ -352,7 +352,16 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			predictedDepartureTime = predictedDeparture
 			predicted = true
 		} else {
-			predicted = false
+			predictedArrivalTime, predictedDepartureTime, predicted = api.predictedTimesFromScheduleDeviation(ctx, scheduleDeviationFallback{
+				status:             status,
+				extras:             statusExtras,
+				stopSequence:       matchedStopTime.StopSequence,
+				stopArrivalSeconds: utils.NanosToSeconds(matchedStopTime.ArrivalTime),
+				serviceMidnight:    serviceMidnight,
+				currentTime:        currentTime,
+				scheduledArrival:   scheduledArrivalTime,
+				scheduledDeparture: scheduledDepartureTime,
+			})
 		}
 
 		// Reuse the snapshot BuildTripStatus already computed for this trip.

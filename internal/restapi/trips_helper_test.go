@@ -2319,3 +2319,78 @@ func TestBuildTripSchedule_ShapeLookupFailureLogsAndContinues(t *testing.T) {
 	assert.Contains(t, logBuf.String(), tripRow.ID)
 	assert.Contains(t, logBuf.String(), "forced shape lookup failure")
 }
+
+func TestAbsorbSlack(t *testing.T) {
+	clockSeconds := func(hour, minute int) int64 { return int64(hour*3600 + minute*60) }
+	stopTime := func(sequence int64, arrivalMinute, departureMinute int) gtfsdb.StopTime {
+		return gtfsdb.StopTime{
+			StopSequence:  sequence,
+			ArrivalTime:   int64(8*time.Hour + time.Duration(arrivalMinute)*time.Minute),
+			DepartureTime: int64(8*time.Hour + time.Duration(departureMinute)*time.Minute),
+		}
+	}
+	// Dwell: 2 minutes at seq 1, 5 minutes at seq 2, none at seq 3.
+	stopTimes := []gtfsdb.StopTime{
+		stopTime(1, 0, 2),
+		stopTime(2, 10, 15),
+		stopTime(3, 20, 20),
+	}
+
+	tests := []struct {
+		name                     string
+		targetSequence           int64
+		effectiveScheduleSeconds int64
+		deviation                int
+		wantArrivalDeviation     int
+		wantDepartureDeviation   int
+	}{
+		{
+			name:                     "early vehicle keeps its deviation",
+			targetSequence:           2,
+			effectiveScheduleSeconds: clockSeconds(7, 58),
+			deviation:                -60,
+			wantArrivalDeviation:     -60,
+			wantDepartureDeviation:   -60,
+		},
+		{
+			name:                     "next stop past target keeps raw deviation",
+			targetSequence:           2,
+			effectiveScheduleSeconds: clockSeconds(8, 16),
+			deviation:                200,
+			wantArrivalDeviation:     200,
+			wantDepartureDeviation:   200,
+		},
+		{
+			name:                     "unknown target keeps raw deviation",
+			targetSequence:           9,
+			effectiveScheduleSeconds: clockSeconds(7, 58),
+			deviation:                200,
+			wantArrivalDeviation:     200,
+			wantDepartureDeviation:   200,
+		},
+		{
+			name:                     "dwell at intermediate stops is absorbed",
+			targetSequence:           3,
+			effectiveScheduleSeconds: clockSeconds(7, 58),
+			deviation:                500,
+			wantArrivalDeviation:     80,
+			wantDepartureDeviation:   80,
+		},
+		{
+			name:                     "dwell already spent at next stop is not absorbed",
+			targetSequence:           2,
+			effectiveScheduleSeconds: clockSeconds(8, 11),
+			deviation:                300,
+			wantArrivalDeviation:     300,
+			wantDepartureDeviation:   60,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			arrivalDeviation, departureDeviation := absorbSlack(stopTimes, tt.targetSequence, tt.effectiveScheduleSeconds, tt.deviation)
+			assert.Equal(t, tt.wantArrivalDeviation, arrivalDeviation)
+			assert.Equal(t, tt.wantDepartureDeviation, departureDeviation)
+		})
+	}
+}
