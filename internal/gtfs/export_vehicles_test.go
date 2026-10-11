@@ -30,27 +30,34 @@ func TestNewExportVehicleActiveTrip(t *testing.T) {
 	tripUpdateBlock := &BlockMatch{TripID: "T_TU", RouteID: "R_STATIC", AgencyID: "40"}
 	tripByVehicle := map[string]tripUpdateRef{"V1": {TripID: "T_TU", VehicleID: "V1"}}
 	tripUpdateBlocks := map[string]*BlockMatch{"T_TU": tripUpdateBlock}
+	staticRoutes := map[string]string{"T_STATIC": "R_STATIC"}
+	staticRouteOf := func(tripID string) string { return staticRoutes[tripID] }
 
 	t.Run("vehicle's own trip is active; its first trip update supplies the block", func(t *testing.T) {
-		got := newExportVehicle(vehicleWithTrip("V1", "T_VP", "R_VP"), tripByVehicle, tripUpdateBlocks)
+		got := newExportVehicle(vehicleWithTrip("V1", "T_VP", "R_VP"), tripByVehicle, tripUpdateBlocks, staticRouteOf)
 		assert.Equal(t, "T_VP", got.ActiveTripID, "a later update on the block does not replace the position's trip")
 		assert.Equal(t, "R_VP", got.ActiveRouteID)
 		assert.Same(t, tripUpdateBlock, got.Block, "ownership still comes from the first trip update")
 	})
 	t.Run("tripless position takes the trip update's trip", func(t *testing.T) {
-		got := newExportVehicle(vehicleWithTrip("V1", "", ""), tripByVehicle, tripUpdateBlocks)
+		got := newExportVehicle(vehicleWithTrip("V1", "", ""), tripByVehicle, tripUpdateBlocks, staticRouteOf)
 		assert.Equal(t, "T_TU", got.ActiveTripID)
 		assert.Equal(t, "R_STATIC", got.ActiveRouteID, "missing realtime route falls back to the matched static route")
 		assert.Same(t, tripUpdateBlock, got.Block)
 	})
 	t.Run("position-only vehicle keeps its trip but gets no block", func(t *testing.T) {
-		got := newExportVehicle(vehicleWithTrip("V2", "T_VP", "R_VP"), tripByVehicle, tripUpdateBlocks)
+		got := newExportVehicle(vehicleWithTrip("V2", "T_VP", "R_VP"), tripByVehicle, tripUpdateBlocks, staticRouteOf)
 		assert.Equal(t, "T_VP", got.ActiveTripID)
 		assert.Equal(t, "R_VP", got.ActiveRouteID)
 		assert.Nil(t, got.Block, "legacy never block-matches a vehicle position that has a vehicle ID")
 	})
+	t.Run("static trip's route replaces the feed's route", func(t *testing.T) {
+		got := newExportVehicle(vehicleWithTrip("V2", "T_STATIC", "R_STATICLX"), tripByVehicle, tripUpdateBlocks, staticRouteOf)
+		assert.Equal(t, "T_STATIC", got.ActiveTripID)
+		assert.Equal(t, "R_STATIC", got.ActiveRouteID, "legacy reports the static trip's route, not the feed's route name")
+	})
 	t.Run("tripless vehicle has no block", func(t *testing.T) {
-		got := newExportVehicle(vehicleWithTrip("V3", "", ""), tripByVehicle, tripUpdateBlocks)
+		got := newExportVehicle(vehicleWithTrip("V3", "", ""), tripByVehicle, tripUpdateBlocks, staticRouteOf)
 		assert.Empty(t, got.ActiveTripID)
 		assert.Nil(t, got.Block)
 	})
@@ -84,6 +91,11 @@ func newRabaExportManager(t *testing.T, tripUpdates []byte) *Manager {
 	t.Helper()
 	vehiclePositions, err := os.ReadFile(filepath.Join("../../testdata", "raba-vehicle-positions.pb"))
 	require.NoError(t, err)
+	return newRabaExportManagerWithFeeds(t, tripUpdates, vehiclePositions)
+}
+
+func newRabaExportManagerWithFeeds(t *testing.T, tripUpdates, vehiclePositions []byte) *Manager {
+	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/trip-updates", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(tripUpdates) })
 	mux.HandleFunc("/vehicle-positions", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(vehiclePositions) })
@@ -231,4 +243,29 @@ func TestBuildExportVehiclesPrefersCurrentFilteredOutRecord(t *testing.T) {
 	}
 	assert.Nil(t, byID["V1"].Vehicle.Trip, "the current tripless record wins over the retained on-trip copy")
 	assert.Equal(t, later, *byID["V1"].Vehicle.Timestamp)
+}
+
+// Tampa's GTFS-RT feed names some routes differently from the static GTFS
+// ("360LX" for static route "360"); the export reports the static route, so
+// route filters and agency prefixes match what legacy produced.
+func TestExportVehiclesUseStaticTripRoute(t *testing.T) {
+	tripUpdates, err := os.ReadFile(filepath.Join("../../testdata", "raba-trip-updates.pb"))
+	require.NoError(t, err)
+	raw, err := os.ReadFile(filepath.Join("../../testdata", "raba-vehicle-positions.pb"))
+	require.NoError(t, err)
+	var message gtfsrt.FeedMessage
+	require.NoError(t, proto.Unmarshal(raw, &message))
+	for _, entity := range message.GetEntity() {
+		if entity.GetVehicle().GetVehicle().GetId() == "5701" {
+			entity.Vehicle.Trip.RouteId = proto.String("24LX")
+		}
+	}
+	vehiclePositions, err := proto.Marshal(&message)
+	require.NoError(t, err)
+
+	manager := newRabaExportManagerWithFeeds(t, tripUpdates, vehiclePositions)
+
+	vehicle := exportVehiclesByID(manager)["5701"]
+	assert.Equal(t, "28c61524-6da8-4506-9a92-22f2f6e91872", vehicle.ActiveTripID)
+	assert.Equal(t, "24", vehicle.ActiveRouteID)
 }

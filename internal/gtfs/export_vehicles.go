@@ -44,6 +44,41 @@ func (manager *Manager) tripUpdateBlockMatches(ctx context.Context, feedID strin
 	return matches
 }
 
+// resolveStaticTripRoutes caches the static routes of the trips that
+// vehicles and trip updates name, querying only trips not cached yet. A
+// failed query leaves those trips on their feed routes for this refresh.
+func (manager *Manager) resolveStaticTripRoutes(ctx context.Context, feedID string, refs []tripUpdateRef, vehicles []gtfs.Vehicle) {
+	if manager.GtfsDB == nil {
+		return
+	}
+	tripIDs := manager.staticTripRoutes.missing(realtimeTripIDs(refs, vehicles))
+	if len(tripIDs) == 0 {
+		return
+	}
+	trips, err := utils.QueryInBatches(ctx, tripIDs, manager.GtfsDB.Queries.GetTripsByIDs)
+	if err != nil {
+		logging.LogError(logging.ForComponent(ctx, "gtfs_realtime"), "Error loading static routes for realtime trips", err,
+			slog.String("feed", feedID))
+		return
+	}
+	manager.staticTripRoutes.store(trips)
+}
+
+func realtimeTripIDs(refs []tripUpdateRef, vehicles []gtfs.Vehicle) map[string]struct{} {
+	tripIDs := make(map[string]struct{}, len(refs)+len(vehicles))
+	for _, ref := range refs {
+		if ref.TripID != "" {
+			tripIDs[ref.TripID] = struct{}{}
+		}
+	}
+	for _, vehicle := range vehicles {
+		if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
+			tripIDs[vehicle.Trip.ID.ID] = struct{}{}
+		}
+	}
+	return tripIDs
+}
+
 // matchBlock treats a failed matching query as unresolved for this refresh
 // only; the matcher does not cache failures.
 func (manager *Manager) matchBlock(ctx context.Context, feedID, tripID string, reference time.Time) *BlockMatch {
@@ -97,7 +132,9 @@ func firstTripUpdateByVehicle(refs []tripUpdateRef) map[string]tripUpdateRef {
 // position that carries a vehicle ID. The active trip is the position's own
 // trip, because a vehicle's later updates can describe trips further along
 // its block; a position without a trip falls back to that first update.
-func newExportVehicle(vehicle gtfs.Vehicle, tripByVehicle map[string]tripUpdateRef, tripUpdateBlocks map[string]*BlockMatch) ExportVehicle {
+// The active route is that trip's static route, as in legacy, and the
+// feed's route only for trips absent from static data.
+func newExportVehicle(vehicle gtfs.Vehicle, tripByVehicle map[string]tripUpdateRef, tripUpdateBlocks map[string]*BlockMatch, staticRouteOf func(tripID string) string) ExportVehicle {
 	export := ExportVehicle{Vehicle: vehicle}
 	ref, hasTripUpdate := tripByVehicle[vehicle.ID.ID]
 	if hasTripUpdate {
@@ -110,6 +147,9 @@ func newExportVehicle(vehicle gtfs.Vehicle, tripByVehicle map[string]tripUpdateR
 	case hasTripUpdate:
 		export.ActiveTripID = ref.TripID
 		export.ActiveRouteID = ref.RouteID
+	}
+	if staticRouteID := staticRouteOf(export.ActiveTripID); staticRouteID != "" {
+		export.ActiveRouteID = staticRouteID
 	}
 	isBlockTrip := export.Block != nil && export.Block.TripID == export.ActiveTripID
 	if export.ActiveRouteID == "" && isBlockTrip {
@@ -126,7 +166,7 @@ func (manager *Manager) buildExportVehiclesLocked(feedIDs []string) []ExportVehi
 		tripByVehicle := firstTripUpdateByVehicle(manager.feedTripUpdateRefs[feedID])
 		tripUpdateBlocks := manager.feedTripUpdateBlocks[feedID]
 		for _, vehicle := range manager.retainedExportVehiclesLocked(feedID) {
-			vehicles = append(vehicles, newExportVehicle(vehicle, tripByVehicle, tripUpdateBlocks))
+			vehicles = append(vehicles, newExportVehicle(vehicle, tripByVehicle, tripUpdateBlocks, manager.staticTripRoutes.routeOf))
 		}
 	}
 	return vehicles

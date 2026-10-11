@@ -72,6 +72,7 @@ type Manager struct {
 	feedTripUpdateBlocks    map[string]map[string]*BlockMatch
 	feedFilteredOutVehicles map[string][]gtfs.Vehicle
 	blockMatcher            *blockMatcher
+	staticTripRoutes        staticTripRoutes
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
 	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
 	// No lock is required for reads.
