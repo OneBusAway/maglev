@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -1259,4 +1260,318 @@ func TestAddRouteReference(t *testing.T) {
 	assert.Equal(t, "Downtown", ref.LongName)
 	assert.Equal(t, "FF0000", ref.Color)
 	assert.Equal(t, "", ref.TextColor, "unset nullable fields map to empty string")
+}
+
+// firstStopOnTripWithShape returns a trip usable for a tripStatus test together with
+// the coordinates of its first stop, so a mock vehicle can be placed somewhere the
+// shape projection has real work to do.
+//
+// Every condition here is one the distance fields depend on, and the shared fixture
+// this package reuses carries trips from other tests that fail one or another of
+// them: a shape_id with no shapes rows behind it, or a service that is not running on
+// the date the caller asked for. Picking one of those leaves the distances at zero.
+func firstStopOnTripWithShape(t testing.TB, api *RestAPI, serviceDate time.Time) (tripID string, lat, lon float64) {
+	t.Helper()
+	ctx := context.Background()
+
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(
+		ctx, serviceDate.Format("20060102"))
+	require.NoError(t, err)
+	require.NotEmpty(t, activeServiceIDs, "fixture should have service on %s", serviceDate.Format("20060102"))
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(activeServiceIDs)), ",")
+	args := make([]any, 0, len(activeServiceIDs))
+	for _, id := range activeServiceIDs {
+		args = append(args, id)
+	}
+
+	err = api.GtfsManager.GtfsDB.DB.QueryRowContext(ctx,
+		`SELECT t.id, s.lat, s.lon
+		   FROM trips t
+		   JOIN stop_times st ON st.trip_id = t.id
+		   JOIN stops s ON s.id = st.stop_id
+		  WHERE t.shape_id IS NOT NULL AND t.shape_id != ''
+		    AND (SELECT COUNT(*) FROM shapes WHERE shape_id = t.shape_id) >= 2
+		    AND t.service_id IN (`+placeholders+`)
+		  ORDER BY t.id, st.stop_sequence
+		  LIMIT 1`, args...,
+	).Scan(&tripID, &lat, &lon)
+	require.NoError(t, err, "fixture should contain a trip with a populated shape and active service")
+	return tripID, lat, lon
+}
+
+// tripStatusSpecFieldsFiles is a one-trip feed with a block and a populated shape,
+// tracing an L east then north. It stands on its own rather than using the shared
+// RABA fixture because the distance fields come from the block snapshot, and other
+// tests in this package add trips to RABA's blocks, which leaves those fields at
+// zero depending on what else has run.
+func tripStatusSpecFieldsFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"TA,Spec Transit,https://spec.test,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"R1,TA,1,Spec Route,3\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"P1,First,40.000,-122.000\n" +
+			"P2,Second,40.000,-121.990\n" +
+			"P3,Third,40.010,-121.980\n" +
+			"P4,Fourth,40.020,-121.980\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"WD,1,1,1,1,1,0,0,20250101,20251231\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,shape_id,block_id\n" +
+			"R1,WD,T1,Outbound,SH1,B1\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence,shape_dist_traveled\n" +
+			"T1,12:00:00,12:00:00,P1,1,0\n" +
+			"T1,12:10:00,12:10:00,P2,2,900\n" +
+			"T1,12:20:00,12:20:00,P3,3,2000\n" +
+			"T1,12:30:00,12:30:00,P4,4,3000\n",
+		"shapes.txt": "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence,shape_dist_traveled\n" +
+			"SH1,40.000,-122.000,1,0\n" +
+			"SH1,40.000,-121.995,2,450\n" +
+			"SH1,40.000,-121.990,3,900\n" +
+			"SH1,40.005,-121.985,4,1400\n" +
+			"SH1,40.010,-121.980,5,2000\n" +
+			"SH1,40.015,-121.980,6,2500\n" +
+			"SH1,40.020,-121.980,7,3000\n",
+	}
+}
+
+// The spec defines these tripStatus fields and this handler left every one of them at
+// its zero value, because it built tripStatus inline instead of going through the
+// builder the other real-time endpoints use (#1195).
+func TestVehiclesForAgencyHandler_TripStatusSpecFields(t *testing.T) {
+	// A Monday inside the fixture's service period, mid-trip. The handler resolves
+	// its reference time in the agency's timezone, so the clock has to be built
+	// there or the trip has not started yet in service terms.
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	now := time.Date(2025, 6, 2, 12, 15, 0, 0, loc)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now),
+		"tripstatus-spec-fields.zip", tripStatusSpecFieldsFiles())
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// A trip update running 120s late, so scheduleDeviation and the stop offsets
+	// have a real value to carry rather than zero. Trips go in before the vehicle,
+	// since both are published under the same synthetic feed.
+	delay := 120 * time.Second
+	targetStopID, targetSequence := "P3", uint32(3)
+	api.GtfsManager.SetRealTimeTripsForTest([]gogtfs.Trip{{
+		ID: gogtfs.TripID{ID: "T1"},
+		StopTimeUpdates: []gogtfs.StopTimeUpdate{{
+			StopID:       &targetStopID,
+			StopSequence: &targetSequence,
+			Arrival:      &gogtfs.StopTimeEvent{Delay: &delay},
+			Departure:    &gogtfs.StopTimeEvent{Delay: &delay},
+		}},
+	}})
+
+	const vehicleID = "v_spec_fields"
+	// Parked at the third stop, past the turn, so the projection has real work.
+	vehicleLat, vehicleLon := float32(40.010), float32(-121.980)
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, "T1", "R1", gtfs.MockVehicleOptions{
+		Position: &gogtfs.Position{Latitude: &vehicleLat, Longitude: &vehicleLon},
+		// Matching the clock keeps the vehicle fresh, so the real-time branch runs
+		// and predicted comes back true.
+		Timestamp: &now,
+	})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL("TA"))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	status := entry.TripStatus
+
+	// The fixture is fully determined, so these are exact. At 12:15 the vehicle sits
+	// between P2 (12:10) and P3 (12:20), and the 120s deviation pushes both offsets
+	// that much later than the schedule alone would put them.
+	assert.Equal(t, "TA_P2", status.ClosestStop)
+	assert.Equal(t, -180, status.ClosestStopTimeOffset, "P2 was due 300s ago, running 120s late")
+	assert.Equal(t, "TA_P3", status.NextStop)
+	assert.Equal(t, 420, status.NextStopTimeOffset, "P3 is due in 300s, running 120s late")
+	assert.Equal(t, 120, status.ScheduleDeviation, "comes from the trip update")
+
+	// Distances are derived from the shape, so they are compared with a tolerance
+	// rather than pinned to the last decimal.
+	assert.InDelta(t, 3364.43, status.TotalDistanceAlongTrip, 1.0, "the shape's full length")
+	assert.InDelta(t, 2252.13, status.DistanceAlongTrip, 1.0, "the vehicle's position along the shape")
+	assert.InDelta(t, 1272.01, status.ScheduledDistanceAlongTrip, 1.0, "where the schedule alone would put it")
+
+	assert.True(t, status.Predicted, "a fresh vehicle is real-time tracked")
+	assert.False(t, status.Scheduled, "scheduled must stay the inverse of predicted")
+
+	// The stop-relative fields are useless to a client if the IDs they name are not
+	// dereferenceable, which is why #1195 asks for them in references.stops.
+	referencedStops := make(map[string]struct{}, len(model.Data.References.Stops))
+	for _, stop := range model.Data.References.Stops {
+		referencedStops[stop.ID] = struct{}{}
+	}
+	assert.Contains(t, referencedStops, status.ClosestStop, "closestStop must appear in references.stops")
+	assert.Contains(t, referencedStops, status.NextStop, "nextStop must appear in references.stops")
+
+	// A stop reference lists the routes serving it, so those must resolve too.
+	referencedRoutes := make(map[string]struct{}, len(model.Data.References.Routes))
+	for _, route := range model.Data.References.Routes {
+		referencedRoutes[route.ID] = struct{}{}
+	}
+	for _, stop := range model.Data.References.Stops {
+		for _, routeID := range stop.RouteIDs {
+			assert.Contains(t, referencedRoutes, routeID,
+				"route %s named by stop %s must appear in references.routes", routeID, stop.ID)
+		}
+	}
+}
+
+// The fields this endpoint resolves for itself must keep their existing values.
+// A stale vehicle is the case that catches it: the shared builder returns early for
+// one, so taking position from it would emit (0, 0) next to a real location at the
+// top level.
+func TestVehiclesForAgencyHandler_KeepsEndpointOwnedStatusFields(t *testing.T) {
+	now := time.Date(2024, 11, 4, 12, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	tripID, lat, lon := firstStopOnTripWithShape(t, api, now)
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(context.Background(), tripID)
+	require.NoError(t, err)
+
+	const vehicleID = "v_stale_position"
+	vehicleLat, vehicleLon := float32(lat), float32(lon)
+	// Well outside the staleness window, so the builder treats it as untracked.
+	staleTimestamp := now.Add(-2 * time.Hour)
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, tripID, trip.RouteID, gtfs.MockVehicleOptions{
+		Position:  &gogtfs.Position{Latitude: &vehicleLat, Longitude: &vehicleLon},
+		Timestamp: &staleTimestamp,
+	})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+	status := entry.TripStatus
+
+	assert.InDelta(t, lat, status.Position.Lat, 0.0001, "tripStatus.position must stay the reported GPS position")
+	assert.InDelta(t, lon, status.Position.Lon, 0.0001, "tripStatus.position must stay the reported GPS position")
+	require.NotNil(t, entry.Location)
+	assert.InDelta(t, entry.Location.Lat, status.Position.Lat, 0.0001,
+		"tripStatus.position must agree with the entry's own location")
+
+	assert.Equal(t, entry.Status, status.Status, "status is mirrored from the entry")
+	assert.Equal(t, entry.Phase, status.Phase, "phase is mirrored from the entry")
+	assert.Equal(t, staleTimestamp.UnixMilli(), status.LastUpdateTime.Time.UnixMilli(),
+		"lastUpdateTime comes from the vehicle timestamp")
+}
+
+// An interlined vehicle must report the same stops whether or not its position is
+// stale. BuildVehicleStatus only rewrites the status's ActiveTripID for a fresh
+// vehicle, and BuildTripStatus picks its DB trip up from there, so a handler that
+// passes the resolved active trip gets it honoured for stale vehicles only and the
+// answer flips across the staleness window.
+func TestVehiclesForAgencyHandler_InterlinedStopsMatchAcrossStaleness(t *testing.T) {
+	ctx := context.Background()
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	nominalID, resolvedActiveID, refTime := findInterliningScenario(t, api)
+	require.NotEqual(t, nominalID, resolvedActiveID, "need a vehicle whose active trip differs")
+	api.Clock = clock.NewMockClock(refTime)
+
+	nominalRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, nominalID)
+	require.NoError(t, err)
+
+	const vehicleID = "v_interlined_staleness"
+	statusFor := func(t *testing.T, timestamp time.Time) *models.TripStatus {
+		t.Helper()
+		api.GtfsManager.MockResetRealTimeData()
+		ts := timestamp
+		api.GtfsManager.MockAddVehicleWithOptions(vehicleID, nominalID, nominalRow.RouteID,
+			gtfs.MockVehicleOptions{Timestamp: &ts})
+
+		_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+		entry := findVehicleStatusByID(model.Data.List, vehicleID)
+		require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+		require.NotNil(t, entry.TripStatus)
+		return entry.TripStatus
+	}
+
+	fresh := statusFor(t, refTime)
+	stale := statusFor(t, refTime.Add(-2*time.Hour))
+
+	assert.Equal(t, stale.ClosestStop, fresh.ClosestStop,
+		"closestStop must not depend on whether the vehicle is stale")
+	assert.Equal(t, stale.NextStop, fresh.NextStop,
+		"nextStop must not depend on whether the vehicle is stale")
+	assert.Equal(t, stale.TotalDistanceAlongTrip, fresh.TotalDistanceAlongTrip,
+		"the trip's total distance must not depend on staleness")
+}
+
+// sharedStopTwoAgencyFiles adds a second agency whose route also serves P3, the stop
+// the vehicle's nextStop points at, so the stop reference lists a route belonging to
+// an agency other than the one requested.
+func sharedStopTwoAgencyFiles() map[string]string {
+	files := tripStatusSpecFieldsFiles()
+	files["agency.txt"] += "TB,Other Transit,https://other.test,America/Los_Angeles\n"
+	files["routes.txt"] += "R2,TB,2,Other Route,3\n"
+	files["trips.txt"] += "R2,WD,T2,Other Outbound,,\n"
+	files["stop_times.txt"] += "T2,13:00:00,13:00:00,P3,1,\n" +
+		"T2,13:10:00,13:10:00,P4,2,\n"
+	return files
+}
+
+// Stops are shared between agencies, so pulling the stops' routes into
+// references.routes can introduce a route whose agencyId is not the requested one.
+// That agency has to be referenced too, or the route entries point at an agency that
+// is not in the response. Java does the same: vehicles-for-agency/1 on Puget Sound
+// returns agencies 1, 40, 29 and 23 because its stops list other operators' routes.
+func TestVehiclesForAgencyHandler_ReferencesAgenciesOfSharedStopRoutes(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	now := time.Date(2025, 6, 2, 12, 15, 0, 0, loc)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now),
+		"shared-stop-two-agency.zip", sharedStopTwoAgencyFiles())
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	const vehicleID = "v_shared_stop"
+	vehicleLat, vehicleLon := float32(40.010), float32(-121.980)
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, "T1", "R1", gtfs.MockVehicleOptions{
+		Position:  &gogtfs.Position{Latitude: &vehicleLat, Longitude: &vehicleLon},
+		Timestamp: &now,
+	})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL("TA"))
+	entry := findVehicleStatusByID(model.Data.List, vehicleID)
+	require.NotNil(t, entry, "mock vehicle not returned by VehiclesForAgencyID")
+	require.NotNil(t, entry.TripStatus)
+
+	// The premise: a referenced stop really does list the other agency's route.
+	routesByStop := make(map[string][]string, len(model.Data.References.Stops))
+	for _, stop := range model.Data.References.Stops {
+		routesByStop[stop.ID] = stop.RouteIDs
+	}
+	require.Contains(t, routesByStop, "TA_P3")
+	require.Contains(t, routesByStop["TA_P3"], "TB_R2",
+		"the shared stop should list the second agency's route")
+
+	referencedRoutes := make(map[string]struct{}, len(model.Data.References.Routes))
+	for _, route := range model.Data.References.Routes {
+		referencedRoutes[route.ID] = struct{}{}
+	}
+	assert.Contains(t, referencedRoutes, "TB_R2", "the shared stop's route must be referenced")
+
+	referencedAgencies := make(map[string]struct{}, len(model.Data.References.Agencies))
+	for _, agency := range model.Data.References.Agencies {
+		referencedAgencies[agency.ID] = struct{}{}
+	}
+	assert.Contains(t, referencedAgencies, "TA", "the requested agency")
+	assert.Contains(t, referencedAgencies, "TB",
+		"an agency owning a referenced route must itself be referenced")
+
+	// Every route named anywhere in references must resolve to a referenced agency.
+	for _, route := range model.Data.References.Routes {
+		assert.Contains(t, referencedAgencies, route.AgencyID,
+			"route %s names agency %s, which must be referenced", route.ID, route.AgencyID)
+	}
 }
