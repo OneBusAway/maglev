@@ -47,7 +47,11 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// Uncapped and clamped: Java computes arrivals for every stop in the box and
 	// only trims the three output lists at the end, so capping the stop query
 	// here would silently drop arrivals that belong in the response.
-	stops := api.GtfsManager.GetStopsInBounds(ctx, params.Location, 0, true)
+	stops, err := api.GtfsManager.GetStopsInBounds(ctx, params.Location, 0, true)
+	if err != nil {
+		api.sendArrivalsForLocationError(w, r, ctx, err)
+		return
+	}
 	if len(stops) == 0 {
 		api.sendEmptyArrivalsForLocation(w, r, params)
 		return
@@ -255,7 +259,10 @@ func (api *RestAPI) nearbyStopsForLocation(
 	agencies *stopAgencyIndex,
 	params arrivalsForLocationParams,
 ) ([]models.StopWithDistance, error) {
-	candidates := api.GtfsManager.GetStopsInBounds(ctx, expandLocationForNearby(params.Location), 0, true)
+	candidates, err := api.GtfsManager.GetStopsInBounds(ctx, expandLocationForNearby(params.Location), 0, true)
+	if err != nil {
+		return nil, err
+	}
 	if len(candidates) == 0 {
 		return nil, nil
 	}
