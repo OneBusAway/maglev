@@ -1149,3 +1149,84 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	}
 	assert.True(t, found, "should find arrival for test trip %s", tripID)
 }
+
+// TestArrivalsAndDeparturesForStopHandler_StopSequenceIsPositionInTrip pins
+// stopSequence to the stop's index in the trip's ordered stop list, which is how
+// testdata/openapi.yml defines the field and what the singular
+// arrival-and-departure-for-stop endpoint already returns.
+//
+// RABA numbers stop_sequence from 0, so deriving this field from the raw feed
+// value reports -1 for the first stop of a trip. Stop 1030 is the first stop of
+// 25 trips and the 21st stop of 23 others, so it covers both that regression and
+// an ordinary mid-trip position — and proves the two visits stay distinguishable.
+func TestArrivalsAndDeparturesForStopHandler_StopSequenceIsPositionInTrip(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	agencyID := mustGetAgencies(t, api)[0].ID
+	ctx := context.Background()
+
+	tests := []struct {
+		name          string
+		stopCode      string
+		wantPositions []int
+	}{
+		{
+			name:          "stop serving both the first and the 21st position of trips",
+			stopCode:      "1030",
+			wantPositions: []int{0, 20},
+		},
+		{
+			name:          "stop at a single mid-trip position",
+			stopCode:      "4062",
+			wantPositions: []int{17},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stopID := utils.FormCombinedID(agencyID, tt.stopCode)
+			_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+				arrivalsAndDeparturesURL(stopID, url.Values{
+					"minutesBefore": {"1440"}, "minutesAfter": {"1440"},
+				}))
+
+			arrivals := model.Data.Entry.ArrivalsAndDepartures
+			require.NotEmpty(t, arrivals, "stop %s should have arrivals in a 48h window", tt.stopCode)
+
+			seen := make(map[int]bool)
+			for _, arrival := range arrivals {
+				tripID, err := utils.ExtractCodeID(arrival.TripID)
+				require.NoError(t, err)
+
+				stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+				require.NoError(t, err)
+
+				// A stop can be visited more than once on a trip, and the response
+				// carries no raw stop_sequence to say which visit this is, so the
+				// position must be one of the indices where the stop appears.
+				var validPositions []int
+				for position, stopTime := range stopTimes {
+					if stopTime.StopID == tt.stopCode {
+						validPositions = append(validPositions, position)
+					}
+				}
+				require.NotEmpty(t, validPositions,
+					"stop %s must appear on trip %s", tt.stopCode, tripID)
+
+				assert.Contains(t, validPositions, arrival.StopSequence,
+					"trip %s: stopSequence %d is not a position of stop %s in the trip",
+					tripID, arrival.StopSequence, tt.stopCode)
+				assert.GreaterOrEqual(t, arrival.StopSequence, 0,
+					"trip %s: stopSequence must not be negative", tripID)
+				assert.Less(t, arrival.StopSequence, arrival.TotalStopsInTrip,
+					"trip %s: stopSequence must fall inside totalStopsInTrip", tripID)
+
+				seen[arrival.StopSequence] = true
+			}
+
+			for _, want := range tt.wantPositions {
+				assert.True(t, seen[want],
+					"expected an arrival at position %d of its trip for stop %s", want, tt.stopCode)
+			}
+		})
+	}
+}
