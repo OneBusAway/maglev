@@ -115,6 +115,14 @@ const staleVehicleTimeout = 15 * time.Minute
 // staleFeedThreshold is the duration after which feed data is cleared if fetches keep failing
 const staleFeedThreshold = 5 * time.Minute
 
+// maxVehicleFeedFutureSkew is how far a vehicle-feed header may sit ahead of
+// local time and still be stored as the freshness watermark. A larger jump is
+// still applied, so a millisecond header or a clock written as local epoch
+// seconds keeps publishing vehicles, but it is not recorded. clearFeedData
+// keeps the watermark, so a future value would reject a corrected clock until
+// wall time passed it.
+const maxVehicleFeedFutureSkew = 15 * time.Minute
+
 // realtimeHTTPClient is a dedicated HTTP client for GTFS-RT feed fetching,
 // configured with explicit timeouts and transport limits to avoid the pitfalls
 // of http.DefaultClient (no timeout, shared global state).
@@ -153,6 +161,42 @@ func isVehicleStale(existing, incoming gtfs.Vehicle) bool {
 		return false
 	}
 	return incoming.Timestamp.Before(*existing.Timestamp)
+}
+
+type vehicleFeedTimestampReason int
+
+const (
+	vehicleFeedAccept vehicleFeedTimestampReason = iota
+	vehicleFeedSkipStale
+	vehicleFeedSkipFuture
+)
+
+type vehicleFeedTimestampDecision struct {
+	apply     bool
+	watermark uint64
+	reason    vehicleFeedTimestampReason
+}
+
+// decideVehicleFeedTimestamp decides whether a vehicle payload is new and which
+// watermark to store. Headers beyond maxVehicleFeedFutureSkew are applied and
+// left out of the watermark, so a fast producer clock still publishes vehicles
+// without blocking a later correction. Unchanged and older plausible headers
+// stay rejected, including after clearFeedData keeps the watermark.
+func decideVehicleFeedTimestamp(prev uint64, createdAt, now time.Time) vehicleFeedTimestampDecision {
+	if createdAt.IsZero() {
+		return vehicleFeedTimestampDecision{apply: true, watermark: prev, reason: vehicleFeedAccept}
+	}
+
+	if createdAt.After(now.Add(maxVehicleFeedFutureSkew)) {
+		return vehicleFeedTimestampDecision{apply: true, watermark: prev, reason: vehicleFeedSkipFuture}
+	}
+
+	incoming := uint64(createdAt.UnixNano())
+	if prev == 0 || incoming > prev {
+		return vehicleFeedTimestampDecision{apply: true, watermark: incoming, reason: vehicleFeedAccept}
+	}
+
+	return vehicleFeedTimestampDecision{apply: false, watermark: prev, reason: vehicleFeedSkipStale}
 }
 
 // vehicleKey identifies a vehicle across feed updates. Exactly one field is
@@ -437,30 +481,35 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		manager.feedUnattributedTrips[feedID] = unattributedTrips
 	}
 
+	// False until a vehicle payload is actually stored. A stale header is not
+	// stored and must not reset the poller circuit breaker. A header past
+	// maxVehicleFeedFutureSkew is stored without moving the watermark.
+	applyVehicleUpdate := false
 	if vehicleData != nil && vehicleErr == nil {
-		applyVehicleUpdate := true
-
 		// Guard against zero CreatedAt from feeds without FeedHeader timestamp.
 		// When CreatedAt is zero time.Time{}, UnixNano() returns a negative value that
 		// wraps to ~11.6×10¹⁸ when cast to uint64, which would permanently block updates.
-		if vehicleData.CreatedAt.IsZero() {
-			// Feed has no FeedHeader timestamp — cannot compare freshness, always apply
-			applyVehicleUpdate = true
-		} else {
-			feedTimestamp := uint64(vehicleData.CreatedAt.UnixNano())
-			if feedTimestamp <= manager.feedVehicleTimestamp[feedID] {
-				logging.LogOperation(
-					logger,
-					"skipping_stale_vehicle_realtime_feed",
-					slog.String("feed", feedID),
-					slog.Uint64("feed_timestamp", feedTimestamp),
-					slog.Uint64("last_applied_timestamp", manager.feedVehicleTimestamp[feedID]),
-				)
-				// Skip applying vehicle updates, but still run cleanup
-				applyVehicleUpdate = false
-			} else {
-				// Record the latest applied vehicle feed timestamp
-				manager.feedVehicleTimestamp[feedID] = feedTimestamp
+		decision := decideVehicleFeedTimestamp(manager.feedVehicleTimestamp[feedID], vehicleData.CreatedAt, time.Now())
+		applyVehicleUpdate = decision.apply
+		switch decision.reason {
+		case vehicleFeedSkipFuture:
+			logging.LogOperation(
+				logger,
+				"ignoring_future_vehicle_feed_timestamp",
+				slog.String("feed", feedID),
+				slog.Time("feed_timestamp", vehicleData.CreatedAt),
+			)
+		case vehicleFeedSkipStale:
+			logging.LogOperation(
+				logger,
+				"skipping_stale_vehicle_realtime_feed",
+				slog.String("feed", feedID),
+				slog.Uint64("feed_timestamp", uint64(vehicleData.CreatedAt.UnixNano())),
+				slog.Uint64("last_applied_timestamp", manager.feedVehicleTimestamp[feedID]),
+			)
+		default:
+			if decision.apply && !vehicleData.CreatedAt.IsZero() {
+				manager.feedVehicleTimestamp[feedID] = decision.watermark
 			}
 		}
 
@@ -546,7 +595,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	}
 
 	tripsUpdated := tripData != nil && tripErr == nil
-	vehiclesUpdated := vehicleData != nil && vehicleErr == nil
+	vehiclesUpdated := applyVehicleUpdate
 	alertsUpdated := alertData != nil && alertErr == nil
 
 	// OR logic: A feed is partially successful if ANY configured sub-feed succeeds.
@@ -576,6 +625,13 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		hasNewData = false
 	}
 
+	// A stale vehicle skip already logged skipping_stale_vehicle_realtime_feed.
+	// Do not also report that as a failed update when nothing else failed.
+	skippedStaleVehiclesOnly := feedCfg.VehiclePositionsURL != "" &&
+		vehicleData != nil && vehicleErr == nil && !vehiclesUpdated &&
+		(feedCfg.TripUpdatesURL == "" || tripErr == nil) &&
+		(feedCfg.ServiceAlertsURL == "" || alertErr == nil)
+
 	// Logging based on partial vs total success
 	if hasNewData {
 		fullSuccess := true
@@ -597,6 +653,8 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				slog.Int("alerts", len(manager.feedAlerts[feedID])),
 			)
 		} else {
+			// Fresh trips beside a stale vehicle header land here with
+			// vehicle_positions_success false. That skip is not a fetch error.
 			logger.Warn("realtime feed partially updated",
 				slog.String("feed", feedID),
 				slog.Bool("trip_updates_configured", feedCfg.TripUpdatesURL != ""),
@@ -607,7 +665,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				slog.Bool("service_alerts_success", alertsUpdated),
 			)
 		}
-	} else {
+	} else if !skippedStaleVehiclesOnly {
 		logger.Error("realtime feed update failed",
 			slog.String("feed", feedID),
 			slog.Bool("trip_updates_configured", feedCfg.TripUpdatesURL != ""),
