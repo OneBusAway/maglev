@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"testing"
@@ -205,13 +206,9 @@ func TestArrivalsAndDeparturesForLocationIncludesStopAlertsWithoutArrivals(t *te
 
 	wantSituationID := utils.FormCombinedID(agencyID, alertID)
 	assert.Contains(t, model.Data.Entry.SituationIDs, wantSituationID)
-	var referenced bool
-	for _, situation := range model.Data.References.Situations {
-		if situation.ID == wantSituationID {
-			referenced = true
-			break
-		}
-	}
+	referenced := slices.ContainsFunc(model.Data.References.Situations, func(situation models.Situation) bool {
+		return situation.ID == wantSituationID
+	})
 	assert.True(t, referenced, "the stop alert must resolve in references.situations")
 }
 
