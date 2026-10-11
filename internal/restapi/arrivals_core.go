@@ -305,6 +305,9 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 	}
 
 	if len(allActive) == 0 {
+		if err := api.addStopAlertsForStops(ctx, in, acc); err != nil {
+			return nil, err
+		}
 		return arrivals, nil
 	}
 
@@ -329,15 +332,21 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 		return nil, err
 	}
 
-	// Stop-level alerts, once per stop — mirrors the per-stop pipeline.
-	for _, stop := range in.Stops {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), in.Agencies.agencyIDFor(stop.ID))
+	if err := api.addStopAlertsForStops(ctx, in, acc); err != nil {
+		return nil, err
 	}
 
 	return arrivals, nil
+}
+
+func (api *RestAPI) addStopAlertsForStops(ctx context.Context, in multiStopArrivalsInput, acc *arrivalsAccumulator) error {
+	for _, stop := range in.Stops {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), in.Agencies.agencyIDFor(stop.ID))
+	}
+	return nil
 }
 
 // agencyGroup is one timezone-shared set of stops: a single query instant,
