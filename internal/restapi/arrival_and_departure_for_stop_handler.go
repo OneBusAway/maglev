@@ -526,17 +526,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		combinedRouteIDs := make([]string, len(routesForThisStop))
 		for i, route := range routesForThisStop {
 			combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)
-			routeCopy := gtfsdb.Route{
-				ID:        route.ID,
-				AgencyID:  route.AgencyID,
-				ShortName: route.ShortName,
-				LongName:  route.LongName,
-				Desc:      route.Desc,
-				Type:      route.Type,
-				Url:       route.Url,
-				Color:     route.Color,
-				TextColor: route.TextColor,
+			if _, exists := routeIDSet[route.ID]; exists {
+				continue
 			}
+			routeCopy := routeFromStopRow(route)
 			routeIDSet[route.ID] = &routeCopy
 		}
 
@@ -545,7 +538,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			Name:               stopData.Name.String,
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
-			Code:               nulls.StringOrDefault(stopData.Code, stopData.ID),
+			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
+			Parent:             parentStationID(stopAgencyID, stopData),
 			Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
@@ -553,6 +547,20 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			StaticRouteIDs:     combinedRouteIDs,
 		}
 		references.Stops = append(references.Stops, stopRef)
+	}
+
+	addedParents, parentRoutes, err := api.missingParentStops(r.Context(), references.Stops)
+	if err != nil {
+		reqLogger.Warn("failed to resolve parent stops", "error", err)
+	} else {
+		references.Stops = append(references.Stops, addedParents...)
+		for _, route := range parentRoutes {
+			if _, exists := routeIDSet[route.ID]; exists {
+				continue
+			}
+			routeCopy := routeFromStopRow(route)
+			routeIDSet[route.ID] = &routeCopy
+		}
 	}
 
 	// Build routes references

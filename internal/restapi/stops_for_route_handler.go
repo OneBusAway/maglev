@@ -212,16 +212,22 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, stops []
 
 		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
 
-		routeIdsString := append([]string(nil), routesMap[stop.ID]...)
+		routeIdsString := routesMap[stop.ID]
+		if routeIdsString == nil {
+			routeIdsString = []string{}
+		} else {
+			routeIdsString = append([]string(nil), routeIdsString...)
+		}
 
 		stopsList = append(stopsList, models.Stop{
-			Code:               stop.Code.String,
+			Code:               nulls.StringOrNonEmpty(stop.Code, stop.ID),
 			Direction:          direction,
 			ID:                 utils.FormCombinedID(agencyID, stop.ID),
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),
 			Lon:                stop.Lon,
 			Name:               stop.Name.String,
+			Parent:             parentStationID(agencyID, stop),
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
@@ -237,6 +243,13 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 	// When includeReferences=false the references block is present but empty.
 	if includeReferences {
 		agencyRef := models.AgencyReferenceFromDatabase(&currentAgency)
+
+		addedParents, _, err := api.missingParentStops(ctx, stopsList)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+		stopsList = append(stopsList, addedParents...)
 
 		routes, err := api.BuildRouteReferences(ctx, currentAgency.ID, stopsList)
 		if err != nil {

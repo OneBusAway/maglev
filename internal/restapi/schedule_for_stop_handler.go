@@ -283,10 +283,14 @@ func (api *RestAPI) buildScheduleForStopReferences(
 		return nil, err
 	}
 
+	queried := buildQueriedStopRef(agencyID, stop, routeIDs)
 	references := models.NewEmptyReferences()
 	references.Routes = utils.MapValues(routeRefs)
 	references.Agencies = utils.MapValues(agencyRefs)
-	references.Stops = append(references.Stops, buildQueriedStopRef(agencyID, stop, routeIDs))
+	references.Stops = append(references.Stops, queried)
+	if err := api.mergeParentStopsIntoReferences(ctx, references, []models.Stop{queried}, agencyID); err != nil {
+		return nil, err
+	}
 
 	return references, nil
 }
@@ -348,11 +352,11 @@ func buildQueriedStopRef(agencyID string, stop gtfsdb.Stop, routeIDs []string) m
 	}
 
 	return models.NewStop(
-		nulls.StringOrEmpty(stop.Code),
+		nulls.StringOrNonEmpty(stop.Code, stop.ID),
 		nulls.StringOrEmpty(stop.Direction),
 		utils.FormCombinedID(agencyID, stop.ID),
 		nulls.StringOrEmpty(stop.Name),
-		"",
+		parentStationID(agencyID, stop),
 		utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		stop.Lat,
 		stop.Lon,

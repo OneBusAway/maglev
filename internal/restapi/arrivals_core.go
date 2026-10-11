@@ -976,7 +976,8 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 			Name:               stopData.Name.String,
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
-			Code:               nulls.StringOrDefault(stopData.Code, stopData.ID),
+			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
+			Parent:             parentStationID(stopAgencyID, stopData),
 			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
@@ -984,6 +985,14 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 			StaticRouteIDs:     combinedRouteIDs,
 		})
 	}
+
+	added, parentRoutes, err := api.missingParentStops(ctx, references.Stops)
+	if err != nil {
+		reqLogger.Warn("failed to resolve parent stops", slog.Any("error", err))
+		return nil
+	}
+	references.Stops = append(references.Stops, added...)
+	collectStopRoutes(parentRoutes, acc)
 
 	return nil
 }
@@ -1036,17 +1045,8 @@ func collectStopRoutes(routesForStop []gtfsdb.GetRoutesForStopsRow, acc *arrival
 		if _, exists := acc.routes[route.ID]; exists {
 			continue
 		}
-		acc.routes[route.ID] = &gtfsdb.Route{
-			ID:        route.ID,
-			AgencyID:  route.AgencyID,
-			ShortName: route.ShortName,
-			LongName:  route.LongName,
-			Desc:      route.Desc,
-			Type:      route.Type,
-			Url:       route.Url,
-			Color:     route.Color,
-			TextColor: route.TextColor,
-		}
+		copied := routeFromStopRow(route)
+		acc.routes[route.ID] = &copied
 	}
 	return combinedRouteIDs
 }
