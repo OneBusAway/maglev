@@ -2156,6 +2156,61 @@ func (q *Queries) GetFeedEndDate(ctx context.Context) (interface{}, error) {
 	return feed_end_date, err
 }
 
+const getFirstDeparturesForTripIDs = `-- name: GetFirstDeparturesForTripIDs :many
+SELECT
+    st.trip_id,
+    st.departure_time
+FROM
+    stop_times st
+WHERE
+    st.trip_id IN (/*SLICE:trip_ids*/?)
+    AND st.stop_sequence = (
+        SELECT MIN(first_stop.stop_sequence)
+        FROM stop_times first_stop
+        WHERE first_stop.trip_id = st.trip_id
+    )
+ORDER BY
+    st.trip_id ASC
+`
+
+type GetFirstDeparturesForTripIDsRow struct {
+	TripID        string
+	DepartureTime int64
+}
+
+func (q *Queries) GetFirstDeparturesForTripIDs(ctx context.Context, tripIds []string) ([]GetFirstDeparturesForTripIDsRow, error) {
+	query := getFirstDeparturesForTripIDs
+	var queryParams []interface{}
+	if len(tripIds) > 0 {
+		for _, v := range tripIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", strings.Repeat(",?", len(tripIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFirstDeparturesForTripIDsRow
+	for rows.Next() {
+		var i GetFirstDeparturesForTripIDsRow
+		if err := rows.Scan(&i.TripID, &i.DepartureTime); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getFirstStopOfNextTripInBlock = `-- name: GetFirstStopOfNextTripInBlock :one
 SELECT st.trip_id, st.arrival_time, st.departure_time, st.stop_id, st.stop_sequence, st.stop_headsign, st.pickup_type, st.drop_off_type, st.shape_dist_traveled, st.timepoint
 FROM stop_times st
