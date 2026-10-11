@@ -3,10 +3,13 @@ package gtfs
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"math"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
@@ -150,6 +153,93 @@ func TestTransientDBError_NotCached(t *testing.T) {
 	// Critical check: ensure the failure was NOT permanently cached
 	_, cached := calc.directionResults.Load(stopID)
 	assert.False(t, cached, "transient DB error result must not be cached in directionResults")
+}
+
+// TestCalculateStopDirection_Timeout verifies that the per-computation timeout
+// bounds the work and that a timeout is treated as a transient error (not cached).
+func TestCalculateStopDirection_Timeout(t *testing.T) {
+	release := make(chan struct{})
+	db := &blockingDBTX{release: release}
+	calc := NewAdvancedDirectionCalculator(gtfsdb.New(db))
+	calc.computeTimeout = 10 * time.Millisecond
+
+	stopID := "timeout-stop"
+
+	result := calc.CalculateStopDirection(context.Background(), stopID)
+	assert.Equal(t, "", result, "should return empty string on timeout")
+
+	assert.Equal(t, int32(1), db.queryCalls.Load(), "should have attempted the DB query once")
+
+	_, cached := calc.directionResults.Load(stopID)
+	assert.False(t, cached, "timeout result must not be cached in directionResults")
+}
+
+// blockingDBTX is a DBTX stub that blocks on QueryContext until release is
+// closed, then returns an error. It records how many times QueryContext was
+// entered so we can assert singleflight deduplication.
+type blockingDBTX struct {
+	queryCalls atomic.Int32
+	release    chan struct{}
+}
+
+func (b *blockingDBTX) ExecContext(context.Context, string, ...interface{}) (sql.Result, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (b *blockingDBTX) PrepareContext(context.Context, string) (*sql.Stmt, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (b *blockingDBTX) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	b.queryCalls.Add(1)
+	select {
+	case <-b.release:
+		return nil, errors.New("simulated DB error")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (b *blockingDBTX) QueryRowContext(context.Context, string, ...interface{}) *sql.Row {
+	return nil
+}
+
+// TestCalculateStopDirection_SingleflightErrorShared verifies that when the
+// shared singleflight computation fails, all concurrent waiters see the failure,
+// the underlying DB work runs only once, and none of them cache an empty result.
+func TestCalculateStopDirection_SingleflightErrorShared(t *testing.T) {
+	release := make(chan struct{})
+	db := &blockingDBTX{release: release}
+	calc := NewAdvancedDirectionCalculator(gtfsdb.New(db))
+
+	stopID := "shared-error-stop"
+
+	const numCallers = 10
+	var wg sync.WaitGroup
+	results := make([]string, numCallers)
+	for i := 0; i < numCallers; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			results[idx] = calc.CalculateStopDirection(context.Background(), stopID)
+		}(i)
+	}
+
+	// Give the goroutines time to queue up on the shared singleflight call.
+	// The first caller will be blocked inside QueryContext waiting for release.
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, int32(1), db.queryCalls.Load(), "singleflight should execute the DB query only once")
+
+	// Unblock the single in-flight query; it returns an error that is shared.
+	close(release)
+	wg.Wait()
+
+	for i, r := range results {
+		assert.Equal(t, "", r, "caller %d should get empty string on shared error", i)
+	}
+
+	_, cached := calc.directionResults.Load(stopID)
+	assert.False(t, cached, "shared error result must not be cached in directionResults")
 }
 
 func TestCalculateStopDirectionPrecomputedAbbreviations(t *testing.T) {
