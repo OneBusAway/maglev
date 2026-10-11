@@ -414,6 +414,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		tripRefs = manager.assignTripUpdateVehicles(ctx, feedID, tripRefs, unfilteredVehicles)
 		tripUpdateBlocks = manager.tripUpdateBlockMatches(ctx, feedID, tripRefs, tripData.CreatedAt)
 	}
+	manager.resolveStaticTripRoutes(ctx, feedID, tripRefs, unfilteredVehicles)
 
 	// Apply agency-based filtering if configured for this feed.
 	// This runs before acquiring realTimeMutex to keep the critical section short.

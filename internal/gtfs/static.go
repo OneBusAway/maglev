@@ -235,6 +235,9 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	if changed && manager.blockMatcher != nil {
 		manager.blockMatcher.Clear()
 	}
+	if changed {
+		manager.staticTripRoutes.Clear()
+	}
 
 	if eTag := manager.GetSystemETag(ctx); eTag != "" {
 		logging.LogOperation(logger, "system_etag_updated_successfully", slog.String("etag", eTag))
