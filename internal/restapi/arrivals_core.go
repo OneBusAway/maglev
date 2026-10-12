@@ -101,7 +101,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 
 	acc.stopIDs[in.StopCode] = true
 
-	routesLookup, tripsLookup, tripStopCountMap, freqMap, err := api.batchArrivalEntities(ctx, allActiveStopTimes)
+	routesLookup, tripsLookup, tripStops, freqMap, err := api.batchArrivalEntities(ctx, allActiveStopTimes)
 	if err != nil {
 		return result, err
 	}
@@ -146,7 +146,8 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 			queryTime:        in.QueryTime,
 			stopCode:         in.StopCode,
 			stopID:           stopID,
-			totalStopsInTrip: tripStopCountMap[st.TripID],
+			totalStopsInTrip: tripStops.stopCounts[st.TripID],
+			stopPosition:     tripStops.stopPosition(st.TripID, st.StopSequence),
 			freqMap:          freqMap,
 		}, acc)
 
@@ -278,7 +279,7 @@ type batchedActiveStopTime struct {
 type batchedArrivalLookups struct {
 	routes      map[string]gtfsdb.Route
 	trips       map[string]gtfsdb.Trip
-	stopCounts  map[string]int
+	tripStops   tripStopIndex
 	frequencies map[string][]gtfsdb.Frequency
 }
 
@@ -314,7 +315,7 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 		acc.stopIDs[b.StopCode] = true
 	}
 
-	routesLookup, tripsLookup, tripStopCountMap, freqMap, err := api.batchArrivalEntities(ctx, plain)
+	routesLookup, tripsLookup, tripStops, freqMap, err := api.batchArrivalEntities(ctx, plain)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +323,7 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 	arrivals, err = api.buildArrivalsFromRows(ctx, allActive, in, acc, batchedArrivalLookups{
 		routes:      routesLookup,
 		trips:       tripsLookup,
-		stopCounts:  tripStopCountMap,
+		tripStops:   tripStops,
 		frequencies: freqMap,
 	})
 	if err != nil {
@@ -520,7 +521,8 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 			queryTime:        b.QueryTime,
 			stopCode:         b.StopCode,
 			stopID:           utils.FormCombinedID(b.AgencyID, b.StopCode),
-			totalStopsInTrip: lookups.stopCounts[st.TripID],
+			totalStopsInTrip: lookups.tripStops.stopCounts[st.TripID],
+			stopPosition:     lookups.tripStops.stopPosition(st.TripID, st.StopSequence),
 			freqMap:          lookups.frequencies,
 		}, acc)
 
@@ -547,14 +549,14 @@ func convertStopsInWindowRow(row gtfsdb.GetStopTimesForStopsInWindowRow) gtfsdb.
 	}
 }
 
-// batchArrivalEntities resolves every route, trip, per-trip stop count and
+// batchArrivalEntities resolves every route, trip, per-trip stop index and
 // frequency row the matched stop_times need in four queries rather than per
-// row. A frequency fetch failure is fatal — unlike stop count, it cannot
+// row. A frequency fetch failure is fatal — unlike the stop index, it cannot
 // silently degrade a field, since BuildTripStatus itself needs the map.
 func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes []activeStopTime) (
 	routesLookup map[string]gtfsdb.Route,
 	tripsLookup map[string]gtfsdb.Trip,
-	tripStopCountMap map[string]int,
+	tripStops tripStopIndex,
 	freqMap map[string][]gtfsdb.Frequency,
 	err error,
 ) {
@@ -562,12 +564,12 @@ func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes
 
 	allRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, uniqueRouteIDs)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, tripStopIndex{}, nil, err
 	}
 
 	allTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, uniqueTripIDs)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, tripStopIndex{}, nil, err
 	}
 
 	routesLookup = make(map[string]gtfsdb.Route, len(allRoutes))
@@ -584,11 +586,11 @@ func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes
 	if len(uniqueTripIDs) > 0 {
 		freqMap, err = api.fetchFrequenciesForTrips(ctx, uniqueTripIDs)
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, tripStopIndex{}, nil, err
 		}
 	}
 
-	return routesLookup, tripsLookup, api.tripStopCounts(ctx, uniqueTripIDs), freqMap, nil
+	return routesLookup, tripsLookup, api.buildTripStopIndex(ctx, uniqueTripIDs), freqMap, nil
 }
 
 // uniqueRouteAndTripIDs collects the distinct route and trip IDs referenced by
@@ -610,27 +612,61 @@ func uniqueRouteAndTripIDs(allActiveStopTimes []activeStopTime) (routeIDs, tripI
 	return slices.Collect(maps.Keys(routeIDSet)), slices.Collect(maps.Keys(tripIDSet))
 }
 
-// tripStopCounts returns how many stops each trip has, batched to avoid a
-// per-arrival query for totalStopsInTrip. A failure yields an empty map rather
-// than an error: a missing count degrades one response field, and the arrivals
-// themselves are still worth returning.
-func (api *RestAPI) tripStopCounts(ctx context.Context, tripIDs []string) map[string]int {
-	counts := make(map[string]int, len(tripIDs))
+// tripStopKey identifies one visit of a stop on a trip by the feed's own
+// stop_sequence value, which GTFS guarantees is unique within a trip.
+type tripStopKey struct {
+	tripID       string
+	stopSequence int64
+}
+
+// tripStopIndex holds the two per-trip facts an arrival row needs from a trip's
+// full ordered stop list: how many stops the trip has, and where in that list
+// each stop_time falls.
+type tripStopIndex struct {
+	stopCounts map[string]int
+	positions  map[tripStopKey]int
+}
+
+// stopPosition returns the zero-based index of a stop_time within its trip's
+// ordered stop list — the "index of the stop into the sequence of stops" the
+// spec defines stopSequence as. It is deliberately not the feed's raw
+// stop_sequence: GTFS only requires that value to increase along the trip, so a
+// 0-based or sparsely numbered feed makes the two differ.
+//
+// An unknown trip yields 0, matching how stopCounts degrades when the batch
+// fetch below fails.
+func (idx tripStopIndex) stopPosition(tripID string, stopSequence int64) int {
+	return idx.positions[tripStopKey{tripID: tripID, stopSequence: stopSequence}]
+}
+
+// buildTripStopIndex resolves each trip's stop count and per-stop positions in
+// one batched query rather than a pair of per-arrival lookups. A failure yields
+// empty maps rather than an error: the missing values degrade two response
+// fields, and the arrivals themselves are still worth returning.
+func (api *RestAPI) buildTripStopIndex(ctx context.Context, tripIDs []string) tripStopIndex {
+	idx := tripStopIndex{
+		stopCounts: make(map[string]int, len(tripIDs)),
+		positions:  make(map[tripStopKey]int),
+	}
 	if len(tripIDs) == 0 {
-		return counts
+		return idx
 	}
 	reqLogger := logging.ForComponent(ctx, "http_server")
 
+	// Ordered by (trip_id, stop_sequence), so each trip's running count is also
+	// the next row's position within that trip.
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
 		reqLogger.Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
-		return counts
+		return idx
 	}
 
 	for _, st := range stopTimes {
-		counts[st.TripID]++
+		key := tripStopKey{tripID: st.TripID, stopSequence: st.StopSequence}
+		idx.positions[key] = idx.stopCounts[st.TripID]
+		idx.stopCounts[st.TripID]++
 	}
-	return counts
+	return idx
 }
 
 // arrivalInput carries the per-row values buildArrival needs. Grouped into a
@@ -645,6 +681,7 @@ type arrivalInput struct {
 	stopCode         string
 	stopID           string
 	totalStopsInTrip int
+	stopPosition     int
 	freqMap          map[string][]gtfsdb.Frequency
 }
 
@@ -666,6 +703,11 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
 	vehicleID := api.combinedVehicleID(ctx, vehicle, route.AgencyID, st.TripID)
 
+	// The raw feed stop_sequence, not in.stopPosition: GTFS-RT
+	// stop_time_update.stop_sequence refers to the feed's own numbering, so
+	// matching a prediction needs the unmodified value. The response's
+	// stopSequence field is a position within the trip instead — see
+	// tripStopIndex.stopPosition.
 	predictedArrivalTime, predictedDepartureTime, predicted := api.getPredictedTimes(
 		ctx,
 		st.TripID,
@@ -717,7 +759,7 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 		predicted,                                       // predicted
 		true,                                            // arrivalEnabled
 		true,                                            // departureEnabled
-		int(st.StopSequence)-1,                          // stopSequence (Zero-based index)
+		in.stopPosition,                                 // stopSequence (Zero-based position in the trip's stop list)
 		in.totalStopsInTrip,                             // totalStopsInTrip
 		numberOfStopsAway,                               // numberOfStopsAway
 		blockTripSequence,                               // blockTripSequence
