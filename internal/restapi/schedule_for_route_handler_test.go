@@ -266,6 +266,49 @@ func TestScheduleForRouteHandler_WithReferences(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.StopTimes)
 }
 
+// TestScheduleForRouteHandler_StopRouteIDsResolve checks the stop references
+// against Java's RouteScheduleBeanServiceImpl.addStopReference: a stop lists
+// only the schedule's route, even where other routes serve it, so every
+// routeId resolves in references.routes without the references growing to
+// every route of every stop. Stops 2000, 7017 and 7018 on RABA route 25_151
+// are also served by 25_24 and 25_157.
+func TestScheduleForRouteHandler_StopRouteIDsResolve(t *testing.T) {
+	api := newScheduleForRouteAPI(t)
+	defer api.Shutdown()
+
+	routeID := testdata.Route1.ID
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025-06-12"))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	refs := model.Data.References
+	routes := make(map[string]bool, len(refs.Routes))
+	for _, rt := range refs.Routes {
+		routes[rt.ID] = true
+	}
+	agencies := make(map[string]bool, len(refs.Agencies))
+	for _, ag := range refs.Agencies {
+		agencies[ag.ID] = true
+	}
+
+	require.NotEmpty(t, refs.Stops)
+	stopIDs := make([]string, 0, len(refs.Stops))
+	for _, stop := range refs.Stops {
+		stopIDs = append(stopIDs, stop.ID)
+		assert.Equal(t, []string{routeID}, stop.RouteIDs, "stop %s", stop.ID)
+		assert.Equal(t, []string{}, stop.StaticRouteIDs, "stop %s", stop.ID)
+		for _, rid := range stop.RouteIDs {
+			assert.True(t, routes[rid], "stop %s routeId %s missing from references.routes", stop.ID, rid)
+		}
+	}
+	assert.Subset(t, stopIDs, []string{"25_2000", "25_7017", "25_7018"})
+
+	require.Len(t, refs.Routes, 1)
+	assert.Equal(t, routeID, refs.Routes[0].ID)
+	for _, rt := range refs.Routes {
+		assert.True(t, agencies[rt.AgencyID], "route %s agency %s missing from references.agencies", rt.ID, rt.AgencyID)
+	}
+}
+
 func TestScheduleForRouteHandler_TripIDsSorted(t *testing.T) {
 	api := newScheduleForRouteAPI(t)
 	defer api.Shutdown()
