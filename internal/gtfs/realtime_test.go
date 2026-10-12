@@ -755,74 +755,89 @@ func TestVehicleMerge_LabelOnlyVehicleRetained(t *testing.T) {
 	assert.InDelta(t, 47.2, *byLabel["102"].Position.Latitude, 0.001)
 }
 
-// positionOnTrip builds a VehiclePosition for a vehicle serving the given trip.
-func positionOnTrip(vehicleID, tripID string, latitude float32, timestamp time.Time) *gtfsrt.VehiclePosition {
-	return &gtfsrt.VehiclePosition{
-		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String(vehicleID)},
-		Trip:      &gtfsrt.TripDescriptor{TripId: proto.String(tripID)},
-		Position:  &gtfsrt.Position{Latitude: proto.Float32(latitude), Longitude: proto.Float32(-122.3)},
-		Timestamp: proto.Uint64(uint64(timestamp.Unix())),
+// positionOnTrip builds a VehiclePosition for a vehicle serving the given trip
+// on route-x. A nil timestamp leaves the optional GTFS-RT timestamp unset.
+func positionOnTrip(vehicleID, tripID string, latitude float32, timestamp *time.Time) *gtfsrt.VehiclePosition {
+	position := &gtfsrt.VehiclePosition{
+		Vehicle:  &gtfsrt.VehicleDescriptor{Id: proto.String(vehicleID)},
+		Trip:     &gtfsrt.TripDescriptor{TripId: proto.String(tripID), RouteId: proto.String("route-x")},
+		Position: &gtfsrt.Position{Latitude: proto.Float32(latitude), Longitude: proto.Float32(-122.3)},
 	}
+	if timestamp != nil {
+		position.Timestamp = proto.Uint64(uint64(timestamp.Unix()))
+	}
+	return position
 }
 
-// TestVehicleMerge_RetainedVehicleDoesNotReplaceLiveVehicleOnTrip checks that
-// when a vehicle drops out of the feed and another vehicle takes over its
-// trip, the trip resolves to the live vehicle while the old one is retained.
-func TestVehicleMerge_RetainedVehicleDoesNotReplaceLiveVehicleOnTrip(t *testing.T) {
-	manager := newTestManager()
+// TestVehicleMerge_RetainedVehicleReleasesTakenTrip checks that when a vehicle
+// drops out of the feed and another vehicle takes over its trip, the trip
+// resolves to the live vehicle in every index, whatever the timestamps say,
+// while the old vehicle is still retained.
+func TestVehicleMerge_RetainedVehicleReleasesTakenTrip(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
-
-	firstFeed := serveVehicleFeed(t, now.Add(-30*time.Second), []*gtfsrt.VehiclePosition{
-		positionOnTrip("V1", "trip-x", 47.1, now.Add(-30*time.Second)),
-	})
-	manager.updateFeedRealtime(context.Background(), firstFeed)
-
-	secondFeed := serveVehicleFeed(t, now, []*gtfsrt.VehiclePosition{
-		positionOnTrip("V2", "trip-x", 47.4, now),
-	})
-	manager.updateFeedRealtime(context.Background(), secondFeed)
-
-	vehicle := manager.GetVehicleForTrip(context.Background(), "trip-x")
-	require.NotNil(t, vehicle)
-	assert.Equal(t, "V2", vehicle.ID.ID)
-	assert.InDelta(t, 47.4, *vehicle.Position.Latitude, 0.001)
-	assert.Len(t, manager.GetRealTimeVehicles(), 2, "V1 should still be retained within the stale-vehicle window")
-}
-
-func TestSetTripVehicle(t *testing.T) {
-	older := time.Date(2026, 10, 11, 10, 0, 0, 0, time.UTC)
-	newer := older.Add(30 * time.Second)
-	vehicleAt := func(id string, timestamp *time.Time) gtfs.Vehicle {
-		return gtfs.Vehicle{
-			ID:        &gtfs.VehicleID{ID: id},
-			Trip:      &gtfs.Trip{ID: gtfs.TripID{ID: "trip-x"}},
-			Timestamp: timestamp,
-		}
-	}
+	older := now.Add(-time.Minute)
+	slightlyOlder := now.Add(-10 * time.Second)
 
 	tests := []struct {
-		name     string
-		vehicles []gtfs.Vehicle
-		wantID   string
+		name              string
+		retainedTimestamp *time.Time
+		liveTimestamp     *time.Time
 	}{
-		{"later newer vehicle replaces earlier", []gtfs.Vehicle{vehicleAt("A", &older), vehicleAt("B", &newer)}, "B"},
-		{"later older vehicle keeps earlier", []gtfs.Vehicle{vehicleAt("A", &newer), vehicleAt("B", &older)}, "A"},
-		{"equal timestamps keep last vehicle", []gtfs.Vehicle{vehicleAt("A", &older), vehicleAt("B", &older)}, "B"},
-		{"timestamped vehicle beats later missing timestamp", []gtfs.Vehicle{vehicleAt("A", &newer), vehicleAt("B", nil)}, "A"},
-		{"later timestamped vehicle beats missing timestamp", []gtfs.Vehicle{vehicleAt("A", nil), vehicleAt("B", &older)}, "B"},
-		{"two missing timestamps keep last vehicle", []gtfs.Vehicle{vehicleAt("A", nil), vehicleAt("B", nil)}, "B"},
-		{"missing timestamp between reports keeps newest", []gtfs.Vehicle{vehicleAt("A", &newer), vehicleAt("B", nil), vehicleAt("C", &older)}, "A"},
+		{"live report is newer", &older, &now},
+		{"no per-vehicle timestamps", nil, nil},
+		{"retained report is newer than the live one", &now, &slightlyOlder},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			vehicleLookupByTrip := make(map[string]int)
-			for i := range tc.vehicles {
-				setTripVehicle(vehicleLookupByTrip, tc.vehicles, i)
+			manager := newTestManager()
+			manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now.Add(-time.Minute), []*gtfsrt.VehiclePosition{
+				positionOnTrip("V1", "trip-x", 47.1, tc.retainedTimestamp),
+			}))
+
+			// The second update covers V1 being released; the third covers it
+			// staying released while still retained.
+			for i, feedTime := range []time.Time{now.Add(-30 * time.Second), now} {
+				manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, feedTime, []*gtfsrt.VehiclePosition{
+					positionOnTrip("V2", "trip-x", 47.4+float32(i)/10, tc.liveTimestamp),
+				}))
+
+				vehicle := manager.GetVehicleForTrip(context.Background(), "trip-x")
+				require.NotNil(t, vehicle)
+				assert.Equal(t, "V2", vehicle.ID.ID)
+
+				routeVehicles := manager.mergedRealtime().vehiclesByRoute["route-x"]
+				require.Len(t, routeVehicles, 1, "only the live vehicle should be listed on the route")
+				assert.Equal(t, "V2", routeVehicles[0].ID.ID)
+
+				vehicles := manager.GetRealTimeVehicles()
+				require.Len(t, vehicles, 2, "V1 should still be retained within the stale-vehicle window")
+				for _, v := range vehicles {
+					if v.ID.ID == "V1" {
+						assert.Nil(t, v.Trip, "retained V1 should no longer claim trip-x")
+					}
+				}
 			}
-			assert.Equal(t, tc.wantID, tc.vehicles[vehicleLookupByTrip["trip-x"]].ID.ID)
 		})
 	}
+}
+
+// TestVehicleMerge_RetainedVehicleKeepsUntakenTrip checks that a retained
+// vehicle keeps its trip while no other vehicle serves it.
+func TestVehicleMerge_RetainedVehicleKeepsUntakenTrip(t *testing.T) {
+	manager := newTestManager()
+	now := time.Now().Truncate(time.Second)
+
+	manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now.Add(-30*time.Second), []*gtfsrt.VehiclePosition{
+		positionOnTrip("V1", "trip-x", 47.1, nil),
+	}))
+	manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now, []*gtfsrt.VehiclePosition{
+		positionOnTrip("V2", "trip-y", 47.4, nil),
+	}))
+
+	vehicle := manager.GetVehicleForTrip(context.Background(), "trip-x")
+	require.NotNil(t, vehicle)
+	assert.Equal(t, "V1", vehicle.ID.ID)
 }
 
 // TestIsVehicleStale verifies the isVehicleStale function correctly compares
