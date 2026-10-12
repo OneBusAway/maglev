@@ -164,6 +164,12 @@ func combinedStopIDs(stops []gtfsdb.Stop, agencies *stopAgencyIndex) []string {
 // entry lists reference, so references do not serialize the stops, trips and
 // routes maxCount trimmed away. Situation references stay global: alerts are
 // few, and tracking them per trip would require invasive accumulator changes.
+//
+// The retained arrivals are a reference source in their own right, not just a
+// filter over the stop lists: maxCount trims stopIDs and arrivals
+// independently, so an arrival can outlive its own stop's place in stopIDs,
+// and a trip status names stops and a reassigned trip that no list carries.
+// Every ID an arrival emits has to resolve, so all of them are retained here.
 func retainedAccumulator(
 	arrivals []models.ArrivalAndDeparture,
 	stopIDs []string,
@@ -174,30 +180,61 @@ func retainedAccumulator(
 	refAcc.situations = acc.situations
 
 	for _, id := range stopIDs {
-		if _, bareID, err := utils.ExtractAgencyIDAndCodeID(id); err == nil {
-			refAcc.stopIDs[bareID] = true
-		}
+		retainStop(refAcc, id)
 	}
 	for _, n := range nearby {
-		if _, bareID, err := utils.ExtractAgencyIDAndCodeID(n.StopID); err == nil {
-			refAcc.stopIDs[bareID] = true
-		}
+		retainStop(refAcc, n.StopID)
 	}
 
 	for _, a := range arrivals {
-		if _, bareTripID, err := utils.ExtractAgencyIDAndCodeID(a.TripID); err == nil {
-			if trip, ok := acc.trips[bareTripID]; ok {
-				refAcc.trips[bareTripID] = trip
-			}
-		}
-		if _, bareRouteID, err := utils.ExtractAgencyIDAndCodeID(a.RouteID); err == nil {
-			if route, ok := acc.routes[bareRouteID]; ok {
-				refAcc.routes[bareRouteID] = route
-			}
-		}
+		retainStop(refAcc, a.StopID)
+		retainTrip(refAcc, acc, a.TripID)
+		retainRoute(refAcc, acc, a.RouteID)
+		retainTripStatusEntities(refAcc, acc, a.TripStatus)
 	}
 
 	return refAcc
+}
+
+// retainTripStatusEntities retains the stops and the reassigned active trip a
+// trip status points at. recordTripStatusReferences resolved these into acc
+// while the arrival was built, so nothing here needs a query.
+func retainTripStatusEntities(refAcc, acc *arrivalsAccumulator, status *models.TripStatus) {
+	if status == nil {
+		return
+	}
+	retainStop(refAcc, status.NextStop)
+	retainStop(refAcc, status.ClosestStop)
+	retainTrip(refAcc, acc, status.ActiveTripID)
+}
+
+// retainStop records a combined stop ID under the bare ID appendStopReferences
+// looks it up by. A malformed or empty ID is skipped.
+func retainStop(refAcc *arrivalsAccumulator, combinedStopID string) {
+	if _, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedStopID); err == nil {
+		refAcc.stopIDs[bareID] = true
+	}
+}
+
+// retainTrip carries a combined trip ID's entity over from acc, which already
+// resolved it. A trip missing from acc is skipped rather than queried: it would
+// have had to come from a row that never reached the accumulator.
+func retainTrip(refAcc, acc *arrivalsAccumulator, combinedTripID string) {
+	if _, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedTripID); err == nil {
+		if trip, ok := acc.trips[bareID]; ok {
+			refAcc.trips[bareID] = trip
+		}
+	}
+}
+
+// retainRoute carries a combined route ID's entity over from acc, under the
+// same contract as retainTrip.
+func retainRoute(refAcc, acc *arrivalsAccumulator, combinedRouteID string) {
+	if _, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedRouteID); err == nil {
+		if route, ok := acc.routes[bareID]; ok {
+			refAcc.routes[bareID] = route
+		}
+	}
 }
 
 // locationReferences builds the references block, or an empty one when the

@@ -191,12 +191,19 @@ func TestArrivalsAndDeparturesForLocationMaxCount(t *testing.T) {
 	assert.LessOrEqual(t, len(entry.NearbyStopIDs), 1)
 
 	// References must cover only the retained entry results, not the stops and
-	// arrivals maxCount trimmed away.
+	// arrivals maxCount trimmed away. "Retained" spans every ID the kept
+	// arrivals name, not just the three lists: maxCount trims stopIDs and
+	// arrivals independently, so a kept arrival's own stop can be absent from
+	// stopIDs, and its trip status names stops and an active trip that no list
+	// carries.
 	retainedTrips := make(map[string]bool, len(entry.ArrivalsAndDepartures))
 	retainedRoutes := make(map[string]bool, len(entry.ArrivalsAndDepartures))
 	for _, a := range entry.ArrivalsAndDepartures {
 		retainedTrips[a.TripID] = true
 		retainedRoutes[a.RouteID] = true
+		if a.TripStatus != nil && a.TripStatus.ActiveTripID != "" {
+			retainedTrips[a.TripStatus.ActiveTripID] = true
+		}
 	}
 	referencedTrips := make(map[string]bool, len(limited.Data.References.Trips))
 	for _, tr := range limited.Data.References.Trips {
@@ -220,6 +227,11 @@ func TestArrivalsAndDeparturesForLocationMaxCount(t *testing.T) {
 	for _, n := range entry.NearbyStopIDs {
 		retainedStops[n.StopID] = true
 	}
+	for _, a := range entry.ArrivalsAndDepartures {
+		for _, id := range arrivalStopIDs(a) {
+			retainedStops[id] = true
+		}
+	}
 	referencedStops := make(map[string]bool, len(limited.Data.References.Stops))
 	for _, s := range limited.Data.References.Stops {
 		assert.True(t, retainedStops[s.ID], "references.stops %s is not in the retained entry", s.ID)
@@ -228,6 +240,80 @@ func TestArrivalsAndDeparturesForLocationMaxCount(t *testing.T) {
 	for stopID := range retainedStops {
 		assert.True(t, referencedStops[stopID], "retained stop %s must resolve in references.stops", stopID)
 	}
+}
+
+// arrivalStopIDs returns every stop ID one arrival names: its own stop plus the
+// stops its trip status points at.
+func arrivalStopIDs(a models.ArrivalAndDeparture) []string {
+	ids := []string{a.StopID}
+	if a.TripStatus != nil {
+		ids = append(ids, a.TripStatus.NextStop, a.TripStatus.ClosestStop)
+	}
+	kept := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			kept = append(kept, id)
+		}
+	}
+	return kept
+}
+
+// TestArrivalsAndDeparturesForLocationReferencesResolveArrivalIDs pins the
+// invariant recordTripStatusReferences exists for: every ID an arrival emits
+// resolves in the references block. The maxCount test covers the truncated
+// case; this one covers an untruncated response, where the trip status stops
+// and active trip are the IDs no entry list carries.
+func TestArrivalsAndDeparturesForLocationReferencesResolveArrivalIDs(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	_, model := callArrivalsForLocation(t, api, url.Values{
+		"minutesBefore": {"5"},
+		"minutesAfter":  {"35"},
+		"maxCount":      {strconv.Itoa(models.MaxCountForArrivalsForLocation)},
+	})
+
+	entry := model.Data.Entry
+	require.NotEmpty(t, entry.ArrivalsAndDepartures)
+	require.False(t, entry.LimitExceeded, "this case must not truncate any list")
+
+	referencedStops := make(map[string]bool, len(model.Data.References.Stops))
+	for _, s := range model.Data.References.Stops {
+		referencedStops[s.ID] = true
+	}
+	referencedTrips := make(map[string]bool, len(model.Data.References.Trips))
+	for _, tr := range model.Data.References.Trips {
+		referencedTrips[tr.ID] = true
+	}
+
+	sawTripStatusStop := false
+	sawReassignedTrip := false
+	for i, a := range entry.ArrivalsAndDepartures {
+		for _, id := range arrivalStopIDs(a) {
+			assert.True(t, referencedStops[id],
+				"arrival[%d] names stop %s, which must resolve in references.stops", i, id)
+		}
+		assert.True(t, referencedTrips[a.TripID],
+			"arrival[%d].tripId %s must resolve in references.trips", i, a.TripID)
+		if a.TripStatus == nil {
+			continue
+		}
+		if a.TripStatus.NextStop != "" || a.TripStatus.ClosestStop != "" {
+			sawTripStatusStop = true
+		}
+		if a.TripStatus.ActiveTripID == "" {
+			continue
+		}
+		if a.TripStatus.ActiveTripID != a.TripID {
+			sawReassignedTrip = true
+		}
+		assert.True(t, referencedTrips[a.TripStatus.ActiveTripID],
+			"arrival[%d].tripStatus.activeTripId %s must resolve in references.trips", i, a.TripStatus.ActiveTripID)
+	}
+	require.True(t, sawTripStatusStop,
+		"fixture must produce a trip status naming a stop, or this test proves nothing")
+	require.True(t, sawReassignedTrip,
+		"fixture must produce an activeTripId differing from the arrival's trip")
 }
 
 // maxCount above the endpoint ceiling clamps rather than erroring, matching the
