@@ -204,6 +204,79 @@ func (b *blockingDBTX) QueryRowContext(context.Context, string, ...interface{}) 
 	return nil
 }
 
+// timeoutAfterFirstShapeDBTX wraps a real *sql.DB and blocks on a specific
+// shape ID so a later shape query can be killed by the computation timeout.
+type timeoutAfterFirstShapeDBTX struct {
+	inner       *sql.DB
+	slowShapeID string
+}
+
+func (t *timeoutAfterFirstShapeDBTX) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return t.inner.ExecContext(ctx, query, args...)
+}
+
+func (t *timeoutAfterFirstShapeDBTX) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
+	return t.inner.PrepareContext(ctx, query)
+}
+
+func (t *timeoutAfterFirstShapeDBTX) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	if len(args) > 0 {
+		if shapeID, ok := args[0].(string); ok && shapeID == t.slowShapeID {
+			// Simulate a slow shape query that gets cancelled by the deadline.
+			select {
+			case <-time.After(10 * time.Second):
+				return nil, errors.New("should have been cancelled")
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
+	return t.inner.QueryContext(ctx, query, args...)
+}
+
+func (t *timeoutAfterFirstShapeDBTX) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return t.inner.QueryRowContext(ctx, query, args...)
+}
+
+// TestCalculateStopDirection_PartialResultTimeoutNotCached verifies that a
+// timeout after at least one shape succeeds is treated as a transient failure
+// and is NOT cached, rather than caching a partial direction.
+func TestCalculateStopDirection_PartialResultTimeoutNotCached(t *testing.T) {
+	rawDB, err := sql.Open("sqlite3", ":memory:")
+	assert.NoError(t, err)
+
+	_, err = rawDB.Exec(`
+		CREATE TABLE stops (id TEXT PRIMARY KEY, lat REAL, lon REAL, name TEXT, code TEXT, direction TEXT);
+		CREATE TABLE trips (id TEXT PRIMARY KEY, shape_id TEXT);
+		CREATE TABLE stop_times (stop_id TEXT, trip_id TEXT, stop_sequence INTEGER, shape_dist_traveled REAL);
+		CREATE TABLE shapes (shape_id TEXT, lat REAL, lon REAL, shape_pt_sequence INTEGER, shape_dist_traveled REAL);
+	`)
+	assert.NoError(t, err)
+
+	_, err = rawDB.Exec(`
+		INSERT INTO stops (id, lat, lon) VALUES ('stop1', 40.0, -122.0);
+		INSERT INTO trips (id, shape_id) VALUES ('trip1', 'shape1'), ('trip2', 'shape2');
+		INSERT INTO stop_times (stop_id, trip_id, stop_sequence, shape_dist_traveled) VALUES
+			('stop1', 'trip1', 1, 0.0), ('stop1', 'trip2', 1, 0.0);
+		INSERT INTO shapes (shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled) VALUES
+			('shape1', 40.0, -122.0, 1, 0.0), ('shape1', 40.0, -122.1, 2, 1.0),
+			('shape2', 40.0, -122.0, 1, 0.0), ('shape2', 40.0, -122.1, 2, 1.0);
+	`)
+	assert.NoError(t, err)
+
+	db := &timeoutAfterFirstShapeDBTX{inner: rawDB, slowShapeID: "shape2"}
+	calc := NewAdvancedDirectionCalculator(gtfsdb.New(db))
+	calc.computeTimeout = 100 * time.Millisecond
+
+	stopID := "stop1"
+
+	result := calc.CalculateStopDirection(context.Background(), stopID)
+	assert.Equal(t, "", result, "partial timeout must return empty string")
+
+	_, cached := calc.directionResults.Load(stopID)
+	assert.False(t, cached, "partial timeout result must not be cached")
+}
+
 // TestCalculateStopDirection_SingleflightErrorShared verifies that when the
 // shared singleflight computation fails, all concurrent waiters see the failure,
 // the underlying DB work runs only once, and none of them cache an empty result.
@@ -233,6 +306,9 @@ func TestCalculateStopDirection_SingleflightErrorShared(t *testing.T) {
 	// Unblock the single in-flight query; it returns an error that is shared.
 	close(release)
 	wg.Wait()
+
+	// After all callers have finished, the DB must still have been hit only once.
+	assert.Equal(t, int32(1), db.queryCalls.Load(), "singleflight must deduplicate concurrent callers")
 
 	for i, r := range results {
 		assert.Equal(t, "", r, "caller %d should get empty string on shared error", i)

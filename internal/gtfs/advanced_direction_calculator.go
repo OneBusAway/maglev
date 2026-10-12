@@ -199,6 +199,10 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 	var lastTransientErr error
 
 	for _, stopTrip := range stopTrips {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+
 		if !stopTrip.ShapeID.Valid {
 			continue
 		}
@@ -239,10 +243,11 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 		orientations = append(orientations, orientation)
 	}
 
+	if lastTransientErr != nil {
+		return "", lastTransientErr
+	}
+
 	if len(orientations) == 0 {
-		if lastTransientErr != nil {
-			return "", lastTransientErr
-		}
 		return "", nil
 	}
 
