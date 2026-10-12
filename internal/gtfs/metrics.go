@@ -35,15 +35,15 @@ type MetricsSnapshot struct {
 	// TimeSinceLastRealtimeUpdate is seconds since the most-stale feed covering
 	// the agency last updated successfully. It is realtimeUpdateUnknown (-1)
 	// when the agency is covered by a configured feed that has never
-	// successfully updated (or was cleared as stale — see clearFeedData), and
-	// 0 only when no configured feed covers the agency at all: a real 0 would
-	// misread as "just updated" for a feed that's actually dead.
+	// successfully updated (or was cleared as stale — see clearFeedData).
+	// Agencies no configured feed covers are left out: any value would read
+	// as a freshness the agency doesn't have, and 0 as "just updated".
 	TimeSinceLastRealtimeUpdate map[string]int64
 }
 
 // realtimeUpdateUnknown marks an agency that's covered by a configured
 // real-time feed whose freshness can't currently be determined, as distinct
-// from an agency with no covering feed at all (which reports 0).
+// from an agency with no covering feed at all (which is left out).
 const realtimeUpdateUnknown int64 = -1
 
 // GetMetrics computes an aggregate health snapshot: currently-active trip
@@ -101,12 +101,8 @@ func newMetricsSnapshot(agencyIDs []string) MetricsSnapshot {
 		snapshot.StopIDsMatchedCount[agencyID] = 0
 		snapshot.StopIDsUnmatchedCount[agencyID] = 0
 		snapshot.StopIDsUnmatched[agencyID] = []string{}
-		// TimeSinceLastRealtimeUpdate is intentionally left unset here: its
-		// accumulation tracks the freshest feed per agency by checking whether
-		// an entry exists yet, so a pre-seeded 0 would look like "already
-		// fresh" and block any real value from ever being recorded. Backfilled
-		// to realtimeUpdateUnknown or 0 at the end of populateRealtimeMetrics,
-		// depending on whether the agency has a covering feed at all.
+		// TimeSinceLastRealtimeUpdate is intentionally left unset here: only
+		// agencies with a covering feed get an entry, via updateStaleness.
 	}
 	return snapshot
 }
@@ -339,13 +335,9 @@ func attributeFeedMetrics(snapshot *MetricsSnapshot, idSets agencyIDSets, metric
 	}
 }
 
-// finalizeRealtimeMetrics writes the accumulated ID sets into the snapshot
-// and backfills 0 freshness for agencies no feed covers.
+// finalizeRealtimeMetrics writes the accumulated ID sets into the snapshot.
 func finalizeRealtimeMetrics(snapshot *MetricsSnapshot, idSets agencyIDSets) {
 	for _, agencyID := range snapshot.AgencyIDs {
-		if _, tracked := snapshot.TimeSinceLastRealtimeUpdate[agencyID]; !tracked {
-			snapshot.TimeSinceLastRealtimeUpdate[agencyID] = 0
-		}
 		snapshot.RealtimeTripCountsMatched[agencyID] = len(idSets.matchedTripIDs[agencyID])
 		snapshot.RealtimeTripCountsUnmatched[agencyID] = len(idSets.unmatchedTripIDs[agencyID])
 		snapshot.RealtimeTripIDsUnmatched[agencyID] = sortedKeys(idSets.unmatchedTripIDs[agencyID])

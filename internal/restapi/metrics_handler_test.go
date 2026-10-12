@@ -46,8 +46,10 @@ func TestMetricsHandlerStaticDataOnly(t *testing.T) {
 	assert.Positive(t, entry.ScheduledTripsCount[testdata.Raba.ID],
 		"RABA static schedule should have scheduled trips")
 
-	// No real-time feeds are configured, so the realtime maps are present but
-	// zero-valued for the known agency rather than missing.
+	// No real-time feeds are configured, so the realtime count maps are
+	// present but zero-valued for the known agency rather than missing. With
+	// no covering feed there is no freshness to report, so the agency is left
+	// out of timeSinceLastRealtimeUpdate.
 	assert.Equal(t, 0, entry.RealtimeRecordsTotal[testdata.Raba.ID])
 	assert.Equal(t, 0, entry.RealtimeTripCountsMatched[testdata.Raba.ID])
 	assert.Equal(t, 0, entry.RealtimeTripCountsUnmatched[testdata.Raba.ID])
@@ -55,7 +57,7 @@ func TestMetricsHandlerStaticDataOnly(t *testing.T) {
 	assert.Equal(t, 0, entry.StopIDsMatchedCount[testdata.Raba.ID])
 	assert.Equal(t, 0, entry.StopIDsUnmatchedCount[testdata.Raba.ID])
 	assert.Empty(t, entry.StopIDsUnmatched[testdata.Raba.ID])
-	assert.Equal(t, int64(0), entry.TimeSinceLastRealtimeUpdate[testdata.Raba.ID])
+	assert.NotContains(t, entry.TimeSinceLastRealtimeUpdate, testdata.Raba.ID)
 
 	assert.Empty(t, model.Data.References.Agencies, "metrics.json does not populate references")
 }

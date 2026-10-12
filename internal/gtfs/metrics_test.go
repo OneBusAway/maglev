@@ -142,7 +142,7 @@ func TestGetMetrics_NoRealtimeFeeds(t *testing.T) {
 		assert.Equal(t, 0, snapshot.StopIDsMatchedCount[agencyID])
 		assert.Equal(t, 0, snapshot.StopIDsUnmatchedCount[agencyID])
 		assert.Equal(t, []string{}, snapshot.StopIDsUnmatched[agencyID])
-		assert.Equal(t, int64(0), snapshot.TimeSinceLastRealtimeUpdate[agencyID])
+		assert.NotContains(t, snapshot.TimeSinceLastRealtimeUpdate, agencyID)
 	}
 }
 
@@ -494,7 +494,7 @@ func TestGetMetrics_UnfilteredFeedCoversAllAgencies(t *testing.T) {
 		assert.Equal(t, 2, snapshot.RealtimeTripCountsUnmatched[agencyID])
 		assert.Equal(t, []string{"GHOST1", "GHOST2"}, snapshot.RealtimeTripIDsUnmatched[agencyID])
 		assert.Equal(t, realtimeUpdateUnknown, snapshot.TimeSinceLastRealtimeUpdate[agencyID],
-			"the covering feed has never updated, so freshness must be unknown, not the no-feed 0")
+			"the covering feed has never updated, so freshness must be unknown, not omitted")
 	}
 }
 
@@ -514,6 +514,27 @@ func TestGetMetrics_TimeSinceLastRealtimeUpdate(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.InDelta(t, 30, snapshot.TimeSinceLastRealtimeUpdate["A"], 5)
+}
+
+// An agency no feed covers has no freshness to report. Leaving it out of the
+// map, rather than reporting 0, keeps the OBA watchdog from publishing it as
+// just updated; its validRealtimeAge check accepts any age from 0 upward.
+func TestGetMetrics_UncoveredAgencyOmitsFreshness(t *testing.T) {
+	routes := map[string]*gtfs.Route{
+		"RA": {Id: "RA", Agency: &gtfs.Agency{Id: "A"}},
+		"RB": {Id: "RB", Agency: &gtfs.Agency{Id: "B"}},
+	}
+	manager := newTestManagerWithRoutes(routes)
+
+	manager.feedTrips["feed-1"] = []gtfs.Trip{}
+	manager.feedAgencyFilter["feed-1"] = map[string]bool{"A": true}
+	manager.SetFeedUpdateTimeForTest("feed-1", time.Now().Add(-30*time.Second))
+
+	snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+	require.NoError(t, err)
+
+	assert.InDelta(t, 30, snapshot.TimeSinceLastRealtimeUpdate["A"], 5)
+	assert.NotContains(t, snapshot.TimeSinceLastRealtimeUpdate, "B")
 }
 
 // TestGetMetrics_ClearedFeedReportsUnknownFreshness guards a discrepancy
@@ -1024,7 +1045,7 @@ func TestGetMetrics_ConfiguredFilteredFeedNeverFetchedIsUnknown(t *testing.T) {
 
 // An enabled feed without agency-ids that has never fetched has no entry in
 // any per-feed map, so only the config reveals it. It covers every agency,
-// so every agency must report unknown rather than the no-feed 0.
+// so every agency must report unknown rather than be omitted as uncovered.
 func TestGetMetrics_ConfiguredUnfilteredFeedNeverFetchedIsUnknown(t *testing.T) {
 	routes := map[string]*gtfs.Route{
 		"RA": {Id: "RA", Agency: &gtfs.Agency{Id: "A"}},

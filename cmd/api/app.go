@@ -71,6 +71,19 @@ func ParseAPIKeys(apiKeysFlag string) []string {
 	return keys
 }
 
+// cliProtectedAPIKeys resolves the protected API keys for a flag-based start:
+// the -protected-api-keys flag wins, then GTFS_PROTECTED_API_KEYS, then the
+// default for the environment.
+func cliProtectedAPIKeys(protectedAPIKeysFlag string, env string) []string {
+	if flagKeys := ParseAPIKeys(protectedAPIKeysFlag); len(flagKeys) > 0 {
+		return flagKeys
+	}
+	if envKeys := appconf.ProtectedAPIKeysFromEnv(); len(envKeys) > 0 {
+		return envKeys
+	}
+	return appconf.DefaultProtectedAPIKeys(env)
+}
+
 func parseLogLevel(level string) slog.Level {
 	switch strings.ToLower(strings.TrimSpace(level)) {
 	case "debug":
