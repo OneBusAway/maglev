@@ -7,7 +7,15 @@ on:
     paths:
       - 'Dockerfile'
       - '.github/workflows/docker-publish.yml'
+      - '.dockerignore'
       - 'go.mod'
+      - 'go.sum'
+      - '**/*.go'
+      - '!**/*_test.go'
+      - '**/*.sql'
+      - '**/*.html'
+      - 'config.example.json'
+      - 'marketing/**'
 
 permissions:
   contents: read
