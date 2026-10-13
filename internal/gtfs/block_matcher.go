@@ -171,7 +171,9 @@ func candidateServiceDates(reference time.Time) []time.Time {
 // the block's first departure plus the trip start minus the matching
 // block-trip's departure; for an ordinary trip both of those are the trip's
 // own first static departure, so the start reduces to the block's first
-// departure. Zero or negative never qualifies.
+// departure, which is never negative. Legacy also rejected a block starting
+// at 00:00:00, as a side effect of its "> 0" check for a -1 error value;
+// Maglev accepts it.
 func (m *blockMatcher) matchOnDate(ctx context.Context, trip gtfsdb.Trip, agencyID string, serviceDate time.Time) (*BlockMatch, error) {
 	serviceIDs, err := m.queries.GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
 	if err != nil {
@@ -186,7 +188,7 @@ func (m *blockMatcher) matchOnDate(ctx context.Context, trip gtfsdb.Trip, agency
 		return nil, err
 	}
 	tripStart, ok := departures[trip.ID]
-	if !ok || earliest(departures) <= 0 {
+	if !ok {
 		return nil, nil
 	}
 	return &BlockMatch{
@@ -236,14 +238,4 @@ func (m *blockMatcher) firstDepartures(ctx context.Context, tripIDs []string) (m
 		departures[row.TripID] = time.Duration(row.DepartureTime)
 	}
 	return departures, nil
-}
-
-func earliest(departures map[string]time.Duration) time.Duration {
-	first := time.Duration(-1)
-	for _, departure := range departures {
-		if first < 0 || departure < first {
-			first = departure
-		}
-	}
-	return first
 }

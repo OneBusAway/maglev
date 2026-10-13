@@ -16,7 +16,8 @@ import (
 // blockMatcherFeed covers the legacy matching cases:
 //   - T_LATE runs only on Mondays, departing 25:00 (Tuesday 01:00).
 //   - T_DAILY runs Monday and Tuesday at 00:30, so both days qualify.
-//   - T_ZERO's block starts at 00:00:00, which never qualifies.
+//   - T_ZERO's block starts at 00:00:00, which legacy rejected and Maglev
+//     accepts.
 //   - T_NOBLOCK has no block_id and forms its own one-trip block.
 //   - T_SECOND shares block B5 with the earlier T_FIRST.
 var blockMatcherFeed = map[string]string{
@@ -137,7 +138,7 @@ func TestBlockMatcherMatch(t *testing.T) {
 	}{
 		{"overnight previous-day service", "T_LATE", tuesday0110, matcherMonday, "B1", 25 * time.Hour, false},
 		{"first qualifying day wins", "T_DAILY", tuesday0110, matcherMonday, "B2", 30 * time.Minute, false},
-		{"zero block start never qualifies", "T_ZERO", tuesday0110, time.Time{}, "", 0, true},
+		{"block starting at midnight qualifies", "T_ZERO", tuesday0110, matcherMonday, "B3", 0, false},
 		{"trip without block", "T_NOBLOCK", time.Date(2026, 10, 6, 12, 0, 0, 0, matcherZone), matcherTuesday, "T_NOBLOCK", 9 * time.Hour, false},
 		{"later trip in shared block", "T_SECOND", time.Date(2026, 10, 6, 12, 0, 0, 0, matcherZone), matcherTuesday, "B5", 7 * time.Hour, false},
 		{"unknown static trip", "T_MISSING", tuesday0110, time.Time{}, "", 0, true},

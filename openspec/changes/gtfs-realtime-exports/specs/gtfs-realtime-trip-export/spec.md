@@ -44,7 +44,7 @@ On a matching-cache miss, candidate service dates SHALL use the timezone of the 
 
 #### Scenario: Overnight previous-day service
 - **WHEN** matching reference time is Tuesday 01:10 agency-local and Monday's active block contains the trip with a first departure at 25:00
-- **THEN** Monday is checked before Tuesday, and Monday's block is selected if its adjusted block start is positive
+- **THEN** Monday is checked before Tuesday, and Monday's block is selected if its adjusted block start is not negative
 
 #### Scenario: Candidate-window boundaries
 - **WHEN** reference time is 03:59:59, 04:00, 20:59:59, or 21:00 agency-local
@@ -55,7 +55,7 @@ On a matching-cache miss, candidate service dates SHALL use the timezone of the 
 - **THEN** the search checks Monday then Tuesday in the agency's timezone, rather than only the server-local Tuesday
 
 ### Requirement: Legacy first-match block resolution
-For each candidate date in order, matching SHALL require an active block containing the trip and a static first departure for that trip. It SHALL accept the first candidate with a positive adjusted block start, without nearest-instance scoring or a uniqueness check. Supplied ordinary-trip `start_date` and `start_time` SHALL NOT select the block instance. If no candidate qualifies, that ordinary update SHALL NOT establish an exportable block association.
+For each candidate date in order, matching SHALL require an active block containing the trip and a static first departure for that trip. It SHALL accept the first candidate with a nonnegative adjusted block start, without nearest-instance scoring or a uniqueness check. Supplied ordinary-trip `start_date` and `start_time` SHALL NOT select the block instance. If no candidate qualifies, that ordinary update SHALL NOT establish an exportable block association.
 
 #### Scenario: Overlapping active days
 - **WHEN** reference time is Tuesday 01:10 and both Monday and Tuesday have qualifying blocks for the ordinary trip
@@ -70,11 +70,11 @@ For each candidate date in order, matching SHALL require an active block contain
 - **THEN** the update does not establish an ordinary block association, even if it contains absolute stop-event times; unrelated eligible updates remain exportable
 
 ### Requirement: Legacy static block-start derivation
-Matching SHALL take the trip's first static departure as its trip start. Adjusted block start SHALL equal the block's first departure plus this trip start minus the matching block-trip's first departure. A negative result SHALL fall back to the block's first departure; a resulting zero or negative value SHALL NOT qualify. An incoming ordinary-trip start time SHALL NOT provide a frequency-instance offset.
+Matching SHALL take the trip's first static departure as its trip start. Adjusted block start SHALL equal the block's first departure plus this trip start minus the matching block-trip's first departure. A negative result SHALL fall back to the block's first departure; a resulting negative value SHALL NOT qualify, while zero SHALL qualify. Legacy also rejected zero, as a side effect of a check meant for its `-1` error value. An incoming ordinary-trip start time SHALL NOT provide a frequency-instance offset.
 
-#### Scenario: Zero block start
-- **WHEN** a candidate's adjusted block start is exactly zero
-- **THEN** that candidate is rejected and the next candidate, if any, is checked
+#### Scenario: Midnight block start
+- **WHEN** a candidate's block has its first departure at `00:00:00`, so its adjusted block start is exactly zero
+- **THEN** that candidate qualifies, unlike legacy
 
 #### Scenario: Frequency start hint ignored
 - **WHEN** an ordinary frequency-based trip supplies a start time different from its first static departure
