@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
@@ -633,7 +634,8 @@ func (api *RestAPI) getPredictedTimes(
 			}
 		}
 
-		if seq != -1 && seq < targetStopSequence && seq > closestPriorSequence {
+		if seq != -1 && seq < targetStopSequence && seq > closestPriorSequence &&
+			stu.ScheduleRelationship != gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED {
 			closestPriorSequence = seq
 			closestPriorUpdate = stu
 		}
@@ -662,6 +664,11 @@ func (api *RestAPI) getPredictedTimes(
 				departureOffset = &offset
 			}
 		}
+	}
+	targetHasNoData := target != nil &&
+		target.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA
+	if targetHasNoData {
+		return time.Time{}, time.Time{}, false
 	}
 
 	needsPropagation := !foundTarget ||

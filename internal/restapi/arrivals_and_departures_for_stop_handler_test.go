@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -1041,6 +1042,60 @@ func TestPluralArrivals_ClosestTimeOnlyPriorDelay(t *testing.T) {
 		break
 	}
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
+}
+
+func TestGetPredictedTimes_SkipsSkippedPriorStop(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopCode, _, tripID, _ := setupDelayPropTestData(t, api, 3)
+	seq1, seq2 := uint32(1), uint32(2)
+	delay := 5 * time.Minute
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{StopSequence: &seq1, Departure: &gtfs.StopTimeEvent{Delay: &delay}},
+		{StopSequence: &seq2, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED},
+	})
+
+	serviceDay := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	arrival, departure, predicted := api.getPredictedTimes(t.Context(), tripID, stopCode, 3,
+		serviceDay.Add(8*time.Hour), serviceDay.Add(8*time.Hour+5*time.Minute))
+	assert.True(t, predicted, "a skipped stop must not hide the earlier valid delay")
+	assert.Equal(t, serviceDay.Add(8*time.Hour+5*time.Minute), arrival)
+	assert.Equal(t, serviceDay.Add(8*time.Hour+10*time.Minute), departure)
+}
+
+func TestGetPredictedTimes_NoDataTargetDoesNotInheritPriorTimeOnlyDelay(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopCode, _, tripID, _ := setupDelayPropTestData(t, api, 3)
+	q := api.GtfsManager.GtfsDB.Queries
+	_, err := q.CreateStop(t.Context(), gtfsdb.CreateStopParams{
+		ID: "dp-no-data-prior", Name: nulls.String("Prior stop"), Lat: 47.0, Lon: -122.0,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStopTime(t.Context(), gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: "dp-no-data-prior", StopSequence: 1,
+		ArrivalTime: int64(7*time.Hour + 55*time.Minute), DepartureTime: int64(7*time.Hour + 55*time.Minute),
+	})
+	require.NoError(t, err)
+
+	seq1, seq3 := uint32(1), uint32(3)
+	priorTime := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{StopSequence: &seq1, Departure: &gtfs.StopTimeEvent{Time: &priorTime}},
+		{StopID: &stopCode, StopSequence: &seq3,
+			ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA},
+	})
+
+	serviceDay := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	arrival, departure, predicted := api.getPredictedTimes(t.Context(), tripID, stopCode, 3,
+		serviceDay.Add(8*time.Hour), serviceDay.Add(8*time.Hour+5*time.Minute))
+	assert.False(t, predicted, "NO_DATA must not inherit a prior time-only delay")
+	assert.True(t, arrival.IsZero())
+	assert.True(t, departure.IsZero())
 }
 
 // findRABAStopWithNeighbour returns a RABA stop that has at least one other
