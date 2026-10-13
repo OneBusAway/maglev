@@ -276,12 +276,9 @@ func stopFromSearchRow(row gtfsdb.SearchStopsByNameRow) gtfsdb.Stop {
 	}
 }
 
-// buildSearchStopModel builds a stop model for a search result, adding the parent
-// station field that the shared buildStopModel does not set.
+// buildSearchStopModel builds a stop model for a search result.
 func (api *RestAPI) buildSearchStopModel(ctx context.Context, agencyID string, stop gtfsdb.Stop, combinedRouteIDs []string) models.Stop {
-	stopModel := api.buildStopModel(ctx, agencyID, stop, combinedRouteIDs)
-	stopModel.Parent = utils.FormCombinedID(agencyID, nulls.StringOrEmpty(stop.ParentStation))
-	return stopModel
+	return api.buildStopModel(ctx, agencyID, stop, combinedRouteIDs)
 }
 
 // buildSearchParentStationReferences resolves parent stations into references, emitting one
