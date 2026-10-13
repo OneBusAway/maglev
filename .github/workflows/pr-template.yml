@@ -1,0 +1,90 @@
+name: PR template
+
+# pull_request_target so fork PRs get a token that can comment. That token
+# can write, so this workflow only ever checks out and runs the base branch,
+# and reads the PR description from the event file, never from an expression
+# inside a script.
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+      - ready_for_review
+      - converted_to_draft
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-template-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: PR template
+    runs-on: ubuntu-latest
+    if: >-
+      github.repository == 'OneBusAway/maglev' &&
+      github.event.pull_request.user.type != 'Bot' &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-template-check')
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          # The checker uses only the standard library.
+          cache: false
+
+      # Built rather than `go run` so exit code 2 (broken template) isn't
+      # flattened to 1.
+      - name: Build the checker
+        run: go build -o "$RUNNER_TEMP/prtemplatecheck" ./cmd/prtemplatecheck
+
+      - name: Check the description
+        id: check
+        run: |
+          jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/body.md"
+          draft_flag=""
+          if [ "$(jq -r '.pull_request.draft' "$GITHUB_EVENT_PATH")" = "true" ]; then
+            draft_flag="-draft"
+          fi
+          set +e
+          "$RUNNER_TEMP/prtemplatecheck" -template .github/pull_request_template.md \
+            -body "$RUNNER_TEMP/body.md" $draft_flag > "$RUNNER_TEMP/report.md"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/report.md"
+
+      # One comment per PR, found by its marker and edited in place. Only the
+      # bot's own comment matches, since the k6 smoke test posts as the same
+      # user without the marker.
+      - name: Update the PR comment
+        if: steps.check.outputs.exit_code == '0' || steps.check.outputs.exit_code == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXIT_CODE: ${{ steps.check.outputs.exit_code }}
+        run: |
+          comment_id=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- maglev-pr-template-check -->"))) | .id' \
+            | head -n 1)
+          if [ -n "$comment_id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -F body=@"$RUNNER_TEMP/report.md" > /dev/null
+          elif [ "$EXIT_CODE" = "1" ]; then
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@"$RUNNER_TEMP/report.md" > /dev/null
+          fi
+
+      - name: Fail if the description doesn't follow the template
+        if: steps.check.outputs.exit_code != '0'
+        run: |
+          echo "See the PR comment, or the 'Check the description' step above."
+          exit 1
