@@ -14,6 +14,9 @@ import (
 type staticTripRoutes struct {
 	mu     sync.RWMutex
 	routes map[string]string // trip ID -> static route ID
+	// generation counts Clear calls, so routes read before a static reload
+	// are not stored after it.
+	generation uint64
 }
 
 // routeOf returns tripID's static route, or "" when it is not cached.
@@ -23,8 +26,9 @@ func (cache *staticTripRoutes) routeOf(tripID string) string {
 	return cache.routes[tripID]
 }
 
-// missing returns the trip IDs that have no cached route.
-func (cache *staticTripRoutes) missing(tripIDs map[string]struct{}) []string {
+// missing returns the trip IDs that have no cached route, and the cache
+// generation to pass to store with the routes read for them.
+func (cache *staticTripRoutes) missing(tripIDs map[string]struct{}) ([]string, uint64) {
 	cache.mu.RLock()
 	defer cache.mu.RUnlock()
 	var missing []string
@@ -33,12 +37,17 @@ func (cache *staticTripRoutes) missing(tripIDs map[string]struct{}) []string {
 			missing = append(missing, tripID)
 		}
 	}
-	return missing
+	return missing, cache.generation
 }
 
-func (cache *staticTripRoutes) store(trips []gtfsdb.Trip) {
+// store caches the trips' routes unless the cache was cleared after
+// generation was read, since they may then come from replaced static data.
+func (cache *staticTripRoutes) store(trips []gtfsdb.Trip, generation uint64) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
+	if generation != cache.generation {
+		return
+	}
 	if cache.routes == nil {
 		cache.routes = make(map[string]string, len(trips))
 	}
@@ -52,4 +61,5 @@ func (cache *staticTripRoutes) Clear() {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	cache.routes = nil
+	cache.generation++
 }

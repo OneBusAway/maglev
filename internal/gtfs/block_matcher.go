@@ -47,6 +47,9 @@ type blockMatcher struct {
 
 	mu     sync.Mutex
 	caches map[string]map[string]blockMatchEntry // feed ID -> trip ID -> entry
+	// generation counts Clear calls, so a match resolved from static data
+	// replaced during the match is not cached.
+	generation uint64
 }
 
 func newBlockMatcher(queries *gtfsdb.Queries, now func() time.Time) *blockMatcher {
@@ -62,14 +65,15 @@ func newBlockMatcher(queries *gtfsdb.Queries, now func() time.Time) *blockMatche
 // the trip is unresolved; an error means a query failed and nothing was
 // cached.
 func (m *blockMatcher) Match(ctx context.Context, feedID, tripID string, reference time.Time) (*BlockMatch, error) {
-	if entry, ok := m.cached(feedID, tripID); ok {
+	entry, generation, ok := m.cached(feedID, tripID)
+	if ok {
 		return entry.match, nil
 	}
 	match, err := m.resolve(ctx, tripID, reference)
 	if err != nil {
 		return nil, err
 	}
-	m.store(feedID, tripID, match)
+	m.store(feedID, tripID, match, generation)
 	return match, nil
 }
 
@@ -78,21 +82,29 @@ func (m *blockMatcher) Clear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.caches = make(map[string]map[string]blockMatchEntry)
+	m.generation++
 }
 
-func (m *blockMatcher) cached(feedID, tripID string) (blockMatchEntry, bool) {
+// cached returns the live entry for tripID, if any, and the cache
+// generation to pass to store with a newly resolved match.
+func (m *blockMatcher) cached(feedID, tripID string) (blockMatchEntry, uint64, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	entry, ok := m.caches[feedID][tripID]
 	if !ok || m.now().Sub(entry.insertedAt) >= blockMatchCacheTTL {
-		return blockMatchEntry{}, false
+		return blockMatchEntry{}, m.generation, false
 	}
-	return entry, true
+	return entry, m.generation, true
 }
 
-func (m *blockMatcher) store(feedID, tripID string, match *BlockMatch) {
+// store caches match unless the cache was cleared after generation was
+// read, since the match may then come from replaced static data.
+func (m *blockMatcher) store(feedID, tripID string, match *BlockMatch, generation uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if generation != m.generation {
+		return
+	}
 	if m.caches[feedID] == nil {
 		m.caches[feedID] = make(map[string]blockMatchEntry)
 	}

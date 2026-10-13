@@ -208,6 +208,18 @@ func TestBlockMatcherCache(t *testing.T) {
 		assert.NotNil(t, match)
 	})
 
+	// ReloadStatic replaces the DB before it clears the cache, so a match
+	// resolved from the old data can finish after the clear.
+	t.Run("a result resolved before static replacement is not cached", func(t *testing.T) {
+		matcher := newTestBlockMatcher(t, fixedNow(tuesday0401))
+		_, generation, cached := matcher.cached("feed", "T_LATE")
+		require.False(t, cached)
+		matcher.Clear()
+		matcher.store("feed", "T_LATE", nil, generation)
+		_, _, cached = matcher.cached("feed", "T_LATE")
+		assert.False(t, cached)
+	})
+
 	t.Run("caches are per source", func(t *testing.T) {
 		matcher := newTestBlockMatcher(t, fixedNow(tuesday0401))
 		miss, err := matcher.Match(ctx, "feed-a", "T_LATE", tuesday0401)
