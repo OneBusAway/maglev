@@ -1031,7 +1031,8 @@ func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
 		LonSpan: 3.0,
 	}
 
-	uncapped := api.GtfsManager.GetStopsInBounds(ctx, params, 0, true)
+	uncapped, err := api.GtfsManager.GetStopsInBounds(ctx, params, 0, true)
+	require.NoError(t, err)
 	require.Greater(t, len(uncapped), models.DefaultMaxCountForStops,
 		"fixture must hold more in-bounds stops than the old cap for this test to mean anything")
 

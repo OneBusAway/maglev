@@ -1301,7 +1301,12 @@ type directionGroup struct {
 
 func groupTripsByDirection(trips []gtfsdb.Trip) []directionGroup {
 	byDirID := make(map[int64][]gtfsdb.Trip)
+	var tripsWithoutDirection []gtfsdb.Trip
 	for _, trip := range trips {
+		if !trip.DirectionID.Valid {
+			tripsWithoutDirection = append(tripsWithoutDirection, trip)
+			continue
+		}
 		byDirID[trip.DirectionID.Int64] = append(byDirID[trip.DirectionID.Int64], trip)
 	}
 
@@ -1311,19 +1316,25 @@ func groupTripsByDirection(trips []gtfsdb.Trip) []directionGroup {
 	}
 	slices.Sort(dirIDs)
 
-	groups := make([]directionGroup, 0, len(dirIDs))
+	groups := make([]directionGroup, 0, len(dirIDs)+1)
 	for _, dirID := range dirIDs {
-		tripsInGroup := byDirID[dirID]
-		slices.SortFunc(tripsInGroup, func(a, b gtfsdb.Trip) int {
-			return cmp.Compare(a.ID, b.ID)
-		})
-		groups = append(groups, directionGroup{
-			GroupID:     strconv.FormatInt(dirID, 10),
-			DirectionID: tripsInGroup[0].DirectionID,
-			Trips:       tripsInGroup,
-		})
+		groups = append(groups, newDirectionGroup(strconv.FormatInt(dirID, 10), byDirID[dirID]))
+	}
+	if len(tripsWithoutDirection) > 0 {
+		groups = append(groups, newDirectionGroup("", tripsWithoutDirection))
 	}
 	return groups
+}
+
+func newDirectionGroup(groupID string, trips []gtfsdb.Trip) directionGroup {
+	slices.SortFunc(trips, func(a, b gtfsdb.Trip) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return directionGroup{
+		GroupID:     groupID,
+		DirectionID: trips[0].DirectionID,
+		Trips:       trips,
+	}
 }
 
 // Match Java OBA: a trip counts as running now if it started up to
