@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 // BlockMatch is the block instance the legacy matcher resolved for a
@@ -201,14 +202,15 @@ func (m *blockMatcher) matchOnDate(ctx context.Context, trip gtfsdb.Trip, agency
 // activeBlockTrips lists the trips of trip's block that run on a date with
 // the given active services. A trip without a block is its own block.
 func (m *blockMatcher) activeBlockTrips(ctx context.Context, trip gtfsdb.Trip, serviceIDs []string) (string, []string, error) {
-	if !trip.BlockID.Valid || trip.BlockID.String == "" {
+	blockID := nulls.StringOrEmpty(trip.BlockID)
+	if blockID == "" {
 		if slices.Contains(serviceIDs, trip.ServiceID) {
 			return trip.ID, []string{trip.ID}, nil
 		}
 		return trip.ID, nil, nil
 	}
 	if len(serviceIDs) == 0 {
-		return trip.BlockID.String, nil, nil
+		return blockID, nil, nil
 	}
 	rows, err := m.queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
 		BlockIds:   []sql.NullString{trip.BlockID},
@@ -221,7 +223,7 @@ func (m *blockMatcher) activeBlockTrips(ctx context.Context, trip gtfsdb.Trip, s
 	for _, row := range rows {
 		tripIDs = append(tripIDs, row.ID)
 	}
-	return trip.BlockID.String, tripIDs, nil
+	return blockID, tripIDs, nil
 }
 
 func (m *blockMatcher) firstDepartures(ctx context.Context, tripIDs []string) (map[string]time.Duration, error) {

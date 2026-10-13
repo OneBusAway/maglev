@@ -10,6 +10,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -292,8 +293,8 @@ func preferredVehicleByBlock(vehicles []gtfs.Vehicle, blockKeys map[string]strin
 // tripBlockKey is the static block a trip runs on. A trip without a
 // block_id is its own block, as in blockMatcher.
 func tripBlockKey(trip gtfsdb.Trip) string {
-	if trip.BlockID.Valid && trip.BlockID.String != "" {
-		return trip.BlockID.String
+	if blockID := nulls.StringOrEmpty(trip.BlockID); blockID != "" {
+		return blockID
 	}
 	return trip.ID
 }
