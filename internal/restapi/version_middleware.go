@@ -19,6 +19,8 @@ func (api *RestAPI) VersionValidationMiddleware(next http.Handler) http.Handler 
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			v := r.URL.Query().Get("version")
 			if v != "" && v != strconv.Itoa(models.APIVersion) {
+				// This rejection runs before any route's CacheControlMiddleware.
+				w.Header().Set("Cache-Control", noStoreCacheControl)
 				api.sendError(w, r, http.StatusBadRequest, fmt.Sprintf("unknown version: %s", v))
 				return
 			}

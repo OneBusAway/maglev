@@ -4,19 +4,16 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
 	"maglev.onebusaway.org/internal/logging"
-	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
 
 const (
-	gtfsRealtimePathPrefix        = "/api/gtfs_realtime/"
 	gtfsRealtimeVersion           = "2.0"
 	gtfsRealtimeBinaryContentType = "application/x-google-protobuf"
 	gtfsRealtimeTextContentType   = "text/plain; charset=utf-8"
@@ -59,20 +56,6 @@ func (api *RestAPI) writeGtfsRealtimeFeed(w http.ResponseWriter, r *http.Request
 		logging.LogError(logging.ForComponent(r.Context(), "http_server"), "write GTFS-RT feed", err,
 			slog.String("path", r.URL.Path))
 	}
-}
-
-// GtfsRealtimeCacheMiddleware marks every GTFS-RT export response no-store.
-// It wraps the whole API chain because version validation can reject a
-// request before it reaches the export route.
-func GtfsRealtimeCacheMiddleware(next http.Handler) http.Handler {
-	noStore := CacheControlMiddleware(models.CacheDurationNone, next)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, gtfsRealtimePathPrefix) {
-			noStore.ServeHTTP(w, r)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // exportPayloadID formats a raw realtime trip, route or stop ID for an export

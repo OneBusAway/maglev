@@ -65,7 +65,7 @@ func TestWriteGtfsRealtimeFeedReportsMarshalFailure(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
 }
 
-func TestGtfsRealtimeCacheMiddlewareCoversVersionRejection(t *testing.T) {
+func TestGtfsRealtimeVersionRejectionIsNoStore(t *testing.T) {
 	api := createTestApi(t)
 	server := httptest.NewServer(api.SetupAPIRoutes())
 	t.Cleanup(server.Close)
@@ -75,11 +75,6 @@ func TestGtfsRealtimeCacheMiddlewareCoversVersionRejection(t *testing.T) {
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Contains(t, resp.Header.Get("Cache-Control"), "no-store")
-
-	other, err := http.Get(server.URL + "/api/where/current-time.json?key=TEST&version=1")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = other.Body.Close() })
-	assert.Empty(t, other.Header.Get("Cache-Control"), "non-export routes keep their existing headers")
 }
 
 func TestExportPayloadID(t *testing.T) {
