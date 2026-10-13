@@ -235,6 +235,36 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
+	// If the trip belongs to an agency with a different timezone than the stop's agency,
+	// localize serviceDate and time in the trip's agency timezone so scheduled times match.
+	// A lookup failure here must not silently fall back to the stop agency's timezone:
+	// that returns 200 with times computed from the wrong midnight.
+	if route.AgencyID != "" && route.AgencyID != stopAgency.ID {
+		routeAgency, agencyErr := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
+		if agencyErr != nil {
+			if errors.Is(agencyErr, sql.ErrNoRows) {
+				api.sendNotFound(w, r)
+			} else {
+				api.serverErrorResponse(w, r, agencyErr)
+			}
+			return
+		}
+		tripLoc, locErr := loadAgencyLocation(routeAgency.ID, routeAgency.Timezone)
+		if locErr != nil {
+			api.serverErrorResponse(w, r, locErr)
+			return
+		}
+		loc = tripLoc
+		if params.ServiceDate != nil {
+			localized := params.ServiceDate.In(loc)
+			params.ServiceDate = &localized
+		}
+		if params.Time != nil {
+			localized := params.Time.In(loc)
+			params.Time = &localized
+		}
+	}
+
 	// Set current time
 	var currentTime time.Time
 	if params.Time != nil {
