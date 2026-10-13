@@ -1065,7 +1065,7 @@ func TestGetPredictedTimes_SkipsSkippedPriorStop(t *testing.T) {
 	assert.Equal(t, serviceDay.Add(8*time.Hour+10*time.Minute), departure)
 }
 
-func TestGetPredictedTimes_NoDataTargetDoesNotInheritPriorTimeOnlyDelay(t *testing.T) {
+func TestGetPredictedTimes_NoDataStopsPropagation(t *testing.T) {
 	api := createTestApiWithClock(t, clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
@@ -1082,20 +1082,36 @@ func TestGetPredictedTimes_NoDataTargetDoesNotInheritPriorTimeOnlyDelay(t *testi
 	})
 	require.NoError(t, err)
 
-	seq1, seq3 := uint32(1), uint32(3)
+	seq1 := uint32(1)
 	priorTime := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
-	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
-		{StopSequence: &seq1, Departure: &gtfs.StopTimeEvent{Time: &priorTime}},
-		{StopID: &stopCode, StopSequence: &seq3,
-			ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA},
-	})
-
+	delay := 5 * time.Minute
 	serviceDay := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
-	arrival, departure, predicted := api.getPredictedTimes(t.Context(), tripID, stopCode, 3,
-		serviceDay.Add(8*time.Hour), serviceDay.Add(8*time.Hour+5*time.Minute))
-	assert.False(t, predicted, "NO_DATA must not inherit a prior time-only delay")
-	assert.True(t, arrival.IsZero())
-	assert.True(t, departure.IsZero())
+	tests := []struct {
+		name           string
+		noDataSequence uint32
+		priorEvent     *gtfs.StopTimeEvent
+		tripDelay      *time.Duration
+	}{
+		{"target-no-data", 3, &gtfs.StopTimeEvent{Time: &priorTime}, nil},
+		{"intermediate-no-data", 2, &gtfs.StopTimeEvent{Time: &priorTime}, nil},
+		{"intermediate-no-data-after-explicit-delay", 2, &gtfs.StopTimeEvent{Delay: &delay}, nil},
+		{"intermediate-no-data-with-trip-delay", 2, &gtfs.StopTimeEvent{Time: &priorTime}, &delay},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api.GtfsManager.MockAddTripUpdate(tripID, tt.tripDelay, []gtfs.StopTimeUpdate{
+				{StopSequence: &seq1, Departure: tt.priorEvent},
+				{StopSequence: &tt.noDataSequence,
+					ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA},
+			})
+
+			arrival, departure, predicted := api.getPredictedTimes(t.Context(), tripID, stopCode, 3,
+				serviceDay.Add(8*time.Hour), serviceDay.Add(8*time.Hour+5*time.Minute))
+			assert.False(t, predicted, "NO_DATA must stop propagation of earlier delays")
+			assert.True(t, arrival.IsZero())
+			assert.True(t, departure.IsZero())
+		})
+	}
 }
 
 // findRABAStopWithNeighbour returns a RABA stop that has at least one other
