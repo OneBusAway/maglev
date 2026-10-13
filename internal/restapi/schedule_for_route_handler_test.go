@@ -436,3 +436,60 @@ func TestScheduleForRouteHandler_HeadsignFallbackToLastStop(t *testing.T) {
 	assert.Contains(t, g.TripHeadsigns, expectedHeadsign,
 		"trip with no headsign should fall back to the last stop's name")
 }
+
+func TestScheduleForRouteOrdersStopsAcrossTripVariants(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"A1,Agency One,http://agency1.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"r1,A1,1,Route One,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"sA,Stop A,37.7000,-122.4000\n" +
+			"sB,Stop B,37.7100,-122.4000\n" +
+			"sC,Stop C,37.7200,-122.4000\n" +
+			"sD,Stop D,37.7300,-122.4000\n" +
+			"sE,Stop E,37.7400,-122.4000\n" +
+			"sF,Stop F,37.7500,-122.4000\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"r1,svc1,full,Downtown,0\n" +
+			"r1,svc1,short,Downtown,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"full,08:00:00,08:00:00,sA,1\n" +
+			"full,08:05:00,08:05:00,sB,2\n" +
+			"full,08:10:00,08:10:00,sC,3\n" +
+			"full,08:15:00,08:15:00,sD,4\n" +
+			"full,08:20:00,08:20:00,sE,5\n" +
+			"short,09:00:00,09:00:00,sC,1\n" +
+			"short,09:05:00,09:05:00,sD,2\n" +
+			"short,09:10:00,09:10:00,sE,3\n" +
+			"short,09:15:00,09:15:00,sF,4\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "schedule-stop-order-variants.zip", files)
+
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL("A1_r1", "2025-06-12"))
+
+	assertScheduleOK(t, resp, model)
+	require.Len(t, model.Data.Entry.StopTripGroupings, 1)
+	assert.Equal(t,
+		[]string{"A1_sA", "A1_sB", "A1_sC", "A1_sD", "A1_sE", "A1_sF"},
+		model.Data.Entry.StopTripGroupings[0].StopIDs)
+}
+
+func TestScheduleForRouteKeepsStopsOfTripsWithoutDirection(t *testing.T) {
+	api := newScheduleForRouteAPI(t)
+
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL("25_15", "2025-06-12"))
+
+	assertScheduleOK(t, resp, model)
+	var direction0 []string
+	for _, grouping := range model.Data.Entry.StopTripGroupings {
+		if grouping.DirectionID == "0" {
+			direction0 = grouping.StopIDs
+		}
+	}
+	require.NotNil(t, direction0, "expected a direction 0 stop trip grouping")
+	assert.Contains(t, direction0, "25_1504")
+}
