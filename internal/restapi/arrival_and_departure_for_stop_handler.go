@@ -601,6 +601,7 @@ func (api *RestAPI) getPredictedTimes(
 	var arrivalOffset, departureOffset *time.Duration
 	var propagatedDelay time.Duration
 	var closestPriorSequence int64 = -1
+	var closestPriorUpdate *gtfs.StopTimeUpdate
 	var foundTarget bool
 
 	// A stop_id can be visited more than once on a loop trip, so matching on
@@ -634,12 +635,7 @@ func (api *RestAPI) getPredictedTimes(
 
 		if seq != -1 && seq < targetStopSequence && seq > closestPriorSequence {
 			closestPriorSequence = seq
-			propagatedDelay = 0
-			if stu.Departure != nil && stu.Departure.Delay != nil {
-				propagatedDelay = *stu.Departure.Delay
-			} else if stu.Arrival != nil && stu.Arrival.Delay != nil {
-				propagatedDelay = *stu.Arrival.Delay
-			}
+			closestPriorUpdate = stu
 		}
 	}
 
@@ -666,6 +662,17 @@ func (api *RestAPI) getPredictedTimes(
 				departureOffset = &offset
 			}
 		}
+	}
+
+	needsPropagation := !foundTarget ||
+		(arrivalOffset == nil && departureOffset == nil)
+	if needsPropagation && closestPriorUpdate != nil {
+		delay, ok := api.propagatedDelayFromUpdate(ctx, tripID, closestPriorUpdate,
+			targetStopSequence, scheduledArrivalTime)
+		if !ok {
+			return time.Time{}, time.Time{}, false
+		}
+		propagatedDelay = delay
 	}
 
 	// CHANGED: Restructured fallback chain to include trip-level Delay (Tier 3)
