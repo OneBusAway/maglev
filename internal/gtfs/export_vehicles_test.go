@@ -245,6 +245,27 @@ func TestBuildExportVehiclesPrefersCurrentFilteredOutRecord(t *testing.T) {
 	assert.Equal(t, later, *byID["V1"].Vehicle.Timestamp)
 }
 
+// Kept vehicles never regress to an older position (isVehicleStale); a
+// filtered-out record must not regress one either.
+func TestBuildExportVehiclesKeepsNewerRetainedRecord(t *testing.T) {
+	earlier := time.Unix(1000, 0)
+	later := time.Unix(1030, 0)
+	retainedOnTrip := vehicleWithTrip("V1", "trip1", "R1")
+	retainedOnTrip.Timestamp = &later
+	olderFilteredOut := vehicleWithTrip("V1", "trip9", "360LX")
+	olderFilteredOut.Timestamp = &earlier
+	manager := &Manager{
+		feedVehicles:            map[string][]gtfs.Vehicle{"feed-0": {retainedOnTrip}},
+		feedFilteredOutVehicles: map[string][]gtfs.Vehicle{"feed-0": {olderFilteredOut}},
+	}
+
+	got := manager.buildExportVehiclesLocked([]string{"feed-0"})
+
+	require.Len(t, got, 1)
+	assert.Equal(t, later, *got[0].Vehicle.Timestamp)
+	assert.Equal(t, "trip1", got[0].ActiveTripID)
+}
+
 // Tampa's GTFS-RT feed names some routes differently from the static GTFS
 // ("360LX" for static route "360"); the export reports the static route, so
 // route filters and agency prefixes match what legacy produced.

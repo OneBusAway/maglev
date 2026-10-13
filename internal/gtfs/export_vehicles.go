@@ -176,12 +176,14 @@ func (manager *Manager) buildExportVehiclesLocked(feedIDs []string) []ExportVehi
 // retainedExportVehiclesLocked returns one record per identified vehicle of
 // a feed. A vehicle the agency filter dropped in the latest refresh can
 // still have its earlier on-trip record retained in feedVehicles for
-// staleness expiry; the filtered-out record is current, so it wins.
+// staleness expiry; the filtered-out record is current, so it wins unless
+// its position is older, the same rule isVehicleStale applies to kept
+// vehicles.
 func (manager *Manager) retainedExportVehiclesLocked(feedID string) []gtfs.Vehicle {
 	filteredOut := manager.feedFilteredOutVehicles[feedID]
-	current := make(map[vehicleKey]struct{}, len(filteredOut))
+	current := make(map[vehicleKey]gtfs.Vehicle, len(filteredOut))
 	for _, vehicle := range filteredOut {
-		current[newVehicleKey(vehicle.ID)] = struct{}{}
+		current[newVehicleKey(vehicle.ID)] = vehicle
 	}
 	retained := make([]gtfs.Vehicle, 0, len(manager.feedVehicles[feedID])+len(filteredOut))
 	for _, vehicle := range manager.feedVehicles[feedID] {
@@ -189,11 +191,19 @@ func (manager *Manager) retainedExportVehiclesLocked(feedID string) []gtfs.Vehic
 		if vehicle.ID == nil {
 			continue
 		}
-		if _, superseded := current[newVehicleKey(vehicle.ID)]; !superseded {
+		key := newVehicleKey(vehicle.ID)
+		if currentRecord, superseded := current[key]; superseded && !isVehicleStale(vehicle, currentRecord) {
+			continue
+		}
+		delete(current, key)
+		retained = append(retained, vehicle)
+	}
+	for _, vehicle := range filteredOut {
+		if _, isCurrent := current[newVehicleKey(vehicle.ID)]; isCurrent {
 			retained = append(retained, vehicle)
 		}
 	}
-	return append(retained, filteredOut...)
+	return retained
 }
 
 func (manager *Manager) storeTripUpdateExportStateLocked(feedID string, refs []tripUpdateRef, blocks map[string]*BlockMatch) {
