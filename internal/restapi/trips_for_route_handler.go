@@ -757,17 +757,6 @@ func tripsByBlockIDsRowToTrip(row gtfsdb.GetTripsByBlockIDsRow) gtfsdb.Trip {
 	}
 }
 
-// tripServiceDayMidnight returns midnight of the trip's service day in the
-// agency's timezone. Overnight trips running under yesterday's (request-frame)
-// service get that date; all other trips get the request's date.
-func tripServiceDayMidnight(currentTime time.Time, trip *gtfsdb.Trip, agencyLocation *time.Location, serviceIDs, prevServiceIDs []string) time.Time {
-	serviceDate := currentTime
-	if !slices.Contains(serviceIDs, trip.ServiceID) && slices.Contains(prevServiceIDs, trip.ServiceID) {
-		serviceDate = currentTime.AddDate(0, 0, -1)
-	}
-	return time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 0, 0, 0, 0, agencyLocation)
-}
-
 func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string][]string) {
 	if schedule == nil {
 		return
