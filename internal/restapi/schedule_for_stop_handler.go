@@ -181,6 +181,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		ctx, scheduleRows, scheduleRowContext{
 			agencyID:                   agencyID,
 			startOfDay:                 serviceStart,
+			serviceStart:               serviceStart,
 			activeServiceBlockTripsMap: activeServiceBlockTripsMap,
 			freqMap:                    freqMap,
 			logger:                     reqLogger,
@@ -279,10 +280,14 @@ func (api *RestAPI) buildScheduleForStopReferences(
 		return nil, err
 	}
 
+	queried := buildQueriedStopRef(agencyID, stop, routeIDs)
 	references := models.NewEmptyReferences()
 	references.Routes = utils.MapValues(routeRefs)
 	references.Agencies = utils.MapValues(agencyRefs)
-	references.Stops = append(references.Stops, buildQueriedStopRef(agencyID, stop, routeIDs))
+	references.Stops = append(references.Stops, queried)
+	if err := api.mergeParentStopsIntoReferences(ctx, references, []models.Stop{queried}, agencyID); err != nil {
+		return nil, err
+	}
 
 	return references, nil
 }
@@ -344,11 +349,11 @@ func buildQueriedStopRef(agencyID string, stop gtfsdb.Stop, routeIDs []string) m
 	}
 
 	return models.NewStop(
-		nulls.StringOrEmpty(stop.Code),
+		nulls.StringOrNonEmpty(stop.Code, stop.ID),
 		nulls.StringOrEmpty(stop.Direction),
 		utils.FormCombinedID(agencyID, stop.ID),
 		nulls.StringOrEmpty(stop.Name),
-		"",
+		parentStationID(agencyID, stop),
 		utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		stop.Lat,
 		stop.Lon,
@@ -365,6 +370,8 @@ type scheduleRowContext struct {
 	agencyID string
 	// startOfDay is the service-day start (noon minus twelve hours), the base GTFS offsets are added to.
 	startOfDay time.Time
+	// serviceStart is noon less twelve hours on the service date, the base for stop time offsets.
+	serviceStart time.Time
 	// activeServiceBlockTripsMap maps block ID to that block's trips, already filtered to
 	// the queried date's active service IDs (see GetActiveServiceIDsForDate). The name is
 	// load-bearing: blockBoundaries's first/last-in-block comparisons are only correct
@@ -499,8 +506,8 @@ func newScheduleStopTime(row gtfsdb.GetScheduleForStopOnDateRow, rowCtx schedule
 // buildScheduleStopTime converts a schedule row into a ScheduleStopTime, converting GTFS
 // times (nanoseconds since midnight) to Unix millisecond timestamps.
 func buildScheduleStopTime(row gtfsdb.GetScheduleForStopOnDateRow, rowCtx scheduleRowContext) models.ScheduleStopTime {
-	arrivalTimeMs := rowCtx.startOfDay.Add(time.Duration(row.ArrivalTime)).UnixMilli()
-	departureTimeMs := rowCtx.startOfDay.Add(time.Duration(row.DepartureTime)).UnixMilli()
+	arrivalTimeMs := rowCtx.serviceStart.Add(time.Duration(row.ArrivalTime)).UnixMilli()
+	departureTimeMs := rowCtx.serviceStart.Add(time.Duration(row.DepartureTime)).UnixMilli()
 
 	isFirstInBlock, isLastInBlock := blockBoundaries(row, rowCtx.activeServiceBlockTripsMap)
 	return newScheduleStopTime(row, rowCtx, arrivalTimeMs, departureTimeMs, isFirstInBlock, isLastInBlock)
@@ -579,8 +586,8 @@ func expandExactTimesStopTimes(row gtfsdb.GetScheduleForStopOnDateRow, freq gtfs
 			}
 			break
 		}
-		arrivalMs := rowCtx.startOfDay.Add(time.Duration(freq.StartTime + offset + arrivalOffset)).UnixMilli()
-		departureMs := rowCtx.startOfDay.Add(time.Duration(freq.StartTime + offset + departureOffset)).UnixMilli()
+		arrivalMs := rowCtx.serviceStart.Add(time.Duration(freq.StartTime + offset + arrivalOffset)).UnixMilli()
+		departureMs := rowCtx.serviceStart.Add(time.Duration(freq.StartTime + offset + departureOffset)).UnixMilli()
 
 		stopTime := newScheduleStopTime(row, rowCtx, arrivalMs, departureMs, isFirstInBlock, isLastInBlock)
 		expanded = append(expanded, stopTime)
