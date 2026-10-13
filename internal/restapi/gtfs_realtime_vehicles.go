@@ -47,20 +47,46 @@ func resolveVehicleOwner(vehicle internalgtfs.ExportVehicle) (string, string, bo
 // ordered by ID so entity numbering is deterministic.
 func selectExportVehicles(vehicles []internalgtfs.ExportVehicle, req gtfsRealtimeExportRequest) []vehicleExportCandidate {
 	var candidates []vehicleExportCandidate
-	for _, vehicle := range vehicles {
-		agencyID, vehicleID, ok := resolveVehicleOwner(vehicle)
-		if !ok || agencyID != req.AgencyID || !isExportableVehicle(vehicle.Vehicle, req.Time) {
+	for _, candidate := range newestAgencyVehicles(vehicles, req.AgencyID) {
+		if !isExportableVehicle(candidate.vehicle.Vehicle, req.Time) {
 			continue
 		}
-		if req.RouteFilterID != "" && vehicle.ActiveRouteID != req.RouteFilterID {
+		if req.RouteFilterID != "" && candidate.vehicle.ActiveRouteID != req.RouteFilterID {
 			continue
 		}
-		candidates = append(candidates, vehicleExportCandidate{vehicle: vehicle, agencyID: agencyID, vehicleID: vehicleID})
+		candidates = append(candidates, candidate)
 	}
 	slices.SortFunc(candidates, func(a, b vehicleExportCandidate) int {
 		return cmp.Compare(a.vehicle.Vehicle.ID.ID, b.vehicle.Vehicle.ID.ID)
 	})
 	return candidates
+}
+
+// newestAgencyVehicles returns the agency's vehicles, one record per vehicle
+// ID. Overlapping feeds can report the same vehicle, and legacy keeps one
+// status per agency-qualified vehicle ID, so the newest record wins.
+func newestAgencyVehicles(vehicles []internalgtfs.ExportVehicle, agencyID string) map[string]vehicleExportCandidate {
+	byVehicleID := make(map[string]vehicleExportCandidate)
+	for _, vehicle := range vehicles {
+		ownerID, vehicleID, ok := resolveVehicleOwner(vehicle)
+		if !ok || ownerID != agencyID {
+			continue
+		}
+		if seen, exists := byVehicleID[vehicleID]; exists && !isNewerVehicle(vehicle.Vehicle, seen.vehicle.Vehicle) {
+			continue
+		}
+		byVehicleID[vehicleID] = vehicleExportCandidate{vehicle: vehicle, agencyID: ownerID, vehicleID: vehicleID}
+	}
+	return byVehicleID
+}
+
+// isNewerVehicle reports whether candidate has a later update than current.
+// A record without a timestamp is never newer.
+func isNewerVehicle(candidate, current gtfs.Vehicle) bool {
+	if candidate.Timestamp == nil {
+		return false
+	}
+	return current.Timestamp == nil || candidate.Timestamp.After(*current.Timestamp)
 }
 
 // isExportableVehicle requires a complete position and an update younger

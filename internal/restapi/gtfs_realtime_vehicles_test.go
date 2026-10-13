@@ -87,6 +87,29 @@ func TestSelectExportVehiclesEligibility(t *testing.T) {
 	assert.ElementsMatch(t, []string{"40_age599", "40_future"}, selected)
 }
 
+// Overlapping feeds can report the same vehicle; it is one vehicle in the
+// export, as in legacy, which keeps one status per qualified vehicle ID.
+func TestSelectExportVehiclesKeepsNewestRecordPerVehicle(t *testing.T) {
+	older := exportVehicleOnRoute("40_1301", "tA", "A")
+	newest := internalgtfs.ExportVehicle{
+		Vehicle:       positionedVehicle("1301", vehicleExportNow.Add(-10*time.Second)),
+		Block:         &internalgtfs.BlockMatch{AgencyID: "40"},
+		ActiveTripID:  "tB",
+		ActiveRouteID: "B",
+	}
+	otherAgency := exportVehicleOnRoute("20_1301", "tC", "C")
+
+	selected := selectExportVehicles([]internalgtfs.ExportVehicle{older, newest, otherAgency}, vehicleExportRequest("40"))
+
+	require.Len(t, selected, 1)
+	assert.Equal(t, "tB", selected[0].vehicle.ActiveTripID)
+
+	req := vehicleExportRequest("40")
+	req.RouteFilterID = "A"
+	assert.Empty(t, selectExportVehicles([]internalgtfs.ExportVehicle{older, newest}, req),
+		"the vehicle's newest record is on route B, so the older route A record must not resurface")
+}
+
 func TestSelectExportVehiclesRouteFilter(t *testing.T) {
 	vehicles := []internalgtfs.ExportVehicle{
 		exportVehicleOnRoute("40_on_A", "tA", "A"),
