@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -60,4 +61,55 @@ func TestDatabaseFailureIsNotReportedAsNotFound(t *testing.T) {
 			assert.Equal(t, http.StatusInternalServerError, model.Code)
 		})
 	}
+}
+
+func TestLocationSpatialQueryFailure(t *testing.T) {
+	api := createTestApiWithFeed(t, models.GetFixturePath(t, "raba.zip"))
+	api.Clock = clock.NewMockClock(arrivalsTestClock)
+
+	req := httptest.NewRequest(http.MethodGet, arrivalsForLocationURL(arrivalsForLocationCenter), nil)
+	params, fieldErrors := api.parseArrivalsForLocationParams(req)
+	require.Empty(t, fieldErrors)
+	stops, err := api.GtfsManager.GetStopsInBounds(t.Context(), params.Location, 0, true)
+	require.NoError(t, err)
+	require.NotEmpty(t, stops)
+	agencies, err := api.agenciesForStops(t.Context(), stops)
+	require.NoError(t, err)
+
+	// Break only spatial queries, leaving agency and other lookups operational.
+	// This fixture has its own database; the shared RABA database stays intact.
+	_, err = api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(), "DROP TABLE stops_rtree")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		endpoint string
+	}{
+		{
+			name:     "arrivals-and-departures-for-location",
+			endpoint: arrivalsForLocationURL(arrivalsForLocationCenter),
+		},
+		{
+			name:     "arrivals-and-departures-for-location with emptyReturnsNotFound",
+			endpoint: arrivalsForLocationURL(arrivalsForLocationCenter) + "&emptyReturnsNotFound=true",
+		},
+		{
+			name:     "trips-for-location",
+			endpoint: tripsForLocationURL(0.1, 0.1),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[models.ResponseModel](t, api, tt.endpoint)
+			assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+			assert.Equal(t, http.StatusInternalServerError, model.Code)
+			assert.Equal(t, "internal server error", model.Text)
+		})
+	}
+
+	t.Run("nearby stops", func(t *testing.T) {
+		nearby, err := api.nearbyStopsForLocation(t.Context(), stops, agencies, params)
+		require.ErrorContains(t, err, "stops_rtree")
+		assert.Nil(t, nearby)
+	})
 }

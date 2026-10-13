@@ -83,7 +83,7 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		Name:               nulls.StringOrEmpty(stop.Name),
 		Lat:                stop.Lat,
 		Lon:                stop.Lon,
-		Code:               nulls.StringOrDefault(stop.Code, stop.ID),
+		Code:               nulls.StringOrNonEmpty(stop.Code, stop.ID),
 		Direction:          nulls.StringOrEmpty(stop.Direction),
 		LocationType:       int(stop.LocationType.Int64),
 		WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),

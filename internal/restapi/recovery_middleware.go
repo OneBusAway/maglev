@@ -12,30 +12,12 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
-// recoveryResponseWriter wraps http.ResponseWriter to detect if headers were sent.
-type recoveryResponseWriter struct {
-	http.ResponseWriter
-	wroteHeader bool
-}
-
-func (rw *recoveryResponseWriter) WriteHeader(code int) {
-	rw.wroteHeader = true
-	rw.ResponseWriter.WriteHeader(code)
-}
-
-func (rw *recoveryResponseWriter) Write(b []byte) (int, error) {
-	if !rw.wroteHeader {
-		rw.wroteHeader = true
-	}
-	return rw.ResponseWriter.Write(b)
-}
-
 // NewRecoveryMiddleware returns middleware that recovers from panics in handlers,
-// logs the panic with stack trace, and returns HTTP 500 (JSON) if no response was sent.
+// logs the panic with stack trace, and returns HTTP 500 (JSON) if no final response was sent.
 func NewRecoveryMiddleware(logger *slog.Logger, c clock.Clock) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			rw := &recoveryResponseWriter{ResponseWriter: w}
+			rw := newStatusCapturingWriter(w)
 			defer func() {
 				if rec := recover(); rec != nil {
 					stack := debug.Stack()
