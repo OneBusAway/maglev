@@ -71,6 +71,41 @@ func TestCalculateStopDirection_StopDistanceValidation(t *testing.T) {
 	}
 }
 
+func TestCalculateStopDirection_ZeroCoordinatesUseGeography(t *testing.T) {
+	tests := []struct {
+		name      string
+		latOffset float64
+		lonOffset float64
+	}{
+		{"zero latitude", 40.020, 0},
+		{"zero longitude", 0, -121.980},
+		{"zero latitude and longitude", 40.020, -121.980},
+	}
+	for _, tt := range tests {
+		for _, preloaded := range []bool{false, true} {
+			name := "database/"
+			if preloaded {
+				name = "preloaded/"
+			}
+			t.Run(name+tt.name, func(t *testing.T) {
+				client := directionTestClient(t, buildDirectionFeed(t, []string{"0", "0", "0", "0"}, increasingDirectionShape))
+				for _, table := range []string{"stops", "shapes"} {
+					_, err := client.DB.Exec("UPDATE "+table+" SET lat = lat - ?, lon = lon - ?", tt.latOffset, tt.lonOffset)
+					require.NoError(t, err)
+				}
+				calculator := NewAdvancedDirectionCalculator(client.Queries)
+				if preloaded {
+					cache, err := NewDirectionPrecomputer(client.Queries, client.DB).loadShapeCache(context.Background())
+					require.NoError(t, err)
+					require.NoError(t, calculator.SetShapeCache(cache))
+				}
+				// The final stop is on the northbound leg; the first shape segment is eastbound.
+				assert.Equal(t, "N", calculator.CalculateStopDirection(context.Background(), "S4"))
+			})
+		}
+	}
+}
+
 func TestCalculateStopDirection_ValidZeroUsesDistance(t *testing.T) {
 	client := directionTestClient(t, buildDirectionFeed(t, []string{"0", "900", "2000", "3000"}, increasingDirectionShape))
 	_, err := client.DB.Exec("UPDATE stops SET lat = 40.020, lon = -121.980 WHERE id = 'S1'")

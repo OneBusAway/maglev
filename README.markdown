@@ -237,13 +237,9 @@ point and an adjacent segment; it does not implement Java's projection of stops
 onto shapes to calculate distances from geometry.
 
 Directions stored in `stops.direction` survive an upgrade when the feed is
-unchanged, because Maglev skips reimporting identical feeds. To rebuild them,
-stop Maglev, back up the SQLite database configured by `data-path`, and start with
-an empty database at that path and the original GTFS feed configured. Import
-starts directions at NULL, then precomputation fills usable results; unknown
-directions remain NULL. An in-memory cache clear or restart with the existing
-database does not rebuild stored directions. Preserve any separately maintained
-direction overrides before rebuilding and restore them afterward.
+unchanged. Recalculating them requires a fresh GTFS import into an empty database;
+back up the existing database first. Restarting or clearing the in-memory cache
+alone does not update stored directions.
 
 ## Directory Structure
 
