@@ -273,14 +273,15 @@ func (api *RestAPI) sendEmptyArrivalsForLocation(w http.ResponseWriter, r *http.
 	api.sendResponse(w, r, models.NewEmptyArrivalsAndDeparturesForLocationResponse(api.Clock))
 }
 
-// nearbyRadiusMeters is the Java nearby-stops radius: the union of the stops
-// within 100 m of each matched stop (each excluding itself).
-const nearbyRadiusMeters = 100.0
+// nearbyBoxHalfSizeMeters is the Java nearby-stops half box: the union of the
+// stops within a 100 m square box around each matched stop (each excluding
+// itself).
+const nearbyBoxHalfSizeMeters = 100.0
 
 // nearbyStopsForLocation mirrors the Java nearby-stops rule: the union of the
-// stops within 100 m of each matched stop (each excluding itself), limited to
-// stops served by a route running on the query date, measured against the
-// centre of the search area and ordered nearest first.
+// stops within a 100 m square box around each matched stop (each excluding
+// itself), limited to stops served by a route running on the query date,
+// measured against the centre of the search area and ordered nearest first.
 //
 // It is deliberately not "every stop in the bounding box" — a matched stop with
 // no neighbour within 100 m does not appear, while a stop just outside the box
@@ -338,9 +339,16 @@ func (api *RestAPI) nearbyStopsForLocation(
 	return buildNearbyResults(nearbyStops, servesRouteType, activeOnDate, combinedByBare, params.Location), nil
 }
 
-// nearbyCandidateIDs returns the union of the stops within 100 m of a matched
-// stop, excluding each stop itself.
+// nearbyCandidateIDs returns the union of the stops within a 100 m square box
+// around a matched stop, excluding each stop itself.
 func nearbyCandidateIDs(ctx context.Context, candidates, stops []gtfsdb.Stop) (map[string]bool, error) {
+	boxes := make(map[string]utils.CoordinateBounds, len(stops))
+	for _, stop := range stops {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		boxes[stop.ID] = utils.CalculateBounds(stop.Lat, stop.Lon, nearbyBoxHalfSizeMeters)
+	}
 	nearIDs := make(map[string]bool)
 	for _, candidate := range candidates {
 		if ctx.Err() != nil {
@@ -350,7 +358,7 @@ func nearbyCandidateIDs(ctx context.Context, candidates, stops []gtfsdb.Stop) (m
 			if stop.ID == candidate.ID {
 				continue
 			}
-			if utils.Distance(candidate.Lat, candidate.Lon, stop.Lat, stop.Lon) <= nearbyRadiusMeters {
+			if utils.BoundsContain(boxes[stop.ID], candidate.Lat, candidate.Lon) {
 				nearIDs[candidate.ID] = true
 				break
 			}
@@ -428,11 +436,11 @@ func expandLocationForNearby(loc *internalgtfs.LocationParams) *internalgtfs.Loc
 		if radius <= 0 {
 			radius = models.DefaultSearchRadiusInMeters
 		}
-		expanded.Radius = radius + nearbyRadiusMeters
+		expanded.Radius = radius + nearbyBoxHalfSizeMeters
 		return &expanded
 	}
 
-	margin := utils.CalculateBounds(loc.Lat, loc.Lon, nearbyRadiusMeters)
+	margin := utils.CalculateBounds(loc.Lat, loc.Lon, nearbyBoxHalfSizeMeters)
 	expanded.LatSpan = loc.LatSpan + (margin.MaxLat - margin.MinLat)
 	expanded.LonSpan = loc.LonSpan + (margin.MaxLon - margin.MinLon)
 	return &expanded
