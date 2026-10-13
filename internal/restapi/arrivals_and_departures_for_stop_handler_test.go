@@ -983,9 +983,9 @@ func TestPluralArrivals_AbsoluteTimeStopEvent(t *testing.T) {
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
 }
 
-// TestPluralArrivals_StalePropagatedDelayReset verifies that when the closest prior
-// stop has only absolute Time data (no Delay), propagatedDelayMs is reset to 0.
-func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
+// TestPluralArrivals_ClosestTimeOnlyPriorDelay verifies that the closest prior
+// stop's derived delay replaces an older stop's explicit delay.
+func TestPluralArrivals_ClosestTimeOnlyPriorDelay(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
@@ -994,10 +994,23 @@ func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 	// Stop being queried is sequence 3.
 	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 3)
 	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
+	q := api.GtfsManager.GtfsDB.Queries
+	priorStopID := "dp-time-only-prior"
+	_, err := q.CreateStop(t.Context(), gtfsdb.CreateStopParams{
+		ID: priorStopID, Name: nulls.String("Prior stop"), Lat: 47.0, Lon: -122.0,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStopTime(t.Context(), gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: priorStopID, StopSequence: 2,
+		ArrivalTime:   int64(7*time.Hour + 58*time.Minute),
+		DepartureTime: int64(7*time.Hour + 58*time.Minute),
+	})
+	require.NoError(t, err)
 
 	// Sequence 1: has a 90s delay.
 	// Sequence 2 (closer): has only an absolute Time, no Delay.
-	// Expected: propagatedDelayMs is reset to 0 when seq 2 becomes the closest prior.
+	// Sequence 2 is scheduled at 07:58 and predicted at 07:59, so its
+	// derived 60s delay supersedes sequence 1's 90s delay.
 	seq1 := uint32(1)
 	seq1Time := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
 	delay90s := 90 * time.Second
@@ -1023,8 +1036,8 @@ func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 		}
 		found = true
 		assert.True(t, a.Predicted, "should be predicted via prior stop propagation")
-		assert.Equal(t, scheduledArrivalMs, a.PredictedArrivalTime.UnixMilli(),
-			"propagatedDelayMs should be 0 when closest prior stop only has absolute Time data")
+		assert.Equal(t, scheduledArrivalMs+60000, a.PredictedArrivalTime.UnixMilli(),
+			"the closest prior timestamp should propagate its derived 60s delay")
 		break
 	}
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)

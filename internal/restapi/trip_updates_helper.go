@@ -612,3 +612,64 @@ func (api *RestAPI) staticStopsForTrip(ctx context.Context, tripID string) map[i
 	}
 	return stops
 }
+
+// propagatedDelayFromUpdate resolves the onward delay from a prior stop update.
+// Departure takes precedence over arrival; time takes precedence over delay.
+func (api *RestAPI) propagatedDelayFromUpdate(
+	ctx context.Context,
+	tripID string,
+	update *gtfs.StopTimeUpdate,
+	targetStopSequence int64,
+	scheduledArrivalTime time.Time,
+) (time.Duration, bool) {
+	event := update.Departure
+	useDeparture := true
+	if event == nil || (event.Time == nil && event.Delay == nil) {
+		event = update.Arrival
+		useDeparture = false
+	}
+	if event == nil {
+		return 0, false
+	}
+	explicitDelay := func() (time.Duration, bool) {
+		if event.Delay != nil {
+			return *event.Delay, true
+		}
+		return 0, false
+	}
+	if event.Time == nil {
+		return explicitDelay()
+	}
+	if update.StopSequence == nil {
+		return explicitDelay()
+	}
+
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	if err != nil {
+		warnIfRealDBError(err, "propagatedDelayFromUpdate: failed to load static schedule")
+		return explicitDelay()
+	}
+	var priorStop, targetStop *gtfsdb.StopTime
+	for i := range stopTimes {
+		stopTime := &stopTimes[i]
+		switch stopTime.StopSequence {
+		case int64(*update.StopSequence):
+			priorStop = stopTime
+		case targetStopSequence:
+			targetStop = stopTime
+		}
+	}
+	if priorStop == nil || targetStop == nil {
+		return explicitDelay()
+	}
+
+	// Recover the caller's service-day start rather than assuming midnight,
+	// preserving DST anchoring and stop-time offsets beyond 24 hours.
+	serviceStart := scheduledArrivalTime.Add(-time.Duration(targetStop.ArrivalTime))
+	scheduledOffset := priorStop.ArrivalTime
+	if useDeparture {
+		scheduledOffset = priorStop.DepartureTime
+	}
+	priorScheduledTime := serviceStart.Add(time.Duration(scheduledOffset))
+	return event.Time.Sub(priorScheduledTime), true
+}
