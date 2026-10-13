@@ -1037,8 +1037,9 @@ func findRABAStopWithNeighbour(t *testing.T, api *RestAPI, ctx context.Context) 
 	t.Helper()
 	// Pull a generous pool of RABA-area stops, then pick one whose 100m
 	// neighbourhood actually contains another stop.
-	candidates := api.GtfsManager.GetStopsInBounds(ctx,
+	candidates, err := api.GtfsManager.GetStopsInBounds(ctx,
 		&internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 5000}, 200)
+	require.NoError(t, err)
 	require.NotEmpty(t, candidates, "precondition: RABA should have stops near Redding")
 	for _, c := range candidates {
 		nearby := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
