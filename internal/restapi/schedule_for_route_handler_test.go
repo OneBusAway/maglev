@@ -251,6 +251,26 @@ func TestScheduleForRouteHandler_DirectionIDMatchesCSV(t *testing.T) {
 	}
 }
 
+func TestScheduleForRouteHandler_TripsWithoutDirectionGroupedSeparately(t *testing.T) {
+	api := newScheduleForRouteAPI(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL("25_15", "2025-06-12"))
+	assertScheduleOK(t, resp, model)
+
+	tripIDsByDirection := make(map[string][]string)
+	for _, grouping := range model.Data.Entry.StopTripGroupings {
+		tripIDsByDirection[grouping.DirectionID] = grouping.TripIDs
+	}
+	require.Len(t, tripIDsByDirection, 3)
+
+	tripsWithoutDirection := []string{"25_Route 15 Northbound 2 Vets Home", "25_Route 15 Southbound"}
+	assert.Equal(t, tripsWithoutDirection, tripIDsByDirection[""])
+	for _, tripID := range tripsWithoutDirection {
+		assert.NotContains(t, tripIDsByDirection["0"], tripID)
+	}
+}
+
 func TestScheduleForRouteHandler_WithReferences(t *testing.T) {
 	api := newScheduleForRouteAPI(t)
 	defer api.Shutdown()
