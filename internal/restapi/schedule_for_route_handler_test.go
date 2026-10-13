@@ -504,12 +504,16 @@ func TestScheduleForRouteKeepsStopsOfTripsWithoutDirection(t *testing.T) {
 	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL("25_15", "2025-06-12"))
 
 	assertScheduleOK(t, resp, model)
-	var direction0 []string
+	var direction0, noDirection []string
 	for _, grouping := range model.Data.Entry.StopTripGroupings {
-		if grouping.DirectionID == "0" {
+		switch grouping.DirectionID {
+		case "0":
 			direction0 = grouping.StopIDs
+		case "":
+			noDirection = grouping.StopIDs
 		}
 	}
-	require.NotNil(t, direction0, "expected a direction 0 stop trip grouping")
-	assert.Contains(t, direction0, "25_1504")
+	require.NotNil(t, noDirection, "expected a stop trip grouping for trips without a direction")
+	assert.Contains(t, noDirection, "25_1504")
+	assert.NotContains(t, direction0, "25_1504")
 }
