@@ -608,23 +608,14 @@ func stopDistances(stops []gtfsdb.Stop, agencies *stopAgencyIndex, loc *internal
 }
 
 // sortArrivalsByStopDistance orders arrivals by stop distance from the search
-// centre, keeping best-arrival-time order within each stop.
+// centre, then by compareBestArrival within each stop.
 func sortArrivalsByStopDistance(arrivals []models.ArrivalAndDeparture, distances map[string]float64) {
 	slices.SortStableFunc(arrivals, func(a, b models.ArrivalAndDeparture) int {
 		if d := distances[a.StopID] - distances[b.StopID]; d != 0 {
 			return cmp.Compare(d, 0)
 		}
-		return cmp.Compare(effectiveArrivalTime(a), effectiveArrivalTime(b))
+		return compareBestArrival(a, b)
 	})
-}
-
-// effectiveArrivalTime is when a rider would actually see the arrival,
-// preferring the predicted time when one exists.
-func effectiveArrivalTime(a models.ArrivalAndDeparture) int64 {
-	if a.PredictedArrivalTime.UnixMilli() > 0 {
-		return a.PredictedArrivalTime.UnixMilli()
-	}
-	return a.ScheduledArrivalTime.UnixMilli()
 }
 
 // truncateSlice trims items to maxCount, reporting whether anything was dropped

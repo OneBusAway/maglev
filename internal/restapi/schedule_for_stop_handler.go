@@ -61,31 +61,25 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var startOfDay time.Time
-	var responseDate int64 // Stores the exact timestamp for the JSON response
+	now := api.Clock.Now().In(loc)
+	serviceDay := serviceDayFromQueryDate(dateParam, loc, now)
+	// GTFS offsets are added to the service-day start. entry.date is the
+	// requested instant: a YYYY-MM-DD date echoes local midnight.
+	serviceStart := serviceDay.Start(loc)
+	var responseDate int64
 
-	if dateParam != "" {
-		// dateParam was already validated above; ParseDate cannot fail here.
-		startOfDay, _ = utils.ParseDate(dateParam, loc)
-
-		// Echo the exact Unix timestamp if provided, else use midnight
-		if unixMillis, err := strconv.ParseInt(dateParam, 10, 64); err == nil {
-			responseDate = unixMillis
-		} else {
-			responseDate = startOfDay.UnixMilli()
-		}
-	} else {
-		now := api.Clock.Now().In(loc)
+	if dateParam == "" {
 		// Echo current wall-clock time if omitted
 		responseDate = now.UnixMilli()
-
-		y, m, d := now.Date()
-		startOfDay = time.Date(y, m, d, 0, 0, 0, 0, loc)
+	} else if unixMillis, err := strconv.ParseInt(dateParam, 10, 64); err == nil {
+		// Echo the exact Unix timestamp if provided
+		responseDate = unixMillis
+	} else {
+		responseDate = serviceDay.Midnight(loc).UnixMilli()
 	}
 
-	serviceDate := servicedate.Of(startOfDay)
-	targetDate := serviceDate.String()
-	weekday := strings.ToLower(serviceDate.Weekday().String())
+	targetDate := serviceDay.String()
+	weekday := strings.ToLower(serviceDay.Weekday().String())
 
 	// Verify stop exists
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
@@ -186,8 +180,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	routeDirectionScheduleMap, routeDirectionFrequencyMap, routeDirectionHeadsignCounts, err := groupScheduleRowsByRouteAndDirection(
 		ctx, scheduleRows, scheduleRowContext{
 			agencyID:                   agencyID,
-			startOfDay:                 startOfDay,
-			serviceStart:               serviceDate.Start(loc),
+			startOfDay:                 serviceStart,
+			serviceStart:               serviceStart,
 			activeServiceBlockTripsMap: activeServiceBlockTripsMap,
 			freqMap:                    freqMap,
 			logger:                     reqLogger,
@@ -373,7 +367,8 @@ func buildQueriedStopRef(agencyID string, stop gtfsdb.Stop, routeIDs []string) m
 // a stop's schedule, so callers don't have to thread each one individually through the
 // row-building helpers below.
 type scheduleRowContext struct {
-	agencyID   string
+	agencyID string
+	// startOfDay is the service-day start (noon minus twelve hours), the base GTFS offsets are added to.
 	startOfDay time.Time
 	// serviceStart is noon less twelve hours on the service date, the base for stop time offsets.
 	serviceStart time.Time
@@ -683,4 +678,20 @@ func recordHeadsignVote(acc *routeDirectionAccumulators, dir routeDirection, hea
 		acc.headsignCounts[dir.combinedRouteID][dir.directionID] = make(map[string]int)
 	}
 	acc.headsignCounts[dir.combinedRouteID][dir.directionID][headsign.String] += weight
+}
+
+// serviceDayFromQueryDate resolves a schedule date parameter to a service date.
+// An empty param uses now. Unix milliseconds are an instant. YYYY-MM-DD is that calendar date.
+// dateParam is validated before this is called.
+func serviceDayFromQueryDate(dateParam string, loc *time.Location, now time.Time) servicedate.Date {
+	if dateParam == "" {
+		return servicedate.FromInstant(now, loc)
+	}
+	if unixMillis, err := strconv.ParseInt(dateParam, 10, 64); err == nil {
+		return servicedate.FromInstant(time.UnixMilli(unixMillis), loc)
+	}
+	// A calendar date has no time of day. Parsing it in a zone that skips
+	// local midnight, such as Santiago or Havana, lands on the previous day.
+	parsed, _ := time.Parse("2006-01-02", dateParam)
+	return servicedate.Of(parsed)
 }
