@@ -18,6 +18,11 @@ type tripUpdateRef struct {
 	Timestamp *time.Time
 }
 
+// isAnonymous reports whether the update names a trip but no vehicle.
+func (ref tripUpdateRef) isAnonymous() bool {
+	return ref.VehicleID == "" && ref.TripID != ""
+}
+
 // tripUpdateRefsInFeedOrder lists the trip updates among trips in the order
 // the feed sent them. go-gtfs returns trips sorted by ID and records each
 // update's feed position in EntityIndex; trips known only from vehicle
