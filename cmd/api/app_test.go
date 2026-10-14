@@ -613,6 +613,7 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 			gtfsCfg.RTFeeds[0].Headers = make(map[string]string)
 		}
 		gtfsCfg.RTFeeds[0].Headers["X-API-Key"] = "my-secret-api-key"
+		gtfsCfg.RTFeeds[0].FallbackAlertRecordAgencyID = "30"
 	}
 
 	// Make a pipe to capture stdout
@@ -666,5 +667,15 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 	assert.Contains(t, exemptApiKeysStr, "REDACTED", "Exempt API keys should be redacted")
 
 	assert.NotEqual(t, "", rtFeed["trip-updates-url"])
+	assert.Equal(t, "30", rtFeed["fallback-alert-record-agency-id"])
 	assert.Equal(t, gtfsCfg.GTFSDataPath, parsed["data-path"])
+}
+
+func TestGtfsConfigFromDataKeepsAlertRecordFallback(t *testing.T) {
+	gtfsCfg := gtfsConfigFromData(appconf.GtfsConfigData{
+		RTFeeds: []appconf.RTFeedConfigData{{ID: "unscoped", FallbackAlertRecordAgencyID: "40"}},
+	})
+
+	require.Len(t, gtfsCfg.RTFeeds, 1)
+	assert.Equal(t, "40", gtfsCfg.RTFeeds[0].FallbackAlertRecordAgencyID)
 }

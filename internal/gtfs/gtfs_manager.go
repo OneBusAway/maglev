@@ -210,6 +210,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	}
 
 	enabledFeeds := config.enabledFeeds()
+	warnFeedsWithoutAlertRecordAgency(logger, enabledFeeds)
 	for _, feedCfg := range enabledFeeds {
 		if len(feedCfg.AgencyIDs) > 0 {
 			logger.Info("realtime feed agency filtering active",

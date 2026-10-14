@@ -19,16 +19,20 @@ type GtfsStaticFeed struct {
 
 // GtfsRtFeed represents a single GTFS-RT feed configuration
 type GtfsRtFeed struct {
-	ID                      string            `json:"id"`
-	AgencyIDs               []string          `json:"agency-ids"` // When set, only realtime data for these agencies is included
-	TripUpdatesURL          string            `json:"trip-updates-url"`
-	VehiclePositionsURL     string            `json:"vehicle-positions-url"`
-	ServiceAlertsURL        string            `json:"service-alerts-url"`
-	RealTimeAuthHeaderName  string            `json:"realtime-auth-header-name"`
-	RealTimeAuthHeaderValue string            `json:"realtime-auth-header-value"`
-	Headers                 map[string]string `json:"headers"`
-	RefreshInterval         int               `json:"refresh-interval"`
-	Enabled                 *bool             `json:"enabled"`
+	ID        string   `json:"id"`
+	AgencyIDs []string `json:"agency-ids"` // When set, only realtime data for these agencies is included
+	// FallbackAlertRecordAgencyID names the agency that owns this feed's
+	// alert IDs in GTFS-RT exports when agency-ids is empty. It does not
+	// filter ingestion.
+	FallbackAlertRecordAgencyID string            `json:"fallback-alert-record-agency-id"`
+	TripUpdatesURL              string            `json:"trip-updates-url"`
+	VehiclePositionsURL         string            `json:"vehicle-positions-url"`
+	ServiceAlertsURL            string            `json:"service-alerts-url"`
+	RealTimeAuthHeaderName      string            `json:"realtime-auth-header-name"`
+	RealTimeAuthHeaderValue     string            `json:"realtime-auth-header-value"`
+	Headers                     map[string]string `json:"headers"`
+	RefreshInterval             int               `json:"refresh-interval"`
+	Enabled                     *bool             `json:"enabled"`
 }
 
 // JSONConfig represents the JSON configuration file structure
@@ -280,8 +284,10 @@ type RTFeedConfigData struct {
 	VehiclePositionsURL string
 	ServiceAlertsURL    string
 	Headers             map[string]string
-	RefreshInterval     int  // seconds, default 30
-	Enabled             bool // default true
+	RefreshInterval     int // seconds, default 30
+	// FallbackAlertRecordAgencyID owns alert IDs when AgencyIDs is empty.
+	FallbackAlertRecordAgencyID string
+	Enabled                     bool // default true
 }
 
 // GtfsConfigData holds GTFS configuration data without importing gtfs package
@@ -360,6 +366,8 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 			Headers:             headers,
 			RefreshInterval:     refreshInterval,
 			Enabled:             enabled,
+
+			FallbackAlertRecordAgencyID: feed.FallbackAlertRecordAgencyID,
 		})
 	}
 

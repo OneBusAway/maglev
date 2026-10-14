@@ -117,6 +117,10 @@
               "type": "string"
             }
           },
+          "fallback-alert-record-agency-id": {
+            "type": "string",
+            "description": "Agency that owns this feed's alert IDs in GTFS-RT exports when agency-ids is empty. Does not filter data."
+          },
           "trip-updates-url": {
             "type": "string",
             "description": "URL for a GTFS-RT trip updates feed",
