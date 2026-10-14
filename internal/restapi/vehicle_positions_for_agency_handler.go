@@ -33,7 +33,7 @@ func (api *RestAPI) vehicleRouteAgencies(ctx context.Context, candidates []vehic
 	}
 	routeIDSet := make(map[string]struct{})
 	for _, candidate := range candidates {
-		if candidate.vehicle.ActiveRouteID != "" {
+		if candidate.vehicle.ActiveRouteID != "" && !isBlockMatchedActiveTrip(candidate.vehicle) {
 			routeIDSet[candidate.vehicle.ActiveRouteID] = struct{}{}
 		}
 	}

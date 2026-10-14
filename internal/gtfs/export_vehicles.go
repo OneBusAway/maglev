@@ -36,11 +36,12 @@ func (manager *Manager) ExportVehicles() []ExportVehicle {
 // the first update for a trip supplies its matching reference.
 func (manager *Manager) tripUpdateBlockMatches(ctx context.Context, feedID string, refs []tripUpdateRef, feedCreatedAt time.Time) map[string]*BlockMatch {
 	matches := make(map[string]*BlockMatch)
+	lookups := newBlockMatchLookups()
 	for _, ref := range refs {
 		if _, seen := matches[ref.TripID]; seen || ref.TripID == "" {
 			continue
 		}
-		matches[ref.TripID] = manager.matchBlock(ctx, feedID, ref.TripID, tripUpdateMatchingReference(ref, feedCreatedAt))
+		matches[ref.TripID] = manager.matchBlock(ctx, feedID, ref.TripID, tripUpdateMatchingReference(ref, feedCreatedAt), lookups)
 	}
 	return matches
 }
@@ -82,11 +83,11 @@ func realtimeTripIDs(refs []tripUpdateRef, vehicles []gtfs.Vehicle) map[string]s
 
 // matchBlock treats a failed matching query as unresolved for this refresh
 // only; the matcher does not cache failures.
-func (manager *Manager) matchBlock(ctx context.Context, feedID, tripID string, reference time.Time) *BlockMatch {
+func (manager *Manager) matchBlock(ctx context.Context, feedID, tripID string, reference time.Time, lookups *blockMatchLookups) *BlockMatch {
 	if manager.blockMatcher == nil {
 		return nil
 	}
-	match, err := manager.blockMatcher.Match(ctx, feedID, tripID, reference)
+	match, err := manager.blockMatcher.Match(ctx, feedID, tripID, reference, lookups)
 	if err != nil {
 		logging.LogError(logging.ForComponent(ctx, "gtfs_realtime"), "Error matching realtime trip to block", err,
 			slog.String("feed", feedID), slog.String("trip_id", tripID))
@@ -224,12 +225,16 @@ func (manager *Manager) storeFilteredOutVehiclesLocked(feedID string, filteredOu
 
 // assignTripUpdateVehicles gives trip updates that name no vehicle to the
 // vehicle running on the same static block, so feeds whose trip updates
-// omit vehicle descriptors still group updates by vehicle.
-func (manager *Manager) assignTripUpdateVehicles(ctx context.Context, feedID string, refs []tripUpdateRef, vehicles []gtfs.Vehicle) []tripUpdateRef {
-	tripIDs := anonymousAssignmentTripIDs(refs, vehicles)
-	if len(tripIDs) == 0 || manager.GtfsDB == nil {
+// omit vehicle descriptors still group updates by vehicle. Vehicles with a
+// position in this refresh are preferred; the feed's vehicles kept from
+// earlier refreshes take only the blocks none of them runs, so a failed or
+// partial vehicle fetch does not strip retained vehicles of their blocks.
+func (manager *Manager) assignTripUpdateVehicles(ctx context.Context, feedID string, refs []tripUpdateRef, fetched []gtfs.Vehicle) []tripUpdateRef {
+	if !hasAnonymousTripUpdate(refs) || manager.GtfsDB == nil {
 		return refs
 	}
+	earlier := manager.earlierFeedVehicles(feedID, fetched)
+	tripIDs := anonymousAssignmentTripIDs(refs, slices.Concat(fetched, earlier))
 	trips, err := utils.QueryInBatches(ctx, tripIDs, manager.GtfsDB.Queries.GetTripsByIDs)
 	if err != nil {
 		logging.LogError(logging.ForComponent(ctx, "gtfs_realtime"), "Error loading blocks for trip update assignment", err,
@@ -240,7 +245,27 @@ func (manager *Manager) assignTripUpdateVehicles(ctx context.Context, feedID str
 	for _, trip := range trips {
 		blockKeys[trip.ID] = tripBlockKey(trip)
 	}
-	return assignAnonymousTripUpdates(refs, vehicles, blockKeys)
+	return assignFetchedThenEarlierVehicles(refs, fetched, earlier, blockKeys)
+}
+
+// assignFetchedThenEarlierVehicles assigns anonymous updates to fetched
+// vehicles first. Every update on a fetched vehicle's block is assigned by
+// then, so earlier vehicles reach only the blocks no fetched vehicle runs.
+func assignFetchedThenEarlierVehicles(refs []tripUpdateRef, fetched, earlier []gtfs.Vehicle, blockKeys map[string]string) []tripUpdateRef {
+	assigned := assignAnonymousTripUpdates(refs, fetched, blockKeys)
+	return assignAnonymousTripUpdates(assigned, earlier, blockKeys)
+}
+
+func hasAnonymousTripUpdate(refs []tripUpdateRef) bool {
+	return slices.ContainsFunc(refs, tripUpdateRef.isAnonymous)
+}
+
+// earlierFeedVehicles returns the feed's retained vehicles that fetched
+// does not report.
+func (manager *Manager) earlierFeedVehicles(feedID string, fetched []gtfs.Vehicle) []gtfs.Vehicle {
+	manager.realTimeMutex.RLock()
+	defer manager.realTimeMutex.RUnlock()
+	return vehiclesMissingFrom(manager.retainedExportVehiclesLocked(feedID), fetched)
 }
 
 // anonymousAssignmentTripIDs lists the trips whose blocks assignment needs:
@@ -249,7 +274,7 @@ func (manager *Manager) assignTripUpdateVehicles(ctx context.Context, feedID str
 func anonymousAssignmentTripIDs(refs []tripUpdateRef, vehicles []gtfs.Vehicle) []string {
 	tripIDs := make(map[string]struct{})
 	for _, ref := range refs {
-		if ref.VehicleID == "" && ref.TripID != "" {
+		if ref.isAnonymous() {
 			tripIDs[ref.TripID] = struct{}{}
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -96,9 +97,19 @@ func newRabaExportManager(t *testing.T, tripUpdates []byte) *Manager {
 
 func newRabaExportManagerWithFeeds(t *testing.T, tripUpdates, vehiclePositions []byte) *Manager {
 	t.Helper()
+	manager, _ := newRabaExportManagerServing(t, tripUpdates, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(vehiclePositions)
+	})
+	return manager
+}
+
+// newRabaExportManagerServing is newRabaExportManagerWithFeeds with a
+// vehicle-positions handler, returning the feed so tests can refresh it.
+func newRabaExportManagerServing(t *testing.T, tripUpdates []byte, vehiclePositions http.HandlerFunc) (*Manager, RTFeedConfig) {
+	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/trip-updates", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(tripUpdates) })
-	mux.HandleFunc("/vehicle-positions", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(vehiclePositions) })
+	mux.HandleFunc("/vehicle-positions", vehiclePositions)
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
@@ -118,7 +129,7 @@ func newRabaExportManagerWithFeeds(t *testing.T, tripUpdates, vehiclePositions [
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
-	return manager
+	return manager, feed
 }
 
 func exportVehiclesByID(manager *Manager) map[string]ExportVehicle {
@@ -190,6 +201,24 @@ func TestAssignAnonymousTripUpdates(t *testing.T) {
 	assert.Empty(t, refs[1].VehicleID, "the input refs are not modified")
 }
 
+func TestAssignFetchedThenEarlierVehicles(t *testing.T) {
+	refs := []tripUpdateRef{{TripID: "T_ON_B1"}, {TripID: "T_ON_B2"}}
+	fetched := []gtfs.Vehicle{vehicleWithTrip("V_FRESH", "T_VP_ON_B1", "")}
+	earlier := []gtfs.Vehicle{
+		vehicleWithTrip("V_A_KEPT", "T_OLD_ON_B1", ""),
+		vehicleWithTrip("V_KEPT", "T_OLD_ON_B2", ""),
+	}
+	blockKeys := map[string]string{
+		"T_ON_B1": "B1", "T_ON_B2": "B2",
+		"T_VP_ON_B1": "B1", "T_OLD_ON_B1": "B1", "T_OLD_ON_B2": "B2",
+	}
+
+	got := assignFetchedThenEarlierVehicles(refs, fetched, earlier, blockKeys)
+
+	assert.Equal(t, "V_FRESH", got[0].VehicleID, "a fetched vehicle beats a kept one on its block, whatever the IDs")
+	assert.Equal(t, "V_KEPT", got[1].VehicleID, "a kept vehicle takes a block no fetched vehicle runs")
+}
+
 func TestTripBlockKey(t *testing.T) {
 	assert.Equal(t, "B1", tripBlockKey(gtfsdb.Trip{ID: "T1", BlockID: sql.NullString{String: "B1", Valid: true}}))
 	assert.Equal(t, "T2", tripBlockKey(gtfsdb.Trip{ID: "T2"}), "a trip without a block is its own block")
@@ -199,6 +228,42 @@ func TestTripBlockKey(t *testing.T) {
 // descriptors; legacy then assigns each update to the vehicle running on
 // its block.
 func TestExportVehiclesAssignsAnonymousTripUpdatesByBlock(t *testing.T) {
+	manager := newRabaExportManager(t, anonymousRabaTripUpdates(t))
+
+	matched := exportVehiclesByID(manager)["5701"]
+	require.NotNil(t, matched.Block, "the anonymous update on 5701's block supplies its block match")
+	assert.Equal(t, "25", matched.Block.AgencyID)
+	assert.Equal(t, "28c61524-6da8-4506-9a92-22f2f6e91872", matched.ActiveTripID)
+}
+
+// A failed vehicle fetch leaves the refresh without fresh positions to
+// assign anonymous updates by; the vehicles kept from earlier refreshes
+// still run those blocks, so they keep their block matches.
+func TestExportVehiclesKeepBlocksWhenVehicleFetchFails(t *testing.T) {
+	vehiclePositions, err := os.ReadFile(filepath.Join("../../testdata", "raba-vehicle-positions.pb"))
+	require.NoError(t, err)
+	var vehicleFetchFails atomic.Bool
+	manager, feed := newRabaExportManagerServing(t, anonymousRabaTripUpdates(t), func(w http.ResponseWriter, r *http.Request) {
+		if vehicleFetchFails.Load() {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write(vehiclePositions)
+	})
+	require.NotNil(t, exportVehiclesByID(manager)["5701"].Block)
+
+	vehicleFetchFails.Store(true)
+	manager.updateFeedRealtime(context.Background(), feed)
+
+	matched := exportVehiclesByID(manager)["5701"]
+	require.NotNil(t, matched.Block, "the retained vehicle still claims the anonymous update on its block")
+	assert.Equal(t, "25", matched.Block.AgencyID)
+}
+
+// anonymousRabaTripUpdates is the RABA trip-update fixture without vehicle
+// descriptors, like OneBusAway's own trip-update export.
+func anonymousRabaTripUpdates(t *testing.T) []byte {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("../../testdata", "raba-trip-updates.pb"))
 	require.NoError(t, err)
 	var message gtfsrt.FeedMessage
@@ -210,13 +275,7 @@ func TestExportVehiclesAssignsAnonymousTripUpdatesByBlock(t *testing.T) {
 	}
 	tripUpdates, err := proto.Marshal(&message)
 	require.NoError(t, err)
-
-	manager := newRabaExportManager(t, tripUpdates)
-
-	matched := exportVehiclesByID(manager)["5701"]
-	require.NotNil(t, matched.Block, "the anonymous update on 5701's block supplies its block match")
-	assert.Equal(t, "25", matched.Block.AgencyID)
-	assert.Equal(t, "28c61524-6da8-4506-9a92-22f2f6e91872", matched.ActiveTripID)
+	return tripUpdates
 }
 
 // The JSON view keeps a vehicle's last on-trip record for 15 minutes after

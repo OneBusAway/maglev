@@ -47,10 +47,7 @@ func resolveVehicleOwner(vehicle internalgtfs.ExportVehicle) (string, string, bo
 // ordered by ID so entity numbering is deterministic.
 func selectExportVehicles(vehicles []internalgtfs.ExportVehicle, req gtfsRealtimeExportRequest) []vehicleExportCandidate {
 	var candidates []vehicleExportCandidate
-	for _, candidate := range newestAgencyVehicles(vehicles, req.AgencyID) {
-		if !isExportableVehicle(candidate.vehicle.Vehicle, req.Time) {
-			continue
-		}
+	for _, candidate := range newestAgencyVehicles(vehicles, req) {
 		if req.RouteFilterID != "" && candidate.vehicle.ActiveRouteID != req.RouteFilterID {
 			continue
 		}
@@ -62,14 +59,19 @@ func selectExportVehicles(vehicles []internalgtfs.ExportVehicle, req gtfsRealtim
 	return candidates
 }
 
-// newestAgencyVehicles returns the agency's vehicles, one record per vehicle
-// ID. Overlapping feeds can report the same vehicle, and legacy keeps one
-// status per agency-qualified vehicle ID, so the newest record wins.
-func newestAgencyVehicles(vehicles []internalgtfs.ExportVehicle, agencyID string) map[string]vehicleExportCandidate {
+// newestAgencyVehicles returns the agency's exportable vehicles, one record
+// per vehicle ID. Overlapping feeds can report the same vehicle, and legacy
+// keeps one status per agency-qualified vehicle ID, so the newest record
+// wins. Only exportable records compete, so a newer record without a
+// position cannot hide an older one that has one.
+func newestAgencyVehicles(vehicles []internalgtfs.ExportVehicle, req gtfsRealtimeExportRequest) map[string]vehicleExportCandidate {
 	byVehicleID := make(map[string]vehicleExportCandidate)
 	for _, vehicle := range vehicles {
+		if !isExportableVehicle(vehicle.Vehicle, req.Time) {
+			continue
+		}
 		ownerID, vehicleID, ok := resolveVehicleOwner(vehicle)
-		if !ok || ownerID != agencyID {
+		if !ok || ownerID != req.AgencyID {
 			continue
 		}
 		if seen, exists := byVehicleID[vehicleID]; exists && !isNewerVehicle(vehicle.Vehicle, seen.vehicle.Vehicle) {
@@ -167,10 +169,16 @@ func exportPosition(position *gtfs.Position) *gtfsrt.Position {
 // activeTripOwner is the agency of the active trip's route: the block
 // match's when it is for that trip, otherwise a static route lookup.
 func activeTripOwner(vehicle internalgtfs.ExportVehicle, routeAgencies map[string]string) string {
-	if vehicle.Block != nil && vehicle.Block.TripID == vehicle.ActiveTripID {
+	if isBlockMatchedActiveTrip(vehicle) {
 		return vehicle.Block.AgencyID
 	}
 	return routeAgencies[vehicle.ActiveRouteID]
+}
+
+// isBlockMatchedActiveTrip reports whether the vehicle's block match is for
+// its active trip, rather than for an earlier trip of its block.
+func isBlockMatchedActiveTrip(vehicle internalgtfs.ExportVehicle) bool {
+	return vehicle.Block != nil && vehicle.Block.TripID == vehicle.ActiveTripID
 }
 
 // activeTripDescriptor describes the vehicle's active trip. An ordinary trip
@@ -225,8 +233,11 @@ func applyRetainedTripFields(descriptor *gtfsrt.TripDescriptor, trip gtfs.TripID
 	}
 }
 
+// isResolvedOrdinaryTrip reports whether the block match's service date and
+// start describe the active trip. A frequency trip's own start_time names
+// the running instance, so it keeps the update's values.
 func isResolvedOrdinaryTrip(vehicle internalgtfs.ExportVehicle, retained *gtfs.TripID) bool {
-	if vehicle.Block == nil || vehicle.Block.TripID != vehicle.ActiveTripID {
+	if !isBlockMatchedActiveTrip(vehicle) || vehicle.Block.FrequencyBased {
 		return false
 	}
 	return retained == nil || retained.ScheduleRelationship == gtfsrt.TripDescriptor_SCHEDULED
