@@ -2,8 +2,7 @@ name: Go CI
 
 on:
   push:
-    # Temporary trusted-branch trigger; remove before merging Phase 2.
-    branches: [main, release/edge-ci-validation]
+    branches: [main]
   pull_request:
 
 jobs:
@@ -12,8 +11,7 @@ jobs:
     if: >-
       github.event_name == 'push' &&
       github.repository == 'OneBusAway/maglev' &&
-      (github.ref == 'refs/heads/main' ||
-       github.ref == 'refs/heads/release/edge-ci-validation')
+      github.ref == 'refs/heads/main'
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -23,8 +21,6 @@ jobs:
       cancel-in-progress: false
     env:
       IMAGE: opentransitsoftwarefoundation/maglev
-      # Temporary test channel; remove branch handling before merging Phase 2.
-      CHANNEL: ${{ github.ref == 'refs/heads/main' && 'main' || 'main-test' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -45,7 +41,7 @@ jobs:
           flavor: latest=false
           tags: |
             type=sha,format=long,priority=300
-            type=raw,value=${{ env.CHANNEL }}
+            type=raw,value=main
           labels: |
             org.opencontainers.image.title=Maglev
             org.opencontainers.image.description=REST API server for OneBusAway transit data
