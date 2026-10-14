@@ -39,6 +39,11 @@ func NewClient(config Config) (*Client, error) {
 		Queries: queries,
 	}
 
+	if err := client.backfillEmptyStopCodes(context.Background()); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("unable to backfill empty stop codes: %w", err)
+	}
+
 	// The search-stop handler reads a stop's agency straight from this index with no
 	// fallback, so a missing or stale index yields an empty combined ID rather than a
 	// merely degraded one - this must succeed before the client is usable.
@@ -97,6 +102,16 @@ func (c *Client) backfillStopAgencyIndex(ctx context.Context) error {
 		}
 		return buildStopAgencyIndex(ctx, c.Queries.WithTx(tx))
 	})
+}
+
+// backfillEmptyStopCodes normalizes empty codes left by older imports. StoreGtfsData
+// may skip an unchanged feed, so these rows otherwise remain empty after an upgrade.
+func (c *Client) backfillEmptyStopCodes(ctx context.Context) error {
+	_, err := c.DB.ExecContext(ctx, "UPDATE stops SET code = NULL WHERE code = ''")
+	if err != nil {
+		return fmt.Errorf("failed to backfill empty stop codes: %w", err)
+	}
+	return nil
 }
 
 // hasLegacyStopAgenciesTable reports whether stop_agencies still has the single-column

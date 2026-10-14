@@ -221,6 +221,26 @@ Maglev uses SQLite and supports two different drivers via Go build tags to balan
    - Run tests: `make test-pure`
    - Build: `make build-pure`
 
+## Stop direction calculation and upgrades
+
+Maglev uses supplied `shape_dist_traveled` values for stop directions only when
+both the shape-point sequence and the trip's stop-time sequence are usable.
+Supplied stop-time distances must be finite, non-negative, and strictly increasing
+in `stop_sequence` order, with at least two values. A valid first-stop zero is
+preserved. Missing values use geographic matching for that occurrence; constant,
+repeated, decreasing, or otherwise unusable stop distances make the entire trip
+use the existing geographic fallback.
+
+This validation checks ordering, not agreement with geometry. Increasing distances
+on an incorrect scale can still pass. Maglev's fallback selects the nearest shape
+point and an adjacent segment; it does not implement Java's projection of stops
+onto shapes to calculate distances from geometry.
+
+Directions stored in `stops.direction` survive an upgrade when the feed is
+unchanged. Recalculating them requires a fresh GTFS import into an empty database;
+back up the existing database first. Restarting or clearing the in-memory cache
+alone does not update stored directions.
+
 ## Directory Structure
 
 * `bin`: Compiled application binaries.

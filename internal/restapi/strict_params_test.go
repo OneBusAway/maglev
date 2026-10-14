@@ -41,7 +41,7 @@ func TestStrictIncludeReferencesAcrossHandlers(t *testing.T) {
 	for _, value := range []string{"", "true", "false", "TrUe", "FaLsE"} {
 		req := httptest.NewRequest("GET", "/?includeReferences="+value, nil)
 		got, errors := ShouldIncludeReferences(req, map[string][]string{"existing": {"error"}})
-		assert.Equal(t, value != "false" && value != "FaLsE", got)
+		assert.Equal(t, value == "true" || value == "TrUe", got)
 		assert.Equal(t, map[string][]string{"existing": {"error"}}, errors)
 	}
 }

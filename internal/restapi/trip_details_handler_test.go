@@ -454,6 +454,17 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
+	t.Run("empty booleans override endpoint defaults", func(t *testing.T) {
+		for _, defaults := range []TripParamDefaults{{}, {IncludeTrip: true, IncludeSchedule: true}} {
+			req := httptest.NewRequest(http.MethodGet, "/?includeTrip=&includeSchedule=&includeStatus=", nil)
+			params, fieldErrors := api.parseTripParams(req, defaults)
+			require.Empty(t, fieldErrors)
+			assert.False(t, params.IncludeTrip)
+			assert.False(t, params.IncludeSchedule)
+			assert.False(t, params.IncludeStatus)
+		}
+	})
+
 	t.Run("explicit params", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/?includeTrip=false&includeSchedule=false&serviceDate=1609459200000", nil)
 

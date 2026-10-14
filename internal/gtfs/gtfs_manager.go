@@ -60,12 +60,16 @@ type Manager struct {
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
 	feedAlerts   map[string][]gtfs.Alert
+	// Per-feed trips the agency filter dropped because their route couldn't
+	// be resolved to any agency. Kept out of the merged view, but the metrics
+	// endpoint reports them as that feed's unmatched records.
+	feedUnattributedTrips map[string][]gtfs.Trip
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
 	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
 	// No lock is required for reads.
 	feedAgencyFilter map[string]map[string]bool
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
-	feedVehicleLastSeen map[string]map[string]time.Time // feedID -> vehicleID -> lastSeen
+	feedVehicleLastSeen map[string]map[vehicleKey]time.Time // feedID -> vehicleKey -> lastSeen
 
 	// Per-feed last successfully applied vehicle feed timestamp
 	feedVehicleTimestamp map[string]uint64 // feedID -> timestamp
@@ -86,6 +90,7 @@ func (manager *Manager) clearFeedData(feedID string) {
 	defer manager.realTimeMutex.Unlock()
 
 	manager.feedTrips[feedID] = nil
+	delete(manager.feedUnattributedTrips, feedID)
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
 
@@ -137,21 +142,10 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedVehicles:         make(map[string][]gtfs.Vehicle),
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedLastUpdate:       make(map[string]time.Time),
-		feedAgencyFilter:     make(map[string]map[string]bool),
-		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		feedAgencyFilter:     config.feedAgencyFilters(),
+		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 		feedVehicleTimestamp: make(map[string]uint64),
 		Metrics:              config.Metrics,
-	}
-
-	// Build per-feed agency filters from config
-	for _, feedCfg := range config.RTFeeds {
-		if len(feedCfg.AgencyIDs) > 0 {
-			filter := make(map[string]bool, len(feedCfg.AgencyIDs))
-			for _, id := range feedCfg.AgencyIDs {
-				filter[id] = true
-			}
-			manager.feedAgencyFilter[feedCfg.ID] = filter
-		}
 	}
 
 	var attemptsMade int
@@ -476,18 +470,16 @@ func (manager *Manager) GetStopsInBounds(
 	loc *LocationParams,
 	maxCount int,
 	clamp ...bool,
-) []gtfsdb.Stop {
+) ([]gtfsdb.Stop, error) {
 	bounds := BoundsFromParams(loc, clamp...)
 	stops, err := manager.queryStopsInBounds(ctx, bounds)
 	if err != nil {
-		reqLogger := logging.ForComponent(ctx, "gtfs_manager")
-		logging.LogError(reqLogger, "could not query stops within bounds", err)
-		return nil
+		return nil, fmt.Errorf("could not query stops within bounds: %w", err)
 	}
 	if maxCount > 0 && len(stops) > maxCount {
 		stops = stops[:maxCount]
 	}
-	return stops
+	return stops, nil
 }
 
 // GetStopIDsWithinBounds returns stop IDs within bounds, optimized for callers that only need IDs.

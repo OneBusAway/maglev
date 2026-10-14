@@ -15,6 +15,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -60,30 +61,25 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var startOfDay time.Time
-	var responseDate int64 // Stores the exact timestamp for the JSON response
+	now := api.Clock.Now().In(loc)
+	serviceDay := serviceDayFromQueryDate(dateParam, loc, now)
+	// GTFS offsets are added to the service-day start. entry.date is the
+	// requested instant: a YYYY-MM-DD date echoes local midnight.
+	serviceStart := serviceDay.Start(loc)
+	var responseDate int64
 
-	if dateParam != "" {
-		// dateParam was already validated above; ParseDate cannot fail here.
-		startOfDay, _ = utils.ParseDate(dateParam, loc)
-
-		// Echo the exact Unix timestamp if provided, else use midnight
-		if unixMillis, err := strconv.ParseInt(dateParam, 10, 64); err == nil {
-			responseDate = unixMillis
-		} else {
-			responseDate = startOfDay.UnixMilli()
-		}
-	} else {
-		now := api.Clock.Now().In(loc)
+	if dateParam == "" {
 		// Echo current wall-clock time if omitted
 		responseDate = now.UnixMilli()
-
-		y, m, d := now.Date()
-		startOfDay = time.Date(y, m, d, 0, 0, 0, 0, loc)
+	} else if unixMillis, err := strconv.ParseInt(dateParam, 10, 64); err == nil {
+		// Echo the exact Unix timestamp if provided
+		responseDate = unixMillis
+	} else {
+		responseDate = serviceDay.Midnight(loc).UnixMilli()
 	}
 
-	targetDate := startOfDay.Format("20060102")
-	weekday := strings.ToLower(startOfDay.Weekday().String())
+	targetDate := serviceDay.String()
+	weekday := strings.ToLower(serviceDay.Weekday().String())
 
 	// Verify stop exists
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
@@ -184,7 +180,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	routeDirectionScheduleMap, routeDirectionFrequencyMap, routeDirectionHeadsignCounts, err := groupScheduleRowsByRouteAndDirection(
 		ctx, scheduleRows, scheduleRowContext{
 			agencyID:                   agencyID,
-			startOfDay:                 startOfDay,
+			startOfDay:                 serviceStart,
+			serviceStart:               serviceStart,
 			activeServiceBlockTripsMap: activeServiceBlockTripsMap,
 			freqMap:                    freqMap,
 			logger:                     reqLogger,
@@ -283,10 +280,14 @@ func (api *RestAPI) buildScheduleForStopReferences(
 		return nil, err
 	}
 
+	queried := buildQueriedStopRef(agencyID, stop, routeIDs)
 	references := models.NewEmptyReferences()
 	references.Routes = utils.MapValues(routeRefs)
 	references.Agencies = utils.MapValues(agencyRefs)
-	references.Stops = append(references.Stops, buildQueriedStopRef(agencyID, stop, routeIDs))
+	references.Stops = append(references.Stops, queried)
+	if err := api.mergeParentStopsIntoReferences(ctx, references, []models.Stop{queried}, agencyID); err != nil {
+		return nil, err
+	}
 
 	return references, nil
 }
@@ -348,11 +349,11 @@ func buildQueriedStopRef(agencyID string, stop gtfsdb.Stop, routeIDs []string) m
 	}
 
 	return models.NewStop(
-		nulls.StringOrEmpty(stop.Code),
+		nulls.StringOrNonEmpty(stop.Code, stop.ID),
 		nulls.StringOrEmpty(stop.Direction),
 		utils.FormCombinedID(agencyID, stop.ID),
 		nulls.StringOrEmpty(stop.Name),
-		"",
+		parentStationID(agencyID, stop),
 		utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
 		stop.Lat,
 		stop.Lon,
@@ -366,8 +367,11 @@ func buildQueriedStopRef(agencyID string, stop gtfsdb.Stop, routeIDs []string) m
 // a stop's schedule, so callers don't have to thread each one individually through the
 // row-building helpers below.
 type scheduleRowContext struct {
-	agencyID   string
+	agencyID string
+	// startOfDay is the service-day start (noon minus twelve hours), the base GTFS offsets are added to.
 	startOfDay time.Time
+	// serviceStart is noon less twelve hours on the service date, the base for stop time offsets.
+	serviceStart time.Time
 	// activeServiceBlockTripsMap maps block ID to that block's trips, already filtered to
 	// the queried date's active service IDs (see GetActiveServiceIDsForDate). The name is
 	// load-bearing: blockBoundaries's first/last-in-block comparisons are only correct
@@ -502,8 +506,8 @@ func newScheduleStopTime(row gtfsdb.GetScheduleForStopOnDateRow, rowCtx schedule
 // buildScheduleStopTime converts a schedule row into a ScheduleStopTime, converting GTFS
 // times (nanoseconds since midnight) to Unix millisecond timestamps.
 func buildScheduleStopTime(row gtfsdb.GetScheduleForStopOnDateRow, rowCtx scheduleRowContext) models.ScheduleStopTime {
-	arrivalTimeMs := rowCtx.startOfDay.Add(time.Duration(row.ArrivalTime)).UnixMilli()
-	departureTimeMs := rowCtx.startOfDay.Add(time.Duration(row.DepartureTime)).UnixMilli()
+	arrivalTimeMs := rowCtx.serviceStart.Add(time.Duration(row.ArrivalTime)).UnixMilli()
+	departureTimeMs := rowCtx.serviceStart.Add(time.Duration(row.DepartureTime)).UnixMilli()
 
 	isFirstInBlock, isLastInBlock := blockBoundaries(row, rowCtx.activeServiceBlockTripsMap)
 	return newScheduleStopTime(row, rowCtx, arrivalTimeMs, departureTimeMs, isFirstInBlock, isLastInBlock)
@@ -582,8 +586,8 @@ func expandExactTimesStopTimes(row gtfsdb.GetScheduleForStopOnDateRow, freq gtfs
 			}
 			break
 		}
-		arrivalMs := rowCtx.startOfDay.Add(time.Duration(freq.StartTime + offset + arrivalOffset)).UnixMilli()
-		departureMs := rowCtx.startOfDay.Add(time.Duration(freq.StartTime + offset + departureOffset)).UnixMilli()
+		arrivalMs := rowCtx.serviceStart.Add(time.Duration(freq.StartTime + offset + arrivalOffset)).UnixMilli()
+		departureMs := rowCtx.serviceStart.Add(time.Duration(freq.StartTime + offset + departureOffset)).UnixMilli()
 
 		stopTime := newScheduleStopTime(row, rowCtx, arrivalMs, departureMs, isFirstInBlock, isLastInBlock)
 		expanded = append(expanded, stopTime)
@@ -674,4 +678,20 @@ func recordHeadsignVote(acc *routeDirectionAccumulators, dir routeDirection, hea
 		acc.headsignCounts[dir.combinedRouteID][dir.directionID] = make(map[string]int)
 	}
 	acc.headsignCounts[dir.combinedRouteID][dir.directionID][headsign.String] += weight
+}
+
+// serviceDayFromQueryDate resolves a schedule date parameter to a service date.
+// An empty param uses now. Unix milliseconds are an instant. YYYY-MM-DD is that calendar date.
+// dateParam is validated before this is called.
+func serviceDayFromQueryDate(dateParam string, loc *time.Location, now time.Time) servicedate.Date {
+	if dateParam == "" {
+		return servicedate.FromInstant(now, loc)
+	}
+	if unixMillis, err := strconv.ParseInt(dateParam, 10, 64); err == nil {
+		return servicedate.FromInstant(time.UnixMilli(unixMillis), loc)
+	}
+	// A calendar date has no time of day. Parsing it in a zone that skips
+	// local midnight, such as Santiago or Havana, lands on the previous day.
+	parsed, _ := time.Parse("2006-01-02", dateParam)
+	return servicedate.Of(parsed)
 }

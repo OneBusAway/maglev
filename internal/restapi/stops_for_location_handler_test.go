@@ -830,3 +830,46 @@ func TestStopsForLocationUsesAgencyDateForCurrentTime(t *testing.T) {
 		})
 	}
 }
+
+// TestStopsForLocationStopCodeFallback tests that a stop entry with no stop_code defined in the
+// feed falls back to the raw stop entity id for stop.Code.
+func TestStopsForLocationStopCodeFallback(t *testing.T) {
+	const (
+		agencyID = "A1"
+		stopID   = "S1"
+		routeID  = "R1"
+		svcID    = "SVC1"
+		tripID   = "Trip1"
+		lat      = "40.583321"
+		lon      = "-122.426966"
+	)
+
+	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 12, 0, 0, 0, time.UTC))
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			agencyID + ",Agency 1,http://example.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			routeID + "," + agencyID + ",A1-R1,Route 1,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			svcID + ",1,1,1,1,1,1,1,20240101,20241231\n",
+		// The feed defines no stop_code for the stop.
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			stopID + ",No Code Stop," + lat + "," + lon + "\n",
+		"trips.txt": "route_id,service_id,trip_id\n" +
+			routeID + "," + svcID + "," + tripID + "\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			tripID + ",12:00:00,12:00:00," + stopID + ",1\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, mockClock, "no-stop-code.zip", files)
+
+	endpoint := fmt.Sprintf("/api/where/stops-for-location.json?key=TEST&lat=%s&lon=%s&radius=100", lat, lon)
+	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.Len(t, model.Data.List, 1, "expected only 1 stop returned, got: %d", len(model.Data.List))
+
+	stop := model.Data.List[0]
+
+	assert.Equal(t, stopID, stop.Code, "stop_code should fall back to the raw stop entity id when stop_code is not defined in the feed")
+}

@@ -49,6 +49,29 @@ type JSONConfig struct {
 	TLSKeyPath       string         `json:"tls-key-path"`
 }
 
+// DefaultProtectedAPIKeys returns the protected API keys used when none are
+// configured. Only development and test get a default; production must
+// supply its own keys.
+func DefaultProtectedAPIKeys(env string) []string {
+	if env == "development" || env == "test" {
+		return []string{"protected-test-key"}
+	}
+	return nil
+}
+
+// ProtectedAPIKeysFromEnv returns the comma-separated keys in
+// GTFS_PROTECTED_API_KEYS with surrounding whitespace and empty entries
+// removed, or nil when none are set.
+func ProtectedAPIKeysFromEnv() []string {
+	var keys []string
+	for _, key := range strings.Split(os.Getenv("GTFS_PROTECTED_API_KEYS"), ",") {
+		if trimmed := strings.TrimSpace(key); trimmed != "" {
+			keys = append(keys, trimmed)
+		}
+	}
+	return keys
+}
+
 // setDefaults applies default values to the JSON config if fields are missing or zero
 func (j *JSONConfig) setDefaults() {
 	if j.Port == 0 {
@@ -60,8 +83,8 @@ func (j *JSONConfig) setDefaults() {
 	if len(j.ApiKeys) == 0 {
 		j.ApiKeys = []string{"test"}
 	}
-	if len(j.ProtectedApiKeys) == 0 && (j.Env == "development" || j.Env == "test") {
-		j.ProtectedApiKeys = []string{"protected-test-key"}
+	if len(j.ProtectedApiKeys) == 0 {
+		j.ProtectedApiKeys = DefaultProtectedAPIKeys(j.Env)
 	}
 	if len(j.ExemptApiKeys) == 0 {
 		j.ExemptApiKeys = []string{"org.onebusaway.iphone"}
@@ -403,17 +426,8 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 	}
 
 	// Override Protected API Keys
-	if envProtectedKeys := os.Getenv("GTFS_PROTECTED_API_KEYS"); envProtectedKeys != "" {
-		rawKeys := strings.Split(envProtectedKeys, ",")
-		var cleanKeys []string
-		for _, k := range rawKeys {
-			if trimmed := strings.TrimSpace(k); trimmed != "" {
-				cleanKeys = append(cleanKeys, trimmed)
-			}
-		}
-		if len(cleanKeys) > 0 {
-			config.ProtectedApiKeys = cleanKeys
-		}
+	if envProtectedKeys := ProtectedAPIKeysFromEnv(); len(envProtectedKeys) > 0 {
+		config.ProtectedApiKeys = envProtectedKeys
 	}
 
 	// Override Static Feed Auth (Name + Value)
