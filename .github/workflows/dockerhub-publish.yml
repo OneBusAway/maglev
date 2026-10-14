@@ -36,9 +36,7 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           flavor: latest=false
-          tags: |
-            type=sha,format=long,priority=300
-            type=raw,value=main
+          tags: type=sha,format=long
           labels: |
             org.opencontainers.image.title=Maglev
             org.opencontainers.image.description=REST API server for OneBusAway transit data
