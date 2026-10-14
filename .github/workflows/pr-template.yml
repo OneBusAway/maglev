@@ -41,12 +41,14 @@ jobs:
       github.event.pull_request.user.type != 'Bot' &&
       !contains(github.event.pull_request.labels.*.name, 'skip-template-check')
     steps:
-      - uses: actions/checkout@v7
+      # Pinned to commit SHAs, unlike other workflows, because this job holds
+      # a write token. Dependabot updates the SHA and the version comment.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: 'go.mod'
           # The checker uses only the standard library.
