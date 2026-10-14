@@ -169,10 +169,16 @@ func exportPosition(position *gtfs.Position) *gtfsrt.Position {
 // activeTripOwner is the agency of the active trip's route: the block
 // match's when it is for that trip, otherwise a static route lookup.
 func activeTripOwner(vehicle internalgtfs.ExportVehicle, routeAgencies map[string]string) string {
-	if vehicle.Block != nil && vehicle.Block.TripID == vehicle.ActiveTripID {
+	if isBlockMatchedActiveTrip(vehicle) {
 		return vehicle.Block.AgencyID
 	}
 	return routeAgencies[vehicle.ActiveRouteID]
+}
+
+// isBlockMatchedActiveTrip reports whether the vehicle's block match is for
+// its active trip, rather than for an earlier trip of its block.
+func isBlockMatchedActiveTrip(vehicle internalgtfs.ExportVehicle) bool {
+	return vehicle.Block != nil && vehicle.Block.TripID == vehicle.ActiveTripID
 }
 
 // activeTripDescriptor describes the vehicle's active trip. An ordinary trip
@@ -228,7 +234,7 @@ func applyRetainedTripFields(descriptor *gtfsrt.TripDescriptor, trip gtfs.TripID
 }
 
 func isResolvedOrdinaryTrip(vehicle internalgtfs.ExportVehicle, retained *gtfs.TripID) bool {
-	if vehicle.Block == nil || vehicle.Block.TripID != vehicle.ActiveTripID {
+	if !isBlockMatchedActiveTrip(vehicle) {
 		return false
 	}
 	return retained == nil || retained.ScheduleRelationship == gtfsrt.TripDescriptor_SCHEDULED

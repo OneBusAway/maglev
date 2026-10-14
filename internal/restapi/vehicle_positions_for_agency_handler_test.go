@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -215,4 +216,19 @@ func TestVehiclePositionsForAgencyLooksUpRouteOwners(t *testing.T) {
 	trip := feed.Entity[0].GetVehicle().GetTrip()
 	assert.Equal(t, "25_24", trip.GetRouteId())
 	assert.Equal(t, "25_trip_without_block", trip.GetTripId())
+}
+
+// A block match already names the active trip's owner, so only vehicles
+// without one need their route looked up.
+func TestVehicleRouteAgenciesSkipsBlockMatchedTrips(t *testing.T) {
+	api := createTestApi(t)
+	blockMatched := exportVehicleOnRoute("1301", "matched_trip", "151")
+	blockMatched.Block = &internalgtfs.BlockMatch{TripID: "matched_trip", AgencyID: "25"}
+	unmatched := exportVehicleOnRoute("25_1302", "unmatched_trip", "24")
+	candidates := []vehicleExportCandidate{{vehicle: blockMatched}, {vehicle: unmatched}}
+
+	routeAgencies, err := api.vehicleRouteAgencies(context.Background(), candidates, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"24": "25"}, routeAgencies)
 }
