@@ -41,7 +41,6 @@ jobs:
         id: metadata
         uses: docker/metadata-action@v6
         with:
-          context: git
           images: ${{ env.IMAGE }}
           flavor: latest=false
           tags: |
