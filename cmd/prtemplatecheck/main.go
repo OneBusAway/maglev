@@ -3,7 +3,7 @@
 // comment and exits 0 when the description passes, 1 when it doesn't and 2
 // on a usage or read error.
 //
-//	go run ./cmd/prtemplatecheck -template .github/pull_request_template.md -body body.md [-draft]
+//	go run ./cmd/prtemplatecheck -template .github/pull_request_template.md -body body.md [-draft] [-author login]
 package main
 
 import (
@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -28,6 +29,10 @@ const (
 
 const checklistHint = " If this item doesn't apply to your PR, ask a maintainer."
 
+// githubLoginPattern is the shape of a GitHub username. Anything else is not
+// mentioned, so the comment can't carry markup from the event payload.
+var githubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -38,6 +43,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	templatePath := flags.String("template", "", "path to the PR template")
 	bodyPath := flags.String("body", "", "path to a file holding the PR description")
 	isDraft := flags.Bool("draft", false, "the PR is a draft, so the checklist is not enforced")
+	author := flags.String("author", "", "GitHub login of the PR author, mentioned when the check fails")
 	if err := flags.Parse(args); err != nil {
 		return exitErrors
 	}
@@ -53,7 +59,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	problems := checkBody(rules, body, *isDraft)
-	fmt.Fprint(stdout, renderReport(problems))
+	fmt.Fprint(stdout, renderReport(problems, *author))
 	if len(problems) > 0 {
 		return exitFail
 	}
@@ -76,7 +82,9 @@ func loadInputs(templatePath, bodyPath string) (templateRules, string, error) {
 	return rules, string(body), nil
 }
 
-func renderReport(problems []problem) string {
+// renderReport builds the bot comment. A failing report mentions the author
+// so the thread shows who needs to act.
+func renderReport(problems []problem, author string) string {
 	var report strings.Builder
 	report.WriteString(reportMarker + "\n")
 	if len(problems) == 0 {
@@ -84,7 +92,11 @@ func renderReport(problems []problem) string {
 		return report.String()
 	}
 
-	fmt.Fprintf(&report, "**The PR description does not follow the [PR template](%s).**\n\n", templateURL)
+	intro := "The PR description does not follow"
+	if githubLoginPattern.MatchString(author) {
+		intro = fmt.Sprintf("@%s, the PR description does not follow", author)
+	}
+	fmt.Fprintf(&report, "%s the [PR template](%s):\n\n", intro, templateURL)
 	for _, p := range problems {
 		message := p.Message
 		if p.Rule == ruleChecklist {
