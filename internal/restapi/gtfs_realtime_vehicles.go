@@ -47,10 +47,7 @@ func resolveVehicleOwner(vehicle internalgtfs.ExportVehicle) (string, string, bo
 // ordered by ID so entity numbering is deterministic.
 func selectExportVehicles(vehicles []internalgtfs.ExportVehicle, req gtfsRealtimeExportRequest) []vehicleExportCandidate {
 	var candidates []vehicleExportCandidate
-	for _, candidate := range newestAgencyVehicles(vehicles, req.AgencyID) {
-		if !isExportableVehicle(candidate.vehicle.Vehicle, req.Time) {
-			continue
-		}
+	for _, candidate := range newestAgencyVehicles(vehicles, req) {
 		if req.RouteFilterID != "" && candidate.vehicle.ActiveRouteID != req.RouteFilterID {
 			continue
 		}
@@ -62,14 +59,19 @@ func selectExportVehicles(vehicles []internalgtfs.ExportVehicle, req gtfsRealtim
 	return candidates
 }
 
-// newestAgencyVehicles returns the agency's vehicles, one record per vehicle
-// ID. Overlapping feeds can report the same vehicle, and legacy keeps one
-// status per agency-qualified vehicle ID, so the newest record wins.
-func newestAgencyVehicles(vehicles []internalgtfs.ExportVehicle, agencyID string) map[string]vehicleExportCandidate {
+// newestAgencyVehicles returns the agency's exportable vehicles, one record
+// per vehicle ID. Overlapping feeds can report the same vehicle, and legacy
+// keeps one status per agency-qualified vehicle ID, so the newest record
+// wins. Only exportable records compete, so a newer record without a
+// position cannot hide an older one that has one.
+func newestAgencyVehicles(vehicles []internalgtfs.ExportVehicle, req gtfsRealtimeExportRequest) map[string]vehicleExportCandidate {
 	byVehicleID := make(map[string]vehicleExportCandidate)
 	for _, vehicle := range vehicles {
+		if !isExportableVehicle(vehicle.Vehicle, req.Time) {
+			continue
+		}
 		ownerID, vehicleID, ok := resolveVehicleOwner(vehicle)
-		if !ok || ownerID != agencyID {
+		if !ok || ownerID != req.AgencyID {
 			continue
 		}
 		if seen, exists := byVehicleID[vehicleID]; exists && !isNewerVehicle(vehicle.Vehicle, seen.vehicle.Vehicle) {

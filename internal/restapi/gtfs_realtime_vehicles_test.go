@@ -110,6 +110,19 @@ func TestSelectExportVehiclesKeepsNewestRecordPerVehicle(t *testing.T) {
 		"the vehicle's newest record is on route B, so the older route A record must not resurface")
 }
 
+func TestSelectExportVehiclesSkipsNewerIneligibleRecord(t *testing.T) {
+	positioned := exportVehicleOnRoute("40_1301", "tA", "A")
+	positioned.Vehicle = positionedVehicle("40_1301", vehicleExportNow.Add(-30*time.Second))
+	newerWithoutPosition := exportVehicleOnRoute("40_1301", "tB", "B")
+	newerWithoutPosition.Vehicle = positionedVehicle("40_1301", vehicleExportNow.Add(-10*time.Second))
+	newerWithoutPosition.Vehicle.Position = nil
+
+	selected := selectExportVehicles([]internalgtfs.ExportVehicle{positioned, newerWithoutPosition}, vehicleExportRequest("40"))
+
+	require.Len(t, selected, 1)
+	assert.Equal(t, "tA", selected[0].vehicle.ActiveTripID)
+}
+
 func TestSelectExportVehiclesRouteFilter(t *testing.T) {
 	vehicles := []internalgtfs.ExportVehicle{
 		exportVehicleOnRoute("40_on_A", "tA", "A"),
