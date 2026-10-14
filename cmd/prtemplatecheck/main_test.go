@@ -27,6 +27,7 @@ func TestRun(t *testing.T) {
 		args         func(t *testing.T) []string
 		wantExitCode int
 		wantStdout   []string
+		rejectStdout []string
 		wantStderr   bool
 	}{
 		{
@@ -40,6 +41,31 @@ func TestRun(t *testing.T) {
 			args:         func(t *testing.T) []string { return []string{"-template", templatePath, "-body", writeBody(t, "")} },
 			wantExitCode: 1,
 			wantStdout:   []string{reportMarker, "doesn't use the PR template", "Keep this PR as Draft"},
+		},
+		{
+			name: "mentions_author_on_failure",
+			args: func(t *testing.T) []string {
+				return []string{"-template", templatePath, "-body", writeBody(t, ""), "-author", "tejasva-vardhan"}
+			},
+			wantExitCode: 1,
+			wantStdout:   []string{"@tejasva-vardhan, the PR description does not follow"},
+		},
+		{
+			name: "no_mention_on_pass",
+			args: func(t *testing.T) []string {
+				return []string{"-template", templatePath, "-body", writeBody(t, filled), "-author", "tejasva-vardhan"}
+			},
+			wantExitCode: 0,
+			rejectStdout: []string{"@tejasva-vardhan"},
+		},
+		{
+			name: "invalid_author_not_mentioned",
+			args: func(t *testing.T) []string {
+				return []string{"-template", templatePath, "-body", writeBody(t, ""), "-author", "x --><b>y</b>"}
+			},
+			wantExitCode: 1,
+			wantStdout:   []string{"The PR description does not follow"},
+			rejectStdout: []string{"@x", "<b>"},
 		},
 		{
 			name: "unchecked_box_hint",
@@ -81,6 +107,9 @@ func TestRun(t *testing.T) {
 			assert.Equal(t, tt.wantExitCode, exitCode, "stderr: %s", stderr.String())
 			for _, want := range tt.wantStdout {
 				assert.Contains(t, stdout.String(), want)
+			}
+			for _, reject := range tt.rejectStdout {
+				assert.NotContains(t, stdout.String(), reject)
 			}
 			if tt.wantStderr {
 				assert.NotEmpty(t, strings.TrimSpace(stderr.String()))
