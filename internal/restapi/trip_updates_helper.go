@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"math"
 	"slices"
+	"sort"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -101,6 +103,108 @@ func (api *RestAPI) collectBlockTripUpdates(tripIDs []string) []tripUpdateForTri
 		}
 	}
 	return out
+}
+
+// deviationSample is one entry of Java's ScheduleDeviationSamples: the
+// scheduled arrival, in seconds since the service date, of the stop a
+// StopTimeUpdate resolved to, and that update's deviation in seconds.
+type deviationSample struct {
+	scheduledArrival int64
+	deviation        int
+}
+
+// blockDeviationSamples mirrors how AbstractBlockLocationServiceImpl turns a
+// block's timepoint predictions into ScheduleDeviationSamples. Every
+// non-skipped StopTimeUpdate across the block that resolves to a scheduled
+// stop time contributes one sample keyed by that stop's scheduled arrival.
+// A departure prediction is preferred over an arrival one, and a later
+// update for the same key replaces an earlier one. Sorted by key.
+func (api *RestAPI) blockDeviationSamples(ctx context.Context, tripIDs []string, serviceDate, currentTime time.Time) []deviationSample {
+	tripUpdates := api.collectBlockTripUpdates(tripIDs)
+	if !slices.ContainsFunc(tripUpdates, func(t tripUpdateForTrip) bool { return len(t.tu.StopTimeUpdates) > 0 }) {
+		return nil
+	}
+
+	scheduled := api.loadScheduledForTrips(ctx, uniqueTripIDs(tripUpdates))
+	deviationByArrival := make(map[int64]int)
+	for _, t := range tripUpdates {
+		for _, stu := range t.tu.StopTimeUpdates {
+			if stu.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED {
+				continue
+			}
+			schedArr, schedDep := scheduleEntryForSTU(scheduled[t.tripID], stu, serviceDate, currentTime)
+			if deviation, ok := stuDeviation(stu, schedArr, schedDep, serviceDate); ok {
+				deviationByArrival[schedArr] = deviation
+			}
+		}
+	}
+
+	samples := make([]deviationSample, 0, len(deviationByArrival))
+	for scheduledArrival, deviation := range deviationByArrival {
+		samples = append(samples, deviationSample{scheduledArrival: scheduledArrival, deviation: deviation})
+	}
+	slices.SortFunc(samples, func(a, b deviationSample) int {
+		return cmp.Compare(a.scheduledArrival, b.scheduledArrival)
+	})
+	return samples
+}
+
+// stuDeviation is the deviation Java records for a timepoint prediction:
+// predicted minus scheduled departure when the update predicts a departure,
+// otherwise predicted minus scheduled arrival.
+func stuDeviation(stu gtfs.StopTimeUpdate, schedArr, schedDep int64, serviceDate time.Time) (int, bool) {
+	if predictedDeparture := stuPredictedFromEvent(stu.Departure, schedDep, serviceDate); predictedDeparture > 0 {
+		return int(predictedDeparture - schedDep), true
+	}
+	if predictedArrival := stuPredictedFromEvent(stu.Arrival, schedArr, serviceDate); predictedArrival > 0 {
+		return int(predictedArrival - schedArr), true
+	}
+	return 0, false
+}
+
+// deviationAtScheduledArrival mirrors Java's getBestScheduleDeviation, which
+// calls TransitInterpolationLibrary.interpolate with LAST_VALUE out of range
+// and PREVIOUS_VALUE in range: the deviation of the last sample at or before
+// scheduledArrival. It reports false for a stop upstream of every sample,
+// because Java refuses to propagate deviations upstream.
+func deviationAtScheduledArrival(samples []deviationSample, scheduledArrival int64) (int, bool) {
+	firstAfter := sort.Search(len(samples), func(i int) bool {
+		return samples[i].scheduledArrival > scheduledArrival
+	})
+	if firstAfter == 0 {
+		return 0, false
+	}
+	return samples[firstAfter-1].deviation, true
+}
+
+func uniqueTripIDs(tripUpdates []tripUpdateForTrip) []string {
+	tripIDs := make([]string, 0, len(tripUpdates))
+	seen := make(map[string]struct{}, len(tripUpdates))
+	for _, t := range tripUpdates {
+		if _, ok := seen[t.tripID]; ok {
+			continue
+		}
+		seen[t.tripID] = struct{}{}
+		tripIDs = append(tripIDs, t.tripID)
+	}
+	return tripIDs
+}
+
+// scheduleEntryForSTU resolves the scheduled arrival and departure, in
+// seconds since the service date, of the stop time a StopTimeUpdate targets.
+// It returns zeroes when the update matches no scheduled stop time.
+func scheduleEntryForSTU(schedMap map[string][]schedEntry, stu gtfs.StopTimeUpdate, serviceDate, currentTime time.Time) (schedArr, schedDep int64) {
+	switch {
+	case stu.StopID != nil:
+		refTime := stuReferenceTime(stu, serviceDate, currentTime)
+		return matchScheduleEntry(schedMap[*stu.StopID], stu.StopSequence, refTime)
+	case stu.StopSequence != nil:
+		// stop_id is optional in GTFS-RT when stop_sequence is given.
+		// schedMap is keyed by stop_id, so such an update has no key to
+		// look under and would otherwise contribute a zero scheduled time.
+		return matchScheduleEntryBySequence(schedMap, *stu.StopSequence)
+	}
+	return 0, 0
 }
 
 // pickTripLevelDeviation implements Java's unconditional overwrite: LAST
@@ -275,33 +379,12 @@ func stuPredictedFromEvent(event *gtfs.StopTimeEvent, sched int64, serviceDate t
 // predicted stop-time is closest to currentTime; tiebreak prefers stops
 // still in the future.
 func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []tripUpdateForTrip, serviceDate, currentTime time.Time) (int, bool) {
-	tripIDs := make([]string, 0, len(tripUpdates))
-	seen := make(map[string]struct{}, len(tripUpdates))
-	for _, t := range tripUpdates {
-		if _, ok := seen[t.tripID]; ok {
-			continue
-		}
-		seen[t.tripID] = struct{}{}
-		tripIDs = append(tripIDs, t.tripID)
-	}
-	scheduled := api.loadScheduledForTrips(ctx, tripIDs)
+	scheduled := api.loadScheduledForTrips(ctx, uniqueTripIDs(tripUpdates))
 	picker := newSTUDeviationPicker(utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate))
 
 	for _, t := range tripUpdates {
-		schedMap := scheduled[t.tripID]
 		for _, stu := range t.tu.StopTimeUpdates {
-			var schedArr, schedDep int64
-			switch {
-			case stu.StopID != nil:
-				refTime := stuReferenceTime(stu, serviceDate, currentTime)
-				schedArr, schedDep = matchScheduleEntry(schedMap[*stu.StopID], stu.StopSequence, refTime)
-			case stu.StopSequence != nil:
-				// stop_id is optional in GTFS-RT when stop_sequence is given.
-				// schedMap is keyed by stop_id, so such an update has no key to
-				// look under and would otherwise contribute a zero scheduled
-				// time, which picker.consider discards.
-				schedArr, schedDep = matchScheduleEntryBySequence(schedMap, *stu.StopSequence)
-			}
+			schedArr, schedDep := scheduleEntryForSTU(scheduled[t.tripID], stu, serviceDate, currentTime)
 			picker.consider(schedArr, stuPredictedFromEvent(stu.Arrival, schedArr, serviceDate))
 			picker.consider(schedDep, stuPredictedFromEvent(stu.Departure, schedDep, serviceDate))
 		}

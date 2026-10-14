@@ -456,6 +456,70 @@ func TestArrivalAndDepartureForStop_NoRealTimeDataUsesZeroPredictionTimes(t *tes
 	assert.True(t, entry.LastUpdateTime.IsZero())
 }
 
+// TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictedWithoutTimes
+// verifies that a StopTimeUpdate only for a later stop marks the arrival
+// predicted without propagating its deviation upstream, matching Java's
+// getBestScheduleDeviation.
+func TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictedWithoutTimes(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addDownstreamSTU(t, api, tripID, 174*time.Second)
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID("dp-agency", tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	require.NotNil(t, entry.TripStatus)
+	assert.True(t, entry.TripStatus.Predicted)
+	assert.Equal(t, 174, entry.TripStatus.ScheduleDeviation)
+	assert.True(t, entry.Predicted, "arrival.predicted should agree with tripStatus.predicted")
+	assert.True(t, entry.PredictedArrivalTime.IsZero(), "deviation must not propagate upstream")
+	assert.True(t, entry.PredictedDepartureTime.IsZero(), "deviation must not propagate upstream")
+}
+
+// TestArrivalAndDepartureForStop_EarlierBlockTripSTUPropagatesDownstream
+// verifies that a StopTimeUpdate on an earlier trip in the block predicts a
+// later trip's stop, matching Java's getBestScheduleDeviation carrying the
+// last deviation sample downstream.
+func TestArrivalAndDepartureForStop_EarlierBlockTripSTUPropagatesDownstream(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addEarlierBlockTripSTU(t, api, 174*time.Second)
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID("dp-agency", tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	assert.True(t, entry.Predicted)
+	// The stop's 5-minute dwell absorbs the delay before departure.
+	assert.Equal(t, entry.ScheduledArrivalTime.Add(174*time.Second).UnixMilli(), entry.PredictedArrivalTime.UnixMilli())
+	assert.Equal(t, entry.ScheduledDepartureTime.UnixMilli(), entry.PredictedDepartureTime.UnixMilli())
+}
+
 func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
