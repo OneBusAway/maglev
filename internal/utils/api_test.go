@@ -1072,6 +1072,41 @@ func TestParseRequiredFloatParam(t *testing.T) {
 	})
 }
 
+func TestParseEpochMillis(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		wantEpoch int64
+		wantOK    bool
+	}{
+		{name: "zero", value: "0", wantOK: true},
+		{name: "positive", value: "1609459200123", wantEpoch: 1609459200123, wantOK: true},
+		{name: "leading zeros", value: "0005", wantEpoch: 5, wantOK: true},
+		{name: "maximum int64", value: "9223372036854775807", wantEpoch: 9223372036854775807, wantOK: true},
+		{name: "empty", value: ""},
+		{name: "negative zero", value: "-0"},
+		{name: "leading plus", value: "+5"},
+		{name: "negative", value: "-5"},
+		{name: "overflow", value: "9223372036854775808"},
+		{name: "leading whitespace", value: " 5"},
+		{name: "trailing whitespace", value: "5 "},
+		{name: "decimal", value: "5.0"},
+		{name: "exponent", value: "5e3"},
+		{name: "hexadecimal", value: "0x5"},
+		{name: "underscore", value: "1_000"},
+		{name: "trailing junk", value: "5junk"},
+		{name: "Arabic digit", value: "٥"},
+		{name: "full-width digit", value: "５"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			epochMillis, ok := ParseEpochMillis(tt.value)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantEpoch, epochMillis)
+		})
+	}
+}
+
 func TestParseDate(t *testing.T) {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	if err != nil {
@@ -1182,10 +1217,22 @@ func TestParseBoolParam(t *testing.T) {
 			expectedValue: true,
 		},
 		{
-			name:          "Empty value takes the fallback",
+			name:          "Empty value is false despite true fallback",
 			params:        url.Values{"includeTrip": []string{""}},
 			fallback:      true,
-			expectedValue: true,
+			expectedValue: false,
+		},
+		{
+			name:          "Empty value with false fallback",
+			params:        url.Values{"includeTrip": []string{""}},
+			fallback:      false,
+			expectedValue: false,
+		},
+		{
+			name:          "Missing parameter with false fallback",
+			params:        url.Values{},
+			fallback:      false,
+			expectedValue: false,
 		},
 		{
 			name:          "Non-boolean value errors and keeps the fallback",

@@ -1,34 +1,48 @@
 package restapi
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
 
 // Benchmark arrivals endpoint (hot path).
+//
+// The RABA fixture's calendar ended 2025-12-31, so a real clock leaves every trip
+// out of service and the handler returns an empty list without ever entering its
+// per-arrival loop. Pin the clock inside the service window and ask for a stop
+// that has service then, the same pair the handler tests use.
 func BenchmarkArrivalsAndDeparturesForStop(b *testing.B) {
-	api, cleanup := createTestApiWithRealTimeData(b, clock.RealClock{})
+	api, cleanup := createTestApiWithRealTimeData(b, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
-
-	agencies := mustGetAgencies(b, api)
-	stops := mustGetStops(b, api)
-	if len(agencies) == 0 || len(stops) == 0 {
-		b.Fatal("no agencies or stops")
-	}
-	stopID := utils.FormCombinedID(agencies[0].ID, stops[0].ID)
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
-	req := httptest.NewRequest(http.MethodGet, "/api/where/arrivals-and-departures-for-stop/"+stopID+".json?key=TEST", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/where/arrivals-and-departures-for-stop/"+arrivalsTestStopID+".json?key=TEST", nil)
 
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		b.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	// Without this the benchmark still passes on an empty list, which is how it
+	// came to measure the empty path unnoticed.
+	var warmup ArrivalsAndDeparturesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &warmup); err != nil {
+		b.Fatalf("decode warmup response: %v", err)
+	}
+	if len(warmup.Data.Entry.ArrivalsAndDepartures) == 0 {
+		b.Fatal("no arrivals in the benchmark window")
 	}
 
 	b.ReportAllocs()
@@ -118,5 +132,43 @@ func BenchmarkTripDetails(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
+	}
+}
+
+func BenchmarkVehiclesForAgencyVehicleCount(b *testing.B) {
+	for _, vehicleCount := range []int{1, 10, 50} {
+		b.Run(strconv.Itoa(vehicleCount)+"Vehicles", func(b *testing.B) {
+			now := time.Date(2024, 11, 4, 12, 0, 0, 0, time.UTC)
+			api := createTestApiWithClock(b, clock.NewMockClock(now))
+			defer api.Shutdown()
+			b.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			trips, err := api.GtfsManager.GetTrips(context.Background(), int64(vehicleCount))
+			if err != nil {
+				b.Fatal(err)
+			}
+			for i, trip := range trips {
+				api.GtfsManager.MockAddVehicleWithOptions(
+					"bench_v_"+strconv.Itoa(i), trip.ID, trip.RouteID,
+					gtfs.MockVehicleOptions{Timestamp: &now})
+			}
+
+			mux := http.NewServeMux()
+			api.SetRoutes(mux)
+			req := httptest.NewRequest(http.MethodGet,
+				"/api/where/vehicles-for-agency/"+testdata.Raba.ID+".json?key=TEST", nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				b.Fatalf("expected 200, got %d", w.Code)
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
+			}
+		})
 	}
 }

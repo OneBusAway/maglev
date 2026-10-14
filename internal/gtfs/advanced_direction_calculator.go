@@ -28,28 +28,32 @@ type AdvancedDirectionCalculator struct {
 	shapeCache                 map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
 	initialized                atomic.Bool                                       // Tracks whether concurrent operations have started
 	cacheMutex                 sync.RWMutex                                      // Protects shapeCache map access
-	// directionResults caches computed stop directions.
-	// Only non-error results are cached; transient DB errors are never stored so that
-	// a recovered database will be retried on the next request.
-	// Lifecycle note: This map caches computed directions to reduce database load.
-	// It is explicitly cleared during GTFS reloads (via UpdateQueries) to prevent
-	// stale directions from persisting across dataset updates.
-	directionResults sync.Map           // Cached direction results (stopID -> string), includes negative cache
-	requestGroup     singleflight.Group // Prevents duplicate concurrent computations for the same stop
+	cache                      atomic.Pointer[directionCache]
+}
+
+// Each calculation retains its generation so work in flight during a reload cannot
+// populate the new caches or share a singleflight result with new requests.
+type directionCache struct {
+	directionResults sync.Map // stopID -> string, including unknown directions
+	tripDistances    sync.Map // tripID -> bool, including unusable sequences
+	requestGroup     singleflight.Group
+	tripGroup        singleflight.Group
 }
 
 // NewAdvancedDirectionCalculator creates a new advanced direction calculator
 func NewAdvancedDirectionCalculator(queries *gtfsdb.Queries) *AdvancedDirectionCalculator {
-	return &AdvancedDirectionCalculator{
+	calculator := &AdvancedDirectionCalculator{
 		queries:                    queries,
 		standardDeviationThreshold: defaultStandardDeviationThreshold,
 	}
+	calculator.cache.Store(&directionCache{})
+	return calculator
 }
 
-// ClearCache clears the direction result cache so stale entries from old GTFS
-// data are not served.
+// ClearCache replaces direction and trip validation caches after a GTFS reload.
+// In-flight calculations can only write to the retired generation.
 func (adc *AdvancedDirectionCalculator) ClearCache() {
-	adc.directionResults.Clear()
+	adc.cache.Store(&directionCache{})
 }
 
 // SetShapeCache is retained exclusively for use by the DirectionPrecomputer during startup.
@@ -68,6 +72,79 @@ func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.
 	return nil
 }
 
+// shapeDistancesCanLocateAStop reports whether a shape's shape_dist_traveled values
+// are usable for finding where along it a stop sits.
+//
+// GTFS requires the values to increase with shape_pt_sequence, but some feeds fill
+// the column with a constant placeholder instead of leaving it out. Matching against
+// a column like that puts every stop on the same point, so the whole trip reports the
+// orientation of one segment. Two distinct increasing values are the minimum that can
+// place a stop, since a single reference distance matches everything equally.
+//
+// Points without a distance are skipped rather than disqualifying the shape: a feed
+// that supplies the column for most points and omits a few is still usable.
+func shapeDistancesCanLocateAStop(points []gtfsdb.GetShapePointsWithDistanceRow) bool {
+	withDistance := 0
+	previous := 0.0
+	for _, point := range points {
+		if !point.ShapeDistTraveled.Valid {
+			continue
+		}
+		if withDistance > 0 && point.ShapeDistTraveled.Float64 <= previous {
+			return false
+		}
+		previous = point.ShapeDistTraveled.Float64
+		withDistance++
+	}
+	return withDistance >= 2
+}
+
+// stopDistancesCanLocateStops checks supplied distances in stop_sequence order.
+// Missing values do not disqualify increasing supplied values; those occurrences
+// still use geographic matching. A single value cannot establish trip progress.
+func stopDistancesCanLocateStops(rows []gtfsdb.StopTime) bool {
+	count := 0
+	previous := 0.0
+	for _, row := range rows {
+		distance := row.ShapeDistTraveled
+		if !distance.Valid {
+			continue
+		}
+		value := distance.Float64
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+		if count > 0 && value <= previous {
+			return false
+		}
+		previous = value
+		count++
+	}
+	return count >= 2
+}
+
+func (adc *AdvancedDirectionCalculator) tripStopDistancesUsable(ctx context.Context, tripID string, cache *directionCache) (bool, error) {
+	if cached, ok := cache.tripDistances.Load(tripID); ok {
+		return cached.(bool), nil
+	}
+	value, err, _ := cache.tripGroup.Do(tripID, func() (any, error) {
+		if cached, ok := cache.tripDistances.Load(tripID); ok {
+			return cached.(bool), nil
+		}
+		rows, err := adc.queries.GetStopTimesForTrip(ctx, tripID)
+		if err != nil {
+			return false, err
+		}
+		usable := stopDistancesCanLocateStops(rows)
+		cache.tripDistances.Store(tripID, usable)
+		return usable, nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return value.(bool), nil
+}
+
 // CalculateStopDirection computes the direction for a stop using the Java algorithm
 func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Context, stopID string, gtfsDirection ...sql.NullString) string {
 	if len(gtfsDirection) > 0 && gtfsDirection[0].Valid && gtfsDirection[0].String != "" {
@@ -77,7 +154,8 @@ func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Conte
 	}
 
 	// Check the in-memory result cache (includes negative cache for empty results)
-	if cached, ok := adc.directionResults.Load(stopID); ok {
+	cache := adc.cache.Load()
+	if cached, ok := cache.directionResults.Load(stopID); ok {
 		return cached.(string)
 	}
 
@@ -86,20 +164,20 @@ func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Conte
 
 	// Fall back to computing from shapes, protected by singleflight
 	// This ensures concurrent requests for the SAME stopID don't hit the DB multiple times.
-	v, _, _ := adc.requestGroup.Do(stopID, func() (any, error) {
+	v, _, _ := cache.requestGroup.Do(stopID, func() (any, error) {
 		// Double-check cache inside the singleflight in case another goroutine just finished it
-		if cached, ok := adc.directionResults.Load(stopID); ok {
+		if cached, ok := cache.directionResults.Load(stopID); ok {
 			return cached.(string), nil
 		}
 
 		// Actually compute it (Hits the DB)
-		computedDir, err := adc.computeFromShapes(context.WithoutCancel(ctx), stopID)
+		computedDir, err := adc.computeFromShapesWithCache(context.WithoutCancel(ctx), stopID, cache)
 
 		// Only cache when there was no transient error. A transient error (e.g. DB
 		// connection lost) must not permanently poison the cache; omitting it here
 		// means the next request will retry the DB.
 		if err == nil {
-			adc.directionResults.Store(stopID, computedDir)
+			cache.directionResults.Store(stopID, computedDir)
 		}
 
 		// Intentionally return nil so singleflight shares the empty fallback result with concurrent callers.
@@ -160,6 +238,10 @@ func (adc *AdvancedDirectionCalculator) translateGtfsDirection(direction string)
 // data for the stop (safe to cache), or ("", err) on a transient database error
 // (must NOT be cached so the next request retries the DB).
 func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, stopID string) (string, error) {
+	return adc.computeFromShapesWithCache(ctx, stopID, adc.cache.Load())
+}
+
+func (adc *AdvancedDirectionCalculator) computeFromShapesWithCache(ctx context.Context, stopID string, cache *directionCache) (string, error) {
 	stopTrips, err := adc.queries.GetStopsWithShapeContext(ctx, stopID)
 	if err != nil {
 		slog.Warn("failed to get stop shape context",
@@ -168,21 +250,8 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 		return "", err
 	}
 
-	// Collect orientations from all trips, using cache to avoid duplicates
-	type shapeKey struct {
-		shapeID      string
-		distTraveled float64
-		useGeo       bool // true when using geographic matching instead of distance
-	}
-	orientationCache := make(map[shapeKey]float64)
+	orientationCache := make(map[shapeOrientationKey]float64)
 	var orientations []float64
-
-	// Get stop coordinates (same for all trips)
-	var stopLat, stopLon float64
-	if len(stopTrips) > 0 {
-		stopLat = stopTrips[0].Lat
-		stopLon = stopTrips[0].Lon
-	}
 
 	var lastTransientErr error
 
@@ -191,31 +260,22 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 			continue
 		}
 
-		shapeID := stopTrip.ShapeID.String
-		distTraveled := -1.0 // Use -1 to signal geographic matching
-		useGeo := false
-
-		// Prefer shape_dist_traveled if available
-		if stopTrip.ShapeDistTraveled.Valid {
-			distTraveled = stopTrip.ShapeDistTraveled.Float64
-		} else {
-			useGeo = true
+		key, err := adc.orientationKeyForTrip(ctx, stopTrip, cache)
+		if err != nil {
+			return "", err
 		}
-
-		// Check cache first
-		key := shapeKey{shapeID, distTraveled, useGeo}
 		if cachedOrientation, found := orientationCache[key]; found {
 			orientations = append(orientations, cachedOrientation)
 			continue
 		}
 
 		// Calculate orientation at this stop location using shape point window
-		orientation, err := adc.calculateOrientationAtStop(ctx, shapeID, distTraveled, stopLat, stopLon)
+		orientation, err := adc.calculateOrientationAtStop(ctx, key.shapeID, key.distTraveled, stopTrip.Lat, stopTrip.Lon)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				slog.Warn("failed to calculate orientation at stop",
 					slog.String("stopID", stopID),
-					slog.String("shapeID", shapeID),
+					slog.String("shapeID", key.shapeID),
 					slog.String("error", err.Error()))
 				lastTransientErr = err
 			}
@@ -228,15 +288,37 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 	}
 
 	if len(orientations) == 0 {
-		if lastTransientErr != nil {
-			return "", lastTransientErr
-		}
-		return "", nil
+		return "", lastTransientErr
 	}
+	return adc.directionFromOrientations(orientations), nil
+}
 
+type shapeOrientationKey struct {
+	shapeID      string
+	distTraveled float64
+	useGeo       bool
+}
+
+func (adc *AdvancedDirectionCalculator) orientationKeyForTrip(ctx context.Context, stopTrip gtfsdb.GetStopsWithShapeContextRow, cache *directionCache) (shapeOrientationKey, error) {
+	key := shapeOrientationKey{shapeID: stopTrip.ShapeID.String, distTraveled: -1, useGeo: true}
+	if !(stopTrip.ShapeDistTraveled.Valid && stopTrip.ShapeDistTraveled.Float64 >= 0) {
+		return key, nil
+	}
+	usable, err := adc.tripStopDistancesUsable(ctx, stopTrip.TripID, cache)
+	if err != nil {
+		return key, err
+	}
+	if usable {
+		key.distTraveled = stopTrip.ShapeDistTraveled.Float64
+		key.useGeo = false
+	}
+	return key, nil
+}
+
+func (adc *AdvancedDirectionCalculator) directionFromOrientations(orientations []float64) string {
 	// Single orientation - return it directly
 	if len(orientations) == 1 {
-		return adc.getAngleAsDirection(orientations[0]), nil
+		return adc.getAngleAsDirection(orientations[0])
 	}
 
 	// Calculate mean orientation vector
@@ -252,7 +334,7 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 	// Intentional improvement over Java's exact == 0.0 comparison;
 	// floating-point mean of cos/sin values is unlikely to be exactly zero.
 	if math.Abs(xMu) < 1e-6 && math.Abs(yMu) < 1e-6 {
-		return "", nil
+		return ""
 	}
 
 	// Calculate standard deviation and compare against threshold
@@ -262,7 +344,7 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 	xStdDev := math.Sqrt(xVariance)
 	yStdDev := math.Sqrt(yVariance)
 	if xStdDev > adc.standardDeviationThreshold || yStdDev > adc.standardDeviationThreshold {
-		return "", nil // Too much variance
+		return "" // Too much variance
 	}
 
 	// Calculate median orientation
@@ -286,7 +368,7 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 	slices.Sort(normalizedThetas)
 	thetaMedian := median(normalizedThetas)
 
-	return adc.getAngleAsDirection(thetaMedian), nil
+	return adc.getAngleAsDirection(thetaMedian)
 }
 
 // calculateOrientationAtStop calculates the orientation at a stop using a window of shape points
@@ -325,7 +407,7 @@ func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.C
 	minDiff := math.MaxFloat64
 
 	// Use shape_dist_traveled if available (distTraveled >= 0)
-	if distTraveled >= 0 {
+	if distTraveled >= 0 && shapeDistancesCanLocateAStop(shapePoints) {
 		// Find the closest shape point using shape_dist_traveled
 		for i, point := range shapePoints {
 			if point.ShapeDistTraveled.Valid {
@@ -338,8 +420,8 @@ func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.C
 		}
 	}
 
-	// Fall back to geographic matching when shape_dist_traveled is not available
-	if minDiff == math.MaxFloat64 && stopLat != 0 && stopLon != 0 {
+	// Stop coordinates are non-nullable; zero is a valid latitude or longitude.
+	if minDiff == math.MaxFloat64 {
 		for i, point := range shapePoints {
 			distance := utils.Distance(stopLat, stopLon, point.Lat, point.Lon)
 			if distance < minDiff {

@@ -1,7 +1,10 @@
 package restapi
 
 import (
+	"cmp"
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -14,6 +17,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -73,7 +77,8 @@ type stopArrivalsResult struct {
 // since the ±1-day window can match the same trip on adjacent service days.
 type activeStopTime struct {
 	gtfsdb.GetStopTimesForStopInWindowRow
-	ServiceDate time.Time
+	ServiceDate servicedate.Date
+	Location    *time.Location
 }
 
 // arrivalsForStop computes the arrivals and departures for a single stop over
@@ -111,7 +116,6 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 		}
 
 		st := ast.GetStopTimesForStopInWindowRow
-		serviceMidnight := ast.ServiceDate
 
 		route, routeExists := routesLookup[st.RouteID]
 		if !routeExists {
@@ -141,7 +145,8 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 		arrival := api.buildArrival(ctx, arrivalInput{
 			stopTime:         st,
 			route:            route,
-			serviceMidnight:  serviceMidnight,
+			serviceDate:      ast.ServiceDate,
+			location:         ast.Location,
 			queryTime:        in.QueryTime,
 			stopCode:         in.StopCode,
 			stopID:           stopID,
@@ -155,58 +160,192 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 	return result, nil
 }
 
+// timezoneGroup holds the agencies sharing a single distinct timezone
+// *time.Location. Service days and query windows depend only on the timezone,
+// so one pass per group keeps the query count flat no matter how many agencies
+// share that timezone.
+type timezoneGroup struct {
+	location *time.Location
+	agencies map[string]struct{}
+}
+
 // activeStopTimesForWindow collects the stop_times falling inside the request
-// window across yesterday, today and tomorrow, so trips whose service day
-// started before midnight are not dropped.
+// window across yesterday, today and tomorrow, resolving each serving agency
+// in its own timezone so trips from agencies in other timezones are not dropped.
+//
+// Agencies are grouped by distinct timezone: a stop served by five agencies in
+// one timezone costs the same six service/window queries as a single agency.
 func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrivalsInput) ([]activeStopTime, error) {
-	reqLogger := logging.ForComponent(ctx, "http_server")
-	windowStart := in.QueryTime.Add(-in.Before)
-	windowEnd := in.QueryTime.Add(in.After)
+	discovery, err := api.discoverStopAgencies(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	groups, groupKeys := groupAgenciesByTimezone(discovery.locations)
+	primaryGroupKey := in.Location.String()
 
 	var allActiveStopTimes []activeStopTime
-
-	for dayOffset := -1; dayOffset <= 1; dayOffset++ {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		dayStopTimes, err := api.stopTimesForServiceDay(ctx, in, dayOffset, windowStart, windowEnd)
+	for _, key := range groupKeys {
+		groupRows, err := api.collectGroupWindow(ctx, in, discovery.routeAgency, groups[key], key == primaryGroupKey)
 		if err != nil {
-			// dayOffset==0 is the user's actual service date — silently
-			// dropping it would emit a 200 with the most important day's
-			// arrivals missing. Fail loud for that case so clients can
-			// retry. ±1-day failures stay best-effort (window-spillover only).
-			if dayOffset == 0 {
-				return nil, err
-			}
-			reqLogger.Warn("failed to resolve services for window-spillover day, skipping",
-				slog.Int("day_offset", dayOffset),
-				slog.Any("error", err))
-			continue
+			return nil, err
 		}
-		allActiveStopTimes = append(allActiveStopTimes, dayStopTimes...)
+		allActiveStopTimes = append(allActiveStopTimes, groupRows...)
 	}
+
+	// Stable sort over a deterministic input order: ties on scheduled arrival
+	// (e.g. two agencies' trips due the same minute) keep a fixed order
+	// instead of varying per request with the map iteration order.
+	slices.SortStableFunc(allActiveStopTimes, func(a, b activeStopTime) int {
+		timeA := a.ServiceDate.Start(a.Location).Add(time.Duration(a.ArrivalTime))
+		timeB := b.ServiceDate.Start(b.Location).Add(time.Duration(b.ArrivalTime))
+		if timeA.Before(timeB) {
+			return -1
+		}
+		if timeA.After(timeB) {
+			return 1
+		}
+		if c := cmp.Compare(a.TripID, b.TripID); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.StopSequence, b.StopSequence)
+	})
 
 	return allActiveStopTimes, nil
 }
 
-// stopTimesForServiceDay returns the stop_times of a single service day that
-// fall inside the window, keeping only those whose service is active that day.
-//
-// The two failure modes are deliberately different: not being able to resolve
-// the day's active services is returned to the caller, which decides whether
-// that day is essential, while an unreadable stop_times page is logged and
-// yields no rows.
-func (api *RestAPI) stopTimesForServiceDay(
+// stopAgencyDiscovery holds what activeStopTimesForWindow learns about a stop
+// before evaluating service days: which agency each route belongs to, and the
+// timezone location of every agency serving the stop.
+type stopAgencyDiscovery struct {
+	routeAgency map[string]string
+	locations   map[string]*time.Location
+}
+
+// discoverStopAgencies finds the routes and agencies serving a stop and resolves
+// each agency's timezone location. Database errors during route discovery or
+// agency lookup, as well as invalid timezones, are returned to fail the request
+// rather than silently dropping arrivals or calculating them in the wrong timezone.
+// Agencies missing entirely from the database (sql.ErrNoRows) are skipped.
+func (api *RestAPI) discoverStopAgencies(ctx context.Context, in stopArrivalsInput) (stopAgencyDiscovery, error) {
+	discovery := stopAgencyDiscovery{
+		routeAgency: make(map[string]string),
+		locations:   make(map[string]*time.Location),
+	}
+
+	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, in.StopCode)
+	if err != nil {
+		return stopAgencyDiscovery{}, fmt.Errorf("fetch routes for stop %s: %w", in.StopCode, err)
+	}
+	for _, r := range routes {
+		discovery.routeAgency[r.ID] = r.AgencyID
+		if _, exists := discovery.locations[r.AgencyID]; !exists {
+			discovery.locations[r.AgencyID] = nil
+		}
+	}
+
+	// Always ensure the stop's primary agency is represented with its known location
+	discovery.locations[in.AgencyID] = in.Location
+
+	// Resolve timezone locations for all other agencies serving this stop
+	for agencyID, loc := range discovery.locations {
+		if loc != nil {
+			continue
+		}
+		agencyLoc, err := api.resolveAgencyLocation(ctx, agencyID)
+		if err != nil {
+			return stopAgencyDiscovery{}, err
+		}
+		if agencyLoc == nil {
+			delete(discovery.locations, agencyID)
+			continue
+		}
+		discovery.locations[agencyID] = agencyLoc
+	}
+	return discovery, nil
+}
+
+// resolveAgencyLocation loads one agency's timezone location. If the agency row
+// is missing (sql.ErrNoRows), it returns (nil, nil) so the agency can be skipped.
+// Real database or timezone loading errors are returned.
+func (api *RestAPI) resolveAgencyLocation(ctx context.Context, agencyID string) (*time.Location, error) {
+	ag, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("fetch agency %s for timezone resolution: %w", agencyID, err)
+	}
+	agLoc, err := loadAgencyLocation(ag.ID, ag.Timezone)
+	if err != nil {
+		return nil, fmt.Errorf("load timezone for agency %s: %w", ag.ID, err)
+	}
+	return agLoc, nil
+}
+
+// groupAgenciesByTimezone clusters agency IDs by distinct timezone and returns
+// the groups with their keys in sorted order, so callers iterate deterministically.
+func groupAgenciesByTimezone(locations map[string]*time.Location) (map[string]*timezoneGroup, []string) {
+	groups := make(map[string]*timezoneGroup)
+	for agencyID, agencyLoc := range locations {
+		key := agencyLoc.String()
+		group, ok := groups[key]
+		if !ok {
+			group = &timezoneGroup{location: agencyLoc, agencies: make(map[string]struct{})}
+			groups[key] = group
+		}
+		group.agencies[agencyID] = struct{}{}
+	}
+	return groups, slices.Sorted(maps.Keys(groups))
+}
+
+// collectGroupWindow gathers the stop_times of yesterday, today and tomorrow for
+// one timezone group that fall inside the request window. A day-0 failure in any
+// group is returned so the request fails loud instead of emitting a 200
+// with the most important day's arrivals missing; window-spillover days are
+// best-effort and only log on error.
+func (api *RestAPI) collectGroupWindow(ctx context.Context, in stopArrivalsInput, routeAgencyMap map[string]string, group *timezoneGroup, isPrimaryGroup bool) ([]activeStopTime, error) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
+	var groupRows []activeStopTime
+	for dayOffset := -1; dayOffset <= 1; dayOffset++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		dayStopTimes, err := api.stopTimesForGroupServiceDay(ctx, in, group, isPrimaryGroup, routeAgencyMap, dayOffset)
+		if err != nil {
+			if dayOffset == 0 {
+				return nil, err
+			}
+			reqLogger.Warn("failed to resolve services for window-spillover day, skipping",
+				slog.String("timezone", group.location.String()),
+				slog.Int("day_offset", dayOffset),
+				slog.Any("error", err))
+			continue
+		}
+		groupRows = append(groupRows, dayStopTimes...)
+	}
+	return groupRows, nil
+}
+
+// stopTimesForGroupServiceDay returns the stop_times of a single service day for one
+// timezone group that fall inside the window, keeping only those whose service is
+// active that day and whose route belongs to the group. Rows whose route has no
+// known agency are attributed to the primary group only, so they are neither
+// dropped nor duplicated.
+func (api *RestAPI) stopTimesForGroupServiceDay(
 	ctx context.Context,
 	in stopArrivalsInput,
+	group *timezoneGroup,
+	isPrimaryGroup bool,
+	routeAgencyMap map[string]string,
 	dayOffset int,
-	windowStart, windowEnd time.Time,
 ) ([]activeStopTime, error) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
-	targetDate := in.QueryTime.AddDate(0, 0, dayOffset)
-	serviceMidnight := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, in.Location)
-	serviceDateStr := targetDate.Format("20060102")
+	agencyLoc := group.location
+	windowStart := in.QueryTime.Add(-in.Before)
+	windowEnd := in.QueryTime.Add(in.After)
+	serviceDate := servicedate.Of(in.QueryTime.In(agencyLoc)).AddDays(dayOffset)
+	serviceStart := serviceDate.Start(agencyLoc)
+	serviceDateStr := serviceDate.String()
 
 	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
 	if err != nil {
@@ -216,14 +355,14 @@ func (api *RestAPI) stopTimesForServiceDay(
 		return nil, nil
 	}
 
-	endOffset := windowEnd.Sub(serviceMidnight)
+	endOffset := windowEnd.Sub(serviceStart)
 	if endOffset < 0 {
 		return nil, nil
 	}
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForStopInWindow(ctx, gtfsdb.GetStopTimesForStopInWindowParams{
 		StopID:           in.StopCode,
-		WindowStartNanos: windowStart.Sub(serviceMidnight).Nanoseconds(),
+		WindowStartNanos: windowStart.Sub(serviceStart).Nanoseconds(),
 		WindowEndNanos:   endOffset.Nanoseconds(),
 	})
 	if err != nil {
@@ -240,14 +379,318 @@ func (api *RestAPI) stopTimesForServiceDay(
 
 	dayStopTimes := make([]activeStopTime, 0, len(stopTimes))
 	for _, st := range stopTimes {
+		if routeAgency, ok := routeAgencyMap[st.RouteID]; ok {
+			if _, inGroup := group.agencies[routeAgency]; !inGroup {
+				continue
+			}
+		} else if !isPrimaryGroup {
+			continue
+		}
 		if activeServiceIDSet[st.ServiceID] {
 			dayStopTimes = append(dayStopTimes, activeStopTime{
 				GetStopTimesForStopInWindowRow: st,
-				ServiceDate:                    serviceMidnight,
+				ServiceDate:                    serviceDate,
+				Location:                       agencyLoc,
 			})
 		}
 	}
 	return dayStopTimes, nil
+}
+
+// multiStopArrivalsInput carries the per-request values the batched multi-stop
+// arrivals pipeline needs.
+type multiStopArrivalsInput struct {
+	Stops      []gtfsdb.Stop
+	Agencies   *stopAgencyIndex
+	QueryTime  time.Time
+	Before     time.Duration
+	After      time.Duration
+	RouteTypes []int // nil or empty means no route-type filter
+}
+
+// batchedActiveStopTime pairs a stop_time row matched for one stop with that
+// stop's agency and query instant, so the shared row loop builds arrivals
+// exactly as the per-stop pipeline would.
+type batchedActiveStopTime struct {
+	activeStopTime
+	StopCode  string
+	AgencyID  string
+	Location  *time.Location
+	QueryTime time.Time
+}
+
+// batchedArrivalLookups groups the four entity maps batchArrivalEntities
+// resolves, so the row loop takes one lookups parameter instead of four.
+type batchedArrivalLookups struct {
+	routes      map[string]gtfsdb.Route
+	trips       map[string]gtfsdb.Trip
+	stopCounts  map[string]int
+	frequencies map[string][]gtfsdb.Frequency
+}
+
+// arrivalsForStops computes arrivals for every stop in the input with one
+// batched pass: active service IDs resolve once per service date, stop_times
+// load once per agency per day, and arrival entities resolve once for the whole
+// request. Filtering and accumulator semantics match the per-stop
+// arrivalsForStop pipeline it replaces for multi-stop callers.
+//
+// Callers are responsible for installing a request-scoped snapshot cache
+// (WithSnapshotCache) before the first call, as with arrivalsForStop.
+func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsInput, acc *arrivalsAccumulator) ([]models.ArrivalAndDeparture, error) {
+	arrivals := make([]models.ArrivalAndDeparture, 0)
+
+	groups := groupStopsByAgency(in.Stops, in.Agencies, in.QueryTime)
+
+	// Active service IDs per YYYYMMDD date, shared by every group whose agency
+	// resolves to the same service day.
+	activeByDate := make(map[string]map[string]bool)
+
+	allActive, err := api.loadBatchedStopTimes(ctx, in, groups, activeByDate)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(allActive) == 0 {
+		return arrivals, nil
+	}
+
+	plain := make([]activeStopTime, len(allActive))
+	for i, b := range allActive {
+		plain[i] = b.activeStopTime
+		acc.stopIDs[b.StopCode] = true
+	}
+
+	routesLookup, tripsLookup, tripStopCountMap, freqMap, err := api.batchArrivalEntities(ctx, plain)
+	if err != nil {
+		return nil, err
+	}
+
+	arrivals, err = api.buildArrivalsFromRows(ctx, allActive, in, acc, batchedArrivalLookups{
+		routes:      routesLookup,
+		trips:       tripsLookup,
+		stopCounts:  tripStopCountMap,
+		frequencies: freqMap,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Stop-level alerts, once per stop — mirrors the per-stop pipeline.
+	for _, stop := range in.Stops {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), in.Agencies.agencyIDFor(stop.ID))
+	}
+
+	return arrivals, nil
+}
+
+// agencyGroup is one timezone-shared set of stops: a single query instant,
+// window and set of service dates covers the whole group.
+type agencyGroup struct {
+	agencyID  string
+	location  *time.Location
+	queryTime time.Time
+	stopIDs   []string
+}
+
+// groupStopsByAgency groups stops by agency. Groups track first-seen order so
+// the pre-sort arrival sequence stays deterministic.
+func groupStopsByAgency(stops []gtfsdb.Stop, agencies *stopAgencyIndex, queryTime time.Time) []agencyGroup {
+	groupIndex := make(map[string]int)
+	var groups []agencyGroup
+	for _, stop := range stops {
+		agencyID := agencies.agencyIDFor(stop.ID)
+		if i, ok := groupIndex[agencyID]; ok {
+			groups[i].stopIDs = append(groups[i].stopIDs, stop.ID)
+			continue
+		}
+		location := agencies.locationFor(stop.ID)
+		groupIndex[agencyID] = len(groups)
+		groups = append(groups, agencyGroup{
+			agencyID:  agencyID,
+			location:  location,
+			queryTime: queryTime.In(location),
+			stopIDs:   []string{stop.ID},
+		})
+	}
+	return groups
+}
+
+// loadBatchedStopTimes collects the active stop_times for every group, keeping
+// first-seen group order, dayOffset -1..1 within a group, and query-row order
+// within a day.
+func (api *RestAPI) loadBatchedStopTimes(ctx context.Context, in multiStopArrivalsInput, groups []agencyGroup, activeByDate map[string]map[string]bool) ([]batchedActiveStopTime, error) {
+	var allActive []batchedActiveStopTime
+	for _, group := range groups {
+		for dayOffset := -1; dayOffset <= 1; dayOffset++ {
+			if err := api.appendBatchedStopTimesForDay(ctx, group, dayOffset, in, activeByDate, &allActive); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return allActive, nil
+}
+
+// appendBatchedStopTimesForDay appends one group's stop_times for one service
+// day, filtered to routes serving the day and times inside the window.
+func (api *RestAPI) appendBatchedStopTimesForDay(ctx context.Context, group agencyGroup, dayOffset int, in multiStopArrivalsInput, activeByDate map[string]map[string]bool, allActive *[]batchedActiveStopTime) error {
+	reqLogger := logging.ForComponent(ctx, "http_server")
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	serviceDate := servicedate.Of(group.queryTime.In(group.location)).AddDays(dayOffset)
+	serviceStart := serviceDate.Start(group.location)
+	serviceDateStr := serviceDate.String()
+
+	activeSet, err := api.activeServicesForDate(ctx, serviceDateStr, dayOffset, activeByDate)
+	if err != nil {
+		return err
+	}
+	if activeSet == nil || len(activeSet) == 0 {
+		return nil
+	}
+
+	windowStartNanos := group.queryTime.Add(-in.Before).Sub(serviceStart).Nanoseconds()
+	windowEndNanos := group.queryTime.Add(in.After).Sub(serviceStart).Nanoseconds()
+	if windowEndNanos < 0 {
+		return nil
+	}
+
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForStopsInWindow(ctx, gtfsdb.GetStopTimesForStopsInWindowParams{
+		StopIds:          group.stopIDs,
+		WindowStartNanos: windowStartNanos,
+		WindowEndNanos:   windowEndNanos,
+	})
+	if err != nil {
+		// Mirrors stopTimesForServiceDay: an unreadable stop_times
+		// page is logged and yields no rows, even for day 0.
+		reqLogger.Warn("failed to query stop times in window",
+			slog.Any("error", err))
+		return nil
+	}
+
+	for _, row := range rows {
+		if !activeSet[row.ServiceID] {
+			continue
+		}
+		*allActive = append(*allActive, batchedActiveStopTime{
+			activeStopTime: activeStopTime{
+				GetStopTimesForStopInWindowRow: convertStopsInWindowRow(row),
+				ServiceDate:                    serviceDate,
+			},
+			StopCode:  row.StopID,
+			AgencyID:  group.agencyID,
+			Location:  group.location,
+			QueryTime: group.queryTime,
+		})
+	}
+	return nil
+}
+
+// activeServicesForDate resolves the active service IDs for one service date,
+// memoizing them in activeByDate. A nil map (with nil error) means the caller
+// should skip the day: a ±1-day window-spillover failure is best-effort, while
+// a dayOffset==0 failure is fatal because the user's actual service date is
+// the most important day's arrivals.
+func (api *RestAPI) activeServicesForDate(ctx context.Context, serviceDateStr string, dayOffset int, activeByDate map[string]map[string]bool) (map[string]bool, error) {
+	if set, ok := activeByDate[serviceDateStr]; ok {
+		return set, nil
+	}
+
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
+	if err != nil {
+		if dayOffset == 0 {
+			return nil, fmt.Errorf("query active service IDs for %s: %w", serviceDateStr, err)
+		}
+		logging.ForComponent(ctx, "http_server").Warn("failed to resolve services for window-spillover day, skipping",
+			slog.Int("day_offset", dayOffset),
+			slog.Any("error", err))
+		return nil, nil
+	}
+
+	set := make(map[string]bool, len(activeServiceIDs))
+	for _, sid := range activeServiceIDs {
+		set[sid] = true
+	}
+	activeByDate[serviceDateStr] = set
+	return set, nil
+}
+
+// buildArrivalsFromRows converts the batched stop_times into arrivals,
+// registering the routes and trips the retained arrivals need.
+func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batchedActiveStopTime, in multiStopArrivalsInput, acc *arrivalsAccumulator, lookups batchedArrivalLookups) ([]models.ArrivalAndDeparture, error) {
+	reqLogger := logging.ForComponent(ctx, "http_server")
+	arrivals := make([]models.ArrivalAndDeparture, 0, len(allActive))
+
+	for _, b := range allActive {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		st := b.GetStopTimesForStopInWindowRow
+
+		route, routeExists := lookups.routes[st.RouteID]
+		if !routeExists {
+			reqLogger.Debug("skipping stop time: route not found in batch fetch",
+				slog.String("routeID", st.RouteID),
+				slog.String("tripID", st.TripID))
+			continue
+		}
+
+		trip, tripExists := lookups.trips[st.TripID]
+		if !tripExists {
+			reqLogger.Debug("skipping stop time: trip not found in batch fetch",
+				slog.String("tripID", st.TripID),
+				slog.String("routeID", st.RouteID))
+			continue
+		}
+
+		if !isRouteTypeAllowed(route.Type, in.RouteTypes) {
+			continue
+		}
+
+		rCopy := route
+		acc.routes[route.ID] = &rCopy
+		tCopy := trip
+		acc.trips[trip.ID] = &tCopy
+
+		arrival := api.buildArrival(ctx, arrivalInput{
+			stopTime:         st,
+			route:            route,
+			serviceDate:      b.ServiceDate,
+			location:         b.Location,
+			queryTime:        b.QueryTime,
+			stopCode:         b.StopCode,
+			stopID:           utils.FormCombinedID(b.AgencyID, b.StopCode),
+			totalStopsInTrip: lookups.stopCounts[st.TripID],
+			freqMap:          lookups.frequencies,
+		}, acc)
+
+		arrivals = append(arrivals, *arrival)
+	}
+	return arrivals, nil
+}
+
+// convertStopsInWindowRow adapts the multi-stop window row to the single-stop
+// row shape the rest of the arrivals pipeline consumes. The columns are
+// identical; only the sqlc-generated Go types differ per query.
+func convertStopsInWindowRow(row gtfsdb.GetStopTimesForStopsInWindowRow) gtfsdb.GetStopTimesForStopInWindowRow {
+	return gtfsdb.GetStopTimesForStopInWindowRow{
+		TripID:        row.TripID,
+		ArrivalTime:   row.ArrivalTime,
+		DepartureTime: row.DepartureTime,
+		StopID:        row.StopID,
+		StopSequence:  row.StopSequence,
+		StopHeadsign:  row.StopHeadsign,
+		RouteID:       row.RouteID,
+		ServiceID:     row.ServiceID,
+		TripHeadsign:  row.TripHeadsign,
+		BlockID:       row.BlockID,
+	}
 }
 
 // batchArrivalEntities resolves every route, trip, per-trip stop count and
@@ -292,6 +735,35 @@ func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes
 	}
 
 	return routesLookup, tripsLookup, api.tripStopCounts(ctx, uniqueTripIDs), freqMap, nil
+}
+
+// bestArrivalMillis is the instant Java's ArrivalAndDepartureComparator sorts
+// on. A positive predicted arrival is hasPredictedArrivalTime(); otherwise
+// the scheduled arrival is used.
+func bestArrivalMillis(a models.ArrivalAndDeparture) int64 {
+	if a.PredictedArrivalTime.UnixMilli() > 0 {
+		return a.PredictedArrivalTime.UnixMilli()
+	}
+	return a.ScheduledArrivalTime.UnixMilli()
+}
+
+// compareBestArrival orders two arrivals by bestArrivalMillis, then by trip ID
+// and stop sequence so equal times come out the same on every request.
+// arrivals-and-departures-for-stop sorts on this alone. The location endpoint
+// sorts by stop distance first and uses this only within one stop.
+func compareBestArrival(a, b models.ArrivalAndDeparture) int {
+	if c := cmp.Compare(bestArrivalMillis(a), bestArrivalMillis(b)); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.TripID, b.TripID); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.StopSequence, b.StopSequence)
+}
+
+// sortArrivalsByBestTime orders a single stop's arrivals with compareBestArrival.
+func sortArrivalsByBestTime(arrivals []models.ArrivalAndDeparture) {
+	slices.SortStableFunc(arrivals, compareBestArrival)
 }
 
 // uniqueRouteAndTripIDs collects the distinct route and trip IDs referenced by
@@ -342,7 +814,8 @@ func (api *RestAPI) tripStopCounts(ctx context.Context, tripIDs []string) map[st
 type arrivalInput struct {
 	stopTime         gtfsdb.GetStopTimesForStopInWindowRow
 	route            gtfsdb.Route
-	serviceMidnight  time.Time
+	serviceDate      servicedate.Date
+	location         *time.Location
 	queryTime        time.Time
 	stopCode         string
 	stopID           string
@@ -355,9 +828,10 @@ type arrivalInput struct {
 func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arrivalsAccumulator) *models.ArrivalAndDeparture {
 	st := in.stopTime
 	route := in.route
+	serviceStart := in.serviceDate.Start(in.location)
 
-	scheduledArrivalTime := in.serviceMidnight.Add(time.Duration(st.ArrivalTime))
-	scheduledDepartureTime := in.serviceMidnight.Add(time.Duration(st.DepartureTime))
+	scheduledArrivalTime := serviceStart.Add(time.Duration(st.ArrivalTime))
+	scheduledDepartureTime := serviceStart.Add(time.Duration(st.DepartureTime))
 
 	// Get vehicle if available. The response's top-level `vehicleId`
 	// is the combined {agencyId}_{vehicleId} form per spec, matching
@@ -409,7 +883,7 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 		st.TripHeadsign.String,                          // tripHeadsign
 		in.stopID,                                       // stopID
 		vehicleID,                                       // vehicleID
-		in.serviceMidnight,                              // serviceDate
+		serviceStart,                                    // serviceDate
 		scheduledArrivalTime,                            // scheduledArrivalTime
 		scheduledDepartureTime,                          // scheduledDepartureTime
 		predictedArrivalTime,                            // predictedArrivalTime
@@ -431,7 +905,7 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 		situationIDs,                                    // situationIDs
 	)
 
-	applyFrequency(arrival, in.freqMap[st.TripID], in.serviceMidnight, in.queryTime)
+	applyFrequency(arrival, in.freqMap[st.TripID], serviceStart, in.queryTime)
 
 	return arrival
 }
@@ -440,12 +914,29 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 // the row whose window contains queryTime. A trip with no frequency rows
 // leaves Frequency nil — selectFrequency panics on an empty slice, so this
 // guard is load-bearing, not defensive filler.
-func applyFrequency(arrival *models.ArrivalAndDeparture, freqs []gtfsdb.Frequency, serviceMidnight, queryTime time.Time) {
+func applyFrequency(arrival *models.ArrivalAndDeparture, freqs []gtfsdb.Frequency, serviceStart, queryTime time.Time) {
 	if len(freqs) == 0 {
 		return
 	}
-	converted := models.NewFrequencyFromDB(*selectFrequency(freqs, serviceMidnight, queryTime), serviceMidnight)
+	converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqs, serviceStart, queryTime), serviceStart)
 	arrival.Frequency = &converted
+}
+
+// startTripStatusAtServiceStart reports the trip status's serviceDate and frequency from serviceStart.
+func startTripStatusAtServiceStart(status *models.TripStatus, freqMap map[string][]gtfsdb.Frequency, tripID string, serviceStart, queryTime time.Time) {
+	status.ServiceDate = models.NewModelTime(serviceStart)
+	if status.Frequency == nil {
+		return
+	}
+	freqs := freqMap[tripID]
+	if _, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID); err == nil && len(freqMap[activeTripID]) > 0 {
+		freqs = freqMap[activeTripID]
+	}
+	if len(freqs) == 0 {
+		return
+	}
+	converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqs, serviceStart, queryTime), serviceStart)
+	status.Frequency = &converted
 }
 
 // combinedVehicleID renders a vehicle's ID in the combined {agency}_{id} form
@@ -478,7 +969,7 @@ func (api *RestAPI) tripStatusForArrival(
 
 	// The vehicle is passed through rather than left nil so BuildTripStatus
 	// does not repeat the GetVehicleForTrip lookup the caller already did.
-	status, extras, err := api.BuildTripStatus(ctx, in.route.AgencyID, st.TripID, vehicle, in.serviceMidnight, in.queryTime, in.freqMap)
+	status, extras, err := api.BuildTripStatus(ctx, in.route.AgencyID, st.TripID, vehicle, in.serviceDate.Midnight(in.location), in.queryTime, in.freqMap)
 	if err != nil {
 		reqLogger.Warn("BuildTripStatus failed for arrival",
 			"tripID", st.TripID, "error", err)
@@ -489,6 +980,7 @@ func (api *RestAPI) tripStatusForArrival(
 	if status == nil {
 		return nil, 0, 0, situations
 	}
+	startTripStatusAtServiceStart(status, in.freqMap, st.TripID, in.serviceDate.Start(in.location), in.queryTime)
 
 	api.recordTripStatusReferences(ctx, status, st.TripID, acc)
 
@@ -654,15 +1146,13 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 			stopAgencyID = agencyID
 		}
 
-		// NOTE: deliberately not buildStopModel — that helper defaults Code to
-		// the stop ID when stops.code is NULL, which would change this
-		// endpoint's existing output.
 		references.Stops = append(references.Stops, models.Stop{
 			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
 			Name:               stopData.Name.String,
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
-			Code:               stopData.Code.String,
+			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
+			Parent:             parentStationID(stopAgencyID, stopData),
 			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
@@ -670,6 +1160,14 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 			StaticRouteIDs:     combinedRouteIDs,
 		})
 	}
+
+	added, parentRoutes, err := api.missingParentStops(ctx, references.Stops)
+	if err != nil {
+		reqLogger.Warn("failed to resolve parent stops", slog.Any("error", err))
+		return nil
+	}
+	references.Stops = append(references.Stops, added...)
+	collectStopRoutes(parentRoutes, acc)
 
 	return nil
 }
@@ -722,17 +1220,8 @@ func collectStopRoutes(routesForStop []gtfsdb.GetRoutesForStopsRow, acc *arrival
 		if _, exists := acc.routes[route.ID]; exists {
 			continue
 		}
-		acc.routes[route.ID] = &gtfsdb.Route{
-			ID:        route.ID,
-			AgencyID:  route.AgencyID,
-			ShortName: route.ShortName,
-			LongName:  route.LongName,
-			Desc:      route.Desc,
-			Type:      route.Type,
-			Url:       route.Url,
-			Color:     route.Color,
-			TextColor: route.TextColor,
-		}
+		copied := routeFromStopRow(route)
+		acc.routes[route.ID] = &copied
 	}
 	return combinedRouteIDs
 }

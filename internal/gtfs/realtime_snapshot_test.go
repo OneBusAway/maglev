@@ -19,7 +19,7 @@ func snapshotTestManager() *Manager {
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedLastUpdate:       make(map[string]time.Time),
 		feedAgencyFilter:     make(map[string]map[string]bool),
-		feedVehicleLastSeen:  make(map[string]map[string]time.Time),
+		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 		feedVehicleTimestamp: make(map[string]uint64),
 	}
 }

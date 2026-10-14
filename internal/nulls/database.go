@@ -25,6 +25,15 @@ func StringOrDefault(ns sql.NullString, defaultValue string) string {
 	return defaultValue
 }
 
+// StringOrNonEmpty returns ns when it is valid and not empty. Otherwise it
+// returns fallback. A whitespace-only value is kept.
+func StringOrNonEmpty(ns sql.NullString, fallback string) string {
+	if ns.Valid && ns.String != "" {
+		return ns.String
+	}
+	return fallback
+}
+
 // Int64OrDefault returns the int64 value if valid, otherwise returns the default value
 func Int64OrDefault(ni sql.NullInt64, defaultValue int64) int64 {
 	if ni.Valid {
@@ -61,5 +70,19 @@ func Int64(value int64) sql.NullInt64 {
 	return sql.NullInt64{
 		Int64: value,
 		Valid: true,
+	}
+}
+
+// Float64FromPtr creates a sql.NullFloat64 from an optional float, treating only a
+// nil pointer as null. Use it for a GTFS column where 0 is a meaningful value and
+// has to stay distinguishable from the column being absent, such as
+// shape_dist_traveled at the first stop of a trip.
+func Float64FromPtr(value *float64) sql.NullFloat64 {
+	if value == nil {
+		return sql.NullFloat64{}
+	}
+	return sql.NullFloat64{
+		Float64: *value,
+		Valid:   true,
 	}
 }

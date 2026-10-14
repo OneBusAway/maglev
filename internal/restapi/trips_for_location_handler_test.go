@@ -18,6 +18,7 @@ import (
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -1031,7 +1032,8 @@ func TestTripsForLocationHandler_CandidateStopsAreNotCapped(t *testing.T) {
 		LonSpan: 3.0,
 	}
 
-	uncapped := api.GtfsManager.GetStopsInBounds(ctx, params, 0, true)
+	uncapped, err := api.GtfsManager.GetStopsInBounds(ctx, params, 0, true)
+	require.NoError(t, err)
 	require.Greater(t, len(uncapped), models.DefaultMaxCountForStops,
 		"fixture must hold more in-bounds stops than the old cap for this test to mean anything")
 
@@ -1141,13 +1143,13 @@ func TestCandidateTripIDsForStops_BatchesLargeStopSets(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, stops)
 
-	stopIDs := make([]string, 0, idsPerBatchedQuery+len(stops))
-	for len(stopIDs) <= idsPerBatchedQuery {
+	stopIDs := make([]string, 0, utils.IDsPerBatchedQuery+len(stops))
+	for len(stopIDs) <= utils.IDsPerBatchedQuery {
 		for _, stop := range stops {
 			stopIDs = append(stopIDs, stop.ID)
 		}
 	}
-	require.Greater(t, len(stopIDs), idsPerBatchedQuery,
+	require.Greater(t, len(stopIDs), utils.IDsPerBatchedQuery,
 		"the input must span more than one batch for this test to mean anything")
 
 	batched, err := api.candidateTripIDsForStops(ctx, stopIDs)
@@ -1316,19 +1318,19 @@ func TestInServiceTripIDs_BatchesLargeStopSets(t *testing.T) {
 		0, 0, 0, 0, currentTime.Location())
 	// PreviousDay is left empty so inServiceTripIDs' second service-day layer is
 	// skipped, isolating this test to the one query being batched.
-	resolver := newServiceDateResolverFor(queryDayMidnight, currentTime, serviceIDsByDay{QueryDay: serviceIDs})
+	resolver := newServiceDateResolverFor(servicedate.Of(queryDayMidnight), currentTime.Location(), currentTime, serviceIDsByDay{QueryDay: serviceIDs})
 
 	stops, err := api.GtfsManager.GtfsDB.Queries.ListStops(ctx)
 	require.NoError(t, err)
 	require.NotEmpty(t, stops)
 
-	stopIDs := make([]string, 0, idsPerBatchedQuery+len(stops))
-	for len(stopIDs) <= idsPerBatchedQuery {
+	stopIDs := make([]string, 0, utils.IDsPerBatchedQuery+len(stops))
+	for len(stopIDs) <= utils.IDsPerBatchedQuery {
 		for _, stop := range stops {
 			stopIDs = append(stopIDs, stop.ID)
 		}
 	}
-	require.Greater(t, len(stopIDs), idsPerBatchedQuery,
+	require.Greater(t, len(stopIDs), utils.IDsPerBatchedQuery,
 		"the input must span more than one batch for this test to mean anything")
 
 	batched, err := api.inServiceTripIDs(ctx, stopIDs, resolver, map[string]struct{}{})

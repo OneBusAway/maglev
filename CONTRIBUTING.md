@@ -2,6 +2,10 @@
 
 ## Pull Request Guidelines
 
+### Start From a Triaged Issue
+
+Every PR must link an issue that a maintainer has triaged or assigned to you: labeled it, commented to confirm the problem, or assigned it. If no such issue exists, open one and wait for a maintainer to confirm the problem and the approach before writing code. A PR without one will be converted back to Draft. Small fixes such as typos or broken links are the exception.
+
 ### Size
 
 Keep PRs as short as possible, ideally no more than 200 lines. Large or multi-issue PRs should usually be split into one PR per issue — reviewers will ask for this if scope creeps, so it's cheaper to split upfront. Tightly coupled fixes that can't be reviewed independently are a reasonable exception.
@@ -87,6 +91,10 @@ Keep cognitive complexity low — check the SonarCloud analysis posted on your P
 ### Handler Consistency and Spec Discrepancies
 
 Flag it in the PR description if your handler's behavior differs from other handlers' — an unusual response envelope, a deviation from a commonly adopted semantic, etc. These are often spec ambiguities that only become visible when comparing handlers side by side. Resolving the discrepancy and updating the `maglev.wiki` spec is the reviewer's job, not the contributor's — don't block your PR on getting the wiki updated yourself, just flag it clearly enough that the reviewer can act on it.
+
+### Java Response Comparison
+
+If your PR changes the response of an endpoint that the Java OneBusAway server also serves, include the Java production server's response for the same request in the PR description, next to Maglev's response before and after your change. Screenshots, validator output, or JSON blocks are all fine. If Maglev intentionally diverges because Java is wrong, say why. This isn't required for endpoints that exist only in Maglev.
 
 ## Code Conventions
 

@@ -13,6 +13,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -75,7 +76,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 
 	// Validate time
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
-		if timeMs, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
+		if timeMs, ok := utils.ParseEpochMillis(timeStr); ok {
 			timeParam := time.Unix(timeMs/1000, 0)
 			params.Time = &timeParam
 		} else {
@@ -90,7 +91,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 
 	// Validate serviceDate
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
-		if serviceDateMs, err := strconv.ParseInt(serviceDateStr, 10, 64); err == nil {
+		if serviceDateMs, ok := utils.ParseEpochMillis(serviceDateStr); ok {
 			serviceDate := time.Unix(serviceDateMs/1000, 0)
 			params.ServiceDate = &serviceDate
 		} else {
@@ -234,6 +235,36 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
+	// If the trip belongs to an agency with a different timezone than the stop's agency,
+	// localize serviceDate and time in the trip's agency timezone so scheduled times match.
+	// A lookup failure here must not silently fall back to the stop agency's timezone:
+	// that returns 200 with times computed from the wrong midnight.
+	if route.AgencyID != "" && route.AgencyID != stopAgency.ID {
+		routeAgency, agencyErr := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
+		if agencyErr != nil {
+			if errors.Is(agencyErr, sql.ErrNoRows) {
+				api.sendNotFound(w, r)
+			} else {
+				api.serverErrorResponse(w, r, agencyErr)
+			}
+			return
+		}
+		tripLoc, locErr := loadAgencyLocation(routeAgency.ID, routeAgency.Timezone)
+		if locErr != nil {
+			api.serverErrorResponse(w, r, locErr)
+			return
+		}
+		loc = tripLoc
+		if params.ServiceDate != nil {
+			localized := params.ServiceDate.In(loc)
+			params.ServiceDate = &localized
+		}
+		if params.Time != nil {
+			localized := params.Time.In(loc)
+			params.Time = &localized
+		}
+	}
+
 	// Set current time
 	var currentTime time.Time
 	if params.Time != nil {
@@ -242,15 +273,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		currentTime = api.Clock.Now().In(loc)
 	}
 
-	// serviceDate is already localized above; extract midnight in agency's TZ.
-	serviceDate := *params.ServiceDate
-	serviceMidnight := time.Date(
-		serviceDate.Year(),
-		serviceDate.Month(),
-		serviceDate.Day(),
-		0, 0, 0, 0,
-		loc,
-	)
+	serviceDate := servicedate.FromInstant(*params.ServiceDate, loc)
+	serviceMidnight := serviceDate.Midnight(loc)
+	serviceStart := serviceDate.Start(loc)
 
 	orderedStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 	if err != nil {
@@ -258,7 +283,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
-	queryOffset := int64(currentTime.Sub(serviceMidnight))
+	queryOffset := int64(currentTime.Sub(serviceStart))
 
 	matchedStopTime, matchedIdx, found := findStopTimeForTripStop(orderedStopTimes, stopCode, params.StopSequence, queryOffset)
 	if !found {
@@ -271,9 +296,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	arrivalOffset := time.Duration(matchedStopTime.ArrivalTime)
 	departureOffset := time.Duration(matchedStopTime.DepartureTime)
 
-	// Add offsets to midnight
-	scheduledArrivalTime := serviceMidnight.Add(arrivalOffset)
-	scheduledDepartureTime := serviceMidnight.Add(departureOffset)
+	scheduledArrivalTime := serviceStart.Add(arrivalOffset)
+	scheduledDepartureTime := serviceStart.Add(departureOffset)
 
 	// Get real-time data for this trip if available.
 	//
@@ -346,6 +370,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	var predictedArrivalTime, predictedDepartureTime time.Time
 	if status != nil {
+		startTripStatusAtServiceStart(status, freqMap, tripID, serviceStart, currentTime)
 		tripStatus = status
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
@@ -386,7 +411,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		trip.TripHeadsign.String,                       // tripHeadsign
 		stopID,                                         // stopID
 		vehicleID,                                      // vehicleID
-		serviceMidnight,                                // serviceDate
+		serviceStart,                                   // serviceDate
 		scheduledArrivalTime,                           // scheduledArrivalTime
 		scheduledDepartureTime,                         // scheduledDepartureTime
 		predictedArrivalTime,                           // predictedArrivalTime
@@ -410,7 +435,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// The arrival's frequency uses the window-matched row fetched above.
 	if len(freqRows) > 0 {
-		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceMidnight, currentTime), serviceMidnight)
+		converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqRows, serviceStart, currentTime), serviceStart)
 		arrival.Frequency = &converted
 	}
 
@@ -531,17 +556,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		combinedRouteIDs := make([]string, len(routesForThisStop))
 		for i, route := range routesForThisStop {
 			combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)
-			routeCopy := gtfsdb.Route{
-				ID:        route.ID,
-				AgencyID:  route.AgencyID,
-				ShortName: route.ShortName,
-				LongName:  route.LongName,
-				Desc:      route.Desc,
-				Type:      route.Type,
-				Url:       route.Url,
-				Color:     route.Color,
-				TextColor: route.TextColor,
+			if _, exists := routeIDSet[route.ID]; exists {
+				continue
 			}
+			routeCopy := routeFromStopRow(route)
 			routeIDSet[route.ID] = &routeCopy
 		}
 
@@ -550,7 +568,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			Name:               stopData.Name.String,
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
-			Code:               stopData.Code.String,
+			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
+			Parent:             parentStationID(stopAgencyID, stopData),
 			Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
@@ -558,6 +577,20 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			StaticRouteIDs:     combinedRouteIDs,
 		}
 		references.Stops = append(references.Stops, stopRef)
+	}
+
+	addedParents, parentRoutes, err := api.missingParentStops(r.Context(), references.Stops)
+	if err != nil {
+		reqLogger.Warn("failed to resolve parent stops", "error", err)
+	} else {
+		references.Stops = append(references.Stops, addedParents...)
+		for _, route := range parentRoutes {
+			if _, exists := routeIDSet[route.ID]; exists {
+				continue
+			}
+			routeCopy := routeFromStopRow(route)
+			routeIDSet[route.ID] = &routeCopy
+		}
 	}
 
 	// Build routes references
@@ -736,7 +769,7 @@ func (api *RestAPI) getPredictedTimes(
 // If requestedIndex is nil, it mirrors Java's ArrivalAndDepartureServiceImpl
 // .getBlockStopTime (no-stopSequence branch): among all visits of stopCode
 // on this trip, pick the one whose arrival or departure time is closest to
-// queryOffset (nanoseconds since service midnight).
+// queryOffset (nanoseconds since the service day start).
 //
 // If requestedIndex is non-nil, it is treated as the 0-based position of the
 // stop within the trip's stop list (per the OBA API spec — NOT the raw GTFS
