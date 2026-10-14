@@ -196,6 +196,25 @@ func TestBuildVehiclePositionsFeedPayload(t *testing.T) {
 	assert.Nil(t, second.GetPosition().Bearing)
 }
 
+// A frequency trip's start_time names the instance the vehicle runs, which
+// the template trip's first departure cannot, so the feed's values stay.
+func TestBuildVehiclePositionsFeedKeepsFrequencyTripStart(t *testing.T) {
+	headway := exportVehicleOnRoute("1234", "freqTrip", "A")
+	headway.Block = &internalgtfs.BlockMatch{TripID: "freqTrip", RouteID: "A", AgencyID: "40",
+		ServiceDate: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC), TripStart: 6 * time.Hour, FrequencyBased: true}
+	headway.Vehicle.Trip = &gtfs.Trip{ID: gtfs.TripID{ID: "freqTrip", RouteID: "A",
+		HasStartDate: true, StartDate: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC),
+		HasStartTime: true, StartTime: 8*time.Hour + 15*time.Minute}}
+
+	req := vehicleExportRequest("40")
+	feed := buildVehiclePositionsFeed(selectExportVehicles([]internalgtfs.ExportVehicle{headway}, req), req, nil)
+
+	require.Len(t, feed.Entity, 1)
+	trip := feed.Entity[0].GetVehicle().GetTrip()
+	assert.Equal(t, "20261006", trip.GetStartDate())
+	assert.Equal(t, "08:15:00", trip.GetStartTime())
+}
+
 func TestBuildVehiclePositionsFeedKeepsAgencyPrefixes(t *testing.T) {
 	onRoute := exportVehicleOnRoute("1234", "tripA", "A")
 	onRoute.Block = &internalgtfs.BlockMatch{TripID: "tripA", RouteID: "A", AgencyID: "40"}

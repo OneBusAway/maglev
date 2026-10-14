@@ -233,8 +233,11 @@ func applyRetainedTripFields(descriptor *gtfsrt.TripDescriptor, trip gtfs.TripID
 	}
 }
 
+// isResolvedOrdinaryTrip reports whether the block match's service date and
+// start describe the active trip. A frequency trip's own start_time names
+// the running instance, so it keeps the update's values.
 func isResolvedOrdinaryTrip(vehicle internalgtfs.ExportVehicle, retained *gtfs.TripID) bool {
-	if !isBlockMatchedActiveTrip(vehicle) {
+	if !isBlockMatchedActiveTrip(vehicle) || vehicle.Block.FrequencyBased {
 		return false
 	}
 	return retained == nil || retained.ScheduleRelationship == gtfsrt.TripDescriptor_SCHEDULED

@@ -22,6 +22,9 @@ type BlockMatch struct {
 	BlockID     string
 	ServiceDate time.Time     // midnight of the chosen candidate date, agency zone
 	TripStart   time.Duration // matched trip's first static departure
+	// FrequencyBased marks a trip listed in frequencies.txt, whose realtime
+	// start_time names the running instance and TripStart cannot replace.
+	FrequencyBased bool
 }
 
 const (
@@ -61,10 +64,12 @@ func newBlockMatcher(queries *gtfsdb.Queries, now func() time.Time) *blockMatche
 }
 
 // blockMatchLookups memoizes the static lookups that are the same for every
-// trip one refresh matches: active services per date and agency zones.
+// trip one refresh matches: active services per date, agency zones and the
+// frequency-based trips, loaded on first use.
 type blockMatchLookups struct {
-	serviceIDs  serviceIDsByDate
-	agencyZones map[string]*time.Location
+	serviceIDs       serviceIDsByDate
+	agencyZones      map[string]*time.Location
+	frequencyTripIDs map[string]struct{}
 }
 
 func newBlockMatchLookups() *blockMatchLookups {
@@ -150,14 +155,34 @@ func (m *blockMatcher) resolve(ctx context.Context, tripID string, reference tim
 	if err != nil || !found {
 		return nil, err
 	}
+	frequencyBased, err := m.isFrequencyTrip(ctx, trip.ID, lookups)
+	if err != nil {
+		return nil, err
+	}
 	return &BlockMatch{
-		TripID:      trip.ID,
-		RouteID:     trip.RouteID,
-		AgencyID:    route.AgencyID,
-		BlockID:     tripBlockKey(trip),
-		ServiceDate: serviceDate,
-		TripStart:   tripStart,
+		TripID:         trip.ID,
+		RouteID:        trip.RouteID,
+		AgencyID:       route.AgencyID,
+		BlockID:        tripBlockKey(trip),
+		ServiceDate:    serviceDate,
+		TripStart:      tripStart,
+		FrequencyBased: frequencyBased,
 	}, nil
+}
+
+func (m *blockMatcher) isFrequencyTrip(ctx context.Context, tripID string, lookups *blockMatchLookups) (bool, error) {
+	if lookups.frequencyTripIDs == nil {
+		tripIDs, err := m.queries.GetFrequencyTripIDs(ctx)
+		if err != nil {
+			return false, err
+		}
+		lookups.frequencyTripIDs = make(map[string]struct{}, len(tripIDs))
+		for _, id := range tripIDs {
+			lookups.frequencyTripIDs[id] = struct{}{}
+		}
+	}
+	_, ok := lookups.frequencyTripIDs[tripID]
+	return ok, nil
 }
 
 // agencyLocation is the zone candidate service dates are read in. Using the

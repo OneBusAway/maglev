@@ -20,6 +20,7 @@ import (
 //     accepts.
 //   - T_NOBLOCK has no block_id and forms its own one-trip block.
 //   - T_SECOND shares block B5 with the earlier T_FIRST.
+//   - T_HEADWAY is a frequency-based trip.
 var blockMatcherFeed = map[string]string{
 	"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
 		"40,Test Agency,https://example.com,America/Los_Angeles\n",
@@ -37,14 +38,18 @@ var blockMatcherFeed = map[string]string{
 		"R1,DAILY,T_ZERO,B3\n" +
 		"R1,DAILY,T_NOBLOCK,\n" +
 		"R1,DAILY,T_FIRST,B5\n" +
-		"R1,DAILY,T_SECOND,B5\n",
+		"R1,DAILY,T_SECOND,B5\n" +
+		"R1,DAILY,T_HEADWAY,B6\n",
 	"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 		"T_LATE,25:00:00,25:00:00,S1,1\nT_LATE,25:20:00,25:20:00,S2,2\n" +
 		"T_DAILY,00:30:00,00:30:00,S1,1\nT_DAILY,00:50:00,00:50:00,S2,2\n" +
 		"T_ZERO,00:00:00,00:00:00,S1,1\nT_ZERO,00:20:00,00:20:00,S2,2\n" +
 		"T_NOBLOCK,09:00:00,09:00:00,S1,1\nT_NOBLOCK,09:20:00,09:20:00,S2,2\n" +
 		"T_FIRST,06:00:00,06:00:00,S1,1\nT_FIRST,06:20:00,06:20:00,S2,2\n" +
-		"T_SECOND,07:00:00,07:00:00,S1,1\nT_SECOND,07:20:00,07:20:00,S2,2\n",
+		"T_SECOND,07:00:00,07:00:00,S1,1\nT_SECOND,07:20:00,07:20:00,S2,2\n" +
+		"T_HEADWAY,06:00:00,06:00:00,S1,1\nT_HEADWAY,06:20:00,06:20:00,S2,2\n",
+	"frequencies.txt": "trip_id,start_time,end_time,headway_secs,exact_times\n" +
+		"T_HEADWAY,06:00:00,22:00:00,900,0\n",
 }
 
 // matcherZone is the fixture agency's timezone, which candidate dates use.
@@ -313,4 +318,21 @@ func TestBlockMatcherReusesRefreshLookups(t *testing.T) {
 		assert.Contains(t, lookups.agencyZones, "40")
 		assert.Contains(t, lookups.serviceIDs, matcherTuesday.Format("20060102"))
 	})
+}
+
+func TestBlockMatcherFlagsFrequencyTrips(t *testing.T) {
+	ctx := context.Background()
+	reference := time.Date(2026, 10, 6, 12, 0, 0, 0, matcherZone)
+	matcher := newTestBlockMatcher(t, fixedNow(reference))
+	lookups := newBlockMatchLookups()
+
+	headway, err := matcher.Match(ctx, "feed", "T_HEADWAY", reference, lookups)
+	require.NoError(t, err)
+	require.NotNil(t, headway)
+	assert.True(t, headway.FrequencyBased)
+
+	scheduled, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference, lookups)
+	require.NoError(t, err)
+	require.NotNil(t, scheduled)
+	assert.False(t, scheduled.FrequencyBased)
 }

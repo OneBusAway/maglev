@@ -157,3 +157,7 @@ Exports SHALL preserve applicable retained standard values, subject to endpoint 
 #### Scenario: Resolved ordinary-trip identity exception
 - **WHEN** retained ordinary-trip date/start-time hints conflict with the instance selected by the legacy matcher
 - **THEN** exported instance descriptors follow the resolved identity rather than preserving the conflicting hints; unrelated retained standard values remain subject to their normal preservation rules
+
+#### Scenario: Frequency trip start kept
+- **WHEN** the resolved trip is listed in `frequencies.txt` and its update supplies `start_date` or `start_time`
+- **THEN** exported descriptors keep the supplied values, because a frequency trip's `start_time` names the running instance and the template trip's first departure cannot; matching still ignores these hints
