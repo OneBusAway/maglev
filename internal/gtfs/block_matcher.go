@@ -126,6 +126,9 @@ func (m *blockMatcher) resolve(ctx context.Context, tripID string, reference tim
 		return nil, fmt.Errorf("route %q for trip %q: %w", trip.RouteID, trip.ID, err)
 	}
 	agencyZone, err := m.agencyLocation(ctx, route.AgencyID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

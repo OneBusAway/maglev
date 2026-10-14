@@ -75,7 +75,7 @@ func zipGTFSFiles(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-func newTestBlockMatcher(t *testing.T, now func() time.Time) *blockMatcher {
+func newBlockMatcherTestDB(t *testing.T) *gtfsdb.Client {
 	t.Helper()
 	client, err := gtfsdb.NewClient(gtfsdb.Config{DBPath: ":memory:", Env: appconf.Test})
 	require.NoError(t, err)
@@ -84,7 +84,12 @@ func newTestBlockMatcher(t *testing.T, now func() time.Time) *blockMatcher {
 	require.NoError(t, err)
 	_, err = client.StoreGtfsData(context.Background(), parsed)
 	require.NoError(t, err)
-	return newBlockMatcher(client.Queries, now)
+	return client
+}
+
+func newTestBlockMatcher(t *testing.T, now func() time.Time) *blockMatcher {
+	t.Helper()
+	return newBlockMatcher(newBlockMatcherTestDB(t).Queries, now)
 }
 
 func fixedNow(t time.Time) func() time.Time { return func() time.Time { return t } }
@@ -245,4 +250,26 @@ func TestBlockMatcherDoesNotCacheQueryFailures(t *testing.T) {
 	match, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference)
 	require.NoError(t, err)
 	assert.NotNil(t, match, "a failed query must not leave a cached unresolved entry")
+}
+
+// A route whose agency row is missing cannot be matched, so the trip is
+// cached as unresolved instead of failing and being retried every refresh.
+func TestBlockMatcherTreatsMissingAgencyAsUnresolved(t *testing.T) {
+	ctx := context.Background()
+	reference := time.Date(2026, 10, 6, 12, 0, 0, 0, matcherZone)
+	client := newBlockMatcherTestDB(t)
+	_, err := client.DB.ExecContext(ctx, "PRAGMA foreign_keys = OFF")
+	require.NoError(t, err)
+	_, err = client.DB.ExecContext(ctx, "DELETE FROM agencies")
+	require.NoError(t, err)
+	_, err = client.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON")
+	require.NoError(t, err)
+	matcher := newBlockMatcher(client.Queries, fixedNow(reference))
+
+	match, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference)
+
+	require.NoError(t, err)
+	assert.Nil(t, match)
+	_, _, cached := matcher.cached("feed", "T_NOBLOCK")
+	assert.True(t, cached, "the unresolved result is cached")
 }
