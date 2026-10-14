@@ -211,7 +211,7 @@ func checklistProblems(items []string, doc document) []problem {
 		default:
 			problems = append(problems, problem{
 				Rule:    ruleChecklist,
-				Message: fmt.Sprintf("Checklist item is missing or reworded, copy it from the template: \"%s\"", item),
+				Message: fmt.Sprintf("Checklist item is missing or its text was changed. Copy this exact line from the template: \"%s\"", item),
 			})
 		}
 	}

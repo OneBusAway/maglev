@@ -104,7 +104,7 @@ func TestCheckBody(t *testing.T) {
 				return replaceOnce(t, filled, "- [x] I read every line of this diff and can explain it if asked.\n", "")
 			},
 			wantRules:    []string{ruleChecklist},
-			wantMentions: []string{"missing or reworded", "I read every line of this diff"},
+			wantMentions: []string{"missing or its text was changed", "I read every line of this diff"},
 		},
 		{
 			name: "checklist_item_reworded",
@@ -112,7 +112,7 @@ func TestCheckBody(t *testing.T) {
 				return replaceOnce(t, filled, "- [x] This PR addresses one issue.", "- [x] This PR mostly addresses one issue.")
 			},
 			wantRules:    []string{ruleChecklist},
-			wantMentions: []string{"missing or reworded", "This PR addresses one issue."},
+			wantMentions: []string{"missing or its text was changed", "This PR addresses one issue."},
 		},
 		{
 			name: "uppercase_and_star",
