@@ -211,6 +211,26 @@ func TestCheckBody(t *testing.T) {
 			wantMentions: []string{"Root cause"},
 		},
 		{
+			name: "heading_in_tilde_fence",
+			body: func(t *testing.T) string {
+				body := replaceOnce(t, filled, "## Root cause\n\nWritten by the author.", "## Root cause\n")
+				return replaceOnce(t, body, "## Testing\n\nWritten by the author.",
+					"## Testing\n\nWritten by the author.\n\n~~~\n## Root cause\nfrom the log\n~~~")
+			},
+			wantRules:    []string{ruleSection},
+			wantMentions: []string{"Root cause"},
+		},
+		{
+			name: "tilde_line_inside_backtick_fence",
+			body: func(t *testing.T) string {
+				body := replaceOnce(t, filled, "## Root cause\n\nWritten by the author.", "## Root cause\n")
+				return replaceOnce(t, body, "## Testing\n\nWritten by the author.",
+					"## Testing\n\nWritten by the author.\n\n```\n~~~\n## Root cause\nfrom the log\n```")
+			},
+			wantRules:    []string{ruleSection},
+			wantMentions: []string{"Root cause"},
+		},
+		{
 			name: "crlf_body",
 			body: func(t *testing.T) string { return strings.ReplaceAll(filled, "\n", "\r\n") },
 		},
