@@ -6,7 +6,7 @@
 
 Every PR must link an issue that a maintainer has triaged or assigned to you: labeled it, commented to confirm the problem, or assigned it. If no such issue exists, open one and wait for a maintainer to confirm the problem and the approach before writing code. A PR without one will be converted back to Draft. Small fixes such as typos or broken links are the exception.
 
-A bot checks each PR description against `.github/pull_request_template.md` and comments with anything missing; the "PR template" check stays red until it's fixed. For the typo and broken-link exception, a maintainer adds the `skip-template-check` label.
+A bot checks each PR description against `.github/pull_request_template.md` and comments with anything missing; the "PR template" check stays red until it's fixed, and a passing PR gets the `follows-template` label. For the typo and broken-link exception, a maintainer adds the `skip-template-check` label.
 
 ### Size
 
