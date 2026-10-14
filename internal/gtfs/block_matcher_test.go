@@ -121,7 +121,7 @@ func TestBlockMatcherUsesAgencyTimezone(t *testing.T) {
 	reference := time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC)
 	matcher := newTestBlockMatcher(t, fixedNow(reference))
 
-	match, err := matcher.Match(context.Background(), "feed", "T_LATE", reference)
+	match, err := matcher.Match(context.Background(), "feed", "T_LATE", reference, newBlockMatchLookups())
 
 	require.NoError(t, err)
 	require.NotNil(t, match)
@@ -152,7 +152,7 @@ func TestBlockMatcherMatch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			matcher := newTestBlockMatcher(t, fixedNow(tuesday0110))
-			match, err := matcher.Match(ctx, "feed", tt.tripID, tt.reference)
+			match, err := matcher.Match(ctx, "feed", tt.tripID, tt.reference, newBlockMatchLookups())
 			require.NoError(t, err)
 			if tt.wantUnmatched {
 				assert.Nil(t, match)
@@ -176,11 +176,11 @@ func TestBlockMatcherCache(t *testing.T) {
 
 	t.Run("cached association survives a date-window change", func(t *testing.T) {
 		matcher := newTestBlockMatcher(t, fixedNow(tuesday0359))
-		first, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0359)
+		first, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
 		require.NoError(t, err)
 		require.NotNil(t, first)
 		// At 04:01 the window is Tuesday only, where T_LATE does not run.
-		second, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0401)
+		second, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0401, newBlockMatchLookups())
 		require.NoError(t, err)
 		assert.Equal(t, first, second)
 	})
@@ -188,28 +188,28 @@ func TestBlockMatcherCache(t *testing.T) {
 	t.Run("unresolved result is cached until expiry", func(t *testing.T) {
 		current := tuesday0401
 		matcher := newTestBlockMatcher(t, func() time.Time { return current })
-		miss, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0401)
+		miss, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0401, newBlockMatchLookups())
 		require.NoError(t, err)
 		require.Nil(t, miss)
 
 		current = current.Add(29 * time.Minute)
-		stillMiss, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0359)
+		stillMiss, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
 		require.NoError(t, err)
 		assert.Nil(t, stillMiss, "cached failure is reused within 30 minutes")
 
 		current = tuesday0401.Add(30 * time.Minute)
-		rematched, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0359)
+		rematched, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
 		require.NoError(t, err)
 		assert.NotNil(t, rematched, "expiry is measured from insertion, not extended by reads")
 	})
 
 	t.Run("static replacement clears the cache", func(t *testing.T) {
 		matcher := newTestBlockMatcher(t, fixedNow(tuesday0401))
-		miss, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0401)
+		miss, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0401, newBlockMatchLookups())
 		require.NoError(t, err)
 		require.Nil(t, miss)
 		matcher.Clear()
-		match, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0359)
+		match, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
 		require.NoError(t, err)
 		assert.NotNil(t, match)
 	})
@@ -228,10 +228,10 @@ func TestBlockMatcherCache(t *testing.T) {
 
 	t.Run("caches are per source", func(t *testing.T) {
 		matcher := newTestBlockMatcher(t, fixedNow(tuesday0401))
-		miss, err := matcher.Match(ctx, "feed-a", "T_LATE", tuesday0401)
+		miss, err := matcher.Match(ctx, "feed-a", "T_LATE", tuesday0401, newBlockMatchLookups())
 		require.NoError(t, err)
 		require.Nil(t, miss)
-		match, err := matcher.Match(ctx, "feed-b", "T_LATE", tuesday0359)
+		match, err := matcher.Match(ctx, "feed-b", "T_LATE", tuesday0359, newBlockMatchLookups())
 		require.NoError(t, err)
 		assert.NotNil(t, match)
 	})
@@ -244,10 +244,10 @@ func TestBlockMatcherDoesNotCacheQueryFailures(t *testing.T) {
 
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	_, err := matcher.Match(canceled, "feed", "T_NOBLOCK", reference)
+	_, err := matcher.Match(canceled, "feed", "T_NOBLOCK", reference, newBlockMatchLookups())
 	require.Error(t, err)
 
-	match, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference)
+	match, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference, newBlockMatchLookups())
 	require.NoError(t, err)
 	assert.NotNil(t, match, "a failed query must not leave a cached unresolved entry")
 }
@@ -266,10 +266,51 @@ func TestBlockMatcherTreatsMissingAgencyAsUnresolved(t *testing.T) {
 	require.NoError(t, err)
 	matcher := newBlockMatcher(client.Queries, fixedNow(reference))
 
-	match, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference)
+	match, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference, newBlockMatchLookups())
 
 	require.NoError(t, err)
 	assert.Nil(t, match)
 	_, _, cached := matcher.cached("feed", "T_NOBLOCK")
 	assert.True(t, cached, "the unresolved result is cached")
+}
+
+// One refresh resolves many trips with the same active services and agency
+// zone, so the matcher reads them from the refresh's lookups once filled.
+func TestBlockMatcherReusesRefreshLookups(t *testing.T) {
+	ctx := context.Background()
+	reference := time.Date(2026, 10, 6, 12, 0, 0, 0, matcherZone)
+
+	t.Run("agency zone", func(t *testing.T) {
+		matcher := newTestBlockMatcher(t, fixedNow(reference))
+		lookups := newBlockMatchLookups()
+		lookups.agencyZones["40"] = time.UTC
+
+		match, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference, lookups)
+
+		require.NoError(t, err)
+		require.NotNil(t, match)
+		assert.Equal(t, time.UTC, match.ServiceDate.Location())
+	})
+
+	t.Run("active service IDs", func(t *testing.T) {
+		matcher := newTestBlockMatcher(t, fixedNow(reference))
+		lookups := newBlockMatchLookups()
+		lookups.serviceIDs[matcherTuesday.Format("20060102")] = nil
+
+		match, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference, lookups)
+
+		require.NoError(t, err)
+		assert.Nil(t, match, "no service is active on the memoized date")
+	})
+
+	t.Run("lookups fill on first use", func(t *testing.T) {
+		matcher := newTestBlockMatcher(t, fixedNow(reference))
+		lookups := newBlockMatchLookups()
+
+		_, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference, lookups)
+
+		require.NoError(t, err)
+		assert.Contains(t, lookups.agencyZones, "40")
+		assert.Contains(t, lookups.serviceIDs, matcherTuesday.Format("20060102"))
+	})
 }

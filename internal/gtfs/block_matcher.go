@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
-	"maglev.onebusaway.org/internal/nulls"
 )
 
 // BlockMatch is the block instance the legacy matcher resolved for a
@@ -61,16 +60,27 @@ func newBlockMatcher(queries *gtfsdb.Queries, now func() time.Time) *blockMatche
 	}
 }
 
+// blockMatchLookups memoizes the static lookups that are the same for every
+// trip one refresh matches: active services per date and agency zones.
+type blockMatchLookups struct {
+	serviceIDs  serviceIDsByDate
+	agencyZones map[string]*time.Location
+}
+
+func newBlockMatchLookups() *blockMatchLookups {
+	return &blockMatchLookups{serviceIDs: serviceIDsByDate{}, agencyZones: make(map[string]*time.Location)}
+}
+
 // Match returns the block for tripID as seen by feedID's source, reusing a
 // cached result for 30 minutes after it was first stored. A nil match means
 // the trip is unresolved; an error means a query failed and nothing was
-// cached.
-func (m *blockMatcher) Match(ctx context.Context, feedID, tripID string, reference time.Time) (*BlockMatch, error) {
+// cached. lookups is shared by the trips matched in one refresh.
+func (m *blockMatcher) Match(ctx context.Context, feedID, tripID string, reference time.Time, lookups *blockMatchLookups) (*BlockMatch, error) {
 	entry, generation, ok := m.cached(feedID, tripID)
 	if ok {
 		return entry.match, nil
 	}
-	match, err := m.resolve(ctx, tripID, reference)
+	match, err := m.resolve(ctx, tripID, reference, lookups)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +122,7 @@ func (m *blockMatcher) store(feedID, tripID string, match *BlockMatch, generatio
 	m.caches[feedID][tripID] = blockMatchEntry{match: match, insertedAt: m.now()}
 }
 
-func (m *blockMatcher) resolve(ctx context.Context, tripID string, reference time.Time) (*BlockMatch, error) {
+func (m *blockMatcher) resolve(ctx context.Context, tripID string, reference time.Time, lookups *blockMatchLookups) (*BlockMatch, error) {
 	trips, err := m.queries.GetTripsByIDs(ctx, []string{tripID})
 	if err != nil || len(trips) == 0 {
 		return nil, err
@@ -125,26 +135,38 @@ func (m *blockMatcher) resolve(ctx context.Context, tripID string, reference tim
 	if err != nil {
 		return nil, fmt.Errorf("route %q for trip %q: %w", trip.RouteID, trip.ID, err)
 	}
-	agencyZone, err := m.agencyLocation(ctx, route.AgencyID)
+	agencyZone, err := m.agencyLocation(ctx, route.AgencyID, lookups)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	for _, serviceDate := range candidateServiceDates(reference.In(agencyZone)) {
-		match, err := m.matchOnDate(ctx, trip, route.AgencyID, serviceDate)
-		if err != nil || match != nil {
-			return match, err
-		}
+	tripStart, hasDeparture, err := m.firstDeparture(ctx, trip.ID)
+	if err != nil || !hasDeparture {
+		return nil, err
 	}
-	return nil, nil
+	serviceDate, found, err := m.firstActiveServiceDate(ctx, trip, reference.In(agencyZone), lookups)
+	if err != nil || !found {
+		return nil, err
+	}
+	return &BlockMatch{
+		TripID:      trip.ID,
+		RouteID:     trip.RouteID,
+		AgencyID:    route.AgencyID,
+		BlockID:     tripBlockKey(trip),
+		ServiceDate: serviceDate,
+		TripStart:   tripStart,
+	}, nil
 }
 
 // agencyLocation is the zone candidate service dates are read in. Using the
 // agency's timezone instead of the server's (as legacy did) keeps matching
 // correct on servers that run in UTC or serve several timezones.
-func (m *blockMatcher) agencyLocation(ctx context.Context, agencyID string) (*time.Location, error) {
+func (m *blockMatcher) agencyLocation(ctx context.Context, agencyID string, lookups *blockMatchLookups) (*time.Location, error) {
+	if location, ok := lookups.agencyZones[agencyID]; ok {
+		return location, nil
+	}
 	agency, err := m.queries.GetAgency(ctx, agencyID)
 	if err != nil {
 		return nil, fmt.Errorf("agency %q: %w", agencyID, err)
@@ -153,6 +175,7 @@ func (m *blockMatcher) agencyLocation(ctx context.Context, agencyID string) (*ti
 	if err != nil {
 		return nil, fmt.Errorf("timezone for agency %q: %w", agencyID, err)
 	}
+	lookups.agencyZones[agencyID] = location
 	return location, nil
 }
 
@@ -170,75 +193,32 @@ func candidateServiceDates(reference time.Time) []time.Time {
 	}
 }
 
-// matchOnDate checks one candidate date. The legacy adjusted block start is
-// the block's first departure plus the trip start minus the matching
-// block-trip's departure; for an ordinary trip both of those are the trip's
-// own first static departure, so the start reduces to the block's first
-// departure, which is never negative. Legacy also rejected a block starting
-// at 00:00:00, as a side effect of its "> 0" check for a -1 error value;
-// Maglev accepts it.
-func (m *blockMatcher) matchOnDate(ctx context.Context, trip gtfsdb.Trip, agencyID string, serviceDate time.Time) (*BlockMatch, error) {
-	serviceIDs, err := m.queries.GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
-	if err != nil {
-		return nil, err
-	}
-	blockID, blockTripIDs, err := m.activeBlockTrips(ctx, trip, serviceIDs)
-	if err != nil || !slices.Contains(blockTripIDs, trip.ID) {
-		return nil, err
-	}
-	departures, err := m.firstDepartures(ctx, blockTripIDs)
-	if err != nil {
-		return nil, err
-	}
-	tripStart, ok := departures[trip.ID]
-	if !ok {
-		return nil, nil
-	}
-	return &BlockMatch{
-		TripID:      trip.ID,
-		RouteID:     trip.RouteID,
-		AgencyID:    agencyID,
-		BlockID:     blockID,
-		ServiceDate: serviceDate,
-		TripStart:   tripStart,
-	}, nil
-}
-
-// activeBlockTrips lists the trips of trip's block that run on a date with
-// the given active services. A trip without a block is its own block.
-func (m *blockMatcher) activeBlockTrips(ctx context.Context, trip gtfsdb.Trip, serviceIDs []string) (string, []string, error) {
-	blockID := nulls.StringOrEmpty(trip.BlockID)
-	if blockID == "" {
-		if slices.Contains(serviceIDs, trip.ServiceID) {
-			return trip.ID, []string{trip.ID}, nil
+// firstActiveServiceDate returns the first candidate date on which trip's
+// service runs. Legacy looked for an active block instance containing the
+// trip, which is the same as the trip's own service being active, and
+// accepted the first date whose adjusted block start was positive. For an
+// ordinary trip that start reduces to the trip's own first departure, so
+// only a block starting at 00:00:00 failed it, as a side effect of a "> 0"
+// check meant for a -1 error value; Maglev accepts that block.
+func (m *blockMatcher) firstActiveServiceDate(ctx context.Context, trip gtfsdb.Trip, reference time.Time, lookups *blockMatchLookups) (time.Time, bool, error) {
+	for _, serviceDate := range candidateServiceDates(reference) {
+		serviceIDs, err := lookups.serviceIDs.forDate(ctx, m.queries, serviceDate)
+		if err != nil {
+			return time.Time{}, false, err
 		}
-		return trip.ID, nil, nil
+		if slices.Contains(serviceIDs, trip.ServiceID) {
+			return serviceDate, true, nil
+		}
 	}
-	if len(serviceIDs) == 0 {
-		return blockID, nil, nil
-	}
-	rows, err := m.queries.GetTripsByBlockIDs(ctx, gtfsdb.GetTripsByBlockIDsParams{
-		BlockIds:   []sql.NullString{trip.BlockID},
-		ServiceIds: serviceIDs,
-	})
-	if err != nil {
-		return "", nil, err
-	}
-	tripIDs := make([]string, 0, len(rows))
-	for _, row := range rows {
-		tripIDs = append(tripIDs, row.ID)
-	}
-	return blockID, tripIDs, nil
+	return time.Time{}, false, nil
 }
 
-func (m *blockMatcher) firstDepartures(ctx context.Context, tripIDs []string) (map[string]time.Duration, error) {
-	rows, err := m.queries.GetFirstDeparturesForTripIDs(ctx, tripIDs)
-	if err != nil {
-		return nil, err
+// firstDeparture returns the trip's first static departure, if it has stop
+// times.
+func (m *blockMatcher) firstDeparture(ctx context.Context, tripID string) (time.Duration, bool, error) {
+	rows, err := m.queries.GetFirstDeparturesForTripIDs(ctx, []string{tripID})
+	if err != nil || len(rows) == 0 {
+		return 0, false, err
 	}
-	departures := make(map[string]time.Duration, len(rows))
-	for _, row := range rows {
-		departures[row.TripID] = time.Duration(row.DepartureTime)
-	}
-	return departures, nil
+	return time.Duration(rows[0].DepartureTime), true, nil
 }

@@ -157,17 +157,18 @@ func (manager *Manager) activeTripsForAgency(ctx context.Context, now time.Time,
 }
 
 // serviceIDsByDate caches active service IDs by YYYYMMDD date for one
-// metrics request, so agencies sharing a service day share one lookup.
+// metrics request or one realtime refresh, so agencies and trips sharing a
+// service day share one lookup.
 // It's keyed by date rather than holding a single today/yesterday pair
 // because each agency's service day comes from its own timezone.
 type serviceIDsByDate map[string][]string
 
-func (manager *Manager) activeServiceIDsForDate(ctx context.Context, cache serviceIDsByDate, serviceDay time.Time) ([]string, error) {
+func (cache serviceIDsByDate) forDate(ctx context.Context, queries *gtfsdb.Queries, serviceDay time.Time) ([]string, error) {
 	date := serviceDay.Format("20060102")
 	if ids, cached := cache[date]; cached {
 		return ids, nil
 	}
-	ids, err := manager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, date)
+	ids, err := queries.GetActiveServiceIDsForDate(ctx, date)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +180,7 @@ func (manager *Manager) activeServiceIDsForDate(ctx context.Context, cache servi
 // given instant — between the block's first trip start and last trip end —
 // among the services active on serviceDay.
 func (manager *Manager) countActiveBlocksAt(ctx context.Context, agencyID string, serviceIDCache serviceIDsByDate, serviceDay time.Time, at time.Duration) (int, error) {
-	serviceIDs, err := manager.activeServiceIDsForDate(ctx, serviceIDCache, serviceDay)
+	serviceIDs, err := serviceIDCache.forDate(ctx, manager.GtfsDB.Queries, serviceDay)
 	if err != nil {
 		return 0, err
 	}

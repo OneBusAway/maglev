@@ -36,11 +36,12 @@ func (manager *Manager) ExportVehicles() []ExportVehicle {
 // the first update for a trip supplies its matching reference.
 func (manager *Manager) tripUpdateBlockMatches(ctx context.Context, feedID string, refs []tripUpdateRef, feedCreatedAt time.Time) map[string]*BlockMatch {
 	matches := make(map[string]*BlockMatch)
+	lookups := newBlockMatchLookups()
 	for _, ref := range refs {
 		if _, seen := matches[ref.TripID]; seen || ref.TripID == "" {
 			continue
 		}
-		matches[ref.TripID] = manager.matchBlock(ctx, feedID, ref.TripID, tripUpdateMatchingReference(ref, feedCreatedAt))
+		matches[ref.TripID] = manager.matchBlock(ctx, feedID, ref.TripID, tripUpdateMatchingReference(ref, feedCreatedAt), lookups)
 	}
 	return matches
 }
@@ -82,11 +83,11 @@ func realtimeTripIDs(refs []tripUpdateRef, vehicles []gtfs.Vehicle) map[string]s
 
 // matchBlock treats a failed matching query as unresolved for this refresh
 // only; the matcher does not cache failures.
-func (manager *Manager) matchBlock(ctx context.Context, feedID, tripID string, reference time.Time) *BlockMatch {
+func (manager *Manager) matchBlock(ctx context.Context, feedID, tripID string, reference time.Time, lookups *blockMatchLookups) *BlockMatch {
 	if manager.blockMatcher == nil {
 		return nil
 	}
-	match, err := manager.blockMatcher.Match(ctx, feedID, tripID, reference)
+	match, err := manager.blockMatcher.Match(ctx, feedID, tripID, reference, lookups)
 	if err != nil {
 		logging.LogError(logging.ForComponent(ctx, "gtfs_realtime"), "Error matching realtime trip to block", err,
 			slog.String("feed", feedID), slog.String("trip_id", tripID))
