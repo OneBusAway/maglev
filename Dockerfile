@@ -1,6 +1,9 @@
 # Build stage
 FROM golang:1.27-alpine AS builder
 
+# Include the compiled Go module inventory in the per-platform SBOM.
+ARG BUILDKIT_SBOM_SCAN_STAGE=true
+
 # Install build dependencies for CGO (required by mattn/go-sqlite3)
 RUN apk add --no-cache gcc musl-dev
 
@@ -16,16 +19,8 @@ COPY . .
 
 # Build the application with CGO enabled (required for SQLite)
 ARG GIT_COMMIT=unknown
-ARG GIT_BRANCH=unknown
 ARG BUILD_TIME=unknown
 ARG VERSION=dev
-ARG GIT_DIRTY=false
-ARG GIT_EMAIL=unknown
-ARG GIT_NAME=unknown
-ARG GIT_REMOTE=unknown
-ARG GIT_MSG=unknown
-ARG BUILD_HOST=docker
-ARG GIT_COMMIT_TIME=unknown
 
 ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -34,24 +29,26 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build \
     -tags "sqlite_fts5 sqlite_math_functions" \
     -ldflags "-X 'maglev.onebusaway.org/internal/buildinfo.CommitHash=${GIT_COMMIT}' \
-              -X 'maglev.onebusaway.org/internal/buildinfo.Branch=${GIT_BRANCH}' \
               -X 'maglev.onebusaway.org/internal/buildinfo.BuildTime=${BUILD_TIME}' \
-              -X 'maglev.onebusaway.org/internal/buildinfo.Version=${VERSION}' \
-              -X 'maglev.onebusaway.org/internal/buildinfo.CommitTime=${GIT_COMMIT_TIME}' \
-              -X 'maglev.onebusaway.org/internal/buildinfo.Dirty=${GIT_DIRTY}' \
-              -X 'maglev.onebusaway.org/internal/buildinfo.UserEmail=${GIT_EMAIL}' \
-              -X 'maglev.onebusaway.org/internal/buildinfo.UserName=${GIT_NAME}' \
-              -X 'maglev.onebusaway.org/internal/buildinfo.RemoteURL=${GIT_REMOTE}' \
-              -X 'maglev.onebusaway.org/internal/buildinfo.CommitMessage=${GIT_MSG}' \
-              -X 'maglev.onebusaway.org/internal/buildinfo.Host=${BUILD_HOST}'" \
+              -X 'maglev.onebusaway.org/internal/buildinfo.Version=${VERSION}'" \
     -o maglev ./cmd/api
 
 # Runtime stage
 FROM alpine:3.24
 
-LABEL org.opencontainers.image.source="https://github.com/OneBusAway/maglev"
-LABEL org.opencontainers.image.description="REST API server for OneBusAway transit data"
-LABEL org.opencontainers.image.licenses="Apache-2.0"
+ARG GIT_COMMIT=unknown
+ARG VERSION=dev
+ARG BUILD_TIME=unknown
+
+LABEL org.opencontainers.image.title="Maglev" \
+      org.opencontainers.image.description="REST API server for OneBusAway transit data" \
+      org.opencontainers.image.source="https://github.com/OneBusAway/maglev" \
+      org.opencontainers.image.url="https://github.com/OneBusAway/maglev" \
+      org.opencontainers.image.documentation="https://github.com/OneBusAway/maglev/wiki" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision="${GIT_COMMIT}" \
+      org.opencontainers.image.created="${BUILD_TIME}" \
+      org.opencontainers.image.version="${VERSION}"
 
 # Configuration for non-root user
 ARG USER_ID=1000

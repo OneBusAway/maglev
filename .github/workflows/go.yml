@@ -2,10 +2,80 @@ name: Go CI
 
 on:
   push:
-    branches: [main]
+    # Temporary trusted-branch trigger; remove before merging Phase 2.
+    branches: [main, release/edge-ci-validation]
   pull_request:
 
 jobs:
+  dockerhub-publish:
+    needs: [fmt, test, test-race]
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'OneBusAway/maglev' &&
+      (github.ref == 'refs/heads/main' ||
+       github.ref == 'refs/heads/release/edge-ci-validation')
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: dockerhub-maglev-main-publication
+      cancel-in-progress: false
+    env:
+      IMAGE: opentransitsoftwarefoundation/maglev
+      # Temporary test channel; remove branch handling before merging Phase 2.
+      CHANNEL: ${{ github.ref == 'refs/heads/main' && 'main' || 'main-test' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: amd64,arm64
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Docker metadata
+        id: metadata
+        uses: docker/metadata-action@v6
+        with:
+          context: git
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=sha,format=long,priority=300
+            type=raw,value=${{ env.CHANNEL }}
+          labels: |
+            org.opencontainers.image.title=Maglev
+            org.opencontainers.image.description=REST API server for OneBusAway transit data
+            org.opencontainers.image.documentation=https://github.com/OneBusAway/maglev/wiki
+            org.opencontainers.image.licenses=Apache-2.0
+            org.onebusaway.maglev.build.url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and publish
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          sbom: true
+          provenance: mode=min
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            GIT_COMMIT=${{ fromJSON(steps.metadata.outputs.json).labels['org.opencontainers.image.revision'] }}
+            BUILD_TIME=${{ fromJSON(steps.metadata.outputs.json).labels['org.opencontainers.image.created'] }}
+            VERSION=${{ steps.metadata.outputs.version }}
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
