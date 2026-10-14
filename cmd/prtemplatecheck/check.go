@@ -224,11 +224,10 @@ func parseDocument(text string) document {
 
 	doc := document{text: text, sections: map[string]*section{}}
 	current := doc.addSection(preambleKey, "")
-	inFence := false
+	openFence := ""
 	for line := range strings.SplitSeq(text, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			inFence = !inFence
-		}
+		openFence = nextFence(openFence, line)
+		inFence := openFence != ""
 		if heading := headingPattern.FindStringSubmatch(line); heading != nil && !inFence {
 			current = doc.addSection(sectionKey(heading[1]), heading[1])
 			continue
@@ -236,6 +235,24 @@ func parseDocument(text string) document {
 		current.addLine(line, inFence)
 	}
 	return doc
+}
+
+// nextFence returns the fence still open after line. A fence opens with
+// ``` or ~~~ and only a line starting with the same marker closes it.
+func nextFence(openFence, line string) string {
+	trimmed := strings.TrimSpace(line)
+	if openFence != "" {
+		if strings.HasPrefix(trimmed, openFence) {
+			return ""
+		}
+		return openFence
+	}
+	for _, marker := range []string{"```", "~~~"} {
+		if strings.HasPrefix(trimmed, marker) {
+			return marker
+		}
+	}
+	return ""
 }
 
 // addSection returns the section for key, creating it on first use so a
