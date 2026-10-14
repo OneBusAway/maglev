@@ -47,6 +47,8 @@ type mergedRealtime struct {
 	alerts                   alertIndex
 	// exportVehicles feeds the GTFS-RT vehicle export; see ExportVehicles.
 	exportVehicles []ExportVehicle
+	// exportAlerts feeds the GTFS-RT alert export; see ExportAlerts.
+	exportAlerts []ExportAlert
 }
 
 // emptyMergedRealtime is returned before the first publish so a zero-value
@@ -87,6 +89,7 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 		duplicatedVehicleByRoute: maps.Clone(m.duplicatedVehicleByRoute),
 		vehiclesByRoute:          maps.Clone(m.vehiclesByRoute),
 		exportVehicles:           slices.Clone(m.exportVehicles),
+		exportAlerts:             slices.Clone(m.exportAlerts),
 		alerts: alertIndex{
 			byTrip:   maps.Clone(m.alerts.byTrip),
 			byRoute:  maps.Clone(m.alerts.byRoute),
@@ -416,6 +419,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	}
 	manager.resolveStaticTripRoutes(ctx, feedID, tripRefs, unfilteredVehicles)
 
+	// Captured before the agency filter: the export keeps what it drops.
+	exportAlerts, applyExportAlerts := manager.exportAlertRefresh(ctx, feedCfg, alertData, alertErr)
+
 	// Apply agency-based filtering if configured for this feed.
 	// This runs before acquiring realTimeMutex to keep the critical section short.
 	agencyFilter := manager.feedAgencyFilter[feedID]
@@ -564,6 +570,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	if alertData != nil && alertErr == nil {
 		manager.feedAlerts[feedID] = alertData.Alerts
+	}
+	if applyExportAlerts {
+		manager.applyExportAlertRefreshLocked(feedID, exportAlerts)
 	}
 
 	tripsUpdated := tripData != nil && tripErr == nil
@@ -974,6 +983,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		vehiclesByRoute:          vehiclesByRoute,
 		alerts:                   idx,
 		exportVehicles:           manager.buildExportVehiclesLocked(vehicleFeedIDs),
+		exportAlerts:             manager.buildExportAlertsLocked(),
 	})
 }
 

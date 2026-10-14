@@ -258,3 +258,12 @@ func (m *Manager) MockSetExportVehicles(vehicles []ExportVehicle) {
 	merged.exportVehicles = slices.Clone(vehicles)
 	m.merged.Store(merged)
 }
+
+// MockSetExportAlerts replaces the alerts the GTFS-RT alert export reads.
+func (m *Manager) MockSetExportAlerts(alerts []ExportAlert) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+	merged := m.mergedRealtime().clone()
+	merged.exportAlerts = slices.Clone(alerts)
+	m.merged.Store(merged)
+}
