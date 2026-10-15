@@ -64,20 +64,19 @@ func NewClient(config Config) (*Client, error) {
 }
 
 // flexImportVersion is the PRAGMA user_version at which the flex tables are
-// known to be populated by StoreGtfsData. Bump it (and the sentinel) whenever an
-// import-only change needs existing deployments to reimport.
+// known to be populated by StoreGtfsData. Bump it whenever an import-only
+// change needs existing deployments to reimport.
 const flexImportVersion = 1
-
-// flexInvalidationHash replaces import_metadata.file_hash so the next
-// StoreGtfsData sees a hash mismatch and reimports. Deleting the row instead
-// would make hasExisting false, skip clearAllGTFSDataWithQueries, and collide on
-// the stop_times primary key. It must be at least 8 characters because
-// StoreGtfsData logs FileHash[:8].
-const flexInvalidationHash = "invalidated:flex-import-v1"
 
 // invalidateStaleFlexImport marks a pre-flex database for reimport, once, by
 // stamping the schema version. Runs after performDatabaseMigration (the flex
 // tables exist) and before backfillStopAgencyIndex, in one transaction.
+//
+// Clearing file_source makes the next StoreGtfsData see a mismatch and
+// reimport. file_hash is left alone because it doubles as the system ETag and
+// still describes the data being served until that reimport succeeds. Deleting
+// the row instead would make hasExisting false, skip
+// clearAllGTFSDataWithQueries, and collide on the stop_times primary key.
 func (c *Client) invalidateStaleFlexImport(ctx context.Context) error {
 	var version int
 	if err := c.DB.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
@@ -89,7 +88,7 @@ func (c *Client) invalidateStaleFlexImport(ctx context.Context) error {
 
 	slog.Default().Info("invalidating pre-flex GTFS import", "user_version", version)
 	return c.withTransaction(ctx, nil, "invalidate_stale_flex_import", func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "UPDATE import_metadata SET file_hash = ?", flexInvalidationHash); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE import_metadata SET file_source = ''"); err != nil {
 			return fmt.Errorf("failed to invalidate import metadata: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", flexImportVersion)); err != nil {
