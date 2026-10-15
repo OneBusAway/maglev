@@ -74,9 +74,16 @@ func collectKeyPaths(value any, prefix string, paths map[string]struct{}, flexKe
 		}
 	case []any:
 		for _, child := range v {
-			collectKeyPaths(child, prefix[:len(prefix)-1]+"[].", paths, flexKeys)
+			collectKeyPaths(child, arrayElementPrefix(prefix), paths, flexKeys)
 		}
 	}
+}
+
+// arrayElementPrefix turns the prefix of an array ("list.") into the prefix of
+// its elements ("list[]."). A top-level array has no key, so its elements
+// start at "[].".
+func arrayElementPrefix(prefix string) string {
+	return strings.TrimSuffix(prefix, ".") + "[]."
 }
 
 func TestWhereResponses_StayAdditiveOnNonFlexFeed(t *testing.T) {
@@ -136,4 +143,11 @@ func TestWhereResponses_StayAdditiveOnNonFlexFeed(t *testing.T) {
 		_, stillTested := observed[name]
 		assert.True(t, stillTested, "snapshot has an endpoint the test no longer covers: %s", name)
 	}
+}
+
+func TestCollectKeyPaths_TopLevelArray(t *testing.T) {
+	paths := make(map[string]struct{})
+	var flexKeys []string
+	collectKeyPaths([]any{map[string]any{"id": "x"}}, "", paths, &flexKeys)
+	assert.Contains(t, paths, "[].id")
 }
