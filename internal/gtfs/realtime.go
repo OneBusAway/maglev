@@ -112,6 +112,9 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 	return out
 }
 
+// realtimeLogComponent names the GTFS-RT ingestion component in logs.
+const realtimeLogComponent = "gtfs_realtime"
+
 // staleVehicleTimeout is the duration after which a vehicle is considered stale
 const staleVehicleTimeout = 15 * time.Minute
 
@@ -370,7 +373,7 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 // It updates the per-feed sub-maps and then calls rebuildMergedRealtimeLocked.
 // Returns true if new data was successfully fetched and processed.
 func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedConfig) bool {
-	logger := logging.ForComponent(ctx, "gtfs_realtime")
+	logger := logging.ForComponent(ctx, realtimeLogComponent)
 	feedID := feedCfg.ID
 
 	var wg sync.WaitGroup

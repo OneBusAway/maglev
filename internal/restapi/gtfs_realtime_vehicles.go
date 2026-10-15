@@ -197,7 +197,7 @@ func activeTripDescriptor(vehicle internalgtfs.ExportVehicle, owner string, remo
 		applyRetainedTripFields(descriptor, *retained)
 	}
 	if isResolvedOrdinaryTrip(vehicle, retained) {
-		descriptor.StartDate = proto.String(vehicle.Block.ServiceDate.Format("20060102"))
+		descriptor.StartDate = proto.String(vehicle.Block.ServiceDate.Format(utils.GtfsDateLayout))
 		descriptor.StartTime = proto.String(formatGtfsServiceTime(vehicle.Block.TripStart))
 	}
 	return descriptor
@@ -221,7 +221,7 @@ func applyRetainedTripFields(descriptor *gtfsrt.TripDescriptor, trip gtfs.TripID
 		descriptor.DirectionId = proto.Uint32(0)
 	}
 	if trip.HasStartDate {
-		descriptor.StartDate = proto.String(trip.StartDate.Format("20060102"))
+		descriptor.StartDate = proto.String(trip.StartDate.Format(utils.GtfsDateLayout))
 	}
 	if trip.HasStartTime {
 		descriptor.StartTime = proto.String(formatGtfsServiceTime(trip.StartTime))

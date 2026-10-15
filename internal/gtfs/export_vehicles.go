@@ -59,7 +59,7 @@ func (manager *Manager) resolveStaticTripRoutes(ctx context.Context, feedID stri
 	}
 	trips, err := utils.QueryInBatches(ctx, tripIDs, manager.GtfsDB.Queries.GetTripsByIDs)
 	if err != nil {
-		logging.LogError(logging.ForComponent(ctx, "gtfs_realtime"), "Error loading static routes for realtime trips", err,
+		logging.LogError(logging.ForComponent(ctx, realtimeLogComponent), "Error loading static routes for realtime trips", err,
 			slog.String("feed", feedID))
 		return
 	}
@@ -89,7 +89,7 @@ func (manager *Manager) matchBlock(ctx context.Context, feedID, tripID string, r
 	}
 	match, err := manager.blockMatcher.Match(ctx, feedID, tripID, reference, lookups)
 	if err != nil {
-		logging.LogError(logging.ForComponent(ctx, "gtfs_realtime"), "Error matching realtime trip to block", err,
+		logging.LogError(logging.ForComponent(ctx, realtimeLogComponent), "Error matching realtime trip to block", err,
 			slog.String("feed", feedID), slog.String("trip_id", tripID))
 		return nil
 	}
@@ -237,7 +237,7 @@ func (manager *Manager) assignTripUpdateVehicles(ctx context.Context, feedID str
 	tripIDs := anonymousAssignmentTripIDs(refs, slices.Concat(fetched, earlier))
 	trips, err := utils.QueryInBatches(ctx, tripIDs, manager.GtfsDB.Queries.GetTripsByIDs)
 	if err != nil {
-		logging.LogError(logging.ForComponent(ctx, "gtfs_realtime"), "Error loading blocks for trip update assignment", err,
+		logging.LogError(logging.ForComponent(ctx, realtimeLogComponent), "Error loading blocks for trip update assignment", err,
 			slog.String("feed", feedID))
 		return refs
 	}
