@@ -591,3 +591,127 @@ CREATE INDEX IF NOT EXISTS idx_trips_time_window ON trips (max_departure_time, m
 
 -- migrate
 CREATE INDEX IF NOT EXISTS idx_stop_times_stop_revenue ON stop_times (stop_id, pickup_type, drop_off_type);
+
+-- GTFS-Flex tables. Windowed stop_times records live in flex_stop_times, never in
+-- stop_times, so every /where consumer of arrival/departure times is untouched.
+-- migrate
+CREATE TABLE
+    IF NOT EXISTS booking_rules (
+        id TEXT PRIMARY KEY,
+        booking_type INTEGER NOT NULL CHECK (booking_type BETWEEN 0 AND 2),
+        prior_notice_duration_min INTEGER, -- minutes
+        prior_notice_duration_max INTEGER, -- minutes
+        prior_notice_last_day INTEGER,
+        prior_notice_last_time INTEGER, -- ns since midnight, matching stop_times
+        prior_notice_start_day INTEGER,
+        prior_notice_start_time INTEGER, -- ns since midnight
+        prior_notice_service_id TEXT,
+        message TEXT,
+        pickup_message TEXT,
+        drop_off_message TEXT,
+        phone_number TEXT,
+        info_url TEXT,
+        booking_url TEXT
+    ) STRICT;
+
+-- migrate
+CREATE TABLE
+    IF NOT EXISTS locations (
+        id TEXT PRIMARY KEY, -- shares one namespace with stops.id and location_groups.id
+        name TEXT,
+        description TEXT,
+        geometry TEXT NOT NULL, -- GeoJSON geometry object, verbatim from the feed
+        geometry_simplified TEXT, -- display geometry; NULL when the original already fits
+        min_lat REAL NOT NULL,
+        max_lat REAL NOT NULL,
+        min_lon REAL NOT NULL,
+        max_lon REAL NOT NULL
+    ) STRICT;
+
+-- migrate
+CREATE TABLE
+    IF NOT EXISTS location_groups (id TEXT PRIMARY KEY, name TEXT) STRICT;
+
+-- migrate
+CREATE TABLE
+    IF NOT EXISTS location_group_stops (
+        location_group_id TEXT NOT NULL REFERENCES location_groups (id),
+        stop_id TEXT NOT NULL REFERENCES stops (id),
+        PRIMARY KEY (location_group_id, stop_id)
+    ) STRICT;
+
+-- migrate
+CREATE TABLE
+    IF NOT EXISTS flex_stop_times (
+        trip_id TEXT NOT NULL REFERENCES trips (id),
+        stop_sequence INTEGER NOT NULL,
+        stop_id TEXT,
+        location_id TEXT,
+        location_group_id TEXT,
+        start_pickup_drop_off_window INTEGER NOT NULL, -- ns since midnight
+        end_pickup_drop_off_window INTEGER NOT NULL,
+        pickup_type INTEGER NOT NULL,
+        drop_off_type INTEGER NOT NULL,
+        pickup_booking_rule_id TEXT,
+        drop_off_booking_rule_id TEXT,
+        safe_duration_factor REAL,
+        safe_duration_offset REAL,
+        PRIMARY KEY (trip_id, stop_sequence),
+        CHECK (
+            (stop_id IS NOT NULL) + (location_id IS NOT NULL) + (location_group_id IS NOT NULL) = 1
+        )
+    ) STRICT;
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_flex_stop_times_trip_id ON flex_stop_times (trip_id);
+
+-- On-demand services compiled at import (one per flex-involved route).
+-- migrate
+CREATE TABLE
+    IF NOT EXISTS ondemand_services (
+        id TEXT PRIMARY KEY, -- the route id for flex feeds
+        agency_id TEXT NOT NULL,
+        route_id TEXT NOT NULL,
+        service_kind TEXT NOT NULL CHECK (
+            service_kind IN ('zone', 'zoneToZone', 'stopGroup', 'deviatedRoute', 'unknown')
+        )
+    ) STRICT;
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_ondemand_services_agency ON ondemand_services (agency_id);
+
+-- migrate
+CREATE TABLE
+    IF NOT EXISTS ondemand_rules (
+        id INTEGER PRIMARY KEY,
+        service_id TEXT NOT NULL REFERENCES ondemand_services (id),
+        trip_id TEXT NOT NULL, -- representative trip, retained for traceability only
+        from_id TEXT NOT NULL,
+        from_kind INTEGER NOT NULL, -- 0 stop, 1 location, 2 location group
+        to_id TEXT NOT NULL,
+        to_kind INTEGER NOT NULL,
+        start_pickup_time INTEGER, -- ns since midnight, may exceed 24h
+        end_pickup_time INTEGER,
+        end_drop_off_time INTEGER, -- NULL when equal to end_pickup_time
+        gtfs_service_id TEXT NOT NULL, -- one row per (tuple, calendar)
+        pickup_type INTEGER NOT NULL,
+        drop_off_type INTEGER NOT NULL,
+        pickup_booking_rule_id TEXT,
+        drop_off_booking_rule_id TEXT,
+        safe_duration_factor REAL,
+        safe_duration_offset REAL
+    ) STRICT;
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_ondemand_rules_service ON ondemand_rules (service_id);
+
+-- migrate
+CREATE TABLE
+    IF NOT EXISTS ondemand_stop_services (
+        stop_id TEXT NOT NULL,
+        service_id TEXT NOT NULL,
+        PRIMARY KEY (stop_id, service_id)
+    ) STRICT;
+
+-- migrate
+CREATE INDEX IF NOT EXISTS idx_ondemand_stop_services_service ON ondemand_stop_services (service_id);

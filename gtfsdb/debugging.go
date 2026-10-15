@@ -48,15 +48,18 @@ func (c *Client) staticDataCounts(staticData *gtfs.Static) map[string]int {
 		frequencyCount += len(t.Frequencies)
 	}
 	return map[string]int{
-		"routes":      len(staticData.Routes),
-		"services":    len(staticData.Services),
-		"stops":       len(staticData.Stops),
-		"agencies":    len(staticData.Agencies),
-		"transfers":   len(staticData.Transfers),
-		"trips":       len(staticData.Trips),
-		"calendar":    len(staticData.Services),
-		"shapes":      len(staticData.Shapes),
-		"frequencies": frequencyCount,
+		"routes":          len(staticData.Routes),
+		"services":        len(staticData.Services),
+		"stops":           len(staticData.Stops),
+		"agencies":        len(staticData.Agencies),
+		"transfers":       len(staticData.Transfers),
+		"trips":           len(staticData.Trips),
+		"calendar":        len(staticData.Services),
+		"shapes":          len(staticData.Shapes),
+		"frequencies":     frequencyCount,
+		"locations":       len(staticData.Locations),
+		"location_groups": len(staticData.LocationGroups),
+		"booking_rules":   len(staticData.BookingRules),
 	}
 }
 
@@ -81,20 +84,28 @@ func (c *Client) TableCounts() (map[string]int, error) {
 	counts := make(map[string]int)
 
 	tableCountQueries := map[string]string{
-		"agencies":         "SELECT COUNT(*) FROM agencies",
-		"routes":           "SELECT COUNT(*) FROM routes",
-		"stops":            "SELECT COUNT(*) FROM stops",
-		"trips":            "SELECT COUNT(*) FROM trips",
-		"stop_times":       "SELECT COUNT(*) FROM stop_times",
-		"calendar":         "SELECT COUNT(*) FROM calendar",
-		"calendar_dates":   "SELECT COUNT(*) FROM calendar_dates",
-		"shapes":           "SELECT COUNT(*) FROM shapes",
-		"transfers":        "SELECT COUNT(*) FROM transfers",
-		"feed_info":        "SELECT COUNT(*) FROM feed_info",
-		"block_trip_index": "SELECT COUNT(*) FROM block_trip_index",
-		"block_trip_entry": "SELECT COUNT(*) FROM block_trip_entry",
-		"import_metadata":  "SELECT COUNT(*) FROM import_metadata",
-		"frequencies":      "SELECT COUNT(*) FROM frequencies",
+		"agencies":               "SELECT COUNT(*) FROM agencies",
+		"routes":                 "SELECT COUNT(*) FROM routes",
+		"stops":                  "SELECT COUNT(*) FROM stops",
+		"trips":                  "SELECT COUNT(*) FROM trips",
+		"stop_times":             "SELECT COUNT(*) FROM stop_times",
+		"calendar":               "SELECT COUNT(*) FROM calendar",
+		"calendar_dates":         "SELECT COUNT(*) FROM calendar_dates",
+		"shapes":                 "SELECT COUNT(*) FROM shapes",
+		"transfers":              "SELECT COUNT(*) FROM transfers",
+		"feed_info":              "SELECT COUNT(*) FROM feed_info",
+		"block_trip_index":       "SELECT COUNT(*) FROM block_trip_index",
+		"block_trip_entry":       "SELECT COUNT(*) FROM block_trip_entry",
+		"import_metadata":        "SELECT COUNT(*) FROM import_metadata",
+		"frequencies":            "SELECT COUNT(*) FROM frequencies",
+		"locations":              "SELECT COUNT(*) FROM locations",
+		"location_groups":        "SELECT COUNT(*) FROM location_groups",
+		"location_group_stops":   "SELECT COUNT(*) FROM location_group_stops",
+		"booking_rules":          "SELECT COUNT(*) FROM booking_rules",
+		"flex_stop_times":        "SELECT COUNT(*) FROM flex_stop_times",
+		"ondemand_services":      "SELECT COUNT(*) FROM ondemand_services",
+		"ondemand_rules":         "SELECT COUNT(*) FROM ondemand_rules",
+		"ondemand_stop_services": "SELECT COUNT(*) FROM ondemand_stop_services",
 	}
 
 	for _, table := range tables {
