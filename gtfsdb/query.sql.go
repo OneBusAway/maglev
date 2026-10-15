@@ -6368,17 +6368,19 @@ func (q *Queries) ListOnDemandServiceLocationIDs(ctx context.Context) ([]ListOnD
 const listOnDemandServiceStopPoints = `-- name: ListOnDemandServiceStopPoints :many
 SELECT oss.service_id, oss.stop_id, s.lat, s.lon
 FROM ondemand_stop_services oss
-JOIN stops s ON s.id = oss.stop_id
+LEFT JOIN stops s ON s.id = oss.stop_id
 ORDER BY oss.service_id, oss.stop_id
 `
 
 type ListOnDemandServiceStopPointsRow struct {
 	ServiceID string
 	StopID    string
-	Lat       float64
-	Lon       float64
+	Lat       sql.NullFloat64
+	Lon       sql.NullFloat64
 }
 
+// ListOnDemandServiceStopPoints lists every stop pointer, with the stop's
+// coordinates when the stop is stored.
 func (q *Queries) ListOnDemandServiceStopPoints(ctx context.Context) ([]ListOnDemandServiceStopPointsRow, error) {
 	rows, err := q.query(ctx, q.listOnDemandServiceStopPointsStmt, listOnDemandServiceStopPoints)
 	if err != nil {

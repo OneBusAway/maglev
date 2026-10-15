@@ -1742,9 +1742,11 @@ GROUP BY stop_id
 ORDER BY stop_id;
 
 -- name: ListOnDemandServiceStopPoints :many
+-- ListOnDemandServiceStopPoints lists every stop pointer, with the stop's
+-- coordinates when the stop is stored.
 SELECT oss.service_id, oss.stop_id, s.lat, s.lon
 FROM ondemand_stop_services oss
-JOIN stops s ON s.id = oss.stop_id
+LEFT JOIN stops s ON s.id = oss.stop_id
 ORDER BY oss.service_id, oss.stop_id;
 
 -- name: ListInertOnDemandRuleCalendars :many
