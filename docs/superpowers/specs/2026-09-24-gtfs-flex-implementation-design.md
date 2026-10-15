@@ -1,9 +1,8 @@
 # GTFS-Flex Implementation Design (maglev, go-gtfs, iOS, Android)
 
-**Status:** approved for planning (autonomous run, 2026-09-24; revised after design review)
+**Status:** implemented by the maglev GTFS-Flex PR stack; §9 records where it deviates from the wiki.
 **Contract:** the maglev wiki page *GTFS-Flex Support & the `/api/ondemand` Namespace*
-(https://github.com/OneBusAway/maglev/wiki/GTFS-Flex%20Support), snapshot identical to
-`docs/superpowers/specs/2026-07-26-gtfs-flex-ondemand-api-design.md` on branch `flex-spec`.
+(https://github.com/OneBusAway/maglev/wiki/GTFS-Flex%20Support).
 
 This document does not restate the wire contract. It records how the contract is
 implemented against the code as it exists today in four repositories, the decisions the
@@ -11,29 +10,23 @@ wiki leaves open, and the places where this implementation deliberately deviates
 the wiki. Wire-level behaviour (paths, parameters, JSON shapes, ordering, error codes)
 follows the wiki exactly except where §9 says otherwise.
 
-## 0. Repositories, branches and worktrees
+## 0. Repositories and sequencing
 
-| Repo | Base | Work location | Branch |
-|---|---|---|---|
-| `OneBusAway/go-gtfs` | `origin/main` @ 50d893a | `../.worktrees/go-gtfs-gtfs-flex` | `gtfs-flex` |
-| `OneBusAway/maglev` | `main` @ e70bd6ba | this checkout (already on `gtfs-flex`) | `gtfs-flex` |
-| `OneBusAway/ios` | `origin/main` @ 68925b53 | `../.worktrees/ios-gtfs-flex` | `gtfs-flex` |
-| `OneBusAway/android` | `origin/main` @ 8046352b | `../.worktrees/android-gtfs-flex` | `gtfs-flex` |
+The work spans `OneBusAway/go-gtfs`, `OneBusAway/maglev`, `OneBusAway/ios` and
+`OneBusAway/android`. go-gtfs lands first (maglev depends on it), then maglev, then iOS
+and Android in parallel. iOS and Android client fixtures are **captured from the
+running maglev server** against the test feeds, so the maglev API must be complete
+before client work starts. maglev pins go-gtfs by pseudo-version, with no `replace`
+directive.
 
-Sequencing: go-gtfs first (maglev depends on it), then maglev, then iOS and Android in
-parallel. iOS and Android client fixtures are **captured from the running maglev
-server** against the test feeds, so the maglev API must be complete before client work
-starts. The go-gtfs branch is pushed to `origin` so maglev can pin a pseudo-version with
-`go get github.com/OneBusAway/go-gtfs@gtfs-flex` (no `replace` directive; CI stays
-green). If the push is refused, fall back to a `replace` directive and flag it.
-
-**maglev PR decomposition (CONTRIBUTING):** three stacked PRs matching wiki §6.
-(A) storage/import: go-gtfs bump + validator + `st.Stop` guards in one commit (the wiki
-requires these to land together); schema + `user_version` migration; flex inserts +
-warning logging; `CompileOnDemand` + tests; simplification. (B) `/ondemand`:
-`polygon.go`; FlexIndex; models; one commit per endpoint. (C) `/where`: pointer fields;
-legacy exclusions; additive regression. Each commit is a single logical change with an
-imperative subject ≤50 chars and a body explaining why.
+**maglev PR decomposition (CONTRIBUTING):** a five-PR stack. (1) storage/import:
+go-gtfs bump + validator + `st.Stop` guards in one commit (the wiki requires these to
+land together); schema + `user_version` migration; flex inserts + warning logging;
+`CompileOnDemand` + tests; simplification. (2) `/ondemand`: `polygon.go`; FlexIndex;
+models; one commit per endpoint. (3) `/where`: pointer fields; legacy exclusions;
+additive regression. (4) this document and the CLAUDE.md notes. (5) post-review
+tidy. Each commit is a single logical change with an imperative subject ≤50 chars and
+a body explaining why.
 
 ## 1. Test data
 
@@ -41,7 +34,7 @@ imperative subject ≤50 chars and a body explaining why.
   flex-only trips, one 4,239-point zone, `booking_type=2`, draft-era columns
   (`mean_duration_*`, `safe_duration_*` on stop_times), header-only
   `location_groups.txt`/`location_group_stops.txt`, `America/Los_Angeles` agency
-  timezone vs `America/New_York` stop timezone. Copied from the `flex-spec` branch.
+  timezone vs `America/New_York` stop timezone.
 - **`testdata/manistee-flex.zip`** (maglev): real Michigan feed. On the wire it
   exercises zone and zone→zone services across six referenced zones (a seventh,
   `grand_traverse_county`, is stored but never referenced), a timed-only fixed route
@@ -432,7 +425,7 @@ element — and logged once at index build.
 `fromIds` joined with `\u0000`, `toIds` likewise, `endDropOffTime` (nulls first),
 `pickupType`, `dropOffType`, `pickupBookingRuleId` (nulls first),
 `dropOffBookingRuleId` (nulls first), then import order (the sort is stable over
-`ListOnDemandRules` rows; rules differing only in safe duration or in `calendarIds`
+`GetOnDemandRulesForServices` rows, which come back `ORDER BY service_id, id`; rules differing only in safe duration or in `calendarIds`
 after the first compare equal). `calendarIds`, `fromIds` and `toIds` are each sorted
 ascending before rules are sorted.
 
