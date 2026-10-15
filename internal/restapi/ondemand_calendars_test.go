@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -72,4 +73,13 @@ func TestCompileOnDemandCalendars(t *testing.T) {
 			assert.Equal(t, tt.want, compileOnDemandCalendars("MC", serviceID, tt.base, tt.exceptions))
 		})
 	}
+}
+
+func TestWellFormedCalendarDates(t *testing.T) {
+	rows := []gtfsdb.CalendarDate{
+		{ServiceID: "wk", Date: "20260704", ExceptionType: 1},
+		{ServiceID: "wk", Date: "2026-07-05", ExceptionType: 1},
+		{ServiceID: "wk", Date: "", ExceptionType: 2},
+	}
+	assert.Equal(t, rows[:1], wellFormedCalendarDates(slog.Default(), rows))
 }
