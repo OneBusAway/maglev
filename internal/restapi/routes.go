@@ -38,7 +38,7 @@ func rateLimitAndValidateAPIKey(api *RestAPI, finalHandler handlerFunc) http.Han
 func etagStatic(api *RestAPI, handler func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	getETagFunc := func(r *http.Request) string {
 		if api.GtfsManager != nil {
-			return api.GtfsManager.GetSystemETag(r.Context())
+			return api.GtfsManager.GetSystemETag()
 		}
 		return ""
 	}

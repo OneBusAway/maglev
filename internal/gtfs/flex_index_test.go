@@ -229,3 +229,23 @@ func TestFlexIndex_WarnsOnceForPriorNoticeServiceWithNoBaseCalendar(t *testing.T
 	assert.Equal(t, 1, strings.Count(logs.String(), "prior_notice_service_id=ghost"), logs.String())
 	assert.NotContains(t, logs.String(), "prior_notice_service_id=sat", "a service with a base calendar resolves")
 }
+
+func TestReloadStatic_PublishesETagWithIndex(t *testing.T) {
+	manager := newFlexTestManager(t, "charlevoix-flex.zip")
+	ctx := context.Background()
+	served := manager.GetSystemETag()
+	require.NotEmpty(t, served)
+
+	// A database that has moved on does not change the ETag until a reload
+	// publishes it alongside the index built from that database.
+	_, err := manager.GtfsDB.DB.ExecContext(ctx, "UPDATE import_metadata SET file_hash = 'next-feed-hash'")
+	require.NoError(t, err)
+	assert.Equal(t, served, manager.GetSystemETag())
+
+	// The mismatched hash makes the reload reimport the feed, then publish the
+	// resulting hash with the rebuilt index.
+	_, err = manager.ReloadStatic(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, readSystemETag(ctx, manager.GtfsDB), manager.GetSystemETag())
+	assert.Equal(t, served, manager.GetSystemETag(), "the same feed reimported keeps its hash")
+}
