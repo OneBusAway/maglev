@@ -17,6 +17,8 @@ import (
 const maxLoggedStaticWarnings = 200
 
 // errLocationHasNoPolygons marks a location with no area to store a bbox for.
+// go-gtfs drops such a feature (and the records that reference it) while
+// parsing, so reaching it means that guarantee broke.
 var errLocationHasNoPolygons = errors.New("location has no polygons")
 
 // logStaticWarnings logs each parser warning (kind, file, row) up to the cap.
@@ -62,16 +64,14 @@ func storeBookingRules(ctx context.Context, rules []gtfs.BookingRule, qtx *Queri
 	return nil
 }
 
-// storeLocations skips, with a warning, any location whose geometry cannot be
-// stored; flex_stop_times.location_id has no foreign key, so the import goes on.
+// storeLocations stores every location go-gtfs parsed. None may be skipped:
+// flex_stop_times.location_id and ondemand_rules have no foreign key, so a
+// skipped location would leave records and rules pointing at nothing.
 func storeLocations(ctx context.Context, locations []gtfs.Location, qtx *Queries) error {
 	for _, location := range lastByID(locations, func(location gtfs.Location) string { return location.Id }) {
 		params, err := locationParams(location)
 		if err != nil {
-			slog.Default().With(slog.String("component", "gtfs_importer")).Warn("gtfs_flex_location_skipped",
-				slog.String("location_id", location.Id),
-				slog.String("reason", err.Error()))
-			continue
+			return fmt.Errorf("unable to store location %s: %w", location.Id, err)
 		}
 		if err := qtx.CreateLocation(ctx, params); err != nil {
 			return fmt.Errorf("unable to create location %s: %w", location.Id, err)
@@ -172,7 +172,8 @@ func bookingRuleParams(rule gtfs.BookingRule) CreateBookingRuleParams {
 }
 
 // locationParams stores the feed geometry verbatim, its bounding box, and the
-// display geometry (NULL when simplification changed nothing).
+// display geometry. The display geometry is NULL when simplification changed
+// nothing, or when it could not be encoded: the verbatim geometry still serves.
 func locationParams(location gtfs.Location) (CreateLocationParams, error) {
 	if len(location.Geometry.Polygons) == 0 {
 		return CreateLocationParams{}, errLocationHasNoPolygons
@@ -195,7 +196,10 @@ func locationParams(location gtfs.Location) (CreateLocationParams, error) {
 	}
 	encoded, err := geo.EncodeGeoJSONGeometry(location.Geometry.Type, simplified.Polygons)
 	if err != nil {
-		return CreateLocationParams{}, err
+		slog.Default().With(slog.String("component", "gtfs_importer")).Warn("gtfs_flex_location_unsimplified",
+			slog.String("location_id", location.Id),
+			slog.String("reason", err.Error()))
+		return params, nil
 	}
 	params.GeometrySimplified = nulls.String(string(encoded))
 	return params, nil
