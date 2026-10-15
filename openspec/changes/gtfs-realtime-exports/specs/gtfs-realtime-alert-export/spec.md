@@ -157,6 +157,10 @@ An identified alert's FeedEntity ID SHALL be its qualified legacy identity `{rec
 ### Requirement: Alert field fidelity
 The export SHALL preserve cause, effect, header/description/URL translations, active periods, and informed-entity selector values retained by the current alert model. Selector route, trip, and stop IDs SHALL obey normalization, while explicit or resolved agency IDs remain intact. Alert severity and other standard fields not retained by current ingestion are deferred; they SHALL NOT be fabricated or require model expansion for this feature.
 
+#### Scenario: Stop qualified by the selector's agency
+- **WHEN** `removeAgencyIds=false` and a selector names agency 40's route `100479` at stop `1121`, which in consolidated static data only agency 3 serves
+- **THEN** the stop stays raw (`1121`), since raw stop IDs can collide across agencies. A stop ID is qualified only with the selector's own agency, and only when that agency serves the stop
+
 #### Scenario: Rich alert export
 - **WHEN** a selected retained alert has cause CONSTRUCTION, effect DETOUR, translations, active periods, and selectors
 - **THEN** those values are preserved in export, while unavailable severity remains absent

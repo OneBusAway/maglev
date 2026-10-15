@@ -50,6 +50,18 @@ func (selector ExportAlertSelector) AgencyID() (string, bool) {
 	return owners[0], true
 }
 
+// StopOwner returns the agency to qualify the selector's stop ID with: the
+// selector's own agency, when that agency serves the stop. Raw stop IDs can
+// collide across agencies, so a stop served only by other agencies, or a
+// selector with no single agency, gives no owner.
+func (selector ExportAlertSelector) StopOwner() string {
+	agencyID, ok := selector.AgencyID()
+	if !ok || !slices.Contains(selector.StopOwners, agencyID) {
+		return ""
+	}
+	return agencyID
+}
+
 // scopeAgencies returns the agencies owning the one scope the selector
 // names. Its fields apply together, so the most specific field decides: an
 // explicit agency, else the route, else the trip, else the stop. A stop

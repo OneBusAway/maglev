@@ -148,9 +148,9 @@ func optionalEpochSeconds(t *time.Time) *uint64 {
 }
 
 // exportAlertSelector keeps every field of the informed entity. A missing
-// agency ID is filled only when ownership is unambiguous, and route, trip
-// and stop IDs are qualified with their own owners, staying raw when that
-// owner is unknown.
+// agency ID is filled only when ownership is unambiguous. Route and trip IDs
+// are qualified with their own owners and the stop ID with the selector's
+// agency, each staying raw when that owner is unknown.
 func exportAlertSelector(selector internalgtfs.ExportAlertSelector, removeAgencyIDs bool) *gtfsrt.EntitySelector {
 	entity := selector.Entity
 	exported := &gtfsrt.EntitySelector{}
@@ -168,7 +168,7 @@ func exportAlertSelector(selector internalgtfs.ExportAlertSelector, removeAgency
 		exported.Trip = alertTripDescriptor(*entity.TripID, selector.TripOwner, removeAgencyIDs)
 	}
 	if entity.StopID != nil {
-		exported.StopId = proto.String(exportPayloadID(*entity.StopID, singleStopOwner(selector), removeAgencyIDs))
+		exported.StopId = proto.String(exportPayloadID(*entity.StopID, selector.StopOwner(), removeAgencyIDs))
 	}
 	return exported
 }
@@ -193,11 +193,4 @@ func alertTripDescriptor(tripID gtfs.TripID, owner string, removeAgencyIDs bool)
 	}
 	applyFeedTripFields(descriptor, tripID)
 	return descriptor
-}
-
-func singleStopOwner(selector internalgtfs.ExportAlertSelector) string {
-	if len(selector.StopOwners) != 1 {
-		return ""
-	}
-	return selector.StopOwners[0]
 }

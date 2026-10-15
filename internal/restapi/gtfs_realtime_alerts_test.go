@@ -146,6 +146,14 @@ func TestBuildAlertsFeedQualifiesPayloadIDs(t *testing.T) {
 		routeSelector("unknown", ""),
 		internalgtfs.ExportAlertSelector{Entity: gtfs.AlertInformedEntity{StopID: proto.String("S")}, StopOwners: []string{"40"}},
 		internalgtfs.ExportAlertSelector{Entity: gtfs.AlertInformedEntity{StopID: proto.String("shared")}, StopOwners: []string{"20", "40"}},
+		internalgtfs.ExportAlertSelector{
+			Entity:     gtfs.AlertInformedEntity{RouteID: proto.String("100479"), StopID: proto.String("1121")},
+			RouteOwner: "40", StopOwners: []string{"3"},
+		},
+		internalgtfs.ExportAlertSelector{
+			Entity:     gtfs.AlertInformedEntity{RouteID: proto.String("2LINE"), StopID: proto.String("shared")},
+			RouteOwner: "40", StopOwners: []string{"20", "40"},
+		},
 	)
 	req := alertExportRequest("40")
 	req.RemoveAgencyIDs = false
@@ -156,6 +164,8 @@ func TestBuildAlertsFeedQualifiesPayloadIDs(t *testing.T) {
 	assert.Equal(t, "unknown", selectors[1].GetRouteId(), "unresolved owner stays raw")
 	assert.Equal(t, "40_S", selectors[2].GetStopId())
 	assert.Equal(t, "shared", selectors[3].GetStopId(), "ambiguous owner stays raw")
+	assert.Equal(t, "1121", selectors[4].GetStopId(), "a stop the selector's agency doesn't serve stays raw")
+	assert.Equal(t, "40_shared", selectors[5].GetStopId(), "the selector's agency picks among a shared stop's owners")
 }
 
 func TestBuildAlertsFeedEntityIDs(t *testing.T) {
