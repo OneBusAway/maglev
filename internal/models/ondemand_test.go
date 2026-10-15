@@ -25,12 +25,6 @@ func TestFormatGTFSTimeOfDay(t *testing.T) {
 	}
 }
 
-func TestNullableString(t *testing.T) {
-	assert.Nil(t, NullableString(""))
-	require.NotNil(t, NullableString("x"))
-	assert.Equal(t, "x", *NullableString("x"))
-}
-
 func TestOnDemandReferences_SerializesTenKeysAndNullPolicy(t *testing.T) {
 	refs := NewEmptyOnDemandReferences()
 	refs.ServiceAreas = []ServiceArea{{ID: "a_1", BBox: [4]float64{-1, -2, 1, 2}}}

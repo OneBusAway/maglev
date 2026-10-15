@@ -91,7 +91,7 @@ func TestBuildOnDemandServices_Charlevoix(t *testing.T) {
 
 	require.Len(t, refs.LocationGroups, 1)
 	assert.Equal(t, models.LocationGroupReference{
-		ID: "CC_CC_ironton_ferry_stops", Name: models.NullableString("Ironton Ferry Stops"),
+		ID: "CC_CC_ironton_ferry_stops", Name: nulls.StringOrNil(nulls.String("Ironton Ferry Stops")),
 		StopIds: []string{"CC_CC_Ironton_Ferry_East", "CC_CC_Ironton_Ferry_West"},
 	}, refs.LocationGroups[0])
 

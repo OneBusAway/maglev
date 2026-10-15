@@ -81,6 +81,12 @@ func TestFloat64OrNil(t *testing.T) {
 	assert.Nil(t, Float64OrNil(sql.NullFloat64{Float64: 2.5, Valid: false}))
 }
 
+func TestStringOrNil(t *testing.T) {
+	assert.Equal(t, "call", *StringOrNil(sql.NullString{String: "call", Valid: true}))
+	assert.Nil(t, StringOrNil(sql.NullString{String: "", Valid: true}), "blank is omitted")
+	assert.Nil(t, StringOrNil(sql.NullString{String: "call", Valid: false}))
+}
+
 func TestIntOrNil(t *testing.T) {
 	assert.Equal(t, 90, *IntOrNil(sql.NullInt64{Int64: 90, Valid: true}))
 	assert.Nil(t, IntOrNil(sql.NullInt64{Int64: 90, Valid: false}))
