@@ -18,6 +18,7 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 func buildAllOnDemandServices(t *testing.T, api *RestAPI, opts onDemandBuildOptions) ([]models.OnDemandService, *models.OnDemandReferences) {
@@ -51,7 +52,7 @@ func ids[T any](items []T, id func(T) string) []string {
 
 func TestBuildOnDemandServices_Charlevoix(t *testing.T) {
 	api := createTestApiWithFeed(t, models.GetFixturePath(t, "charlevoix-flex.zip"))
-	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
+	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone})
 
 	assert.Equal(t, []string{"CC_CC1", "CC_CC2_med", "CC_CC3", "CC_CC4"}, ids(list, func(s models.OnDemandService) string { return s.ID }))
 
@@ -129,28 +130,28 @@ func TestBuildOnDemandServices_GeometryDetail(t *testing.T) {
 		return len(polygons[0][0])
 	}
 
-	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailFull})
+	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailFull})
 	require.Len(t, refs.ServiceAreas, 1)
 	assert.Equal(t, 4239, ringLength(refs.ServiceAreas[0].Geometry))
 	assert.Equal(t, [4]float64{-77.5372039, 38.617508, -76.9092198, 39.057831}, refs.ServiceAreas[0].BBox)
 	assert.Nil(t, refs.ServiceAreas[0].Name)
 
-	_, refs = buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailSimplified})
+	_, refs = buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailSimplified})
 	assert.LessOrEqual(t, ringLength(refs.ServiceAreas[0].Geometry), geo.SimplifyMaxRingPoints)
 
-	_, refs = buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
+	_, refs = buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone})
 	assert.Empty(t, refs.ServiceAreas[0].Geometry)
 }
 
 func TestBuildOnDemandServices_QueryPointDistances(t *testing.T) {
 	api := createTestApiWithFeed(t, models.GetFixturePath(t, "alexandria-flex.zip"))
 
-	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, AreaDistances: newAreaDistances(api.GtfsManager.FlexIndex(), geoPoint{Lat: 38.836368, Lon: -77.049221})})
+	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone, AreaDistances: newAreaDistances(api.GtfsManager.FlexIndex(), geoPoint{Lat: 38.836368, Lon: -77.049221})})
 	require.NotNil(t, refs.ServiceAreas[0].DistanceToArea)
 	assert.Equal(t, 0.0, *refs.ServiceAreas[0].DistanceToArea, "inside the zone")
 	assert.Nil(t, refs.ServiceAreas[0].NearestPointOnBoundary)
 
-	_, refs = buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, AreaDistances: newAreaDistances(api.GtfsManager.FlexIndex(), geoPoint{Lat: 38.60, Lon: -77.20})})
+	_, refs = buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone, AreaDistances: newAreaDistances(api.GtfsManager.FlexIndex(), geoPoint{Lat: 38.60, Lon: -77.20})})
 	require.NotNil(t, refs.ServiceAreas[0].DistanceToArea)
 	assert.InDelta(t, 1956, *refs.ServiceAreas[0].DistanceToArea, 25, "south of the zone's southern tip")
 	require.NotNil(t, refs.ServiceAreas[0].NearestPointOnBoundary)
@@ -179,7 +180,7 @@ func twoAgencySharedZoneFiles() map[string]string {
 
 func TestBuildOnDemandServices_TwoAgenciesSharingAZone(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "two-agency.zip", twoAgencySharedZoneFiles())
-	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
+	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone})
 
 	assert.Equal(t, []string{"a1_r1", "a2_r2"}, ids(list, func(s models.OnDemandService) string { return s.ID }))
 	assert.Equal(t, []string{"a1_zone_x"}, list[0].Rules[0].FromIds)
@@ -204,7 +205,7 @@ func TestBuildOnDemandServices_ServiceWithOnlyInertRulesKeepsEmptyRules(t *testi
 		"unused,1,1,1,1,1,1,1,20240101,20991231\n"
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "inert-calendar.zip", files)
 
-	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
+	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone})
 
 	require.Equal(t, []string{"a1_r1", "a2_r2"}, ids(list, func(s models.OnDemandService) string { return s.ID }))
 	for _, service := range list {
@@ -236,7 +237,7 @@ func zeroRuleDeviatedFiles() map[string]string {
 
 func TestBuildOnDemandServices_ZeroRuleServiceStillCarriesAreas(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "zero-rule.zip", zeroRuleDeviatedFiles())
-	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
+	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone})
 
 	require.Len(t, list, 1)
 	assert.Equal(t, "deviatedRoute", list[0].ServiceKind)
@@ -268,7 +269,7 @@ func TestBuildOnDemandServices_DanglingReferencesAreOmitted(t *testing.T) {
 		require.NoError(t, err, statement)
 	}
 
-	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
+	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone})
 
 	assert.Equal(t, []string{"CC_beaver_island", "CC_charlevoix_county", "CC_petoskey"},
 		ids(refs.ServiceAreas, func(a models.ServiceArea) string { return a.ID }))
@@ -299,7 +300,7 @@ func TestBuildOnDemandServices_MeasuresAgainstTheGivenSnapshot(t *testing.T) {
 		{-77.21, 38.59}, {-77.19, 38.59}, {-77.19, 38.61}, {-77.21, 38.61}, {-77.21, 38.59},
 	}}}}
 
-	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, AreaDistances: newAreaDistances(snapshot, point)})
+	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone, AreaDistances: newAreaDistances(snapshot, point)})
 
 	require.Len(t, refs.ServiceAreas, 1)
 	require.NotNil(t, refs.ServiceAreas[0].DistanceToArea)
@@ -314,7 +315,7 @@ func TestBuildOnDemandServices_UnindexedAreaHasNoDistance(t *testing.T) {
 	unindexed.Areas = maps.Clone(unindexed.Areas)
 	delete(unindexed.Areas, "gaylord")
 
-	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, AreaDistances: newAreaDistances(&unindexed, geoPoint{Lat: 45.3, Lon: -85.2})})
+	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone, AreaDistances: newAreaDistances(&unindexed, geoPoint{Lat: 45.3, Lon: -85.2})})
 
 	for _, area := range refs.ServiceAreas {
 		if area.ID == "CC_gaylord" {
@@ -331,7 +332,7 @@ func TestBuildOnDemandServices_InvalidStoredGeometryIsOmitted(t *testing.T) {
 	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(ctx, "UPDATE locations SET geometry = 'not geojson', geometry_simplified = NULL WHERE id = 'gaylord'")
 	require.NoError(t, err)
 
-	for _, detail := range []GeometryDetail{GeometryDetailFull, GeometryDetailSimplified} {
+	for _, detail := range []utils.GeometryDetail{utils.GeometryDetailFull, utils.GeometryDetailSimplified} {
 		_, refs := buildAllOnDemandServicesWithContext(t, ctx, api, onDemandBuildOptions{GeometryDetail: detail})
 
 		for _, area := range refs.ServiceAreas {
@@ -355,7 +356,7 @@ func TestBuildOnDemandServices_SimplifiedFallsBackToFullGeometry(t *testing.T) {
 		"SELECT id, geometry FROM locations WHERE geometry_simplified IS NULL ORDER BY id LIMIT 1").Scan(&unsimplifiedID, &fullGeometry)
 	require.NoError(t, err, "fixture needs a zone that already fits the display target")
 
-	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailSimplified})
+	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailSimplified})
 
 	for _, area := range refs.ServiceAreas {
 		if area.ID == "CC_"+unsimplifiedID {
@@ -383,7 +384,7 @@ func deviatedRouteWithStopsFiles() map[string]string {
 
 func TestBuildOnDemandServices_RuleStopsBringTheirRoutes(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "deviated-stops.zip", deviatedRouteWithStopsFiles())
-	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
+	list, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone})
 
 	require.Len(t, list, 1)
 	require.NotEmpty(t, list[0].Rules)
@@ -426,7 +427,7 @@ func TestBuildOnDemandServices_PriorNoticeCalendarMustResolve(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "prior-notice-dates.zip", files)
 	ctx, logs := contextCapturingLogs()
 
-	_, refs := buildAllOnDemandServicesWithContext(t, ctx, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
+	_, refs := buildAllOnDemandServicesWithContext(t, ctx, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone})
 
 	require.Equal(t, []string{"a1_br", "a2_br_svc"}, ids(refs.BookingRules, func(b models.BookingRule) string { return b.ID }))
 	require.NotNil(t, refs.BookingRules[0].PriorNoticeCalendarId,
@@ -447,7 +448,7 @@ func TestBuildOnDemandServices_PriorNoticeCalendarWithNoWeekdays(t *testing.T) {
 	files["calendar_dates.txt"] = "service_id,date,exception_type\nbiz,20260911,1\nbiz,20260914,1\n"
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "prior-notice-no-weekdays.zip", files)
 
-	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone})
+	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: utils.GeometryDetailNone})
 
 	require.NotNil(t, refs.BookingRules[0].PriorNoticeCalendarId)
 	assert.Equal(t, "a1_biz", *refs.BookingRules[0].PriorNoticeCalendarId)
