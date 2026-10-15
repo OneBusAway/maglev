@@ -66,8 +66,6 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 		references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 	}
 
-	api.attachRouteOnDemandIDs(&routeData)
-	api.attachOnDemandPointersToReferences(references)
 	response := models.NewEntryResponse(routeData, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }

@@ -124,7 +124,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// Nothing scheduled in the window: emit the bare envelope without paying
 	// for reference, alert or nearby-stop lookups.
 	if !result.Matched {
-		api.attachOnDemandPointersToReferences(references)
 		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, []string{}, []string{}, stopID, api.Clock)
 		api.sendResponse(w, r, response)
 		return
@@ -151,7 +150,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	topLevelSituationIDs := situationIDsFromRefs(acc.situations.refs)
 
 	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
-	api.attachOnDemandPointersToReferences(references)
 	response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nearbyStopIDs, topLevelSituationIDs, stopID, api.Clock)
 	api.sendResponse(w, r, response)
 }

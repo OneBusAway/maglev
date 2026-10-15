@@ -270,7 +270,6 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 		}
 	}
 
-	api.attachOnDemandPointersToReferences(references)
 	response := models.NewEntryResponse(result, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
