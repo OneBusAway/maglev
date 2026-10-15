@@ -86,6 +86,19 @@ func openSquare() [][][][2]float64 {
 	return [][][][2]float64{{{{0, 0}, {0.01, 0}, {0.01, 0.01}, {0, 0.01}}}}
 }
 
+func TestPolygonIntersectsBoundsUnclosedRings(t *testing.T) {
+	// The exterior and the hole are both left unclosed, and their closing
+	// edges (lon 0 and lon 0.005) bound a solid strip. The box crosses that
+	// strip with every corner outside the solid area and no vertex inside it,
+	// so only the two closing edges can detect the overlap.
+	exterior := [][2]float64{{0, 0}, {0.1, 0}, {0.1, 0.1}, {0, 0.1}}
+	hole := [][2]float64{{0.005, 0.01}, {0.09, 0.01}, {0.09, 0.09}, {0.005, 0.09}}
+	polygons := [][][][2]float64{{exterior, hole}}
+	bounds := CoordinateBounds{MinLat: 0.04, MaxLat: 0.06, MinLon: -0.01, MaxLon: 0.007}
+
+	assert.True(t, PolygonIntersectsBounds(polygons, bounds))
+}
+
 func TestNearestPointOnBoundaryUnclosedRing(t *testing.T) {
 	// West of the closing edge (lon 0, from lat 0.01 back to 0): 0.001° ≈ 111.2 m.
 	distance, lon, lat := NearestPointOnBoundary(0.005, -0.001, openSquare())

@@ -128,9 +128,9 @@ func PolygonIntersectsBounds(polygons [][][][2]float64, bounds CoordinateBounds)
 
 	for _, polygon := range polygons {
 		for _, ring := range polygon {
-			for i := 0; i < len(ring)-1; i++ {
+			for i := range ring {
 				for j := range corners {
-					if segmentsIntersect(ring[i], ring[i+1], corners[j], corners[(j+1)%4]) {
+					if segmentsIntersect(ring[i], nextRingVertex(ring, i), corners[j], corners[(j+1)%4]) {
 						return true
 					}
 				}
