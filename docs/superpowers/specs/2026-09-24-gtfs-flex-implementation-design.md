@@ -286,13 +286,15 @@ populated only inside `StoreGtfsData`, which is skipped when the import metadata
 matches, `NewClient` (after `performDatabaseMigration`, before `backfillStopAgencyIndex`,
 following the `hasLegacyStopAgenciesTable` precedent) reads `PRAGMA user_version`; if it
 is below `flexImportVersion = 1` it runs, in one transaction,
-`UPDATE import_metadata SET file_hash = 'invalidated:flex-import-v1'` and
-`PRAGMA user_version = 1`. The sentinel keeps `hasExisting = true` so the next import
-clears old rows first (a deleted metadata row would make `StoreGtfsData` skip the clear
-and then collide on `stop_times`' primary key); it is ≥8 characters because the log line
-slices `FileHash[:8]`. Every deployment re-imports exactly once on upgrade. Migration
-test: open a pre-flex DB, assert the sentinel and `user_version = 1`, then assert the
-next `StoreGtfsData` succeeds and populates the flex tables.
+`UPDATE import_metadata SET file_source = ''` and `PRAGMA user_version = 1`. The import
+skip check compares hash and source, so the cleared source forces the reimport while
+`file_hash`, which is also the system ETag, keeps naming the data being served. The row
+survives, so `hasExisting = true` and the next import clears old rows first (a deleted
+metadata row would make `StoreGtfsData` skip the clear and then collide on
+`stop_times`' primary key). Every deployment re-imports exactly once on upgrade.
+Migration test: open a pre-flex DB, assert the cleared source, the untouched hash and
+`user_version = 1`, then assert the next `StoreGtfsData` succeeds and populates the flex
+tables.
 
 ### 3.2 Import (`gtfsdb/helpers.go` + new `gtfsdb/flex_import.go`, `gtfsdb/flex_compile.go`)
 
@@ -445,29 +447,35 @@ any agency stop bounds nor any `ServiceBounds`; no bounds at all → `false`. An
 `geometryDetail` → 400 with `fieldErrors.geometryDetail`.
 
 **Pointer fields:** `OnDemandServiceIDs []string \`json:"onDemandServiceIds,omitempty"\``
-on `models.Route` and `models.Stop`, populated by `api.attachOnDemandPointers` in the
-central builders (`buildStopModel`, `buildRouteModels`, `routeReferenceFromStopRow`,
-`utils.FilterRoutes`/`GetAllRoutesRefs` call sites, the stop and route entry handlers,
-`stops-for-location`, `routes-for-location`, `routes-for-agency`, `stops-for-route`,
-`stops-for-agency`, `search-stop`, `search-route`). The oracle is a table-driven test
-over every `/where` route in `routes.go` that serializes a Route or Stop, run on
-Charlevoix and the deviated fixture, asserting `onDemandServiceIds` on every
-serialization of a flex route or stop (22 non-test files construct these models).
+on `models.Route` and `models.Stop`, filled once per response by `sendResponse`
+(`attachOnDemandPointersToResponse`), which walks the envelope: either references block
+and any route or stop entry or list, by value, pointer or slice, at any depth. No
+handler sets the pointer itself, so a new handler cannot omit it. The oracle is a
+table-driven test over every `/where` route in `routes.go` that serializes a Route or
+Stop, run on Charlevoix and the deviated fixture (with a mock vehicle for the vehicle
+endpoints), asserting `onDemandServiceIds` on every serialization of a flex route or
+stop.
 
 **Legacy exclusions:** `GetTripsForRouteInActiveServiceIDs` and `GetAllTripsForRoute`
 gain `AND t.min_arrival_time IS NOT NULL` ("has timed stop_times" is the timed-trip
 predicate); `schedule-for-route` returns the existing `noTripsResponse` for an all-flex
 route; `stops-for-route` returns its usual single direction grouping with empty
-stop groups (the same envelope as a route with no service that day). The
-block-scoped queries (`GetTripSpansForBlocks`, `GetTripsByBlockIDs`,
-`GetNextAndPreviousTripsInBlock`, `GetFirstStopOfNextTripInBlock`) also filter
-on `min_arrival_time IS NOT NULL`: the wiki's claim that NULL bounds drop
+stop groups (the same envelope as a route with no service that day). The rule is that
+any trips query whose ordering or results depend on timed stop_times filters on
+`min_arrival_time IS NOT NULL`; that covers the block-scoped queries
+(`GetTripSpansForBlocks`, `GetTripsByBlockIDs`, `GetTripsByBlockID`,
+`GetNextAndPreviousTripsInBlock`, `GetFirstStopOfNextTripInBlock`,
+`GetBlockTripSequence`), `GetShapesGroupedByTripHeadSign` and
+`RouteHasFutureService`. For the block queries in particular, the wiki's claim that NULL bounds drop
 flex-only trips "naturally" is false when a flex-only trip shares a `block_id`
 with timed trips (SQLite sorts NULLs first, and trips-for-location's block
 anchoring would then hide the whole block). `trip/{id}` already ignores
 stop_times. `trip-details/{id}` for a flex-only trip returns the entity with
-`schedule.stopTimes: []` and the `status` key omitted (existing untracked behaviour) —
-requires a zero-stop-times guard in `BuildTripStatus`/`BuildTripSchedule`.
+`schedule.stopTimes: []`. `BuildTripStatus` decides from the trip's timed stop_times:
+with none, the status carries only what a serving vehicle reports (identity, position,
+orientation, occupancy, freshness) and no stop or deviation fields, and with no vehicle
+it is nil and the key is omitted. Every caller, trip-details and trip-for-vehicle
+included, gets the same answer.
 
 **OpenAPI:** the `/ondemand` paths are added to a **local** `testdata/openapi-ondemand.yml`
 consumed by a new conformance test; `testdata/openapi.yml` stays upstream-synced.
