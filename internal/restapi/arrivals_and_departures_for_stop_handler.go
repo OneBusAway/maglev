@@ -122,12 +122,16 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	sortArrivalsByBestTime(result.Arrivals)
 
 	// Nothing scheduled in the window: emit the bare envelope without paying
-	// for reference, alert or nearby-stop lookups.
-	if !result.Matched {
+	// for reference, alert or nearby-stop lookups. A stop with on-demand
+	// services takes the full path instead, because its stop reference carries
+	// the onDemandServiceIds pointer: for a stop no fixed route serves, that is
+	// the only way a client learns which on-demand service covers it.
+	if !result.Matched && !api.stopHasOnDemandServices(stopCode) {
 		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, []string{}, []string{}, stopID, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
+	acc.stopIDs[stopCode] = true
 
 	references, err = api.buildArrivalsReferences(ctx, arrivalsReferencesInput{
 		fallbackAgencyID: stopAgencyID,

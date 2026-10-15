@@ -6368,17 +6368,19 @@ func (q *Queries) ListOnDemandServiceLocationIDs(ctx context.Context) ([]ListOnD
 const listOnDemandServiceStopPoints = `-- name: ListOnDemandServiceStopPoints :many
 SELECT oss.service_id, oss.stop_id, s.lat, s.lon
 FROM ondemand_stop_services oss
-JOIN stops s ON s.id = oss.stop_id
+LEFT JOIN stops s ON s.id = oss.stop_id
 ORDER BY oss.service_id, oss.stop_id
 `
 
 type ListOnDemandServiceStopPointsRow struct {
 	ServiceID string
 	StopID    string
-	Lat       float64
-	Lon       float64
+	Lat       sql.NullFloat64
+	Lon       sql.NullFloat64
 }
 
+// ListOnDemandServiceStopPoints lists every stop pointer, with the stop's
+// coordinates when the stop is stored.
 func (q *Queries) ListOnDemandServiceStopPoints(ctx context.Context) ([]ListOnDemandServiceStopPointsRow, error) {
 	rows, err := q.query(ctx, q.listOnDemandServiceStopPointsStmt, listOnDemandServiceStopPoints)
 	if err != nil {
@@ -6426,33 +6428,6 @@ func (q *Queries) ListOnDemandServices(ctx context.Context) ([]OndemandService, 
 			&i.RouteID,
 			&i.ServiceKind,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listOnDemandStopServices = `-- name: ListOnDemandStopServices :many
-SELECT stop_id, service_id FROM ondemand_stop_services ORDER BY stop_id, service_id
-`
-
-func (q *Queries) ListOnDemandStopServices(ctx context.Context) ([]OndemandStopService, error) {
-	rows, err := q.query(ctx, q.listOnDemandStopServicesStmt, listOnDemandStopServices)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []OndemandStopService
-	for rows.Next() {
-		var i OndemandStopService
-		if err := rows.Scan(&i.StopID, &i.ServiceID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
