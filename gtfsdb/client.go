@@ -67,24 +67,23 @@ func NewClient(config Config) (*Client, error) {
 // flexSchemaVersion is the schemaVersion that added the flex tables.
 const flexSchemaVersion = 2
 
-// flexInvalidationHash replaces import_metadata.file_hash so the next
-// StoreGtfsData sees a hash mismatch and reimports. Deleting the row instead
-// would make hasExisting false, skip clearAllGTFSDataWithQueries, and collide on
-// the stop_times primary key. It must be at least 8 characters because
-// StoreGtfsData logs FileHash[:8].
-const flexInvalidationHash = "invalidated:flex-import-v1"
-
 // invalidatePreFlexImport marks a database migrated from before
 // flexSchemaVersion for one reimport. Flex tables are populated only inside
 // StoreGtfsData, which is skipped when the feed hash is unchanged, so a
 // database imported before those tables existed would never fill them.
 // performDatabaseMigration calls it in its transaction, before it stamps the
 // new user_version, so the reimport is forced exactly once.
+//
+// Clearing file_source makes the next StoreGtfsData see a mismatch and
+// reimport. file_hash is left alone because it doubles as the system ETag and
+// still describes the data being served until that reimport succeeds. Deleting
+// the row instead would make hasExisting false, skip
+// clearAllGTFSDataWithQueries, and collide on the stop_times primary key.
 func invalidatePreFlexImport(ctx context.Context, tx *sql.Tx, fromVersion int) error {
 	if fromVersion >= flexSchemaVersion {
 		return nil
 	}
-	result, err := tx.ExecContext(ctx, "UPDATE import_metadata SET file_hash = ?", flexInvalidationHash)
+	result, err := tx.ExecContext(ctx, "UPDATE import_metadata SET file_source = ''")
 	if err != nil {
 		return fmt.Errorf("failed to invalidate pre-flex import: %w", err)
 	}
