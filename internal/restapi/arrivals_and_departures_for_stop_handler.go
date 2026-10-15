@@ -157,7 +157,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	topLevelSituationIDs := api.addStopSituations(ctx, references, acc, stopCode, stopAgencyID)
-	api.attachOnDemandPointersToReferences(references)
 	response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nearbyStopIDs, topLevelSituationIDs, stopID, api.Clock)
 	api.sendResponse(w, r, response)
 }

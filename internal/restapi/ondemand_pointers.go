@@ -7,45 +7,67 @@ import (
 )
 
 // The onDemandServiceIds pointer is the only /where coupling to GTFS-Flex
-// (wiki §3.1). These helpers fill it from the FlexIndex on every Route and Stop
-// serialization; each handler calls them right before building its response.
+// (wiki §3.1). sendResponse fills it on every Route and Stop a response
+// carries, so no handler has to remember to.
 //
-// Every exported entry point fetches the index once and hands that snapshot to
-// the per-item setters: FlexIndex() takes the static read lock, so fetching it
-// per item could stall behind a waiting reload and mix two snapshots.
+// The index is fetched once per response and that snapshot handed to the
+// per-item setters: FlexIndex() takes the static read lock, so fetching it per
+// item could stall behind a waiting reload and mix two snapshots.
 
-// attachRouteOnDemandIDs sets the pointer on a route model from its combined id.
-func (api *RestAPI) attachRouteOnDemandIDs(route *models.Route) {
-	if index := api.pointerFlexIndex(); index != nil {
-		setRouteOnDemandIDs(index, route)
-	}
-}
-
-// attachStopOnDemandIDs sets the pointer on a stop model from its combined id.
-func (api *RestAPI) attachStopOnDemandIDs(stop *models.Stop) {
-	if index := api.pointerFlexIndex(); index != nil {
-		setStopOnDemandIDs(index, stop)
-	}
-}
-
-// attachOnDemandPointers fills the pointer on every route and stop in place.
-func (api *RestAPI) attachOnDemandPointers(routes []models.Route, stops []models.Stop) {
+// attachOnDemandPointersToResponse fills the pointer on every route and stop
+// in the response: the references block and any route or stop entry or list,
+// at any depth of the map-built envelope.
+func (api *RestAPI) attachOnDemandPointersToResponse(response *models.ResponseModel) {
 	index := api.pointerFlexIndex()
 	if index == nil {
 		return
 	}
+	response.Data = withOnDemandPointers(index, response.Data)
+}
+
+// withOnDemandPointers sets the pointer on the routes and stops within value
+// and returns it. Slices and pointers are updated in place; a Route or Stop
+// held by value is returned updated so the caller can store it back.
+func withOnDemandPointers(index *gtfs.FlexIndex, value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			typed[key] = withOnDemandPointers(index, nested)
+		}
+	case models.ReferencesModel:
+		setOnDemandPointers(index, typed.Routes, typed.Stops)
+	case *models.ReferencesModel:
+		setOnDemandPointers(index, typed.Routes, typed.Stops)
+	case models.OnDemandReferences:
+		setOnDemandPointers(index, typed.Routes, typed.Stops)
+	case *models.OnDemandReferences:
+		setOnDemandPointers(index, typed.Routes, typed.Stops)
+	case []models.Route:
+		setOnDemandPointers(index, typed, nil)
+	case []models.Stop:
+		setOnDemandPointers(index, nil, typed)
+	case models.Route:
+		setRouteOnDemandIDs(index, &typed)
+		return typed
+	case *models.Route:
+		setRouteOnDemandIDs(index, typed)
+	case models.Stop:
+		setStopOnDemandIDs(index, &typed)
+		return typed
+	case *models.Stop:
+		setStopOnDemandIDs(index, typed)
+	}
+	return value
+}
+
+// setOnDemandPointers fills the pointer on every route and stop in place.
+func setOnDemandPointers(index *gtfs.FlexIndex, routes []models.Route, stops []models.Stop) {
 	for i := range routes {
 		setRouteOnDemandIDs(index, &routes[i])
 	}
 	for i := range stops {
 		setStopOnDemandIDs(index, &stops[i])
 	}
-}
-
-// attachOnDemandPointersToReferences fills the pointer on a references block's
-// routes and stops.
-func (api *RestAPI) attachOnDemandPointersToReferences(references *models.ReferencesModel) {
-	api.attachOnDemandPointers(references.Routes, references.Stops)
 }
 
 // pointerFlexIndex returns the snapshot to fill pointers from, or nil when no

@@ -8,6 +8,7 @@ import (
 )
 
 func (api *RestAPI) sendResponse(w http.ResponseWriter, r *http.Request, response models.ResponseModel) {
+	api.attachOnDemandPointersToResponse(&response)
 	setJSONResponseType(&w)
 	err := json.NewEncoder(w).Encode(response)
 	if err != nil {

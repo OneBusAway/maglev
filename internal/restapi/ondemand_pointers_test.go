@@ -198,22 +198,60 @@ func TestWhereEndpoints_CarryOnDemandPointers(t *testing.T) {
 	}
 }
 
-func TestAttachOnDemandPointers_NilSafe(t *testing.T) {
-	api := &RestAPI{}
+func TestAttachOnDemandPointersToResponse_NilSafe(t *testing.T) {
 	route := models.Route{ID: "x_y"}
-	stop := models.Stop{ID: "x_y"}
-	api.attachRouteOnDemandIDs(&route)
-	api.attachStopOnDemandIDs(&stop)
-	api.attachOnDemandPointersToReferences(models.NewEmptyReferences())
-	assert.Nil(t, route.OnDemandServiceIDs)
-	assert.Nil(t, stop.OnDemandServiceIDs)
+	response := models.NewEntryResponse(route, *models.NewEmptyReferences(), clock.NewMockClock(pointerFixtureClock))
+	(&RestAPI{}).attachOnDemandPointersToResponse(&response)
+	entry := response.Data.(map[string]any)["entry"].(models.Route)
+	assert.Nil(t, entry.OnDemandServiceIDs)
 }
 
-func TestAttachOnDemandPointers_IgnoresUnparseableIDs(t *testing.T) {
-	api := createTestApiWithFeed(t, models.GetFixturePath(t, "charlevoix-flex.zip"))
-	route := models.Route{ID: "no-underscore"}
-	api.attachRouteOnDemandIDs(&route)
+func TestWithOnDemandPointers_IgnoresUnparseableIDs(t *testing.T) {
+	index := createTestApiWithFeed(t, models.GetFixturePath(t, "charlevoix-flex.zip")).pointerFlexIndex()
+	require.NotNil(t, index)
+	route := withOnDemandPointers(index, models.Route{ID: "no-underscore"}).(models.Route)
 	assert.Nil(t, route.OnDemandServiceIDs)
+}
+
+// Every shape a handler hands sendResponse must get its pointers: a route or
+// stop held by value, by pointer or in a slice, at any depth of the envelope,
+// and inside either references block.
+func TestWithOnDemandPointers_ReachesEveryShape(t *testing.T) {
+	index := createTestApiWithFeed(t, models.GetFixturePath(t, "charlevoix-flex.zip")).pointerFlexIndex()
+	require.NotNil(t, index)
+	want := []string{"CC_CC3"}
+	flexRoute := func() models.Route { return models.Route{ID: "CC_CC3"} }
+	flexStop := func() models.Stop { return models.Stop{ID: "CC_CC_Ironton_Ferry_West"} }
+
+	routePtr, stopPtr := flexRoute(), flexStop()
+	references := models.NewEmptyReferences()
+	references.Routes = []models.Route{flexRoute()}
+	references.Stops = []models.Stop{flexStop()}
+	onDemandReferences := models.NewEmptyOnDemandReferences()
+	onDemandReferences.Routes = []models.Route{flexRoute()}
+	routeList := []models.Route{flexRoute()}
+	stopList := []models.Stop{flexStop()}
+
+	data := withOnDemandPointers(index, map[string]any{
+		"routeValue": flexRoute(),
+		"stopValue":  flexStop(),
+		"routePtr":   &routePtr,
+		"stopPtr":    &stopPtr,
+		"routes":     routeList,
+		"stops":      stopList,
+		"nested":     map[string]any{"references": *references},
+		"ondemand":   *onDemandReferences,
+	}).(map[string]any)
+
+	assert.Equal(t, want, data["routeValue"].(models.Route).OnDemandServiceIDs)
+	assert.Equal(t, want, data["stopValue"].(models.Stop).OnDemandServiceIDs)
+	assert.Equal(t, want, routePtr.OnDemandServiceIDs)
+	assert.Equal(t, want, stopPtr.OnDemandServiceIDs)
+	assert.Equal(t, want, routeList[0].OnDemandServiceIDs)
+	assert.Equal(t, want, stopList[0].OnDemandServiceIDs)
+	assert.Equal(t, want, references.Routes[0].OnDemandServiceIDs)
+	assert.Equal(t, want, references.Stops[0].OnDemandServiceIDs)
+	assert.Equal(t, want, onDemandReferences.Routes[0].OnDemandServiceIDs)
 }
 
 func TestPointerFlexIndex_SkipsFeedsWithoutOnDemandServices(t *testing.T) {

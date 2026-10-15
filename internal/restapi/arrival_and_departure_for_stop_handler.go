@@ -608,7 +608,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	references.Situations = append(references.Situations, situationRefs...)
 
-	api.attachOnDemandPointersToReferences(references)
 	response := models.NewEntryResponse(arrival, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
