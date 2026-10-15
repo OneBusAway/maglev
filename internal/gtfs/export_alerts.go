@@ -117,7 +117,7 @@ func (manager *Manager) exportAlertRefresh(ctx context.Context, feedCfg RTFeedCo
 	}
 	owners, err := manager.resolveAlertSelectorOwners(ctx, alertData.Alerts)
 	if err != nil {
-		logging.LogError(logging.ForComponent(ctx, "gtfs_realtime"), "Error resolving alert owners for export", err,
+		logging.LogError(logging.ForComponent(ctx, realtimeLogComponent), "Error resolving alert owners for export", err,
 			slog.String("feed", feedCfg.ID))
 		return nil, false
 	}
