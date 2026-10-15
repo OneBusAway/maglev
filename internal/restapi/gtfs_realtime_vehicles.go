@@ -205,12 +205,7 @@ func activeTripDescriptor(vehicle internalgtfs.ExportVehicle, owner string, remo
 }
 
 func applyFeedTripFields(descriptor *gtfsrt.TripDescriptor, trip gtfs.TripID) {
-	switch trip.DirectionID {
-	case gtfs.DirectionID_True:
-		descriptor.DirectionId = proto.Uint32(1)
-	case gtfs.DirectionID_False:
-		descriptor.DirectionId = proto.Uint32(0)
-	}
+	descriptor.DirectionId = exportDirectionID(trip.DirectionID)
 	if trip.HasStartDate {
 		descriptor.StartDate = proto.String(trip.StartDate.Format(utils.GtfsDateLayout))
 	}

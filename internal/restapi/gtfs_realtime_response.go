@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
@@ -67,6 +68,18 @@ func exportPayloadID(rawID, ownerAgencyID string, removeAgencyIDs bool) string {
 		return rawID
 	}
 	return utils.FormCombinedID(ownerAgencyID, rawID)
+}
+
+// exportDirectionID maps a direction to its GTFS-RT value, leaving it out
+// when unspecified.
+func exportDirectionID(direction gtfs.DirectionID) *uint32 {
+	switch direction {
+	case gtfs.DirectionID_True:
+		return proto.Uint32(1)
+	case gtfs.DirectionID_False:
+		return proto.Uint32(0)
+	}
+	return nil
 }
 
 // formatGtfsServiceTime renders a duration since the service day's start as

@@ -205,20 +205,6 @@ func TestNextFallbackAlertIDSkipsUsedIDs(t *testing.T) {
 	assert.Equal(t, "4", nextFallbackAlertID(2, used))
 }
 
-func TestExportDirectionID(t *testing.T) {
-	tests := []struct {
-		direction gtfs.DirectionID
-		want      *uint32
-	}{
-		{gtfs.DirectionID_True, proto.Uint32(1)},
-		{gtfs.DirectionID_False, proto.Uint32(0)},
-		{gtfs.DirectionID_Unspecified, nil},
-	}
-	for _, tt := range tests {
-		assert.Equal(t, tt.want, exportDirectionID(tt.direction), "direction %v", tt.direction)
-	}
-}
-
 func TestBuildAlertsFeedKeepsRouteType(t *testing.T) {
 	alert := exportAlert("40", "notice", routeSelector("2LINE", "40"))
 	alert.Selectors[0].Entity.RouteType = gtfs.RouteType_Bus

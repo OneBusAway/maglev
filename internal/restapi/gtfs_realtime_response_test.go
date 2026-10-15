@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,6 +86,20 @@ func TestExportPayloadID(t *testing.T) {
 	// A raw realtime ID can look qualified; legacy treats it as raw too.
 	assert.Equal(t, "40_123", exportPayloadID("40_123", "40", true), "a raw ID is not stripped by its text")
 	assert.Equal(t, "40_40_123", exportPayloadID("40_123", "40", false))
+}
+
+func TestExportDirectionID(t *testing.T) {
+	tests := []struct {
+		direction gtfs.DirectionID
+		want      *uint32
+	}{
+		{gtfs.DirectionID_True, proto.Uint32(1)},
+		{gtfs.DirectionID_False, proto.Uint32(0)},
+		{gtfs.DirectionID_Unspecified, nil},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, exportDirectionID(tt.direction), "direction %v", tt.direction)
+	}
 }
 
 func TestFormatGtfsServiceTime(t *testing.T) {

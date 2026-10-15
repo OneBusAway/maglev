@@ -173,16 +173,6 @@ func exportAlertSelector(selector internalgtfs.ExportAlertSelector, removeAgency
 	return exported
 }
 
-func exportDirectionID(direction gtfs.DirectionID) *uint32 {
-	switch direction {
-	case gtfs.DirectionID_True:
-		return proto.Uint32(1)
-	case gtfs.DirectionID_False:
-		return proto.Uint32(0)
-	}
-	return nil
-}
-
 func alertTripDescriptor(tripID gtfs.TripID, owner string, removeAgencyIDs bool) *gtfsrt.TripDescriptor {
 	descriptor := &gtfsrt.TripDescriptor{}
 	if tripID.ID != "" {
