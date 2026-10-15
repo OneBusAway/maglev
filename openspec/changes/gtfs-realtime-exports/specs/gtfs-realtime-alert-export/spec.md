@@ -17,6 +17,10 @@ An alert with a resolved record agency SHALL qualify for an agency export when a
 - **WHEN** an alert selector names a route belonging to agency B without an explicit agency ID
 - **THEN** agency selection resolves that route's ownership and includes the alert for B
 
+#### Scenario: Most specific selector field decides ownership
+- **WHEN** a selector names agency 40's route `100479` at stop `501`, and in consolidated static data raw stop `501` belongs to agency 3
+- **THEN** the alert qualifies for agency 40 only. A selector's owner comes from its most specific field: an explicit agency, else its route, else its trip, else its stop. A stop's owners decide only for a selector naming no agency, route or trip, and a route or trip with unknown ownership does not fall back to them
+
 ### Requirement: Selector agency enrichment
 An informed-entity selector SHALL identify one affected scope; fields within it apply together. A missing `agency_id` SHALL be populated when route, trip, or stop ownership unambiguously resolves it. Existing agency IDs SHALL be preserved. Ambiguous or unresolved ownership SHALL NOT be guessed, and enrichment SHALL NOT broaden an entity-specific selector into an agency-only selector.
 

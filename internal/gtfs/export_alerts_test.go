@@ -345,9 +345,9 @@ func TestExportAlertSelectorAgencies(t *testing.T) {
 			wantAgencyID: "40",
 		},
 		{
-			name:         "explicit agency is kept over the route owner",
+			name:         "explicit agency decides over the route owner",
 			selector:     ExportAlertSelector{Entity: gtfs.AlertInformedEntity{AgencyID: proto.String("20"), RouteID: proto.String("2LINE")}, RouteOwner: "40"},
-			wantAffects:  []string{"20", "40"},
+			wantAffects:  []string{"20"},
 			wantAgencyID: "20",
 		},
 		{
@@ -356,9 +356,31 @@ func TestExportAlertSelectorAgencies(t *testing.T) {
 			wantAffects: []string{"A", "B"},
 		},
 		{
-			name:        "route and stop owners that disagree affect both without an agency ID",
-			selector:    ExportAlertSelector{Entity: gtfs.AlertInformedEntity{RouteID: proto.String("R"), StopID: proto.String("S")}, RouteOwner: "A", StopOwners: []string{"B"}},
-			wantAffects: []string{"A", "B"},
+			name:         "route owner decides over stop owners",
+			selector:     ExportAlertSelector{Entity: gtfs.AlertInformedEntity{RouteID: proto.String("R"), StopID: proto.String("S")}, RouteOwner: "A", StopOwners: []string{"B"}},
+			wantAffects:  []string{"A"},
+			wantAgencyID: "A",
+		},
+		{
+			name:         "trip owner decides over stop owners",
+			selector:     ExportAlertSelector{Entity: gtfs.AlertInformedEntity{TripID: &gtfs.TripID{ID: "T"}, StopID: proto.String("S")}, TripOwner: "A", StopOwners: []string{"B"}},
+			wantAffects:  []string{"A"},
+			wantAgencyID: "A",
+		},
+		{
+			// Puget Sound: Sound Transit's stop 501 shares its raw ID with a
+			// Pierce Transit (agency 3) stop in the consolidated static data.
+			name: "stop ID shared with another agency does not leak the alert",
+			selector: ExportAlertSelector{
+				Entity:     gtfs.AlertInformedEntity{AgencyID: proto.String("40"), RouteID: proto.String("100479"), StopID: proto.String("501")},
+				RouteOwner: "40", StopOwners: []string{"3"},
+			},
+			wantAffects:  []string{"40"},
+			wantAgencyID: "40",
+		},
+		{
+			name:     "unknown route does not fall back to stop owners",
+			selector: ExportAlertSelector{Entity: gtfs.AlertInformedEntity{RouteID: proto.String("unknown"), StopID: proto.String("S")}, StopOwners: []string{"B"}},
 		},
 		{
 			name:         "agreeing owners give one agency ID",
@@ -373,7 +395,7 @@ func TestExportAlertSelectorAgencies(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			for _, agencyID := range []string{"20", "40", "A", "B", "Z"} {
+			for _, agencyID := range []string{"3", "20", "40", "A", "B", "Z"} {
 				assert.Equal(t, slices.Contains(tt.wantAffects, agencyID), tt.selector.AffectsAgency(agencyID), "agency %s", agencyID)
 			}
 			agencyID, ok := tt.selector.AgencyID()

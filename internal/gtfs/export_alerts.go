@@ -33,41 +33,48 @@ type ExportAlertSelector struct {
 	StopOwners []string
 }
 
-// AffectsAgency reports whether the selector names the agency or anything
-// it owns.
+// AffectsAgency reports whether the agency owns the scope the selector
+// names.
 func (selector ExportAlertSelector) AffectsAgency(agencyID string) bool {
-	return slices.Contains(selector.agencies(), agencyID)
+	return slices.Contains(selector.scopeAgencies(), agencyID)
 }
 
 // AgencyID returns the selector's explicit agency, or else the single
-// agency that owns everything it names. Ownership split across agencies is
+// agency that owns its scope. A stop served by several agencies is
 // ambiguous, so no agency is guessed.
 func (selector ExportAlertSelector) AgencyID() (string, bool) {
-	if selector.Entity.AgencyID != nil {
-		return *selector.Entity.AgencyID, true
-	}
-	owners := selector.agencies()
+	owners := selector.scopeAgencies()
 	if len(owners) != 1 {
 		return "", false
 	}
 	return owners[0], true
 }
 
-// agencies returns the distinct explicit and owning agencies.
-func (selector ExportAlertSelector) agencies() []string {
-	var agencies []string
-	if selector.Entity.AgencyID != nil {
-		agencies = append(agencies, *selector.Entity.AgencyID)
+// scopeAgencies returns the agencies owning the one scope the selector
+// names. Its fields apply together, so the most specific field decides: an
+// explicit agency, else the route, else the trip, else the stop. A stop
+// owner never stands in for a route or trip, since raw stop IDs can
+// collide across agencies in consolidated static data; a route or trip
+// with no known owner leaves the scope unresolved.
+func (selector ExportAlertSelector) scopeAgencies() []string {
+	entity := selector.Entity
+	switch {
+	case entity.AgencyID != nil:
+		return []string{*entity.AgencyID}
+	case entity.RouteID != nil:
+		return knownOwner(selector.RouteOwner)
+	case entity.TripID != nil:
+		return knownOwner(selector.TripOwner)
+	default:
+		return selector.StopOwners
 	}
-	if selector.RouteOwner != "" {
-		agencies = append(agencies, selector.RouteOwner)
+}
+
+func knownOwner(agencyID string) []string {
+	if agencyID == "" {
+		return nil
 	}
-	if selector.TripOwner != "" {
-		agencies = append(agencies, selector.TripOwner)
-	}
-	agencies = append(agencies, selector.StopOwners...)
-	slices.Sort(agencies)
-	return slices.Compact(agencies)
+	return []string{agencyID}
 }
 
 // ExportAlerts returns the alerts retained for the GTFS-RT alert export:

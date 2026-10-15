@@ -201,10 +201,14 @@ func TestBuildAlertsFeedKeepsRouteType(t *testing.T) {
 
 func TestSelectExportAlertsRouteFilter(t *testing.T) {
 	tripSelector := func(tripID, tripRouteID string, topLevelRouteID *string) internalgtfs.ExportAlertSelector {
-		return internalgtfs.ExportAlertSelector{
+		selector := internalgtfs.ExportAlertSelector{
 			Entity:    gtfs.AlertInformedEntity{TripID: &gtfs.TripID{ID: tripID, RouteID: tripRouteID}, RouteID: topLevelRouteID},
 			TripOwner: "40",
 		}
+		if topLevelRouteID != nil {
+			selector.RouteOwner = "40"
+		}
+		return selector
 	}
 	stopOnly := internalgtfs.ExportAlertSelector{Entity: gtfs.AlertInformedEntity{StopID: proto.String("S_ON_A")}, StopOwners: []string{"40"}}
 	agencyOnly := internalgtfs.ExportAlertSelector{Entity: gtfs.AlertInformedEntity{AgencyID: proto.String("40")}}
