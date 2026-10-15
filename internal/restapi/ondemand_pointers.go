@@ -70,6 +70,13 @@ func setOnDemandPointers(index *gtfs.FlexIndex, routes []models.Route, stops []m
 	}
 }
 
+// stopHasOnDemandServices reports whether any on-demand service's rules
+// reference the stop.
+func (api *RestAPI) stopHasOnDemandServices(stopID string) bool {
+	index := api.pointerFlexIndex()
+	return index != nil && len(index.OnDemandServiceIDsForStop(stopID)) > 0
+}
+
 // pointerFlexIndex returns the snapshot to fill pointers from, or nil when no
 // pointer can be set: a RestAPI built without an Application or manager (some
 // tests), or a feed with no on-demand services, which then skips per-item id
