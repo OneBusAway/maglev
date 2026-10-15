@@ -3,6 +3,7 @@ package gtfsdb
 import (
 	"context"
 	"database/sql"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -232,6 +233,40 @@ func squareLocation(id, name string) gtfs.Location {
 	}
 }
 
+func TestStoreLocations_NoPolygonsFailsTheImport(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	empty := gtfs.Location{Id: "empty", Geometry: gtfs.LocationGeometry{Type: geo.GeoJSONPolygon}}
+	err = storeLocations(context.Background(), []gtfs.Location{empty}, client.Queries)
+	assert.ErrorIs(t, err, errLocationHasNoPolygons, "skipping it would leave records pointing at nothing")
+}
+
+func TestLocationParams_UnencodableSimplificationKeepsLocation(t *testing.T) {
+	// A ring dense enough to be simplified, under a "Polygon" type holding two
+	// polygons, which EncodeGeoJSONGeometry refuses.
+	ring := make([][2]float64, 0, 1001)
+	for i := range 1000 {
+		angle := 2 * math.Pi * float64(i) / 1000
+		ring = append(ring, [2]float64{-122 + 0.1*math.Cos(angle), 47 + 0.1*math.Sin(angle)})
+	}
+	ring = append(ring, ring[0])
+	location := gtfs.Location{
+		Id: "dense",
+		Geometry: gtfs.LocationGeometry{
+			Type:     geo.GeoJSONPolygon,
+			Polygons: [][][][2]float64{{ring}, {ring}},
+			Raw:      []byte(`{"type":"Polygon"}`),
+		},
+	}
+
+	params, err := locationParams(location)
+	require.NoError(t, err)
+	assert.Equal(t, "dense", params.ID)
+	assert.False(t, params.GeometrySimplified.Valid, "the verbatim geometry still serves")
+}
+
 func TestStoreFlexEntities_DuplicatesAndUnusableRecords(t *testing.T) {
 	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
 	require.NoError(t, err)
@@ -251,7 +286,6 @@ func TestStoreFlexEntities_DuplicatesAndUnusableRecords(t *testing.T) {
 		Locations: []gtfs.Location{
 			squareLocation("zone", "first"),
 			squareLocation("zone", "last"),
-			{Id: "empty", Geometry: gtfs.LocationGeometry{Type: geo.GeoJSONPolygon}},
 		},
 		LocationGroups: []gtfs.LocationGroup{
 			{Id: "group", Name: "first"},
@@ -267,9 +301,9 @@ func TestStoreFlexEntities_DuplicatesAndUnusableRecords(t *testing.T) {
 	require.Len(t, rules, 1)
 	assert.Equal(t, "last", rules[0].PhoneNumber.String, "the last duplicate wins, as go-gtfs resolves references")
 
-	locations, err := client.Queries.GetLocationsByIDs(ctx, []string{"zone", "empty"})
+	locations, err := client.Queries.GetLocationsByIDs(ctx, []string{"zone"})
 	require.NoError(t, err)
-	require.Len(t, locations, 1, "a location with no polygons is skipped, not fatal")
+	require.Len(t, locations, 1)
 	assert.Equal(t, "last", locations[0].Name.String)
 
 	groups, err := client.Queries.GetLocationGroupsByIDs(ctx, []string{"group"})
