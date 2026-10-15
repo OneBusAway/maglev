@@ -239,6 +239,13 @@ func TestSelectExportAlertsRouteFilter(t *testing.T) {
 		}
 		return selector
 	}
+	// go-gtfs keeps a trip descriptor without a trip ID only when route,
+	// direction, start date and start time identify the trip. A shorter one
+	// is dropped and replaced by a separate route selector.
+	tripRouteOverTopLevel := tripSelector("", "A", proto.String("B"))
+	tripRouteOverTopLevel.Entity.TripID.DirectionID = gtfs.DirectionID_True
+	tripRouteOverTopLevel.Entity.TripID.HasStartDate = true
+	tripRouteOverTopLevel.Entity.TripID.HasStartTime = true
 	stopOnly := internalgtfs.ExportAlertSelector{Entity: gtfs.AlertInformedEntity{StopID: proto.String("S_ON_A")}, StopOwners: []string{"40"}}
 	agencyOnly := internalgtfs.ExportAlertSelector{Entity: gtfs.AlertInformedEntity{AgencyID: proto.String("40")}}
 	alerts := []internalgtfs.ExportAlert{
@@ -250,7 +257,7 @@ func TestSelectExportAlertsRouteFilter(t *testing.T) {
 		exportAlert("40", "trip-only", tripSelector("T_ON_A", "", nil)),
 		exportAlert("40", "stop-only", stopOnly),
 		exportAlert("40", "agency-only", agencyOnly),
-		exportAlert("40", "trip-route-over-top-level", tripSelector("", "A", proto.String("B"))),
+		exportAlert("40", "trip-route-over-top-level", tripRouteOverTopLevel),
 		exportAlert("40", "named-trip-hint", tripSelector("T1", "A", nil)),
 		exportAlert("40", "named-trip-top-level", tripSelector("T1", "A", proto.String("B"))),
 	}
