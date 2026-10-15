@@ -68,6 +68,25 @@ func TestStoreGtfsData_ZeroStopsFeedImports(t *testing.T) {
 	assert.Equal(t, 0, countRows(t, client, "block_layover"))
 }
 
+func TestGetStopBoundsPerAgency_CoversZones(t *testing.T) {
+	client := newTestClientWithBytes(t, flexfixtures.ZipBytes(t, flexfixtures.ZeroStopsFiles()), "flex-zero-stops")
+	ctx := context.Background()
+
+	var minLat, maxLat, minLon, maxLon float64
+	require.NoError(t, client.DB.QueryRowContext(ctx,
+		"SELECT MIN(min_lat), MAX(max_lat), MIN(min_lon), MAX(max_lon) FROM locations").
+		Scan(&minLat, &maxLat, &minLon, &maxLon))
+
+	rows, err := client.Queries.GetStopBoundsPerAgency(ctx)
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "a zone-only agency still gets a coverage area")
+	assert.Equal(t, flexfixtures.APAgencyID, rows[0].AgencyID)
+	assert.Equal(t, minLat, rows[0].MinLat)
+	assert.Equal(t, maxLat, rows[0].MaxLat)
+	assert.Equal(t, minLon, rows[0].MinLon)
+	assert.Equal(t, maxLon, rows[0].MaxLon)
+}
+
 func TestStoreGtfsData_DeviatedFeedIndexesTimedRecordsOnly(t *testing.T) {
 	client := newTestClientWithBytes(t, flexfixtures.ZipBytes(t, flexfixtures.GroupDeviatedFiles()), "flex-group-deviated")
 

@@ -4446,20 +4446,43 @@ func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
 }
 
 const getStopBoundsPerAgency = `-- name: GetStopBoundsPerAgency :many
+WITH agency_places AS (
+    SELECT r.agency_id, s.lat AS min_lat, s.lat AS max_lat, s.lon AS min_lon, s.lon AS max_lon
+    FROM routes r
+        JOIN trips t ON t.route_id = r.id
+        JOIN stop_times st ON st.trip_id = t.id
+        JOIN stops s ON s.id = st.stop_id
+    UNION ALL
+    SELECT r.agency_id, s.lat, s.lat, s.lon, s.lon
+    FROM routes r
+        JOIN trips t ON t.route_id = r.id
+        JOIN flex_stop_times f ON f.trip_id = t.id
+        JOIN stops s ON s.id = f.stop_id
+    UNION ALL
+    SELECT r.agency_id, l.min_lat, l.max_lat, l.min_lon, l.max_lon
+    FROM routes r
+        JOIN trips t ON t.route_id = r.id
+        JOIN flex_stop_times f ON f.trip_id = t.id
+        JOIN locations l ON l.id = f.location_id
+    UNION ALL
+    SELECT r.agency_id, s.lat, s.lat, s.lon, s.lon
+    FROM routes r
+        JOIN trips t ON t.route_id = r.id
+        JOIN flex_stop_times f ON f.trip_id = t.id
+        JOIN location_group_stops lgs ON lgs.location_group_id = f.location_group_id
+        JOIN stops s ON s.id = lgs.stop_id
+)
 SELECT
-    r.agency_id,
+    agency_id,
     COUNT(*) AS cnt,
-    CAST(MIN(s.lat) AS REAL) AS min_lat,
-    CAST(MAX(s.lat) AS REAL) AS max_lat,
-    CAST(MIN(s.lon) AS REAL) AS min_lon,
-    CAST(MAX(s.lon) AS REAL) AS max_lon
+    CAST(MIN(min_lat) AS REAL) AS min_lat,
+    CAST(MAX(max_lat) AS REAL) AS max_lat,
+    CAST(MIN(min_lon) AS REAL) AS min_lon,
+    CAST(MAX(max_lon) AS REAL) AS max_lon
 FROM
-    routes r
-    JOIN trips t ON t.route_id = r.id
-    JOIN stop_times st ON st.trip_id = t.id
-    JOIN stops s ON s.id = st.stop_id
+    agency_places
 GROUP BY
-    r.agency_id
+    agency_id
 `
 
 type GetStopBoundsPerAgencyRow struct {
@@ -4471,6 +4494,9 @@ type GetStopBoundsPerAgencyRow struct {
 	MaxLon   float64
 }
 
+// GetStopBoundsPerAgency covers the stops each agency's timed trips serve and
+// everything its flex records reference: stops, zones and location group
+// members. A zone-only feed has no stop_times at all.
 func (q *Queries) GetStopBoundsPerAgency(ctx context.Context) ([]GetStopBoundsPerAgencyRow, error) {
 	rows, err := q.query(ctx, q.getStopBoundsPerAgencyStmt, getStopBoundsPerAgency)
 	if err != nil {
