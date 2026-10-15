@@ -86,3 +86,22 @@ func Float64FromPtr(value *float64) sql.NullFloat64 {
 		Valid:   true,
 	}
 }
+
+// Int64FromPtr creates a sql.NullInt64 from an optional integer-like value
+// (an int32 count, or a time.Duration in nanoseconds since midnight), treating
+// only a nil pointer as null.
+func Int64FromPtr[T ~int32 | ~int64](value *T) sql.NullInt64 {
+	if value == nil {
+		return sql.NullInt64{}
+	}
+	return Int64(int64(*value))
+}
+
+// StringFromPtr creates a sql.NullString from an optional string, treating only
+// a nil pointer as null.
+func StringFromPtr(value *string) sql.NullString {
+	if value == nil {
+		return sql.NullString{}
+	}
+	return String(*value)
+}

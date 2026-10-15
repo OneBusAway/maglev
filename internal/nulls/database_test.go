@@ -3,6 +3,7 @@ package nulls
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
@@ -55,4 +56,22 @@ func TestFloat64FromPtr(t *testing.T) {
 	assert.Equal(t, 1500.5, got.Float64)
 
 	assert.False(t, Float64FromPtr(nil).Valid, "only a nil pointer is null")
+}
+
+func TestInt64FromPtr(t *testing.T) {
+	zero := int32(0)
+	window := 90 * time.Minute
+
+	got := Int64FromPtr(&zero)
+	assert.True(t, got.Valid, "a pointer to 0 is a supplied value")
+	assert.Equal(t, int64(0), got.Int64)
+
+	assert.Equal(t, sql.NullInt64{Int64: int64(window), Valid: true}, Int64FromPtr(&window))
+	assert.False(t, Int64FromPtr[int64](nil).Valid, "only a nil pointer is null")
+}
+
+func TestStringFromPtr(t *testing.T) {
+	empty := ""
+	assert.Equal(t, sql.NullString{String: "", Valid: true}, StringFromPtr(&empty), "a pointer to \"\" is a supplied value")
+	assert.False(t, StringFromPtr(nil).Valid, "only a nil pointer is null")
 }
