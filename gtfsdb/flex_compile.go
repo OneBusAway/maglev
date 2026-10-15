@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/OneBusAway/go-gtfs"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 // Service kinds classified from a route's flex records (wiki §2.3).
@@ -423,21 +424,6 @@ func optionalOf[T cmp.Ordered](p *T) optional[T] {
 	return optional[T]{value: *p, valid: true}
 }
 
-// ComparePtr orders a nil pointer before any value and otherwise compares the
-// pointed-to values with cmp.Compare. Use it to sort by optional fields.
-func ComparePtr[T cmp.Ordered](a, b *T) int {
-	switch {
-	case a == nil && b == nil:
-		return 0
-	case a == nil:
-		return -1
-	case b == nil:
-		return 1
-	default:
-		return cmp.Compare(*a, *b)
-	}
-}
-
 // ruleKey is CompiledRule minus the representative trip, with pointers
 // flattened so it can be a map key.
 type ruleKey struct {
@@ -484,14 +470,14 @@ func compareRules(a, b CompiledRule) int {
 		cmp.Compare(a.FromID, b.FromID),
 		cmp.Compare(a.ToKind, b.ToKind),
 		cmp.Compare(a.ToID, b.ToID),
-		ComparePtr(a.StartPickupTime, b.StartPickupTime),
-		ComparePtr(a.EndPickupTime, b.EndPickupTime),
-		ComparePtr(a.EndDropOffTime, b.EndDropOffTime),
+		nulls.ComparePtr(a.StartPickupTime, b.StartPickupTime),
+		nulls.ComparePtr(a.EndPickupTime, b.EndPickupTime),
+		nulls.ComparePtr(a.EndDropOffTime, b.EndDropOffTime),
 		cmp.Compare(a.PickupType, b.PickupType),
 		cmp.Compare(a.DropOffType, b.DropOffType),
-		ComparePtr(a.PickupBookingRuleID, b.PickupBookingRuleID),
-		ComparePtr(a.DropOffBookingRuleID, b.DropOffBookingRuleID),
-		ComparePtr(a.SafeDurationFactor, b.SafeDurationFactor),
-		ComparePtr(a.SafeDurationOffset, b.SafeDurationOffset),
+		nulls.ComparePtr(a.PickupBookingRuleID, b.PickupBookingRuleID),
+		nulls.ComparePtr(a.DropOffBookingRuleID, b.DropOffBookingRuleID),
+		nulls.ComparePtr(a.SafeDurationFactor, b.SafeDurationFactor),
+		nulls.ComparePtr(a.SafeDurationOffset, b.SafeDurationOffset),
 	)
 }

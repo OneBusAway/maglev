@@ -117,16 +117,16 @@ func sortAvailabilityRules(rules []models.AvailabilityRule) {
 // strings with two-digit hours compare the same as their numeric value.
 func compareAvailabilityRules(a, b models.AvailabilityRule) int {
 	return cmp.Or(
-		gtfsdb.ComparePtr(a.StartPickupTime, b.StartPickupTime),
-		gtfsdb.ComparePtr(a.EndPickupTime, b.EndPickupTime),
+		nulls.ComparePtr(a.StartPickupTime, b.StartPickupTime),
+		nulls.ComparePtr(a.EndPickupTime, b.EndPickupTime),
 		cmp.Compare(firstOrEmpty(a.CalendarIds), firstOrEmpty(b.CalendarIds)),
 		cmp.Compare(strings.Join(a.FromIds, "\x00"), strings.Join(b.FromIds, "\x00")),
 		cmp.Compare(strings.Join(a.ToIds, "\x00"), strings.Join(b.ToIds, "\x00")),
-		gtfsdb.ComparePtr(a.EndDropOffTime, b.EndDropOffTime),
+		nulls.ComparePtr(a.EndDropOffTime, b.EndDropOffTime),
 		cmp.Compare(a.PickupType, b.PickupType),
 		cmp.Compare(a.DropOffType, b.DropOffType),
-		gtfsdb.ComparePtr(a.PickupBookingRuleId, b.PickupBookingRuleId),
-		gtfsdb.ComparePtr(a.DropOffBookingRuleId, b.DropOffBookingRuleId),
+		nulls.ComparePtr(a.PickupBookingRuleId, b.PickupBookingRuleId),
+		nulls.ComparePtr(a.DropOffBookingRuleId, b.DropOffBookingRuleId),
 	)
 }
 
