@@ -114,26 +114,26 @@ func TestFlexIndex_SkippedLocationIsAbsent(t *testing.T) {
 	assert.Equal(t, geo.UnionBounds(idx.FlexArea("charlevoix_county").Bounds, idx.FlexArea("petoskey").Bounds), idx.ServiceBounds["CC_CC2_med"])
 }
 
-func TestFlexIndex_CorruptGeometryIsSkippedOnReload(t *testing.T) {
+func TestFlexIndex_CorruptGeometryIsSkipped(t *testing.T) {
 	manager := newFlexTestManager(t, "charlevoix-flex.zip")
 	ctx := context.Background()
 	_, err := manager.GtfsDB.DB.ExecContext(ctx, "UPDATE locations SET geometry = 'not geojson' WHERE id = 'gaylord'")
 	require.NoError(t, err)
 
-	_, err = manager.ReloadStatic(ctx)
+	idx, err := buildFlexIndex(ctx, manager.GtfsDB, slog.Default())
 	require.NoError(t, err)
 
-	idx := manager.FlexIndex()
 	assert.Nil(t, idx.FlexArea("gaylord"))
 	assert.Len(t, idx.Areas, 3)
 	assert.ElementsMatch(t, []string{"charlevoix_county", "petoskey"}, idx.ServiceAreaIDs["CC_CC2_med"])
 }
 
-func TestFlexIndex_BuildFailureOnUnchangedDataKeepsIndex(t *testing.T) {
+func TestFlexIndex_UnchangedReloadKeepsIndexWithoutRebuilding(t *testing.T) {
 	manager := newFlexTestManager(t, "charlevoix-flex.zip")
 	ctx := context.Background()
 	before := manager.FlexIndex()
 	require.False(t, before.IsFlexEmpty())
+	// A rebuild would now fail, so keeping the index proves none was attempted.
 	_, err := manager.GtfsDB.DB.ExecContext(ctx, "DROP TABLE ondemand_stop_services")
 	require.NoError(t, err)
 
@@ -144,13 +144,25 @@ func TestFlexIndex_BuildFailureOnUnchangedDataKeepsIndex(t *testing.T) {
 	assert.Same(t, before, manager.FlexIndex())
 }
 
-func TestFlexIndex_BuildFailureAfterDataChangePublishesEmptyIndex(t *testing.T) {
+func TestFlexIndex_BuildFailurePublishesNoIndex(t *testing.T) {
 	manager := newFlexTestManager(t, "charlevoix-flex.zip")
 	ctx := context.Background()
 	_, err := manager.GtfsDB.DB.ExecContext(ctx, "DROP TABLE ondemand_stop_services")
 	require.NoError(t, err)
 
-	assert.True(t, manager.nextFlexIndex(ctx, true, slog.Default()).IsFlexEmpty())
+	assert.Nil(t, manager.nextFlexIndex(ctx, true, slog.Default()))
+}
+
+func TestFlexIndex_UnchangedReloadRetriesAfterFailedBuild(t *testing.T) {
+	manager := newFlexTestManager(t, "charlevoix-flex.zip")
+	ctx := context.Background()
+	manager.flexIndex = nil // as left by a failed build
+
+	changed, err := manager.ReloadStatic(ctx)
+	require.NoError(t, err)
+	require.False(t, changed)
+
+	assert.False(t, manager.FlexIndex().IsFlexEmpty(), "unchanged data still rebuilds a missing index")
 }
 
 func TestFlexIndex_UnsetManagerIndexIsEmpty(t *testing.T) {
