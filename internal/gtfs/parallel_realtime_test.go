@@ -205,6 +205,7 @@ func newTestManager() *Manager {
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedAgencyFilter:     make(map[string]map[string]bool),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
+		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 		feedVehicleTimestamp: make(map[string]uint64),
 	}
 }
