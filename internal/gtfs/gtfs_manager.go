@@ -470,18 +470,16 @@ func (manager *Manager) GetStopsInBounds(
 	loc *LocationParams,
 	maxCount int,
 	clamp ...bool,
-) []gtfsdb.Stop {
+) ([]gtfsdb.Stop, error) {
 	bounds := BoundsFromParams(loc, clamp...)
 	stops, err := manager.queryStopsInBounds(ctx, bounds)
 	if err != nil {
-		reqLogger := logging.ForComponent(ctx, "gtfs_manager")
-		logging.LogError(reqLogger, "could not query stops within bounds", err)
-		return nil
+		return nil, fmt.Errorf("could not query stops within bounds: %w", err)
 	}
 	if maxCount > 0 && len(stops) > maxCount {
 		stops = stops[:maxCount]
 	}
-	return stops
+	return stops, nil
 }
 
 // GetStopIDsWithinBounds returns stop IDs within bounds, optimized for callers that only need IDs.

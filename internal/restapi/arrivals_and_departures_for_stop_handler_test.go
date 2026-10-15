@@ -23,6 +23,114 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
+func TestSortArrivalsByBestTime(t *testing.T) {
+	base := time.Date(2026, 3, 8, 10, 0, 0, 0, time.UTC)
+	late := models.ArrivalAndDeparture{
+		TripID:               "agency_late",
+		ScheduledArrivalTime: models.NewModelTime(base),
+		PredictedArrivalTime: models.NewModelTime(base.Add(30 * time.Minute)),
+		Predicted:            true,
+		StopSequence:         1,
+	}
+	onTime := models.ArrivalAndDeparture{
+		TripID:               "agency_ontime",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(10 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         1,
+	}
+	sameTimeEarlierTrip := models.ArrivalAndDeparture{
+		TripID:               "agency_a",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(40 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         4,
+	}
+	sameTimeLaterTrip := models.ArrivalAndDeparture{
+		TripID:               "agency_b",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(40 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         1,
+	}
+	// Same best time and trip, inserted with the later stop first.
+	sameTripLaterStop := models.ArrivalAndDeparture{
+		TripID:               "agency_same",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(40 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         2,
+	}
+	sameTripEarlierStop := models.ArrivalAndDeparture{
+		TripID:               "agency_same",
+		ScheduledArrivalTime: models.NewModelTime(base.Add(40 * time.Minute)),
+		Predicted:            false,
+		StopSequence:         1,
+	}
+
+	arrivals := []models.ArrivalAndDeparture{
+		sameTimeLaterTrip, late, sameTimeEarlierTrip, sameTripLaterStop, sameTripEarlierStop, onTime,
+	}
+	sortArrivalsByBestTime(arrivals)
+
+	got := make([]string, len(arrivals))
+	gotStopSequences := make([]int, len(arrivals))
+	for i, a := range arrivals {
+		got[i] = a.TripID
+		gotStopSequences[i] = a.StopSequence
+	}
+	assert.Equal(t, []string{
+		"agency_ontime",
+		"agency_late",
+		"agency_a",
+		"agency_b",
+		"agency_same",
+		"agency_same",
+	}, got)
+	assert.Equal(t, []int{1, 1, 4, 1, 1, 2}, gotStopSequences)
+}
+
+// A trip-level delay on the 10:17 trip must move it after the 10:47 trip.
+// Without the sort this stays first, which is the stop_times order.
+func TestArrivalsAndDeparturesForStop_LateTripSortsAfterOnTime(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	delay := 45 * time.Minute
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+		ID:    gtfs.TripID{ID: "d8caf694-87e1-4f9f-b51e-4a32287e3a50"},
+		Delay: &delay,
+	}})
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{"minutesBefore": {"60"}, "minutesAfter": {"240"}}))
+
+	require.GreaterOrEqual(t, len(model.Data.Entry.ArrivalsAndDepartures), 3)
+	got := []string{
+		model.Data.Entry.ArrivalsAndDepartures[0].TripID,
+		model.Data.Entry.ArrivalsAndDepartures[1].TripID,
+		model.Data.Entry.ArrivalsAndDepartures[2].TripID,
+	}
+	assert.Equal(t, []string{
+		"25_6a3ef1d9-13d7-488b-8528-633ce9bbeb6d",
+		"25_d8caf694-87e1-4f9f-b51e-4a32287e3a50",
+		"25_1c782b7e-3ed5-4f1d-b68d-c1f1cd9c4ab5",
+	}, got)
+}
+
+func assertArrivalsSortedByBestTime(t *testing.T, arrivals []models.ArrivalAndDeparture) {
+	t.Helper()
+	for i := 1; i < len(arrivals); i++ {
+		prev, curr := arrivals[i-1], arrivals[i]
+		prevBest, currBest := bestArrivalMillis(prev), bestArrivalMillis(curr)
+		if prevBest == currBest {
+			assert.LessOrEqual(t, prev.TripID, curr.TripID, "arrival[%d] trip ID", i)
+			if prev.TripID == curr.TripID {
+				assert.LessOrEqual(t, prev.StopSequence, curr.StopSequence, "arrival[%d] stop sequence", i)
+			}
+			continue
+		}
+		assert.Less(t, prevBest, currBest, "arrival[%d] best time", i)
+	}
+}
+
 func arrivalsAndDeparturesURL(stopID string, params ...url.Values) string {
 	q := url.Values{"key": {"TEST"}}
 	for _, p := range params {
@@ -80,7 +188,8 @@ func TestArrivalsAndDeparturesForStopHandlerEndToEnd(t *testing.T) {
 	assert.NotNil(t, entry.SituationIDs)
 
 	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
-	require.NotEmpty(t, entry.ArrivalsAndDepartures, "Stop4062 should have at least one scheduled arrival in the test window")
+	require.Greater(t, len(entry.ArrivalsAndDepartures), 1, "Stop4062 should have more than one arrival in the wide window")
+	assertArrivalsSortedByBestTime(t, entry.ArrivalsAndDepartures)
 
 	// TripHeadsign is intentionally not asserted here: RABA's route 25_154 trips have
 	// empty trip_headsign in the static feed, and the spec does not require a non-empty value.
@@ -1037,8 +1146,9 @@ func findRABAStopWithNeighbour(t *testing.T, api *RestAPI, ctx context.Context) 
 	t.Helper()
 	// Pull a generous pool of RABA-area stops, then pick one whose 100m
 	// neighbourhood actually contains another stop.
-	candidates := api.GtfsManager.GetStopsInBounds(ctx,
+	candidates, err := api.GtfsManager.GetStopsInBounds(ctx,
 		&internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 5000}, 200)
+	require.NoError(t, err)
 	require.NotEmpty(t, candidates, "precondition: RABA should have stops near Redding")
 	for _, c := range candidates {
 		nearby := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
@@ -1148,4 +1258,364 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 		break
 	}
 	assert.True(t, found, "should find arrival for test trip %s", tripID)
+}
+
+func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *testing.T) {
+	locLA, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(queryTimeUTC)
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyUTC  = "TzA"
+		agencyLA   = "TzB"
+		sharedStop = "SharedTzStop"
+		routeUTC   = "RouteUTC"
+		routeLA    = "RouteLA"
+		tripUTC    = "TripUTC"
+		tripLA     = "TripLA"
+		calID      = "service_tz"
+	)
+
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyUTC, Name: "UTC Agency", Url: "http://utc-agency.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyLA, Name: "LA Agency", Url: "http://la-agency.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: sharedStop, Name: nulls.String("Shared Timezone Stop"),
+		Lat: 47.6062, Lon: -122.3321,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: calID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20200101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+
+	// Route & Trip for UTC Agency: arrives at 15:10 UTC (offset: 15h10m)
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeUTC, AgencyID: agencyUTC,
+		ShortName: nulls.String("UTC-Line"),
+		LongName:  nulls.String("UTC Express"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripUTC, RouteID: routeUTC, ServiceID: calID,
+		TripHeadsign: nulls.String("Northbound"),
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripUTC, StopID: sharedStop, StopSequence: 1,
+		ArrivalTime:   int64(15*time.Hour + 10*time.Minute),
+		DepartureTime: int64(15*time.Hour + 12*time.Minute),
+	})
+	require.NoError(t, err)
+
+	// Route & Trip for LA Agency: arrives at 15:10 UTC, which is 07:10 PST (offset: 7h10m from LA midnight)
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeLA, AgencyID: agencyLA,
+		ShortName: nulls.String("LA-Line"),
+		LongName:  nulls.String("LA Express"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripLA, RouteID: routeLA, ServiceID: calID,
+		TripHeadsign: nulls.String("Southbound"),
+	})
+	require.NoError(t, err)
+
+	// On 2026-01-15, 15:10 UTC is 07:10 PST in America/Los_Angeles
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripLA, StopID: sharedStop, StopSequence: 1,
+		ArrivalTime:   int64(7*time.Hour + 10*time.Minute),
+		DepartureTime: int64(7*time.Hour + 12*time.Minute),
+	})
+	require.NoError(t, err)
+
+	queryURLWithPrefix := func(agencyPrefix string) string {
+		combinedID := utils.FormCombinedID(agencyPrefix, sharedStop)
+		return arrivalsAndDeparturesURL(combinedID, url.Values{
+			"minutesBefore": {"5"},
+			"minutesAfter":  {"30"},
+		})
+	}
+
+	expectedArrivalUTC := time.Date(2026, 1, 15, 15, 10, 0, 0, time.UTC)
+	expectedMidnightLA := time.Date(2026, 1, 15, 0, 0, 0, 0, locLA)
+
+	// Query via UTC Agency prefix
+	{
+		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, queryURLWithPrefix(agencyUTC))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, http.StatusOK, model.Code)
+
+		tripIDs := make(map[string]models.ArrivalAndDeparture)
+		order := make([]string, 0, len(model.Data.Entry.ArrivalsAndDepartures))
+		for _, ad := range model.Data.Entry.ArrivalsAndDepartures {
+			tripIDs[ad.TripID] = ad
+			order = append(order, ad.TripID)
+		}
+		require.Contains(t, tripIDs, utils.FormCombinedID(agencyUTC, tripUTC), "UTC query should include trip-utc")
+		require.Contains(t, tripIDs, utils.FormCombinedID(agencyLA, tripLA), "UTC query should include trip-la from another timezone")
+		assert.True(t, tripIDs[utils.FormCombinedID(agencyLA, tripLA)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
+		assert.True(t, tripIDs[utils.FormCombinedID(agencyUTC, tripUTC)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
+		assert.True(t, tripIDs[utils.FormCombinedID(agencyLA, tripLA)].ServiceDate.In(locLA).Equal(expectedMidnightLA),
+			"LA trip service date must be midnight in its own timezone")
+
+		// Same query again: row order must be identical (map iteration order
+		// must not leak into the response).
+		resp2, model2 := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, queryURLWithPrefix(agencyUTC))
+		require.Equal(t, http.StatusOK, resp2.StatusCode)
+		order2 := make([]string, 0, len(model2.Data.Entry.ArrivalsAndDepartures))
+		for _, ad := range model2.Data.Entry.ArrivalsAndDepartures {
+			order2 = append(order2, ad.TripID)
+		}
+		assert.Equal(t, order, order2, "arrival order must be deterministic across requests")
+	}
+
+	// Query via LA Agency prefix
+	{
+		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, queryURLWithPrefix(agencyLA))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, http.StatusOK, model.Code)
+
+		tripIDs := make(map[string]models.ArrivalAndDeparture)
+		for _, ad := range model.Data.Entry.ArrivalsAndDepartures {
+			tripIDs[ad.TripID] = ad
+		}
+		require.Contains(t, tripIDs, utils.FormCombinedID(agencyUTC, tripUTC), "LA query should include trip-utc from another timezone")
+		require.Contains(t, tripIDs, utils.FormCombinedID(agencyLA, tripLA), "LA query should include trip-la")
+		assert.True(t, tripIDs[utils.FormCombinedID(agencyLA, tripLA)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
+		assert.True(t, tripIDs[utils.FormCombinedID(agencyUTC, tripUTC)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
+		assert.True(t, tripIDs[utils.FormCombinedID(agencyLA, tripLA)].ServiceDate.In(locLA).Equal(expectedMidnightLA),
+			"LA trip service date must be midnight in its own timezone")
+	}
+}
+func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *testing.T) {
+	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(queryTimeUTC)
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyPrimary = "AgencyPrimaryErr"
+		agencyInvalid = "AgencyInvalidTz"
+		sharedStop    = "StopSharedError"
+		routePrimary  = "RoutePrimaryErr"
+		routeInvalid  = "RouteInvalidErr"
+		tripInvalid   = "TripInvalidErr"
+		calID         = "service_cal_err"
+	)
+
+	defer func() {
+		conn, err := api.GtfsManager.GtfsDB.DB.Conn(context.Background())
+		if err == nil {
+			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = OFF")
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_times WHERE stop_id = ?", sharedStop)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM trips WHERE id = ?", tripInvalid)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM routes WHERE id IN (?, ?)", routePrimary, routeInvalid)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stops WHERE id = ?", sharedStop)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM calendars WHERE id = ?", calID)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM agencies WHERE id IN (?, ?)", agencyPrimary, agencyInvalid)
+			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
+			conn.Close()
+		}
+	}()
+
+	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyPrimary, Name: "Primary Agency", Url: "http://primary.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyInvalid, Name: "Invalid Agency", Url: "http://invalid.com", Timezone: "Not/A_Valid_Timezone",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: sharedStop, Name: nulls.String("Shared Stop"),
+		Lat: 47.6062, Lon: -122.3321,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: calID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20200101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routePrimary, AgencyID: agencyPrimary,
+		ShortName: nulls.String("Route-1"),
+		LongName:  nulls.String("Route One"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeInvalid, AgencyID: agencyInvalid,
+		ShortName: nulls.String("Route-2"),
+		LongName:  nulls.String("Route Two"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripInvalid, RouteID: routeInvalid, ServiceID: calID,
+		TripHeadsign: nulls.String("Loop"),
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripInvalid, StopID: sharedStop, StopSequence: 1,
+		ArrivalTime:   int64(15*time.Hour + 10*time.Minute),
+		DepartureTime: int64(15*time.Hour + 12*time.Minute),
+	})
+	require.NoError(t, err)
+
+	endpoint := arrivalsAndDeparturesURL(utils.FormCombinedID(agencyPrimary, sharedStop), nil)
+	resp, model := callAPIHandler[models.ResponseModel](t, api, endpoint)
+	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	require.Equal(t, http.StatusInternalServerError, model.Code)
+}
+
+func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySkipped(t *testing.T) {
+	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(queryTimeUTC)
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyPrimary = "AgencyPrimaryOK"
+		agencyMissing = "AgencyMissingRow"
+		sharedStop    = "StopSharedMissingAgency"
+		routePrimary  = "RoutePrimaryOK"
+		routeMissing  = "RouteMissingAgency"
+		tripPrimary   = "TripPrimaryOK"
+		tripMissing   = "TripMissingAgency"
+		calID         = "service_cal_ok"
+	)
+
+	defer func() {
+		conn, err := api.GtfsManager.GtfsDB.DB.Conn(context.Background())
+		if err == nil {
+			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = OFF")
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_times WHERE stop_id = ?", sharedStop)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM trips WHERE id IN (?, ?)", tripPrimary, tripMissing)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM routes WHERE id IN (?, ?)", routePrimary, routeMissing)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stops WHERE id = ?", sharedStop)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM calendars WHERE id = ?", calID)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM agencies WHERE id IN (?, ?)", agencyPrimary, agencyMissing)
+			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
+			conn.Close()
+		}
+	}()
+
+	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyPrimary, Name: "Primary Agency", Url: "http://primary-ok.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyMissing, Name: "Transient Agency", Url: "http://missing.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: sharedStop, Name: nulls.String("Shared Stop Missing Agency"),
+		Lat: 47.6062, Lon: -122.3321,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: calID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20200101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routePrimary, AgencyID: agencyPrimary,
+		ShortName: nulls.String("Route-OK"),
+		LongName:  nulls.String("Route OK"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeMissing, AgencyID: agencyMissing,
+		ShortName: nulls.String("Route-Missing"),
+		LongName:  nulls.String("Route Missing"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripPrimary, RouteID: routePrimary, ServiceID: calID,
+		TripHeadsign: nulls.String("Inbound"),
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripPrimary, StopID: sharedStop, StopSequence: 1,
+		ArrivalTime:   int64(15*time.Hour + 5*time.Minute),
+		DepartureTime: int64(15*time.Hour + 6*time.Minute),
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripMissing, RouteID: routeMissing, ServiceID: calID,
+		TripHeadsign: nulls.String("MissingAgencyTrip"),
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripMissing, StopID: sharedStop, StopSequence: 1,
+		ArrivalTime:   int64(15*time.Hour + 8*time.Minute),
+		DepartureTime: int64(15*time.Hour + 9*time.Minute),
+	})
+	require.NoError(t, err)
+
+	// Now delete the agency row with foreign keys disabled on a dedicated connection,
+	// leaving the route referencing a genuinely missing agency row (sql.ErrNoRows).
+	conn, err := api.GtfsManager.GtfsDB.DB.Conn(ctx)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, "DELETE FROM agencies WHERE id = ?", agencyMissing)
+	require.NoError(t, err)
+	conn.Close()
+
+	endpoint := arrivalsAndDeparturesURL(utils.FormCombinedID(agencyPrimary, sharedStop), url.Values{
+		"minutesBefore": {"5"},
+		"minutesAfter":  {"30"},
+	})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.Entry.ArrivalsAndDepartures, 1)
+	assert.Equal(t, utils.FormCombinedID(agencyPrimary, tripPrimary), model.Data.Entry.ArrivalsAndDepartures[0].TripID)
 }

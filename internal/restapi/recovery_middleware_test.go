@@ -7,6 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/textproto"
+	"slices"
 	"testing"
 	"time"
 
@@ -109,6 +112,100 @@ func TestRecoveryMiddleware_PanicAfterWriteDoesNotOverrideResponse(t *testing.T)
 	}
 	if body := rr.Body.String(); body != "partial" {
 		t.Errorf("expected body 'partial', got %s", body)
+	}
+}
+
+func TestRecoveryMiddleware_PanicAfterInformationalResponse(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(now)
+	tests := []struct {
+		name     string
+		statuses []int
+	}{
+		{"continue", []int{http.StatusContinue}},
+		{"processing", []int{http.StatusProcessing}},
+		{"early hints", []int{http.StatusEarlyHints}},
+		{"multiple informational responses", []int{http.StatusProcessing, http.StatusEarlyHints}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			panicHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				for _, status := range tt.statuses {
+					w.WriteHeader(status)
+				}
+				panic("panic after informational response")
+			})
+
+			// ResponseRecorder treats 1xx as final, so exercise a real HTTP server.
+			server := httptest.NewServer(NewRecoveryMiddleware(logger, mockClock)(panicHandler))
+			defer server.Close()
+			var informationalStatuses []int
+			trace := &httptrace.ClientTrace{
+				Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
+					informationalStatuses = append(informationalStatuses, code)
+					return nil
+				},
+			}
+			req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+			if err != nil {
+				t.Fatalf("failed to create request: %v", err)
+			}
+			req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+			response, err := server.Client().Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			if err != nil {
+				t.Fatalf("failed to read response: %v", err)
+			}
+
+			if !slices.Equal(informationalStatuses, tt.statuses) {
+				t.Errorf("expected informational statuses %v, got %v", tt.statuses, informationalStatuses)
+			}
+			if response.StatusCode != http.StatusInternalServerError {
+				t.Fatalf("expected final status 500, got %d with body %q", response.StatusCode, body)
+			}
+			if contentType := response.Header.Get("Content-Type"); contentType != "application/json" {
+				t.Errorf("expected Content-Type application/json, got %s", contentType)
+			}
+			var payload models.ResponseModel
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatalf("failed to parse response body: %v", err)
+			}
+			if payload.Code != http.StatusInternalServerError ||
+				payload.Text != "internal server error" ||
+				payload.Version != models.APIVersion ||
+				payload.CurrentTime != now.UnixMilli() {
+				t.Errorf("unexpected error response: %+v", payload)
+			}
+		})
+	}
+}
+
+func TestRecoveryMiddleware_PanicAfterFinalHeaderDoesNotOverrideResponse(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mockClock := clock.NewMockClock(time.Now())
+	for _, status := range []int{http.StatusSwitchingProtocols, http.StatusCreated} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			panicHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				panic("panic after final header")
+			})
+			handler := NewRecoveryMiddleware(logger, mockClock)(panicHandler)
+			writer := newTestResponseWriter()
+			handler.ServeHTTP(writer, httptest.NewRequest(http.MethodGet, "/test", nil))
+
+			if !slices.Equal(writer.statuses, []int{status}) {
+				t.Errorf("expected only status %d, got %v", status, writer.statuses)
+			}
+			if body := writer.body.String(); body != "" {
+				t.Errorf("expected empty body, got %q", body)
+			}
+		})
 	}
 }
 

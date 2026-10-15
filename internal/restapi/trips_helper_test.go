@@ -2122,36 +2122,34 @@ func TestGroupTripsByDirection_NullDirectionID(t *testing.T) {
 	groups := groupTripsByDirection(trips)
 
 	require.Len(t, groups, 1)
-	assert.Equal(t, "0", groups[0].GroupID)
+	assert.Equal(t, "", groups[0].GroupID)
 	assert.False(t, groups[0].DirectionID.Valid, "NULL direction_id must be surfaced via Valid=false")
 	assert.Equal(t, []string{"t-1", "t-2"}, testTripIDs(groups[0].Trips))
 }
 
-// TestGroupTripsByDirection_MixedNullAndValid pins current behavior when a route
-// has trips with both valid direction_id and NULL direction_id. NULL values
-// decode to Int64=0 via sql.NullInt64, so they bucket together with valid
-// direction_id=0 trips. The group's DirectionID mirrors the lexicographically
-// first trip in that bucket — exposing the NULL when that trip is NULL.
 func TestGroupTripsByDirection_MixedNullAndValid(t *testing.T) {
 	trips := []gtfsdb.Trip{
 		makeTestTrip("t-out", dir(1)),
 		makeTestTrip("t-in", dir(0)),
+		makeTestTrip("b-null", nullDir()),
 		makeTestTrip("a-null", nullDir()),
 	}
 
 	groups := groupTripsByDirection(trips)
 
-	require.Len(t, groups, 2)
+	require.Len(t, groups, 3)
 
 	assert.Equal(t, "0", groups[0].GroupID)
-	assert.False(t, groups[0].DirectionID.Valid,
-		"NULL direction_id collides with direction_id=0; first trip by ID determines group DirectionID")
-	assert.Equal(t, []string{"a-null", "t-in"}, testTripIDs(groups[0].Trips))
+	assert.Equal(t, dir(0), groups[0].DirectionID)
+	assert.Equal(t, []string{"t-in"}, testTripIDs(groups[0].Trips))
 
 	assert.Equal(t, "1", groups[1].GroupID)
-	assert.True(t, groups[1].DirectionID.Valid)
-	assert.Equal(t, int64(1), groups[1].DirectionID.Int64)
+	assert.Equal(t, dir(1), groups[1].DirectionID)
 	assert.Equal(t, []string{"t-out"}, testTripIDs(groups[1].Trips))
+
+	assert.Equal(t, "", groups[2].GroupID)
+	assert.False(t, groups[2].DirectionID.Valid)
+	assert.Equal(t, []string{"a-null", "b-null"}, testTripIDs(groups[2].Trips))
 }
 
 // TestGroupTripsByDirection_TripsWithinGroupSortedByID verifies deterministic trip order.

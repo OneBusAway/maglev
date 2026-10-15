@@ -117,8 +117,9 @@ func newMetricsSnapshot(agencyIDs []string) MetricsSnapshot {
 // both trips in progress and layovers between trips count.
 func (manager *Manager) activeTripsByAgency(ctx context.Context, now time.Time, agencies []gtfsdb.Agency) (map[string]int, error) {
 	counts := make(map[string]int, len(agencies))
+	serviceIDCache := serviceIDsByDate{}
 	for _, agency := range agencies {
-		count, err := manager.activeTripsForAgency(ctx, now, agency)
+		count, err := manager.activeTripsForAgency(ctx, now, agency, serviceIDCache)
 		if err != nil {
 			return nil, err
 		}
@@ -127,7 +128,7 @@ func (manager *Manager) activeTripsByAgency(ctx context.Context, now time.Time, 
 	return counts, nil
 }
 
-func (manager *Manager) activeTripsForAgency(ctx context.Context, now time.Time, agency gtfsdb.Agency) (int, error) {
+func (manager *Manager) activeTripsForAgency(ctx context.Context, now time.Time, agency gtfsdb.Agency, serviceIDCache serviceIDsByDate) (int, error) {
 	loc, err := time.LoadLocation(agency.Timezone)
 	if err != nil {
 		loc = time.UTC
@@ -139,7 +140,7 @@ func (manager *Manager) activeTripsForAgency(ctx context.Context, now time.Time,
 	h, m, s := localNow.Clock()
 	sinceMidnight := time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second
 
-	today, err := manager.countActiveBlocksAt(ctx, agency.ID, localNow, sinceMidnight)
+	today, err := manager.countActiveBlocksAt(ctx, agency.ID, serviceIDCache, localNow, sinceMidnight)
 	if err != nil {
 		return 0, err
 	}
@@ -147,7 +148,7 @@ func (manager *Manager) activeTripsForAgency(ctx context.Context, now time.Time,
 	// GTFS allows departure times past 24:00:00 for trips that started
 	// yesterday but are still running (e.g. 25:30:00 = 1:30 AM). Check
 	// yesterday's service against the same instant shifted +24h.
-	yesterday, err := manager.countActiveBlocksAt(ctx, agency.ID, localNow.AddDate(0, 0, -1), sinceMidnight+24*time.Hour)
+	yesterday, err := manager.countActiveBlocksAt(ctx, agency.ID, serviceIDCache, localNow.AddDate(0, 0, -1), sinceMidnight+24*time.Hour)
 	if err != nil {
 		return 0, err
 	}
@@ -155,11 +156,30 @@ func (manager *Manager) activeTripsForAgency(ctx context.Context, now time.Time,
 	return today + yesterday, nil
 }
 
+// serviceIDsByDate caches active service IDs by YYYYMMDD date for one
+// metrics request, so agencies sharing a service day share one lookup.
+// It's keyed by date rather than holding a single today/yesterday pair
+// because each agency's service day comes from its own timezone.
+type serviceIDsByDate map[string][]string
+
+func (manager *Manager) activeServiceIDsForDate(ctx context.Context, cache serviceIDsByDate, serviceDay time.Time) ([]string, error) {
+	date := serviceDay.Format("20060102")
+	if ids, cached := cache[date]; cached {
+		return ids, nil
+	}
+	ids, err := manager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, date)
+	if err != nil {
+		return nil, err
+	}
+	cache[date] = ids
+	return ids, nil
+}
+
 // countActiveBlocksAt counts the distinct blocks active for one agency at the
 // given instant — between the block's first trip start and last trip end —
 // among the services active on serviceDay.
-func (manager *Manager) countActiveBlocksAt(ctx context.Context, agencyID string, serviceDay time.Time, at time.Duration) (int, error) {
-	serviceIDs, err := manager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDay.Format("20060102"))
+func (manager *Manager) countActiveBlocksAt(ctx context.Context, agencyID string, serviceIDCache serviceIDsByDate, serviceDay time.Time, at time.Duration) (int, error) {
+	serviceIDs, err := manager.activeServiceIDsForDate(ctx, serviceIDCache, serviceDay)
 	if err != nil {
 		return 0, err
 	}
