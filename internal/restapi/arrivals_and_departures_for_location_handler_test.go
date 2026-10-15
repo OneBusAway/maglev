@@ -640,3 +640,26 @@ func TestRetainedAccumulatorDropsUnretainedSituations(t *testing.T) {
 
 	assert.Equal(t, []string{"25_kept"}, situationIDsFromRefs(refAcc.situations.refs))
 }
+
+// A stop alert on a stop that maxCount trims must still reach situationIds:
+// Java collects stop alerts for every found stop before trimming.
+func TestLocationStopAlertSurvivesMaxCountTrim(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, full := callArrivalsForLocation(t, api)
+	require.Greater(t, len(full.Data.Entry.StopIDs), 1, "need several stops to observe truncation")
+	last := full.Data.Entry.StopIDs[len(full.Data.Entry.StopIDs)-1]
+	agencyID, trimmedCode, err := utils.ExtractAgencyIDAndCodeID(last)
+	require.NoError(t, err)
+
+	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
+		ID:               "trimmed-stop-alert",
+		InformedEntities: []gogtfs.AlertInformedEntity{{StopID: &trimmedCode}},
+	})
+
+	_, limited := callArrivalsForLocation(t, api, url.Values{"maxCount": {"1"}})
+	assert.NotContains(t, limited.Data.Entry.StopIDs, last, "the alerted stop must be trimmed for this test")
+	assert.Contains(t, limited.Data.Entry.SituationIDs, utils.FormCombinedID(agencyID, "trimmed-stop-alert"))
+}

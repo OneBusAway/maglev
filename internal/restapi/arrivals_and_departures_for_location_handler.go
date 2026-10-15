@@ -115,7 +115,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// References cover only the retained entry results, not the stops and
 	// arrivals maxCount trimmed away.
 	refAcc := retainedAccumulator(lists.arrivals, lists.stopIDs, lists.nearby, acc)
-	if err := api.collectSituationsForRetainedStops(ctx, lists.stopIDs, agencies, refAcc); err != nil {
+	if err := api.collectSituationsForRetainedStops(ctx, stops, lists.stopIDs, agencies, refAcc); err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
 		return
 	}
@@ -226,12 +226,13 @@ func retainedAccumulator(
 	return refAcc
 }
 
-// collectSituationsForRetainedStops gathers the alerts affecting the retained
-// stops: route alerts for every route serving them — even with no arrival in
-// the window — and stop alerts for the stops themselves. Trip situations for
-// retained arrivals are already in the accumulator; everything here is scoped
-// to the truncated lists so trimmed results leave no alerts behind.
-func (api *RestAPI) collectSituationsForRetainedStops(ctx context.Context, stopIDs []string, agencies *stopAgencyIndex, acc *arrivalsAccumulator) error {
+// collectSituationsForRetainedStops gathers the alerts affecting the search:
+// route alerts for every route serving the retained stops — even with no
+// arrival in the window — and stop alerts for every found stop, including
+// ones maxCount trimmed away. Trip situations for retained arrivals are
+// already in the accumulator; the route lookup alone is scoped to the
+// truncated lists so trimmed results leave no route alerts behind.
+func (api *RestAPI) collectSituationsForRetainedStops(ctx context.Context, stops []gtfsdb.Stop, stopIDs []string, agencies *stopAgencyIndex, acc *arrivalsAccumulator) error {
 	bareIDs := make([]string, 0, len(stopIDs))
 	for _, id := range stopIDs {
 		if _, bareID, err := utils.ExtractAgencyIDAndCodeID(id); err == nil {
@@ -252,8 +253,8 @@ func (api *RestAPI) collectSituationsForRetainedStops(ctx context.Context, stopI
 		acc.situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), row.AgencyID)
 	}
 
-	for _, bareID := range bareIDs {
-		acc.situations.add(api.GtfsManager.GetAlertsForStop(bareID), agencies.agencyIDFor(bareID))
+	for _, stop := range stops {
+		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), agencies.agencyIDFor(stop.ID))
 	}
 	return nil
 }

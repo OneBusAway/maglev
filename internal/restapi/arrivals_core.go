@@ -476,8 +476,9 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 	}
 
 	// Stop-level alerts are not collected here: the location handler recollects
-	// them after truncation, scoped to the retained stops, so trimmed stops
-	// leave no alerts behind.
+	// them after truncation over every found stop, so ones maxCount trimmed
+	// away still reach situationIds. Only the route lookup stays scoped to
+	// the retained stops.
 	return arrivals, nil
 }
 
