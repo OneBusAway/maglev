@@ -2,8 +2,7 @@ name: Docker build and publish
 
 on:
   push:
-    # Temporary native-runner publication test; remove before merging.
-    branches: [main, release/edge-ci-validation]
+    branches: [main]
   pull_request:
 
 permissions:
@@ -63,7 +62,7 @@ jobs:
       - name: Login to Docker Hub
         if: >-
           github.event_name == 'push' &&
-          (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release/edge-ci-validation') &&
+          github.ref == 'refs/heads/main' &&
           github.repository == 'OneBusAway/maglev'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -76,7 +75,7 @@ jobs:
         with:
           context: .
           platforms: linux/${{ matrix.arch }}
-          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release/edge-ci-validation') && github.repository == 'OneBusAway/maglev' }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'OneBusAway/maglev' }}
           sbom: true
           provenance: mode=min
           labels: ${{ needs.metadata.outputs.labels }}
@@ -88,7 +87,7 @@ jobs:
       - name: Export digest
         if: >-
           github.event_name == 'push' &&
-          (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release/edge-ci-validation') &&
+          github.ref == 'refs/heads/main' &&
           github.repository == 'OneBusAway/maglev'
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -99,7 +98,7 @@ jobs:
       - name: Upload digest
         if: >-
           github.event_name == 'push' &&
-          (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release/edge-ci-validation') &&
+          github.ref == 'refs/heads/main' &&
           github.repository == 'OneBusAway/maglev'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -113,7 +112,7 @@ jobs:
     needs: [metadata, build]
     if: >-
       github.event_name == 'push' &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release/edge-ci-validation') &&
+      github.ref == 'refs/heads/main' &&
       github.repository == 'OneBusAway/maglev'
     runs-on: ubuntu-latest
     timeout-minutes: 15
