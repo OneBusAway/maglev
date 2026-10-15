@@ -212,7 +212,8 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
     	code TEXT
 	);
     CREATE TABLE IF NOT EXISTS import_metadata (
-        file_hash TEXT NOT NULL
+        file_hash TEXT NOT NULL,
+        file_source TEXT NOT NULL
     );
 `
 	t.Cleanup(func() {

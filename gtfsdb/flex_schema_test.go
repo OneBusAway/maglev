@@ -80,21 +80,22 @@ func TestNewClient_InvalidatesPreFlexImportOnce(t *testing.T) {
 
 	metadata, err := client.Queries.GetImportMetadata(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, "invalidated:flex-import-v1", metadata.FileHash)
+	assert.Empty(t, metadata.FileSource)
+	assert.Equal(t, parsed.Hash, metadata.FileHash, "the served data's hash stays the system ETag")
 
 	var version int
 	require.NoError(t, client.DB.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version))
 	assert.Equal(t, flexImportVersion, version)
 
-	// The sentinel keeps hasExisting=true so the next import clears old rows before
-	// inserting and does not collide on the stop_times primary key.
+	// The row survives, so hasExisting=true and the next import clears old rows
+	// before inserting instead of colliding on the stop_times primary key.
 	changed, err := client.StoreGtfsData(ctx, parsed)
 	require.NoError(t, err)
-	assert.True(t, changed, "the sentinel hash must force a reimport")
+	assert.True(t, changed, "the cleared source must force a reimport")
 
 	metadata, err = client.Queries.GetImportMetadata(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, parsed.Hash, metadata.FileHash)
+	assert.Equal(t, parsed.Source, metadata.FileSource)
 
 	// Reopening at the current version must not invalidate again.
 	require.NoError(t, client.Close())
@@ -102,5 +103,5 @@ func TestNewClient_InvalidatesPreFlexImportOnce(t *testing.T) {
 	require.NoError(t, err)
 	metadata, err = client.Queries.GetImportMetadata(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, parsed.Hash, metadata.FileHash)
+	assert.Equal(t, parsed.Source, metadata.FileSource)
 }
