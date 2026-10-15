@@ -247,12 +247,14 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
 	newFlexIndex := manager.nextFlexIndex(ctx, changed, logger)
+	newSystemETag := readSystemETag(ctx, manager.GtfsDB)
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 
 	manager.regionBounds = newRegionBounds
 	manager.flexIndex = newFlexIndex
+	manager.systemETag = newSystemETag
 
 	// Replace direction and trip-distance caches together for the new feed.
 	// In-flight calculations retain the retired cache generation.
@@ -260,7 +262,7 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		manager.DirectionCalculator.ClearCache()
 	}
 
-	if eTag := manager.GetSystemETag(ctx); eTag != "" {
+	if eTag := manager.systemETag; eTag != "" {
 		logging.LogOperation(logger, "system_etag_updated_successfully", slog.String("etag", eTag))
 	}
 
