@@ -281,8 +281,8 @@ func onDemandServiceModel(service gtfsdb.OndemandService, route gtfsdb.Route, ru
 		RouteID:     &routeID,
 		Name:        name,
 		ServiceKind: service.ServiceKind,
-		Description: models.NullableString(nulls.StringOrEmpty(route.Desc)),
-		URL:         models.NullableString(nulls.StringOrEmpty(route.Url)),
+		Description: nulls.StringOrNil(route.Desc),
+		URL:         nulls.StringOrNil(route.Url),
 		Rules:       rules,
 	}
 }
@@ -325,12 +325,12 @@ func bookingRuleReference(rule gtfsdb.BookingRule, agencyID string) models.Booki
 		PriorNoticeStartDay:    nulls.IntOrNil(rule.PriorNoticeStartDay),
 		PriorNoticeStartTime:   timeOfDayOrNil(rule.PriorNoticeStartTime),
 		PriorNoticeCalendarId:  combinedIDOrNil(agencyID, rule.PriorNoticeServiceID),
-		Message:                models.NullableString(nulls.StringOrEmpty(rule.Message)),
-		PickupMessage:          models.NullableString(nulls.StringOrEmpty(rule.PickupMessage)),
-		DropOffMessage:         models.NullableString(nulls.StringOrEmpty(rule.DropOffMessage)),
-		PhoneNumber:            models.NullableString(nulls.StringOrEmpty(rule.PhoneNumber)),
-		InfoUrl:                models.NullableString(nulls.StringOrEmpty(rule.InfoUrl)),
-		BookingUrl:             models.NullableString(nulls.StringOrEmpty(rule.BookingUrl)),
+		Message:                nulls.StringOrNil(rule.Message),
+		PickupMessage:          nulls.StringOrNil(rule.PickupMessage),
+		DropOffMessage:         nulls.StringOrNil(rule.DropOffMessage),
+		PhoneNumber:            nulls.StringOrNil(rule.PhoneNumber),
+		InfoUrl:                nulls.StringOrNil(rule.InfoUrl),
+		BookingUrl:             nulls.StringOrNil(rule.BookingUrl),
 	}
 }
 
@@ -512,8 +512,8 @@ func (api *RestAPI) onDemandServiceAreas(ctx context.Context, locations map[agen
 func (api *RestAPI) serviceAreaReference(ctx context.Context, location gtfsdb.Location, agencyID string, opts onDemandBuildOptions) models.ServiceArea {
 	area := models.ServiceArea{
 		ID:          utils.FormCombinedID(agencyID, location.ID),
-		Name:        models.NullableString(nulls.StringOrEmpty(location.Name)),
-		Description: models.NullableString(nulls.StringOrEmpty(location.Description)),
+		Name:        nulls.StringOrNil(location.Name),
+		Description: nulls.StringOrNil(location.Description),
 		BBox:        [4]float64{location.MinLon, location.MinLat, location.MaxLon, location.MaxLat},
 	}
 	switch opts.GeometryDetail {
@@ -608,7 +608,7 @@ func locationGroupReferences(groups []onDemandLocationGroup, stopAgencies stopAg
 		}
 		references = append(references, models.LocationGroupReference{
 			ID:      group.scoped.combined(),
-			Name:    models.NullableString(nulls.StringOrEmpty(group.group.Name)),
+			Name:    nulls.StringOrNil(group.group.Name),
 			StopIds: utils.SortedUnique(stopIDs),
 		})
 	}
