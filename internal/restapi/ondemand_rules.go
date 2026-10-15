@@ -49,7 +49,8 @@ func (scope serviceIDScope) endpointID(id string, kind int64) string {
 // buildAvailabilityRules groups a service's rows by tuple-minus-calendar,
 // prefixes every id through scope, resolves calendarIds through
 // calendarIDsByService (bare gtfs service id → combined calendar ids) and
-// returns the rules in the wiki §3.4 total order. Never nil.
+// returns the rules in the stable order of design spec §4 (the wiki §3.4
+// order, with import order breaking the remaining ties). Never nil.
 //
 // A rule whose calendars all compile to nothing (no service days and no added
 // dates) is dropped: it can never apply, and wiki §3.4 requires calendarIds to
