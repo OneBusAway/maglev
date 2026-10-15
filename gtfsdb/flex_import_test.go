@@ -15,6 +15,7 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/flexfixtures"
 	"maglev.onebusaway.org/internal/geo"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 // newTestClientWithZip imports a GTFS zip from disk into a fresh in-memory client.
@@ -422,4 +423,56 @@ func TestStoreGtfsData_FlexStopAgenciesKeepFixedRouteAgency(t *testing.T) {
 		flexfixtures.TAFlexAgencyID + "_" + flexfixtures.TAFlexStopID,
 		flexfixtures.TAFixedAgencyID + "_" + flexfixtures.TAFixedStopID,
 	}, indexed)
+}
+
+// flexTripBesideTimedFiles adds a-flex, a flex-only hermann trip in her-block
+// with its own shape and the timed trips' headsign. Its id sorts before every
+// timed trip, so a query that does not skip flex-only trips picks it first.
+func flexTripBesideTimedFiles() map[string]string {
+	files := flexfixtures.GroupDeviatedFiles()
+	files["trips.txt"] = "route_id,service_id,trip_id,block_id,shape_id,trip_headsign\n" +
+		"rufbus,svc,ruf-trip,,,\n" +
+		"hermann,svc,a-flex,her-block,flex-shape,Downtown\n" +
+		"hermann,svc,her-trip,her-block,her-shape,Downtown\n" +
+		"hermann,svc,her-trip-2,her-block,,Downtown\n" +
+		"winstop,svc,win-trip,,,\n"
+	files["shapes.txt"] += "flex-shape,44.4000,-94.5000,1\n" +
+		"flex-shape,44.4100,-94.5100,2\n"
+	files["stop_times.txt"] += "a-flex,,,,zone_a,,1,2,1,08:00:00,12:00:00,br_ruf,br_ruf\n" +
+		"a-flex,,,,zone_a,,2,1,2,08:00:00,12:00:00,br_ruf,br_ruf\n"
+	return files
+}
+
+func TestTimedTripQueries_SkipFlexOnlyTrips(t *testing.T) {
+	client := newTestClientWithBytes(t, flexfixtures.ZipBytes(t, flexTripBesideTimedFiles()), "flex-beside-timed")
+	ctx := context.Background()
+
+	t.Run("block trips", func(t *testing.T) {
+		trips, err := client.Queries.GetTripsByBlockID(ctx, nulls.String(flexfixtures.GDHerBlockID))
+		require.NoError(t, err)
+		var tripIDs []string
+		for _, trip := range trips {
+			tripIDs = append(tripIDs, trip.ID)
+		}
+		assert.ElementsMatch(t, []string{"her-trip", "her-trip-2"}, tripIDs)
+	})
+
+	t.Run("headsign shape", func(t *testing.T) {
+		points, err := client.Queries.GetShapesGroupedByTripHeadSign(ctx, GetShapesGroupedByTripHeadSignParams{
+			RouteID:      flexfixtures.GDHermannRouteID,
+			TripHeadsign: nulls.String("Downtown"),
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, points)
+		assert.Equal(t, 44.31, points[0].Lat, "the timed trip's shape, not the flex trip's")
+	})
+
+	t.Run("future service", func(t *testing.T) {
+		hasFuture, err := client.Queries.RouteHasFutureService(ctx, RouteHasFutureServiceParams{
+			RouteID: flexfixtures.GDRufbusRouteID,
+			RefDate: "20250101",
+		})
+		require.NoError(t, err)
+		assert.Zero(t, hasFuture, "a flex-only route has no fixed-route service on any date")
+	})
 }

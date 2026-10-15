@@ -4378,6 +4378,8 @@ FROM shapes s
     WHERE route_id = ?1
       AND trip_headsign = ?2
       AND shape_id IS NOT NULL
+      -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+      AND min_arrival_time IS NOT NULL
     ORDER BY id
     LIMIT 1
 ) t ON s.shape_id = t.shape_id
@@ -5605,6 +5607,8 @@ FROM
     trips
 WHERE
     block_id = ?
+    -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+    AND min_arrival_time IS NOT NULL
 `
 
 type GetTripsByBlockIDRow struct {
@@ -6677,6 +6681,8 @@ SELECT CAST((
         FROM trips t
         JOIN calendar_dates cd ON cd.service_id = t.service_id
         WHERE t.route_id = ?1
+          -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+          AND t.min_arrival_time IS NOT NULL
           AND cd.exception_type = 1
           AND cd.date > (SELECT ref_ymd FROM ref)
           AND cd.date <= (SELECT horizon_ymd FROM ref)
@@ -6692,6 +6698,8 @@ SELECT CAST((
         FROM trips t
         JOIN calendar cal ON cal.id = t.service_id
         WHERE t.route_id = ?1
+          -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+          AND t.min_arrival_time IS NOT NULL
           AND cal.end_date > (SELECT ref_ymd FROM ref)
           AND cal.start_date <= (SELECT horizon_ymd FROM ref)
           AND (cal.sunday + cal.monday + cal.tuesday + cal.wednesday
