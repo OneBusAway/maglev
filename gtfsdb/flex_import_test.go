@@ -334,3 +334,41 @@ func TestStoreGtfsData_GroupMemberWithoutCoordinatesGetsNoAgency(t *testing.T) {
 	assert.Contains(t, agencyStops, "s1")
 	assert.NotContains(t, agencyStops, "s3", "an unstored stop cannot join the stop agency index")
 }
+
+// parseInMemory parses a feed with its stop times in memory, as a streamed
+// import never holds them.
+func parseInMemory(t *testing.T, feed []byte) *gtfs.Static {
+	t.Helper()
+	static, err := gtfs.ParseStatic(feed, gtfs.ParseStaticOptions{})
+	require.NoError(t, err)
+	return static
+}
+
+func TestTimedStopTimes(t *testing.T) {
+	static := parseInMemory(t, flexfixtures.ZipBytes(t, flexfixtures.GroupDeviatedFiles()))
+	trips := make(map[string]*gtfs.ScheduledTrip, len(static.Trips))
+	for i := range static.Trips {
+		trips[static.Trips[i].ID] = &static.Trips[i]
+	}
+
+	deviated := trips[flexfixtures.GDHerTripID]
+	timed := timedStopTimes(deviated.StopTimes)
+	assert.Len(t, timed, 3, "the zone records are dropped")
+	for _, st := range timed {
+		assert.False(t, st.IsWindowed())
+	}
+
+	flexOnly := trips[flexfixtures.GDRufTripID]
+	assert.Empty(t, timedStopTimes(flexOnly.StopTimes))
+}
+
+func TestTimedStopTimes_FixedTripIsNotCopied(t *testing.T) {
+	rabaBytes, err := os.ReadFile("../testdata/raba.zip")
+	require.NoError(t, err)
+	static := parseInMemory(t, rabaBytes)
+
+	trip := &static.Trips[0]
+	require.NotEmpty(t, trip.StopTimes)
+	timed := timedStopTimes(trip.StopTimes)
+	assert.Same(t, &trip.StopTimes[0], &timed[0], "a trip with no windowed record shares its slice")
+}
