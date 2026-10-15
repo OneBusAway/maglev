@@ -511,3 +511,9 @@ func FuzzCalculateBounds(f *testing.F) {
 		}
 	})
 }
+
+func TestUnionBounds(t *testing.T) {
+	a := CoordinateBounds{MinLat: 1, MaxLat: 2, MinLon: 10, MaxLon: 11}
+	b := CoordinateBounds{MinLat: 0, MaxLat: 1.5, MinLon: 10.5, MaxLon: 12}
+	assert.Equal(t, CoordinateBounds{MinLat: 0, MaxLat: 2, MinLon: 10, MaxLon: 12}, UnionBounds(a, b))
+}

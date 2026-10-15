@@ -434,6 +434,35 @@ func ParseBoolParam(params url.Values, key string, fallback bool, fieldErrors ma
 	}
 }
 
+// GeometryDetail selects how much zone geometry an /ondemand response embeds.
+type GeometryDetail string
+
+const (
+	GeometryDetailNone       GeometryDetail = "none"
+	GeometryDetailSimplified GeometryDetail = "simplified"
+	GeometryDetailFull       GeometryDetail = "full"
+)
+
+const geometryDetailParam = "geometryDetail"
+
+// ParseGeometryDetail reads the tri-state geometryDetail parameter, returning
+// fallback when absent and recording a field error for any other value.
+func ParseGeometryDetail(params url.Values, fallback GeometryDetail, fieldErrors map[string][]string) (GeometryDetail, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+	value := params.Get(geometryDetailParam)
+	switch GeometryDetail(value) {
+	case "":
+		return fallback, fieldErrors
+	case GeometryDetailNone, GeometryDetailSimplified, GeometryDetailFull:
+		return GeometryDetail(value), fieldErrors
+	default:
+		fieldErrors[geometryDetailParam] = append(fieldErrors[geometryDetailParam], `Invalid field value for field "geometryDetail".`)
+		return fallback, fieldErrors
+	}
+}
+
 // ClampRadius restricts a radius value to MaxSearchRadiusInMeters
 func ClampRadius(radius float64) float64 {
 	if radius > models.MaxSearchRadiusInMeters {

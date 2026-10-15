@@ -105,3 +105,31 @@ func StringFromPtr(value *string) sql.NullString {
 	}
 	return String(*value)
 }
+
+// Float64OrNil returns a pointer to the float64 value if valid, otherwise nil.
+func Float64OrNil(nf sql.NullFloat64) *float64 {
+	if !nf.Valid {
+		return nil
+	}
+	value := nf.Float64
+	return &value
+}
+
+// StringOrNil returns a pointer to the string if valid and non-empty,
+// otherwise nil, so an absent or blank column is omitted rather than "".
+func StringOrNil(ns sql.NullString) *string {
+	if !ns.Valid || ns.String == "" {
+		return nil
+	}
+	value := ns.String
+	return &value
+}
+
+// IntOrNil returns a pointer to the value as an int if valid, otherwise nil.
+func IntOrNil(ni sql.NullInt64) *int {
+	if !ni.Valid {
+		return nil
+	}
+	value := int(ni.Int64)
+	return &value
+}

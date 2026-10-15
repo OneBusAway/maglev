@@ -189,6 +189,31 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 	}
 }
 
+// nextFlexIndex never fails the reload: the database has already been
+// swapped, so the rest of the in-memory state must still follow it. Unchanged
+// data keeps the index already built from it, so a periodic refresh does not
+// re-read the on-demand tables and re-parse every zone. A failed build
+// publishes no index (FlexIndex serves an empty one), so on-demand lookups go
+// dark and the next reload tries again even when the data is unchanged.
+func (manager *Manager) nextFlexIndex(ctx context.Context, dataChanged bool, logger *slog.Logger) *FlexIndex {
+	if current := manager.builtFlexIndex(); current != nil && !dataChanged {
+		return current
+	}
+	flexIndex, err := buildFlexIndex(ctx, manager.GtfsDB, logger)
+	if err != nil {
+		logging.LogError(logger, "Error building on-demand index; serving none", err)
+		return nil
+	}
+	return flexIndex
+}
+
+// builtFlexIndex returns the published index, or nil when none has been built.
+func (manager *Manager) builtFlexIndex() *FlexIndex {
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+	return manager.flexIndex
+}
+
 // ReloadStatic is the single code path for importing GTFS static data into
 // manager.GtfsDB. It is called from both startup (InitGTFSManager) and the
 // periodic refresh. Returns (changed, err). Caller is responsible
@@ -221,11 +246,15 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	}
 
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
+	newFlexIndex := manager.nextFlexIndex(ctx, changed, logger)
+	newSystemETag := readSystemETag(ctx, manager.GtfsDB)
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 
 	manager.regionBounds = newRegionBounds
+	manager.flexIndex = newFlexIndex
+	manager.systemETag = newSystemETag
 
 	// Replace direction and trip-distance caches together for the new feed.
 	// In-flight calculations retain the retired cache generation.
@@ -233,7 +262,7 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		manager.DirectionCalculator.ClearCache()
 	}
 
-	if eTag := manager.GetSystemETag(ctx); eTag != "" {
+	if eTag := manager.systemETag; eTag != "" {
 		logging.LogOperation(logger, "system_etag_updated_successfully", slog.String("etag", eTag))
 	}
 
