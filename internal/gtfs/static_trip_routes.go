@@ -1,13 +1,12 @@
 package gtfs
 
 import (
+	"maps"
 	"sync"
-
-	"maglev.onebusaway.org/gtfsdb"
 )
 
-// staticTripRoutes caches the static route of each trip a realtime feed has
-// named. Feeds can name routes the static GTFS lacks (Tampa's GTFS-RT feed
+// staticTripRoutes caches, across refreshes and feeds, the static route of
+// each trip a realtime feed has named. Feeds can name routes the static GTFS lacks (Tampa's GTFS-RT feed
 // reports static route "360" as "360LX"), while legacy exports always used
 // the static trip's route. Trips missing from static data are not cached,
 // so the cache holds at most one entry per static trip.
@@ -19,41 +18,36 @@ type staticTripRoutes struct {
 	generation uint64
 }
 
-// routeOf returns tripID's static route, or "" when it is not cached.
-func (cache *staticTripRoutes) routeOf(tripID string) string {
+// lookup returns the cached routes of tripIDs, the trip IDs that have no
+// cached route, and the cache generation to pass to store with the routes
+// read for them.
+func (cache *staticTripRoutes) lookup(tripIDs []string) (map[string]string, []string, uint64) {
 	cache.mu.RLock()
 	defer cache.mu.RUnlock()
-	return cache.routes[tripID]
-}
-
-// missing returns the trip IDs that have no cached route, and the cache
-// generation to pass to store with the routes read for them.
-func (cache *staticTripRoutes) missing(tripIDs map[string]struct{}) ([]string, uint64) {
-	cache.mu.RLock()
-	defer cache.mu.RUnlock()
+	routes := make(map[string]string, len(tripIDs))
 	var missing []string
-	for tripID := range tripIDs {
-		if _, ok := cache.routes[tripID]; !ok {
+	for _, tripID := range tripIDs {
+		if routeID, ok := cache.routes[tripID]; ok {
+			routes[tripID] = routeID
+		} else {
 			missing = append(missing, tripID)
 		}
 	}
-	return missing, cache.generation
+	return routes, missing, cache.generation
 }
 
-// store caches the trips' routes unless the cache was cleared after
+// store caches routes, keyed by trip ID, unless the cache was cleared after
 // generation was read, since they may then come from replaced static data.
-func (cache *staticTripRoutes) store(trips []gtfsdb.Trip, generation uint64) {
+func (cache *staticTripRoutes) store(routes map[string]string, generation uint64) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	if generation != cache.generation {
 		return
 	}
 	if cache.routes == nil {
-		cache.routes = make(map[string]string, len(trips))
+		cache.routes = make(map[string]string, len(routes))
 	}
-	for _, trip := range trips {
-		cache.routes[trip.ID] = trip.RouteID
-	}
+	maps.Copy(cache.routes, routes)
 }
 
 // Clear drops every cached route; static data has changed.

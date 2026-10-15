@@ -66,10 +66,13 @@ type Manager struct {
 	feedUnattributedTrips map[string][]gtfs.Trip
 	// GTFS-RT export state, per feed. Trip-update refs are the unfiltered
 	// updates in feed order; the block map holds legacy matches keyed
-	// by trip ID; filtered-out vehicles are the ones the agency filter keeps
-	// out of feedVehicles that the vehicle export still serves.
+	// by trip ID; static trip routes map the trips the feed's export
+	// vehicles name to their static routes; filtered-out vehicles are the
+	// ones the agency filter keeps out of feedVehicles that the vehicle
+	// export still serves.
 	feedTripUpdateRefs      map[string][]tripUpdateRef
 	feedTripUpdateBlocks    map[string]map[string]*BlockMatch
+	feedStaticTripRoutes    map[string]map[string]string
 	feedFilteredOutVehicles map[string][]gtfs.Vehicle
 	blockMatcher            *blockMatcher
 	staticTripRoutes        staticTripRoutes
@@ -102,6 +105,7 @@ func (manager *Manager) clearFeedData(feedID string) {
 	delete(manager.feedUnattributedTrips, feedID)
 	delete(manager.feedTripUpdateRefs, feedID)
 	delete(manager.feedTripUpdateBlocks, feedID)
+	delete(manager.feedStaticTripRoutes, feedID)
 	delete(manager.feedFilteredOutVehicles, feedID)
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
@@ -161,6 +165,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 
 		feedTripUpdateRefs:      make(map[string][]tripUpdateRef),
 		feedTripUpdateBlocks:    make(map[string]map[string]*BlockMatch),
+		feedStaticTripRoutes:    make(map[string]map[string]string),
 		feedFilteredOutVehicles: make(map[string][]gtfs.Vehicle),
 		// Built before the startup realtime fetch below, which already
 		// matches blocks.
