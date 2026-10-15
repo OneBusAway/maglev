@@ -125,12 +125,3 @@ func FormatGTFSTimeOfDay(nanos int64) string {
 	total := int64(time.Duration(nanos) / time.Second)
 	return fmt.Sprintf("%02d:%02d:%02d", total/3600, (total%3600)/60, total%60)
 }
-
-// NullableString maps the empty string to nil, the wire convention for absent
-// optional strings on the new object types.
-func NullableString(value string) *string {
-	if value == "" {
-		return nil
-	}
-	return &value
-}
