@@ -100,6 +100,9 @@ func TestWhereEndpoints_CarryOnDemandPointers(t *testing.T) {
 
 	manisteeExpected := map[string][]string{"MC_MC1": {"MC_MC1"}, "MC_MC2": {"MC_MC2"}}
 
+	deviatedAPI := createTestApiWithGTFSFixture(t, clock.NewMockClock(pointerFixtureClock), "flex-group-deviated.zip", flexfixtures.GroupDeviatedFiles())
+	deviatedAPI.GtfsManager.MockAddVehicle("v1", flexfixtures.GDHerTripID, flexfixtures.GDHermannRouteID)
+
 	fixtures := []struct {
 		name     string
 		api      *RestAPI
@@ -125,7 +128,7 @@ func TestWhereEndpoints_CarryOnDemandPointers(t *testing.T) {
 		},
 		{
 			name:     "group and deviated",
-			api:      createTestApiWithGTFSFixture(t, clock.NewMockClock(pointerFixtureClock), "flex-group-deviated.zip", flexfixtures.GroupDeviatedFiles()),
+			api:      deviatedAPI,
 			expected: deviatedExpected,
 			endpoints: []string{
 				"/api/where/stop/gd_s1.json",
@@ -145,6 +148,9 @@ func TestWhereEndpoints_CarryOnDemandPointers(t *testing.T) {
 				"/api/where/schedule-for-stop/gd_h1.json",
 				"/api/where/schedule-for-route/gd_hermann.json?date=2025-06-12",
 				"/api/where/arrivals-and-departures-for-stop/gd_h2.json",
+				"/api/where/arrivals-and-departures-for-location.json?lat=44.32&lon=-94.45&radius=3000",
+				"/api/where/vehicles-for-agency/gd.json",
+				"/api/where/trip-for-vehicle/gd_v1.json",
 				"/api/where/arrival-and-departure-for-stop/gd_h2.json?tripId=gd_her-trip&serviceDate=" + pointerFixtureServiceDateMillis,
 				"/api/where/block/gd_her-block.json",
 				"/api/ondemand/services-for-location.json?lat=44.32&lon=-94.45&radius=3000&geometryDetail=none",

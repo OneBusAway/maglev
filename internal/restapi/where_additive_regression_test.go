@@ -27,6 +27,14 @@ var whereKeyPathsSnapshot = filepath.Join("testdata", "where_keypaths.json")
 // c_1658_b_18260_d_31 calendar, so time-windowed endpoints are deterministic.
 var regressionClock = time.Date(2025, 6, 12, 19, 0, 0, 0, time.UTC)
 
+// The vehicle the vehicle endpoints report on. Its trip is on a route no other
+// endpoint below queries, so it leaves their key paths alone.
+const (
+	regressionVehicleID      = "regression-vehicle"
+	regressionVehicleTripID  = "t_74134_b_18260_tn_11"
+	regressionVehicleRouteID = "159"
+)
+
 // whereRegressionEndpoints is the fixed endpoint set; names key the snapshot.
 var whereRegressionEndpoints = []struct{ name, endpoint string }{
 	{"agencies-with-coverage", "/api/where/agencies-with-coverage.json"},
@@ -45,6 +53,9 @@ var whereRegressionEndpoints = []struct{ name, endpoint string }{
 	{"trips-for-route", "/api/where/trips-for-route/25_151.json"},
 	{"trips-for-location", "/api/where/trips-for-location.json?lat=40.58&lon=-122.39&latSpan=0.2&lonSpan=0.2"},
 	{"arrivals-and-departures-for-stop", "/api/where/arrivals-and-departures-for-stop/25_1030.json"},
+	{"arrivals-and-departures-for-location", "/api/where/arrivals-and-departures-for-location.json?lat=40.58&lon=-122.39"},
+	{"vehicles-for-agency", "/api/where/vehicles-for-agency/25.json"},
+	{"trip-for-vehicle", "/api/where/trip-for-vehicle/25_" + regressionVehicleID + ".json"},
 	{"block", "/api/where/block/25_1.json"},
 	{"shape", "/api/where/shape/25_t580.json"},
 	{"search-stop", "/api/where/search/stop.json?input=Shasta"},
@@ -89,6 +100,7 @@ func arrayElementPrefix(prefix string) string {
 func TestWhereResponses_StayAdditiveOnNonFlexFeed(t *testing.T) {
 	api := createTestApiWithFeedAndClock(t, filepath.Join("../../testdata", "raba.zip"), clock.NewMockClock(regressionClock))
 	defer api.Shutdown()
+	api.GtfsManager.MockAddVehicle(regressionVehicleID, regressionVehicleTripID, regressionVehicleRouteID)
 	server := httptest.NewServer(api.SetupAPIRoutes())
 	defer server.Close()
 
