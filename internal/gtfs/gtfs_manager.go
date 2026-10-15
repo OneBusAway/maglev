@@ -76,6 +76,8 @@ type Manager struct {
 	// Per-feed time its vehicle data was produced: the vehicle feed's header
 	// timestamp, else its fetch time.
 	feedVehicleDataTime map[string]time.Time
+	// Per-feed vehicles kept after dropping out of the feed's latest update
+	feedRetainedVehicles map[string]map[vehicleKey]struct{} // feedID -> retained vehicle keys
 
 	// Per-feed last successfully applied vehicle feed timestamp
 	feedVehicleTimestamp map[string]uint64 // feedID -> timestamp
@@ -105,6 +107,7 @@ func (manager *Manager) clearFeedData(feedID string) {
 	delete(manager.feedVehicleLastSeen, feedID)
 	delete(manager.feedVehicleAgency, feedID)
 	delete(manager.feedVehicleDataTime, feedID)
+	delete(manager.feedRetainedVehicles, feedID)
 
 	delete(manager.feedLastUpdate, feedID)
 
@@ -155,6 +158,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 		feedVehicleAgency:    make(map[string]map[vehicleKey]string),
 		feedVehicleDataTime:  make(map[string]time.Time),
+		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 		feedVehicleTimestamp: make(map[string]uint64),
 		Metrics:              config.Metrics,
 	}
