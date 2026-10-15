@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // BlockMatch is the block instance the legacy matcher resolved for a
@@ -63,34 +65,48 @@ func newBlockMatcher(queries *gtfsdb.Queries, now func() time.Time) *blockMatche
 	}
 }
 
-// blockMatchLookups memoizes the static lookups that are the same for every
-// trip one refresh matches: active services per date, agency zones and the
-// frequency-based trips, loaded on first use.
+// blockMatchLookups memoizes the static lookups shared by every trip one
+// refresh matches: trip rows, active services per date, agency zones and
+// the frequency-based trips, each loaded on first use.
 type blockMatchLookups struct {
+	trips            staticTripRows
 	serviceIDs       serviceIDsByDate
 	agencyZones      map[string]*time.Location
 	frequencyTripIDs map[string]struct{}
 }
 
 func newBlockMatchLookups() *blockMatchLookups {
-	return &blockMatchLookups{serviceIDs: serviceIDsByDate{}, agencyZones: make(map[string]*time.Location)}
+	return &blockMatchLookups{
+		trips:       staticTripRows{},
+		serviceIDs:  serviceIDsByDate{},
+		agencyZones: make(map[string]*time.Location),
+	}
 }
 
-// Match returns the block for tripID as seen by feedID's source, reusing a
-// cached result for 30 minutes after it was first stored. A nil match means
-// the trip is unresolved; an error means a query failed and nothing was
-// cached. lookups is shared by the trips matched in one refresh.
-func (m *blockMatcher) Match(ctx context.Context, feedID, tripID string, reference time.Time, lookups *blockMatchLookups) (*BlockMatch, error) {
-	entry, generation, ok := m.cached(feedID, tripID)
-	if ok {
-		return entry.match, nil
+// blockMatchRequest is one trip to match and its legacy matching reference.
+type blockMatchRequest struct {
+	tripID    string
+	reference time.Time
+}
+
+// Match returns the block of each requested trip as seen by feedID's
+// source. Results cached within the last 30 minutes are reused, and the
+// other trips are resolved together, so the query count does not grow with
+// the number of trips. A nil match means the trip is unresolved. When a
+// query fails, Match returns the cached matches with the error and caches
+// nothing new.
+func (m *blockMatcher) Match(ctx context.Context, feedID string, requests []blockMatchRequest, lookups *blockMatchLookups) (map[string]*BlockMatch, error) {
+	matches, pending, generation := m.cachedMatches(feedID, requests)
+	if len(pending) == 0 {
+		return matches, nil
 	}
-	match, err := m.resolve(ctx, tripID, reference, lookups)
+	resolved, err := m.resolve(ctx, pending, lookups)
 	if err != nil {
-		return nil, err
+		return matches, err
 	}
-	m.store(feedID, tripID, match, generation)
-	return match, nil
+	m.store(feedID, resolved, generation)
+	maps.Copy(matches, resolved)
+	return matches, nil
 }
 
 // Clear drops every cached association; static GTFS replacement calls it.
@@ -101,21 +117,28 @@ func (m *blockMatcher) Clear() {
 	m.generation++
 }
 
-// cached returns the live entry for tripID, if any, and the cache
-// generation to pass to store with a newly resolved match.
-func (m *blockMatcher) cached(feedID, tripID string) (blockMatchEntry, uint64, bool) {
+// cachedMatches splits requests into live cached matches and the requests
+// still to resolve, and returns the cache generation to pass to store with
+// their results.
+func (m *blockMatcher) cachedMatches(feedID string, requests []blockMatchRequest) (map[string]*BlockMatch, []blockMatchRequest, uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	entry, ok := m.caches[feedID][tripID]
-	if !ok || m.now().Sub(entry.insertedAt) >= blockMatchCacheTTL {
-		return blockMatchEntry{}, m.generation, false
+	matches := make(map[string]*BlockMatch, len(requests))
+	var pending []blockMatchRequest
+	for _, request := range requests {
+		entry, ok := m.caches[feedID][request.tripID]
+		if !ok || m.now().Sub(entry.insertedAt) >= blockMatchCacheTTL {
+			pending = append(pending, request)
+			continue
+		}
+		matches[request.tripID] = entry.match
 	}
-	return entry, m.generation, true
+	return matches, pending, m.generation
 }
 
-// store caches match unless the cache was cleared after generation was
-// read, since the match may then come from replaced static data.
-func (m *blockMatcher) store(feedID, tripID string, match *BlockMatch, generation uint64) {
+// store caches resolved unless the cache was cleared after generation was
+// read, since the matches may then come from replaced static data.
+func (m *blockMatcher) store(feedID string, resolved map[string]*BlockMatch, generation uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if generation != m.generation {
@@ -124,21 +147,49 @@ func (m *blockMatcher) store(feedID, tripID string, match *BlockMatch, generatio
 	if m.caches[feedID] == nil {
 		m.caches[feedID] = make(map[string]blockMatchEntry)
 	}
-	m.caches[feedID][tripID] = blockMatchEntry{match: match, insertedAt: m.now()}
+	insertedAt := m.now()
+	for tripID, match := range resolved {
+		m.caches[feedID][tripID] = blockMatchEntry{match: match, insertedAt: insertedAt}
+	}
 }
 
-func (m *blockMatcher) resolve(ctx context.Context, tripID string, reference time.Time, lookups *blockMatchLookups) (*BlockMatch, error) {
-	trips, err := m.queries.GetTripsByIDs(ctx, []string{tripID})
-	if err != nil || len(trips) == 0 {
+// resolve matches the pending trips, reading their trips, routes and first
+// departures in batches.
+func (m *blockMatcher) resolve(ctx context.Context, pending []blockMatchRequest, lookups *blockMatchLookups) (map[string]*BlockMatch, error) {
+	tripIDs := make([]string, 0, len(pending))
+	for _, request := range pending {
+		tripIDs = append(tripIDs, request.tripID)
+	}
+	if err := lookups.trips.load(ctx, m.queries, tripIDs); err != nil {
 		return nil, err
 	}
-	trip := trips[0]
-	route, err := m.queries.GetRoute(ctx, trip.RouteID)
-	if errors.Is(err, sql.ErrNoRows) {
+	routes, err := m.tripRoutes(ctx, tripIDs, lookups.trips)
+	if err != nil {
+		return nil, err
+	}
+	departures, err := m.firstDepartures(ctx, tripIDs)
+	if err != nil {
+		return nil, err
+	}
+	resolved := make(map[string]*BlockMatch, len(pending))
+	for _, request := range pending {
+		match, err := m.resolveTrip(ctx, request, routes, departures, lookups)
+		if err != nil {
+			return nil, err
+		}
+		resolved[request.tripID] = match
+	}
+	return resolved, nil
+}
+
+func (m *blockMatcher) resolveTrip(ctx context.Context, request blockMatchRequest, routes map[string]gtfsdb.Route, departures map[string]time.Duration, lookups *blockMatchLookups) (*BlockMatch, error) {
+	trip, ok := lookups.trips.get(request.tripID)
+	if !ok {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("route %q for trip %q: %w", trip.RouteID, trip.ID, err)
+	route, ok := routes[trip.RouteID]
+	if !ok {
+		return nil, nil
 	}
 	agencyZone, err := m.agencyLocation(ctx, route.AgencyID, lookups)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -147,11 +198,11 @@ func (m *blockMatcher) resolve(ctx context.Context, tripID string, reference tim
 	if err != nil {
 		return nil, err
 	}
-	tripStart, hasDeparture, err := m.firstDeparture(ctx, trip.ID)
-	if err != nil || !hasDeparture {
-		return nil, err
+	tripStart, ok := departures[trip.ID]
+	if !ok {
+		return nil, nil
 	}
-	serviceDate, found, err := m.firstActiveServiceDate(ctx, trip, reference.In(agencyZone), lookups)
+	serviceDate, found, err := m.firstActiveServiceDate(ctx, trip, request.reference.In(agencyZone), lookups)
 	if err != nil || !found {
 		return nil, err
 	}
@@ -168,6 +219,25 @@ func (m *blockMatcher) resolve(ctx context.Context, tripID string, reference tim
 		TripStart:      tripStart,
 		FrequencyBased: frequencyBased,
 	}, nil
+}
+
+// tripRoutes reads the routes of the loaded trips, keyed by route ID.
+func (m *blockMatcher) tripRoutes(ctx context.Context, tripIDs []string, trips staticTripRows) (map[string]gtfsdb.Route, error) {
+	routeIDs := make(map[string]struct{})
+	for _, tripID := range tripIDs {
+		if trip, ok := trips.get(tripID); ok {
+			routeIDs[trip.RouteID] = struct{}{}
+		}
+	}
+	rows, err := utils.QueryInBatches(ctx, slices.Sorted(maps.Keys(routeIDs)), m.queries.GetRoutesByIDs)
+	if err != nil {
+		return nil, err
+	}
+	routes := make(map[string]gtfsdb.Route, len(rows))
+	for _, route := range rows {
+		routes[route.ID] = route
+	}
+	return routes, nil
 }
 
 func (m *blockMatcher) isFrequencyTrip(ctx context.Context, tripID string, lookups *blockMatchLookups) (bool, error) {
@@ -238,12 +308,16 @@ func (m *blockMatcher) firstActiveServiceDate(ctx context.Context, trip gtfsdb.T
 	return time.Time{}, false, nil
 }
 
-// firstDeparture returns the trip's first static departure, if it has stop
-// times.
-func (m *blockMatcher) firstDeparture(ctx context.Context, tripID string) (time.Duration, bool, error) {
-	rows, err := m.queries.GetFirstDeparturesForTripIDs(ctx, []string{tripID})
-	if err != nil || len(rows) == 0 {
-		return 0, false, err
+// firstDepartures returns each trip's first static departure; trips
+// without stop times are left out.
+func (m *blockMatcher) firstDepartures(ctx context.Context, tripIDs []string) (map[string]time.Duration, error) {
+	rows, err := utils.QueryInBatches(ctx, tripIDs, m.queries.GetFirstDeparturesForTripIDs)
+	if err != nil {
+		return nil, err
 	}
-	return time.Duration(rows[0].DepartureTime), true, nil
+	departures := make(map[string]time.Duration, len(rows))
+	for _, row := range rows {
+		departures[row.TripID] = time.Duration(row.DepartureTime)
+	}
+	return departures, nil
 }

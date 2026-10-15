@@ -436,12 +436,13 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	}
 	var tripRefs []tripUpdateRef
 	var tripUpdateBlocks map[string]*BlockMatch
+	lookups := newBlockMatchLookups()
 	if tripData != nil && tripErr == nil {
 		tripRefs = tripUpdateRefsInFeedOrder(tripData.Trips)
-		tripRefs = manager.assignTripUpdateVehicles(ctx, feedID, tripRefs, unfilteredVehicles)
-		tripUpdateBlocks = manager.tripUpdateBlockMatches(ctx, feedID, tripRefs, tripData.CreatedAt)
+		tripRefs = manager.assignTripUpdateVehicles(ctx, feedID, tripRefs, unfilteredVehicles, lookups.trips)
+		tripUpdateBlocks = manager.tripUpdateBlockMatches(ctx, feedID, tripRefs, tripData.CreatedAt, lookups)
 	}
-	manager.resolveStaticTripRoutes(ctx, feedID, tripRefs, unfilteredVehicles)
+	manager.resolveStaticTripRoutes(ctx, feedID, tripRefs, unfilteredVehicles, lookups.trips)
 
 	// Apply agency-based filtering if configured for this feed.
 	// This runs before acquiring realTimeMutex to keep the critical section short.

@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"database/sql"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,6 +101,37 @@ func newTestBlockMatcher(t *testing.T, now func() time.Time) *blockMatcher {
 
 func fixedNow(t time.Time) func() time.Time { return func() time.Time { return t } }
 
+// matchTrip matches a single trip through the batched Match.
+func matchTrip(ctx context.Context, matcher *blockMatcher, feedID, tripID string, reference time.Time, lookups *blockMatchLookups) (*BlockMatch, error) {
+	matches, err := matcher.Match(ctx, feedID, []blockMatchRequest{{tripID: tripID, reference: reference}}, lookups)
+	return matches[tripID], err
+}
+
+// countingDB counts the statements run through it.
+type countingDB struct {
+	gtfsdb.DBTX
+	queries *atomic.Int64
+}
+
+func (db countingDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	db.queries.Add(1)
+	return db.DBTX.QueryContext(ctx, query, args...)
+}
+
+func (db countingDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	db.queries.Add(1)
+	return db.DBTX.QueryRowContext(ctx, query, args...)
+}
+
+// newCountingBlockMatcher is newTestBlockMatcher with a count of the
+// statements matching runs.
+func newCountingBlockMatcher(t *testing.T, now func() time.Time) (*blockMatcher, *atomic.Int64) {
+	t.Helper()
+	var queries atomic.Int64
+	db := countingDB{DBTX: newBlockMatcherTestDB(t).DB, queries: &queries}
+	return newBlockMatcher(gtfsdb.New(db), now), &queries
+}
+
 func TestCandidateServiceDates(t *testing.T) {
 	day := func(d int, hh, mm, ss int) time.Time { return time.Date(2026, 10, d, hh, mm, ss, 0, matcherZone) }
 	tests := []struct {
@@ -126,7 +159,7 @@ func TestBlockMatcherUsesAgencyTimezone(t *testing.T) {
 	reference := time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC)
 	matcher := newTestBlockMatcher(t, fixedNow(reference))
 
-	match, err := matcher.Match(context.Background(), "feed", "T_LATE", reference, newBlockMatchLookups())
+	match, err := matchTrip(context.Background(), matcher, "feed", "T_LATE", reference, newBlockMatchLookups())
 
 	require.NoError(t, err)
 	require.NotNil(t, match)
@@ -157,7 +190,7 @@ func TestBlockMatcherMatch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			matcher := newTestBlockMatcher(t, fixedNow(tuesday0110))
-			match, err := matcher.Match(ctx, "feed", tt.tripID, tt.reference, newBlockMatchLookups())
+			match, err := matchTrip(ctx, matcher, "feed", tt.tripID, tt.reference, newBlockMatchLookups())
 			require.NoError(t, err)
 			if tt.wantUnmatched {
 				assert.Nil(t, match)
@@ -181,11 +214,11 @@ func TestBlockMatcherCache(t *testing.T) {
 
 	t.Run("cached association survives a date-window change", func(t *testing.T) {
 		matcher := newTestBlockMatcher(t, fixedNow(tuesday0359))
-		first, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
+		first, err := matchTrip(ctx, matcher, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
 		require.NoError(t, err)
 		require.NotNil(t, first)
 		// At 04:01 the window is Tuesday only, where T_LATE does not run.
-		second, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0401, newBlockMatchLookups())
+		second, err := matchTrip(ctx, matcher, "feed", "T_LATE", tuesday0401, newBlockMatchLookups())
 		require.NoError(t, err)
 		assert.Equal(t, first, second)
 	})
@@ -193,28 +226,28 @@ func TestBlockMatcherCache(t *testing.T) {
 	t.Run("unresolved result is cached until expiry", func(t *testing.T) {
 		current := tuesday0401
 		matcher := newTestBlockMatcher(t, func() time.Time { return current })
-		miss, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0401, newBlockMatchLookups())
+		miss, err := matchTrip(ctx, matcher, "feed", "T_LATE", tuesday0401, newBlockMatchLookups())
 		require.NoError(t, err)
 		require.Nil(t, miss)
 
 		current = current.Add(29 * time.Minute)
-		stillMiss, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
+		stillMiss, err := matchTrip(ctx, matcher, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
 		require.NoError(t, err)
 		assert.Nil(t, stillMiss, "cached failure is reused within 30 minutes")
 
 		current = tuesday0401.Add(30 * time.Minute)
-		rematched, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
+		rematched, err := matchTrip(ctx, matcher, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
 		require.NoError(t, err)
 		assert.NotNil(t, rematched, "expiry is measured from insertion, not extended by reads")
 	})
 
 	t.Run("static replacement clears the cache", func(t *testing.T) {
 		matcher := newTestBlockMatcher(t, fixedNow(tuesday0401))
-		miss, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0401, newBlockMatchLookups())
+		miss, err := matchTrip(ctx, matcher, "feed", "T_LATE", tuesday0401, newBlockMatchLookups())
 		require.NoError(t, err)
 		require.Nil(t, miss)
 		matcher.Clear()
-		match, err := matcher.Match(ctx, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
+		match, err := matchTrip(ctx, matcher, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
 		require.NoError(t, err)
 		assert.NotNil(t, match)
 	})
@@ -223,20 +256,21 @@ func TestBlockMatcherCache(t *testing.T) {
 	// resolved from the old data can finish after the clear.
 	t.Run("a result resolved before static replacement is not cached", func(t *testing.T) {
 		matcher := newTestBlockMatcher(t, fixedNow(tuesday0401))
-		_, generation, cached := matcher.cached("feed", "T_LATE")
-		require.False(t, cached)
+		late := []blockMatchRequest{{tripID: "T_LATE", reference: tuesday0401}}
+		_, pending, generation := matcher.cachedMatches("feed", late)
+		require.Len(t, pending, 1)
 		matcher.Clear()
-		matcher.store("feed", "T_LATE", nil, generation)
-		_, _, cached = matcher.cached("feed", "T_LATE")
-		assert.False(t, cached)
+		matcher.store("feed", map[string]*BlockMatch{"T_LATE": nil}, generation)
+		_, pending, _ = matcher.cachedMatches("feed", late)
+		assert.Len(t, pending, 1)
 	})
 
 	t.Run("caches are per source", func(t *testing.T) {
 		matcher := newTestBlockMatcher(t, fixedNow(tuesday0401))
-		miss, err := matcher.Match(ctx, "feed-a", "T_LATE", tuesday0401, newBlockMatchLookups())
+		miss, err := matchTrip(ctx, matcher, "feed-a", "T_LATE", tuesday0401, newBlockMatchLookups())
 		require.NoError(t, err)
 		require.Nil(t, miss)
-		match, err := matcher.Match(ctx, "feed-b", "T_LATE", tuesday0359, newBlockMatchLookups())
+		match, err := matchTrip(ctx, matcher, "feed-b", "T_LATE", tuesday0359, newBlockMatchLookups())
 		require.NoError(t, err)
 		assert.NotNil(t, match)
 	})
@@ -249,10 +283,10 @@ func TestBlockMatcherDoesNotCacheQueryFailures(t *testing.T) {
 
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	_, err := matcher.Match(canceled, "feed", "T_NOBLOCK", reference, newBlockMatchLookups())
+	_, err := matchTrip(canceled, matcher, "feed", "T_NOBLOCK", reference, newBlockMatchLookups())
 	require.Error(t, err)
 
-	match, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference, newBlockMatchLookups())
+	match, err := matchTrip(ctx, matcher, "feed", "T_NOBLOCK", reference, newBlockMatchLookups())
 	require.NoError(t, err)
 	assert.NotNil(t, match, "a failed query must not leave a cached unresolved entry")
 }
@@ -271,12 +305,12 @@ func TestBlockMatcherTreatsMissingAgencyAsUnresolved(t *testing.T) {
 	require.NoError(t, err)
 	matcher := newBlockMatcher(client.Queries, fixedNow(reference))
 
-	match, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference, newBlockMatchLookups())
+	match, err := matchTrip(ctx, matcher, "feed", "T_NOBLOCK", reference, newBlockMatchLookups())
 
 	require.NoError(t, err)
 	assert.Nil(t, match)
-	_, _, cached := matcher.cached("feed", "T_NOBLOCK")
-	assert.True(t, cached, "the unresolved result is cached")
+	_, pending, _ := matcher.cachedMatches("feed", []blockMatchRequest{{tripID: "T_NOBLOCK", reference: reference}})
+	assert.Empty(t, pending, "the unresolved result is cached")
 }
 
 // One refresh resolves many trips with the same active services and agency
@@ -290,7 +324,7 @@ func TestBlockMatcherReusesRefreshLookups(t *testing.T) {
 		lookups := newBlockMatchLookups()
 		lookups.agencyZones["40"] = time.UTC
 
-		match, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference, lookups)
+		match, err := matchTrip(ctx, matcher, "feed", "T_NOBLOCK", reference, lookups)
 
 		require.NoError(t, err)
 		require.NotNil(t, match)
@@ -302,7 +336,7 @@ func TestBlockMatcherReusesRefreshLookups(t *testing.T) {
 		lookups := newBlockMatchLookups()
 		lookups.serviceIDs[matcherTuesday.Format("20060102")] = nil
 
-		match, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference, lookups)
+		match, err := matchTrip(ctx, matcher, "feed", "T_NOBLOCK", reference, lookups)
 
 		require.NoError(t, err)
 		assert.Nil(t, match, "no service is active on the memoized date")
@@ -312,7 +346,7 @@ func TestBlockMatcherReusesRefreshLookups(t *testing.T) {
 		matcher := newTestBlockMatcher(t, fixedNow(reference))
 		lookups := newBlockMatchLookups()
 
-		_, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference, lookups)
+		_, err := matchTrip(ctx, matcher, "feed", "T_NOBLOCK", reference, lookups)
 
 		require.NoError(t, err)
 		assert.Contains(t, lookups.agencyZones, "40")
@@ -326,13 +360,82 @@ func TestBlockMatcherFlagsFrequencyTrips(t *testing.T) {
 	matcher := newTestBlockMatcher(t, fixedNow(reference))
 	lookups := newBlockMatchLookups()
 
-	headway, err := matcher.Match(ctx, "feed", "T_HEADWAY", reference, lookups)
+	headway, err := matchTrip(ctx, matcher, "feed", "T_HEADWAY", reference, lookups)
 	require.NoError(t, err)
 	require.NotNil(t, headway)
 	assert.True(t, headway.FrequencyBased)
 
-	scheduled, err := matcher.Match(ctx, "feed", "T_NOBLOCK", reference, lookups)
+	scheduled, err := matchTrip(ctx, matcher, "feed", "T_NOBLOCK", reference, lookups)
 	require.NoError(t, err)
 	require.NotNil(t, scheduled)
 	assert.False(t, scheduled.FrequencyBased)
+}
+
+// A refresh can name thousands of uncached trips, so they are resolved
+// together: the statement count does not grow with the number of trips.
+func TestBlockMatcherResolvesTripsTogether(t *testing.T) {
+	ctx := context.Background()
+	reference := time.Date(2026, 10, 6, 12, 0, 0, 0, matcherZone)
+	tripIDs := []string{"T_NOBLOCK", "T_FIRST", "T_SECOND", "T_HEADWAY", "T_DAILY", "T_MISSING"}
+	requests := make([]blockMatchRequest, 0, len(tripIDs))
+	for _, tripID := range tripIDs {
+		requests = append(requests, blockMatchRequest{tripID: tripID, reference: reference})
+	}
+	matcher, queries := newCountingBlockMatcher(t, fixedNow(reference))
+
+	matches, err := matcher.Match(ctx, "feed", requests, newBlockMatchLookups())
+
+	require.NoError(t, err)
+	require.Len(t, matches, len(tripIDs))
+	assert.Nil(t, matches["T_MISSING"])
+	for _, tripID := range tripIDs[:5] {
+		require.NotNil(t, matches[tripID], tripID)
+		single, err := matchTrip(ctx, newTestBlockMatcher(t, fixedNow(reference)), "feed", tripID, reference, newBlockMatchLookups())
+		require.NoError(t, err)
+		assert.Equal(t, single, matches[tripID], "batched and single matches agree for %s", tripID)
+	}
+	// Trips, routes, agency, first departures, one service day, frequencies.
+	assert.LessOrEqual(t, queries.Load(), int64(6))
+}
+
+func TestBlockMatcherMixesCachedAndNewTrips(t *testing.T) {
+	ctx := context.Background()
+	tuesday0359 := time.Date(2026, 10, 6, 3, 59, 0, 0, matcherZone)
+	tuesday0401 := time.Date(2026, 10, 6, 4, 1, 0, 0, matcherZone)
+	matcher := newTestBlockMatcher(t, fixedNow(tuesday0359))
+	cached, err := matchTrip(ctx, matcher, "feed", "T_LATE", tuesday0359, newBlockMatchLookups())
+	require.NoError(t, err)
+	require.NotNil(t, cached)
+
+	matches, err := matcher.Match(ctx, "feed", []blockMatchRequest{
+		{tripID: "T_LATE", reference: tuesday0401},
+		{tripID: "T_NOBLOCK", reference: tuesday0401},
+	}, newBlockMatchLookups())
+
+	require.NoError(t, err)
+	assert.Equal(t, cached, matches["T_LATE"], "the cached association is reused, not re-resolved at 04:01")
+	require.NotNil(t, matches["T_NOBLOCK"])
+	assert.Equal(t, matcherTuesday, matches["T_NOBLOCK"].ServiceDate)
+}
+
+// A failed query fails the whole batch once, rather than once per trip,
+// and still returns the matches the cache already held.
+func TestBlockMatcherQueryFailureKeepsCachedMatches(t *testing.T) {
+	ctx := context.Background()
+	reference := time.Date(2026, 10, 6, 12, 0, 0, 0, matcherZone)
+	matcher := newTestBlockMatcher(t, fixedNow(reference))
+	cached, err := matchTrip(ctx, matcher, "feed", "T_FIRST", reference, newBlockMatchLookups())
+	require.NoError(t, err)
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	matches, err := matcher.Match(canceled, "feed", []blockMatchRequest{
+		{tripID: "T_FIRST", reference: reference},
+		{tripID: "T_SECOND", reference: reference},
+	}, newBlockMatchLookups())
+
+	require.Error(t, err)
+	assert.Equal(t, map[string]*BlockMatch{"T_FIRST": cached}, matches)
+	_, pending, _ := matcher.cachedMatches("feed", []blockMatchRequest{{tripID: "T_SECOND", reference: reference}})
+	assert.Len(t, pending, 1, "the failed trip is not cached")
 }
