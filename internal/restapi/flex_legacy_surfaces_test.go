@@ -1,14 +1,17 @@
 package restapi
 
 import (
+	"math"
 	"net/http"
 	"testing"
 	"time"
 
+	realtimegtfs "github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/flexfixtures"
+	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -179,4 +182,47 @@ func tripIDsOf[E interface{ GetTripId() string }](entries []E) []string {
 		ids = append(ids, entry.GetTripId())
 	}
 	return ids
+}
+
+// A vehicle serving a flex-only trip still reports where it is. trip-details
+// and trip-for-vehicle must agree on that status: the vehicle's identity and
+// position, with no stop or schedule-deviation fields to derive.
+func TestFlexOnlyTripWithVehicle_ReportsPositionOnlyStatus(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(pointerFixtureClock), "flex-group-deviated.zip", flexfixtures.GroupDeviatedFiles())
+	lat, lon := float32(53.01), float32(14.0)
+	api.GtfsManager.MockAddVehicleWithOptions("ruf-bus", flexfixtures.GDRufTripID, flexfixtures.GDRufbusRouteID, gtfs.MockVehicleOptions{
+		Position:  &realtimegtfs.Position{Latitude: &lat, Longitude: &lon},
+		Timestamp: &pointerFixtureClock,
+	})
+
+	for _, endpoint := range []string{
+		"/api/where/trip-details/gd_ruf-trip.json?key=TEST",
+		"/api/where/trip-for-vehicle/gd_ruf-bus.json?key=TEST",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			resp, body := callAPIHandler[map[string]any](t, api, endpoint)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			entry := body["data"].(map[string]any)["entry"].(map[string]any)
+			status, ok := entry["status"].(map[string]any)
+			require.True(t, ok, "a flex-only trip with a vehicle has a status")
+			assert.Equal(t, "gd_ruf-bus", status["vehicleId"])
+			assert.Equal(t, map[string]any{"lat": 53.01, "lon": 14.0}, roundLocation(status["lastKnownLocation"]))
+			assert.Equal(t, "", status["closestStop"], "no timed stops to be closest to")
+			assert.Equal(t, "", status["nextStop"])
+		})
+	}
+}
+
+// roundLocation rounds a decoded lat/lon pair to 4 places, since the vehicle
+// position travels through float32.
+func roundLocation(value any) map[string]any {
+	location, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	rounded := make(map[string]any, len(location))
+	for key, coordinate := range location {
+		rounded[key] = math.Round(coordinate.(float64)*1e4) / 1e4
+	}
+	return rounded
 }

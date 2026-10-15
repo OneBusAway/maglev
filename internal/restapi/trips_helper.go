@@ -48,6 +48,19 @@ type tripStatusExtras struct {
 // which is called per-arrival-row across wide time windows.
 //
 // freqMap supplies batch-fetched frequency rows, avoiding a per-call query.
+// flexOnlyTripStatus finishes the status of a trip with no timed stop_times.
+// With no timed stops there is no schedule to measure against, so the status
+// carries only what the vehicle reports (identity, position, orientation,
+// occupancy) and no stop or deviation fields. Without a vehicle there is
+// nothing to report, and the result is nil.
+func flexOnlyTripStatus(status *models.TripStatus, vehicle *gtfs.Vehicle, currentTime time.Time) *models.TripStatus {
+	if vehicle == nil {
+		return nil
+	}
+	status.SetPredicted(!defaultStaleDetector.Check(vehicle, currentTime))
+	return status
+}
+
 func (api *RestAPI) BuildTripStatus(
 	ctx context.Context,
 	agencyID, tripID string,
@@ -140,6 +153,16 @@ func (api *RestAPI) BuildTripStatus(
 		return status, extras, nil
 	}
 
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, dbTripID)
+	if err != nil {
+		slog.Warn("buildTripStatusCore: failed to get stop times",
+			slog.String("trip_id", dbTripID),
+			slog.String("error", err.Error()))
+	}
+	if err == nil && len(stopTimes) == 0 {
+		return flexOnlyTripStatus(status, vehicle, currentTime), extras, nil
+	}
+
 	// Mirror Java's applyTripUpdatesToRecord: iterate all block trips in
 	// start-time order; last trip-level delay wins (Java overwrites
 	// best.scheduleDeviation unconditionally each time a trip-level delay is
@@ -160,13 +183,6 @@ func (api *RestAPI) BuildTripStatus(
 
 	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
 	status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
-
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, dbTripID)
-	if err != nil {
-		slog.Warn("buildTripStatusCore: failed to get stop times",
-			slog.String("trip_id", dbTripID),
-			slog.String("error", err.Error()))
-	}
 
 	if err == nil && len(stopTimes) > 0 {
 		stopTimesPtrs := make([]*gtfsdb.StopTime, len(stopTimes))
