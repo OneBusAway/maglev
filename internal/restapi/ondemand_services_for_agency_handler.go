@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // onDemandServicesForAgencyHandler lists an agency's on-demand services. An
@@ -14,7 +15,7 @@ func (api *RestAPI) onDemandServicesForAgencyHandler(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
-	geometryDetail, fieldErrors := parseGeometryDetail(r.URL.Query(), GeometryDetailSimplified, nil)
+	geometryDetail, fieldErrors := utils.ParseGeometryDetail(r.URL.Query(), utils.GeometryDetailSimplified, nil)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return

@@ -7,6 +7,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // onDemandServiceHandler returns one on-demand service with its rules and the
@@ -17,7 +18,7 @@ func (api *RestAPI) onDemandServiceHandler(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	geometryDetail, fieldErrors := parseGeometryDetail(r.URL.Query(), GeometryDetailFull, nil)
+	geometryDetail, fieldErrors := utils.ParseGeometryDetail(r.URL.Query(), utils.GeometryDetailFull, nil)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return

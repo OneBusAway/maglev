@@ -85,11 +85,11 @@ func (api *RestAPI) onDemandServicesForLocationHandler(w http.ResponseWriter, r 
 
 // parseOnDemandLocationQuery reads the location and geometryDetail parameters.
 // lat and lon are required here (wiki §3), unlike in parseLocationParams.
-func (api *RestAPI) parseOnDemandLocationQuery(r *http.Request) (*gtfs.LocationParams, GeometryDetail, map[string][]string) {
+func (api *RestAPI) parseOnDemandLocationQuery(r *http.Request) (*gtfs.LocationParams, utils.GeometryDetail, map[string][]string) {
 	query := r.URL.Query()
 	fieldErrors := requireCoordinates(query)
 	loc, fieldErrors := api.parseLocationParams(r, fieldErrors)
-	geometryDetail, fieldErrors := parseGeometryDetail(query, GeometryDetailSimplified, fieldErrors)
+	geometryDetail, fieldErrors := utils.ParseGeometryDetail(query, utils.GeometryDetailSimplified, fieldErrors)
 	return loc, geometryDetail, fieldErrors
 }
 
