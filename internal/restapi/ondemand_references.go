@@ -24,7 +24,7 @@ type geoPoint struct {
 
 // onDemandBuildOptions controls what a builder run embeds in references.
 type onDemandBuildOptions struct {
-	GeometryDetail GeometryDetail
+	GeometryDetail utils.GeometryDetail
 	// AreaDistances, when set, fills distanceToArea and nearestPointOnBoundary.
 	AreaDistances *areaDistances
 }
@@ -517,9 +517,9 @@ func (api *RestAPI) serviceAreaReference(ctx context.Context, location gtfsdb.Lo
 		BBox:        [4]float64{location.MinLon, location.MinLat, location.MaxLon, location.MaxLat},
 	}
 	switch opts.GeometryDetail {
-	case GeometryDetailFull:
+	case utils.GeometryDetailFull:
 		area.Geometry = validStoredGeometry(ctx, location.ID, location.Geometry)
-	case GeometryDetailSimplified:
+	case utils.GeometryDetailSimplified:
 		// NULL means the feed geometry already met the display target.
 		area.Geometry = validStoredGeometry(ctx, location.ID, nulls.StringOrDefault(location.GeometrySimplified, location.Geometry))
 	}
