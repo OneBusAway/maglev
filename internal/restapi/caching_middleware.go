@@ -6,13 +6,17 @@ import (
 	"strings"
 )
 
+// noStoreCacheControl is the Cache-Control value for responses that must
+// not be cached.
+const noStoreCacheControl = "no-cache, no-store, must-revalidate"
+
 // CacheControlMiddleware adds Cache-Control headers based on the tier
 func CacheControlMiddleware(durationSeconds int, next http.Handler) http.Handler {
 	var headerValue string
 	if durationSeconds > 0 {
 		headerValue = fmt.Sprintf("public, max-age=%d", durationSeconds)
 	} else {
-		headerValue = "no-cache, no-store, must-revalidate"
+		headerValue = noStoreCacheControl
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +41,7 @@ func (w *cacheControlWriter) WriteHeader(code int) {
 		if (code >= 200 && code < 300) || code == http.StatusNotModified {
 			w.ResponseWriter.Header().Set("Cache-Control", w.headerValue)
 		} else {
-			w.ResponseWriter.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.ResponseWriter.Header().Set("Cache-Control", noStoreCacheControl)
 		}
 	}
 	w.ResponseWriter.WriteHeader(code)

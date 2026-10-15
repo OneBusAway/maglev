@@ -92,6 +92,8 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	// --- Routes with simple ID validation (agency IDs) ---
 	mux.Handle("GET /api/where/agency/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.agencyHandler))))
 	mux.Handle("GET /api/where/routes-for-agency/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.routesForAgencyHandler))))
+
+	mux.Handle("GET /api/gtfs_realtime/vehicle-positions-for-agency/{id}", CacheControlMiddleware(models.CacheDurationNone, rateLimitAndValidateAPIKey(api, api.vehiclePositionsForAgencyHandler)))
 	mux.Handle("GET /api/where/stop-ids-for-agency/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.stopIDsForAgencyHandler))))
 	mux.Handle("GET /api/where/stops-for-agency/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.stopsForAgencyHandler))))
 	mux.Handle("GET /api/where/route-ids-for-agency/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.routeIDsForAgencyHandler))))

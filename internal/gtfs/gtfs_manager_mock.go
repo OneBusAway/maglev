@@ -2,6 +2,7 @@ package gtfs
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -246,5 +247,14 @@ func (m *Manager) MockAddDuplicatedVehicleDirect(routeID string, vehicle gtfs.Ve
 
 	merged := m.mergedRealtime().clone()
 	merged.duplicatedVehicleByRoute[routeID] = append(merged.duplicatedVehicleByRoute[routeID], vehicle)
+	m.merged.Store(merged)
+}
+
+// MockSetExportVehicles replaces the vehicles the GTFS-RT vehicle export reads.
+func (m *Manager) MockSetExportVehicles(vehicles []ExportVehicle) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+	merged := m.mergedRealtime().clone()
+	merged.exportVehicles = slices.Clone(vehicles)
 	m.merged.Store(merged)
 }

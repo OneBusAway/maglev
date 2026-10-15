@@ -1,0 +1,261 @@
+package restapi
+
+import (
+	"testing"
+	"time"
+
+	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+)
+
+var vehicleExportNow = time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
+
+func positionedVehicle(id string, updated time.Time) gtfs.Vehicle {
+	return gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: id},
+		Timestamp: &updated,
+		Position:  &gtfs.Position{Latitude: proto.Float32(40.5), Longitude: proto.Float32(-122.4)},
+	}
+}
+
+func exportVehicleOnRoute(id, tripID, routeID string) internalgtfs.ExportVehicle {
+	return internalgtfs.ExportVehicle{
+		Vehicle:       positionedVehicle(id, vehicleExportNow.Add(-time.Minute)),
+		ActiveTripID:  tripID,
+		ActiveRouteID: routeID,
+	}
+}
+
+func vehicleExportRequest(agencyID string) gtfsRealtimeExportRequest {
+	return gtfsRealtimeExportRequest{AgencyID: agencyID, Time: vehicleExportNow, RemoveAgencyIDs: true}
+}
+
+func TestResolveVehicleOwner(t *testing.T) {
+	block40 := &internalgtfs.BlockMatch{AgencyID: "40"}
+	tests := []struct {
+		name        string
+		vehicleID   string
+		block       *internalgtfs.BlockMatch
+		wantAgency  string
+		wantVehicle string
+		wantOK      bool
+	}{
+		{"prefixed ID", "40_bus_A", nil, "40", "bus_A", true},
+		{"prefix beats block agency", "A_bus_1", &internalgtfs.BlockMatch{AgencyID: "B"}, "A", "bus_1", true},
+		{"raw underscore read as prefix", "bus_A", nil, "bus", "A", true},
+		{"no underscore uses block", "1234", block40, "40", "1234", true},
+		{"no underscore and no block", "1234", nil, "", "", false},
+		{"empty prefix", "_123", block40, "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vehicle := internalgtfs.ExportVehicle{Vehicle: gtfs.Vehicle{ID: &gtfs.VehicleID{ID: tt.vehicleID}}, Block: tt.block}
+			agencyID, vehicleID, ok := resolveVehicleOwner(vehicle)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantAgency, agencyID)
+			assert.Equal(t, tt.wantVehicle, vehicleID)
+		})
+	}
+}
+
+func TestSelectExportVehiclesEligibility(t *testing.T) {
+	latitudeOnly := positionedVehicle("40_lat_only", vehicleExportNow)
+	latitudeOnly.Position = &gtfs.Position{Latitude: proto.Float32(1)}
+	noTimestamp := positionedVehicle("40_no_time", vehicleExportNow)
+	noTimestamp.Timestamp = nil
+	noPosition := positionedVehicle("40_no_position", vehicleExportNow)
+	noPosition.Position = nil
+
+	vehicles := []internalgtfs.ExportVehicle{
+		{Vehicle: positionedVehicle("40_age599", vehicleExportNow.Add(-599*time.Second))},
+		{Vehicle: positionedVehicle("40_age600", vehicleExportNow.Add(-600*time.Second))},
+		{Vehicle: positionedVehicle("40_future", vehicleExportNow.Add(time.Minute))},
+		{Vehicle: positionedVehicle("20_other_agency", vehicleExportNow)},
+		{Vehicle: positionedVehicle("1234", vehicleExportNow)},
+		{Vehicle: latitudeOnly},
+		{Vehicle: noTimestamp},
+		{Vehicle: noPosition},
+	}
+	var selected []string
+	for _, candidate := range selectExportVehicles(vehicles, vehicleExportRequest("40")) {
+		selected = append(selected, candidate.vehicle.Vehicle.ID.ID)
+	}
+	assert.ElementsMatch(t, []string{"40_age599", "40_future"}, selected)
+}
+
+// Overlapping feeds can report the same vehicle; it is one vehicle in the
+// export, as in legacy, which keeps one status per qualified vehicle ID.
+func TestSelectExportVehiclesKeepsNewestRecordPerVehicle(t *testing.T) {
+	older := exportVehicleOnRoute("40_1301", "tA", "A")
+	newest := internalgtfs.ExportVehicle{
+		Vehicle:       positionedVehicle("1301", vehicleExportNow.Add(-10*time.Second)),
+		Block:         &internalgtfs.BlockMatch{AgencyID: "40"},
+		ActiveTripID:  "tB",
+		ActiveRouteID: "B",
+	}
+	otherAgency := exportVehicleOnRoute("20_1301", "tC", "C")
+
+	selected := selectExportVehicles([]internalgtfs.ExportVehicle{older, newest, otherAgency}, vehicleExportRequest("40"))
+
+	require.Len(t, selected, 1)
+	assert.Equal(t, "tB", selected[0].vehicle.ActiveTripID)
+
+	req := vehicleExportRequest("40")
+	req.RouteFilterID = "A"
+	assert.Empty(t, selectExportVehicles([]internalgtfs.ExportVehicle{older, newest}, req),
+		"the vehicle's newest record is on route B, so the older route A record must not resurface")
+}
+
+func TestSelectExportVehiclesSkipsNewerIneligibleRecord(t *testing.T) {
+	positioned := exportVehicleOnRoute("40_1301", "tA", "A")
+	positioned.Vehicle = positionedVehicle("40_1301", vehicleExportNow.Add(-30*time.Second))
+	newerWithoutPosition := exportVehicleOnRoute("40_1301", "tB", "B")
+	newerWithoutPosition.Vehicle = positionedVehicle("40_1301", vehicleExportNow.Add(-10*time.Second))
+	newerWithoutPosition.Vehicle.Position = nil
+
+	selected := selectExportVehicles([]internalgtfs.ExportVehicle{positioned, newerWithoutPosition}, vehicleExportRequest("40"))
+
+	require.Len(t, selected, 1)
+	assert.Equal(t, "tA", selected[0].vehicle.ActiveTripID)
+}
+
+func TestSelectExportVehiclesRouteFilter(t *testing.T) {
+	vehicles := []internalgtfs.ExportVehicle{
+		exportVehicleOnRoute("40_on_A", "tA", "A"),
+		exportVehicleOnRoute("40_on_B", "tB", "B"),
+		exportVehicleOnRoute("40_tripless", "", ""),
+	}
+	unfiltered := selectExportVehicles(vehicles, vehicleExportRequest("40"))
+	assert.Len(t, unfiltered, 3, "tripless vehicles appear agency-wide")
+
+	req := vehicleExportRequest("40")
+	req.RouteFilterID = "A"
+	filtered := selectExportVehicles(vehicles, req)
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "40_on_A", filtered[0].vehicle.Vehicle.ID.ID)
+
+	req.RouteFilterID = "40_A"
+	assert.Empty(t, selectExportVehicles(vehicles, req), "the filter matches raw route IDs only")
+}
+
+func TestBuildVehiclePositionsFeedPayload(t *testing.T) {
+	rich := exportVehicleOnRoute("1234", "tripA", "A")
+	rich.Block = &internalgtfs.BlockMatch{TripID: "tripA", RouteID: "A", AgencyID: "40",
+		ServiceDate: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC), TripStart: 25 * time.Hour}
+	rich.Vehicle.Trip = &gtfs.Trip{ID: gtfs.TripID{ID: "tripA", RouteID: "A",
+		HasStartDate: true, StartDate: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)}}
+	rich.ActiveTripDescriptor = &rich.Vehicle.Trip.ID
+	rich.Vehicle.Position.Bearing = proto.Float32(90)
+	rich.Vehicle.Position.Speed = proto.Float32(12.5)
+	rich.Vehicle.Position.Odometer = proto.Float64(1000)
+	rich.Vehicle.CurrentStopSequence = proto.Uint32(4)
+	rich.Vehicle.StopID = proto.String("stop_9")
+	status := gtfsrt.VehiclePosition_STOPPED_AT
+	rich.Vehicle.CurrentStatus = &status
+	rich.Vehicle.CongestionLevel = gtfsrt.VehiclePosition_RUNNING_SMOOTHLY
+	occupancy := gtfsrt.VehiclePosition_FEW_SEATS_AVAILABLE
+	rich.Vehicle.OccupancyStatus = &occupancy
+	rich.Vehicle.OccupancyPercentage = proto.Uint32(40)
+
+	tripless := internalgtfs.ExportVehicle{Vehicle: positionedVehicle("40_bus_B", vehicleExportNow)}
+
+	req := vehicleExportRequest("40")
+	candidates := selectExportVehicles([]internalgtfs.ExportVehicle{rich, tripless}, req)
+	feed := buildVehiclePositionsFeed(candidates, req, nil)
+
+	assert.Equal(t, uint64(vehicleExportNow.Unix()), feed.GetHeader().GetTimestamp())
+	require.Len(t, feed.Entity, 2)
+	assert.Equal(t, "1", feed.Entity[0].GetId())
+	assert.Equal(t, "2", feed.Entity[1].GetId())
+
+	first := feed.Entity[0].GetVehicle()
+	assert.Equal(t, "1234", first.GetVehicle().GetId())
+	assert.Equal(t, "tripA", first.GetTrip().GetTripId())
+	assert.Equal(t, "A", first.GetTrip().GetRouteId())
+	assert.Equal(t, "20261005", first.GetTrip().GetStartDate(), "resolved Monday instance beats the Tuesday hint")
+	assert.Equal(t, "25:00:00", first.GetTrip().GetStartTime())
+	assert.InDelta(t, 90, first.GetPosition().GetBearing(), 0.001)
+	assert.InDelta(t, 12.5, first.GetPosition().GetSpeed(), 0.001)
+	assert.InDelta(t, 1000, first.GetPosition().GetOdometer(), 0.001)
+	assert.Equal(t, uint32(4), first.GetCurrentStopSequence())
+	assert.Equal(t, "stop_9", first.GetStopId())
+	assert.Equal(t, gtfsrt.VehiclePosition_STOPPED_AT, first.GetCurrentStatus())
+	assert.Equal(t, gtfsrt.VehiclePosition_RUNNING_SMOOTHLY, first.GetCongestionLevel())
+	assert.Equal(t, gtfsrt.VehiclePosition_FEW_SEATS_AVAILABLE, first.GetOccupancyStatus())
+	assert.Equal(t, uint32(40), first.GetOccupancyPercentage())
+	assert.Equal(t, uint64(vehicleExportNow.Add(-time.Minute).Unix()), first.GetTimestamp())
+	assert.Nil(t, first.GetTrip().ScheduleRelationship, "the SCHEDULED default is not emitted")
+
+	second := feed.Entity[1].GetVehicle()
+	assert.Equal(t, "bus_B", second.GetVehicle().GetId())
+	assert.Nil(t, second.GetTrip(), "a tripless vehicle has no trip descriptor")
+	assert.Nil(t, second.CongestionLevel, "an unknown congestion default is not emitted")
+	assert.Nil(t, second.GetPosition().Bearing)
+}
+
+// A frequency trip's start_time names the instance the vehicle runs, which
+// the template trip's first departure cannot, so the feed's values stay.
+func TestBuildVehiclePositionsFeedKeepsFrequencyTripStart(t *testing.T) {
+	headway := exportVehicleOnRoute("1234", "freqTrip", "A")
+	headway.Block = &internalgtfs.BlockMatch{TripID: "freqTrip", RouteID: "A", AgencyID: "40",
+		ServiceDate: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC), TripStart: 6 * time.Hour, FrequencyBased: true}
+	headway.Vehicle.Trip = &gtfs.Trip{ID: gtfs.TripID{ID: "freqTrip", RouteID: "A",
+		HasStartDate: true, StartDate: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC),
+		HasStartTime: true, StartTime: 8*time.Hour + 15*time.Minute}}
+	headway.ActiveTripDescriptor = &headway.Vehicle.Trip.ID
+
+	req := vehicleExportRequest("40")
+	feed := buildVehiclePositionsFeed(selectExportVehicles([]internalgtfs.ExportVehicle{headway}, req), req, nil)
+
+	require.Len(t, feed.Entity, 1)
+	trip := feed.Entity[0].GetVehicle().GetTrip()
+	assert.Equal(t, "20261006", trip.GetStartDate())
+	assert.Equal(t, "08:15:00", trip.GetStartTime())
+}
+
+// A duplicated trip runs the static trip at another time, which its own
+// start_time names, so a tripless position's trip update keeps its values
+// rather than take the scheduled trip's start.
+func TestBuildVehiclePositionsFeedKeepsDuplicatedTripUpdateStart(t *testing.T) {
+	duplicate := exportVehicleOnRoute("1234", "tripA", "A")
+	duplicate.Block = &internalgtfs.BlockMatch{TripID: "tripA", RouteID: "A", AgencyID: "40",
+		ServiceDate: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC), TripStart: 6 * time.Hour}
+	duplicate.ActiveTripDescriptor = &gtfs.TripID{ID: "tripA", RouteID: "A",
+		ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+		HasStartDate:         true, StartDate: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC),
+		HasStartTime: true, StartTime: 10*time.Hour + 30*time.Minute}
+
+	req := vehicleExportRequest("40")
+	feed := buildVehiclePositionsFeed(selectExportVehicles([]internalgtfs.ExportVehicle{duplicate}, req), req, nil)
+
+	require.Len(t, feed.Entity, 1)
+	trip := feed.Entity[0].GetVehicle().GetTrip()
+	assert.Equal(t, "20261006", trip.GetStartDate())
+	assert.Equal(t, "10:30:00", trip.GetStartTime())
+	assert.Equal(t, gtfsrt.TripDescriptor_DUPLICATED, trip.GetScheduleRelationship())
+}
+
+func TestBuildVehiclePositionsFeedKeepsAgencyPrefixes(t *testing.T) {
+	onRoute := exportVehicleOnRoute("1234", "tripA", "A")
+	onRoute.Block = &internalgtfs.BlockMatch{TripID: "tripA", RouteID: "A", AgencyID: "40"}
+	prefixed := exportVehicleOnRoute("40_bus_A", "tripB", "B")
+
+	req := vehicleExportRequest("40")
+	req.RemoveAgencyIDs = false
+	routeAgencies := map[string]string{"B": "40"}
+	feed := buildVehiclePositionsFeed(selectExportVehicles([]internalgtfs.ExportVehicle{onRoute, prefixed}, req), req, routeAgencies)
+
+	byVehicle := map[string]*gtfsrt.VehiclePosition{}
+	for _, entity := range feed.Entity {
+		byVehicle[entity.GetVehicle().GetVehicle().GetId()] = entity.GetVehicle()
+	}
+	require.Contains(t, byVehicle, "40_1234")
+	require.Contains(t, byVehicle, "40_bus_A", "an already prefixed ID is not prefixed twice")
+	assert.Equal(t, "40_tripA", byVehicle["40_1234"].GetTrip().GetTripId())
+	assert.Equal(t, "40_A", byVehicle["40_1234"].GetTrip().GetRouteId())
+	assert.Equal(t, "40_tripB", byVehicle["40_bus_A"].GetTrip().GetTripId())
+}

@@ -84,6 +84,8 @@ func TestVersionValidationMiddleware(t *testing.T) {
 				assert.Equal(t, http.StatusBadRequest, response.Code)
 				assert.Equal(t, tc.expectedErrMessage, response.Text)
 				assert.Equal(t, models.APIVersion, response.Version)
+				// The rejection happens before any route's CacheControlMiddleware.
+				assert.Equal(t, "no-cache, no-store, must-revalidate", w.Header().Get("Cache-Control"))
 			}
 		})
 	}

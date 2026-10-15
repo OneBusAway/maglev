@@ -1,0 +1,236 @@
+package restapi
+
+import (
+	"cmp"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
+	"google.golang.org/protobuf/proto"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/utils"
+)
+
+// vehicleExportMaxAgeSeconds is the exclusive freshness limit, compared in
+// whole epoch seconds.
+const vehicleExportMaxAgeSeconds = 600
+
+// vehicleExportCandidate is a selected vehicle with its resolved identity.
+type vehicleExportCandidate struct {
+	vehicle   internalgtfs.ExportVehicle
+	agencyID  string
+	vehicleID string
+}
+
+// resolveVehicleOwner applies the legacy vehicle identity rule: the text
+// before the first underscore is the agency, even when the source meant the
+// whole string as a raw ID. Only an ID without an underscore falls back to
+// the matched block's agency. Anything else stays unresolved.
+func resolveVehicleOwner(vehicle internalgtfs.ExportVehicle) (string, string, bool) {
+	rawID := vehicle.Vehicle.ID.ID
+	if agencyID, vehicleID, found := strings.Cut(rawID, "_"); found {
+		if agencyID == "" {
+			return "", "", false
+		}
+		return agencyID, vehicleID, true
+	}
+	if vehicle.Block == nil {
+		return "", "", false
+	}
+	return vehicle.Block.AgencyID, rawID, true
+}
+
+// selectExportVehicles returns the requested agency's eligible vehicles,
+// ordered by ID so entity numbering is deterministic.
+func selectExportVehicles(vehicles []internalgtfs.ExportVehicle, req gtfsRealtimeExportRequest) []vehicleExportCandidate {
+	var candidates []vehicleExportCandidate
+	for _, candidate := range newestAgencyVehicles(vehicles, req) {
+		if req.RouteFilterID != "" && candidate.vehicle.ActiveRouteID != req.RouteFilterID {
+			continue
+		}
+		candidates = append(candidates, candidate)
+	}
+	slices.SortFunc(candidates, func(a, b vehicleExportCandidate) int {
+		return cmp.Compare(a.vehicle.Vehicle.ID.ID, b.vehicle.Vehicle.ID.ID)
+	})
+	return candidates
+}
+
+// newestAgencyVehicles returns the agency's exportable vehicles, one record
+// per vehicle ID. Overlapping feeds can report the same vehicle, and legacy
+// keeps one status per agency-qualified vehicle ID, so the newest record
+// wins. Only exportable records compete, so a newer record without a
+// position cannot hide an older one that has one.
+func newestAgencyVehicles(vehicles []internalgtfs.ExportVehicle, req gtfsRealtimeExportRequest) map[string]vehicleExportCandidate {
+	byVehicleID := make(map[string]vehicleExportCandidate)
+	for _, vehicle := range vehicles {
+		if !isExportableVehicle(vehicle.Vehicle, req.Time) {
+			continue
+		}
+		ownerID, vehicleID, ok := resolveVehicleOwner(vehicle)
+		if !ok || ownerID != req.AgencyID {
+			continue
+		}
+		if seen, exists := byVehicleID[vehicleID]; exists && !isNewerVehicle(vehicle.Vehicle, seen.vehicle.Vehicle) {
+			continue
+		}
+		byVehicleID[vehicleID] = vehicleExportCandidate{vehicle: vehicle, agencyID: ownerID, vehicleID: vehicleID}
+	}
+	return byVehicleID
+}
+
+// isNewerVehicle reports whether candidate has a later update than current.
+// A record without a timestamp is never newer.
+func isNewerVehicle(candidate, current gtfs.Vehicle) bool {
+	if candidate.Timestamp == nil {
+		return false
+	}
+	return current.Timestamp == nil || candidate.Timestamp.After(*current.Timestamp)
+}
+
+// isExportableVehicle requires a complete position and an update younger
+// than the limit. A future timestamp has negative age and stays eligible.
+func isExportableVehicle(vehicle gtfs.Vehicle, requestTime time.Time) bool {
+	hasPosition := vehicle.Position != nil &&
+		vehicle.Position.Latitude != nil &&
+		vehicle.Position.Longitude != nil
+	if !hasPosition || vehicle.Timestamp == nil {
+		return false
+	}
+	return requestTime.Unix()-vehicle.Timestamp.Unix() < vehicleExportMaxAgeSeconds
+}
+
+// buildVehiclePositionsFeed maps selected vehicles to VehiclePositions with
+// sequential entity IDs. routeAgencies resolves trip/route owners when IDs
+// keep their agency prefix and no block match supplies one.
+func buildVehiclePositionsFeed(candidates []vehicleExportCandidate, req gtfsRealtimeExportRequest, routeAgencies map[string]string) *gtfsrt.FeedMessage {
+	feed := newGtfsRealtimeFeed(req.Time)
+	for i, candidate := range candidates {
+		feed.Entity = append(feed.Entity, &gtfsrt.FeedEntity{
+			Id:      proto.String(strconv.Itoa(i + 1)),
+			Vehicle: vehiclePosition(candidate, req.RemoveAgencyIDs, routeAgencies),
+		})
+	}
+	return feed
+}
+
+func vehiclePosition(candidate vehicleExportCandidate, removeAgencyIDs bool, routeAgencies map[string]string) *gtfsrt.VehiclePosition {
+	vehicle := candidate.vehicle.Vehicle
+	tripOwner := activeTripOwner(candidate.vehicle, routeAgencies)
+	position := &gtfsrt.VehiclePosition{
+		Trip:                activeTripDescriptor(candidate.vehicle, tripOwner, removeAgencyIDs),
+		Vehicle:             vehicleDescriptor(candidate, removeAgencyIDs),
+		Position:            exportPosition(vehicle.Position),
+		CurrentStopSequence: vehicle.CurrentStopSequence,
+		CurrentStatus:       vehicle.CurrentStatus,
+		Timestamp:           proto.Uint64(uint64(vehicle.Timestamp.Unix())),
+		OccupancyStatus:     vehicle.OccupancyStatus,
+		OccupancyPercentage: vehicle.OccupancyPercentage,
+	}
+	if vehicle.StopID != nil {
+		position.StopId = proto.String(exportPayloadID(*vehicle.StopID, tripOwner, removeAgencyIDs))
+	}
+	// go-gtfs stores congestion as a plain value, so UNKNOWN cannot be told
+	// apart from absent; do not emit it.
+	if vehicle.CongestionLevel != gtfsrt.VehiclePosition_UNKNOWN_CONGESTION_LEVEL {
+		position.CongestionLevel = vehicle.CongestionLevel.Enum()
+	}
+	return position
+}
+
+func vehicleDescriptor(candidate vehicleExportCandidate, removeAgencyIDs bool) *gtfsrt.VehicleDescriptor {
+	id := candidate.vehicleID
+	if !removeAgencyIDs {
+		id = utils.FormCombinedID(candidate.agencyID, candidate.vehicleID)
+	}
+	descriptor := &gtfsrt.VehicleDescriptor{Id: proto.String(id)}
+	if label := candidate.vehicle.Vehicle.ID.Label; label != "" {
+		descriptor.Label = proto.String(label)
+	}
+	if plate := candidate.vehicle.Vehicle.ID.LicensePlate; plate != "" {
+		descriptor.LicensePlate = proto.String(plate)
+	}
+	return descriptor
+}
+
+func exportPosition(position *gtfs.Position) *gtfsrt.Position {
+	return &gtfsrt.Position{
+		Latitude:  position.Latitude,
+		Longitude: position.Longitude,
+		Bearing:   position.Bearing,
+		Odometer:  position.Odometer,
+		Speed:     position.Speed,
+	}
+}
+
+// activeTripOwner is the agency of the active trip's route: the block
+// match's when it is for that trip, otherwise a static route lookup.
+func activeTripOwner(vehicle internalgtfs.ExportVehicle, routeAgencies map[string]string) string {
+	if isBlockMatchedActiveTrip(vehicle) {
+		return vehicle.Block.AgencyID
+	}
+	return routeAgencies[vehicle.ActiveRouteID]
+}
+
+// isBlockMatchedActiveTrip reports whether the vehicle's block match is for
+// its active trip, rather than for an earlier trip of its block.
+func isBlockMatchedActiveTrip(vehicle internalgtfs.ExportVehicle) bool {
+	return vehicle.Block != nil && vehicle.Block.TripID == vehicle.ActiveTripID
+}
+
+// activeTripDescriptor describes the vehicle's active trip. An ordinary trip
+// with a block match carries the resolved service date and start rather than
+// the feed's hints; other trips keep the values of the feed descriptor that
+// named them.
+func activeTripDescriptor(vehicle internalgtfs.ExportVehicle, owner string, removeAgencyIDs bool) *gtfsrt.TripDescriptor {
+	if vehicle.ActiveTripID == "" {
+		return nil
+	}
+	descriptor := &gtfsrt.TripDescriptor{TripId: proto.String(exportPayloadID(vehicle.ActiveTripID, owner, removeAgencyIDs))}
+	if vehicle.ActiveRouteID != "" {
+		descriptor.RouteId = proto.String(exportPayloadID(vehicle.ActiveRouteID, owner, removeAgencyIDs))
+	}
+	feedDescriptor := vehicle.ActiveTripDescriptor
+	if feedDescriptor != nil {
+		applyFeedTripFields(descriptor, *feedDescriptor)
+	}
+	if isResolvedOrdinaryTrip(vehicle, feedDescriptor) {
+		descriptor.StartDate = proto.String(vehicle.Block.ServiceDate.Format(utils.GtfsDateLayout))
+		descriptor.StartTime = proto.String(formatGtfsServiceTime(vehicle.Block.TripStart))
+	}
+	return descriptor
+}
+
+func applyFeedTripFields(descriptor *gtfsrt.TripDescriptor, trip gtfs.TripID) {
+	switch trip.DirectionID {
+	case gtfs.DirectionID_True:
+		descriptor.DirectionId = proto.Uint32(1)
+	case gtfs.DirectionID_False:
+		descriptor.DirectionId = proto.Uint32(0)
+	}
+	if trip.HasStartDate {
+		descriptor.StartDate = proto.String(trip.StartDate.Format(utils.GtfsDateLayout))
+	}
+	if trip.HasStartTime {
+		descriptor.StartTime = proto.String(formatGtfsServiceTime(trip.StartTime))
+	}
+	// Like congestion, go-gtfs stores the relationship as a plain value, so
+	// the SCHEDULED default cannot be told apart from absent.
+	if trip.ScheduleRelationship != gtfsrt.TripDescriptor_SCHEDULED {
+		descriptor.ScheduleRelationship = trip.ScheduleRelationship.Enum()
+	}
+}
+
+// isResolvedOrdinaryTrip reports whether the block match's service date and
+// start describe the active trip. A frequency trip's own start_time names
+// the running instance, and an added or duplicated trip names its own
+// instance, so both keep the feed's values.
+func isResolvedOrdinaryTrip(vehicle internalgtfs.ExportVehicle, feedDescriptor *gtfs.TripID) bool {
+	if !isBlockMatchedActiveTrip(vehicle) || vehicle.Block.FrequencyBased {
+		return false
+	}
+	return feedDescriptor == nil || feedDescriptor.ScheduleRelationship == gtfsrt.TripDescriptor_SCHEDULED
+}

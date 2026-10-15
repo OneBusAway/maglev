@@ -45,6 +45,8 @@ type mergedRealtime struct {
 	duplicatedVehicleByRoute map[string][]gtfs.Vehicle
 	vehiclesByRoute          map[string][]gtfs.Vehicle
 	alerts                   alertIndex
+	// exportVehicles feeds the GTFS-RT vehicle export; see ExportVehicles.
+	exportVehicles []ExportVehicle
 }
 
 // emptyMergedRealtime is returned before the first publish so a zero-value
@@ -84,6 +86,7 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 		vehicleLookupByVehicle:   maps.Clone(m.vehicleLookupByVehicle),
 		duplicatedVehicleByRoute: maps.Clone(m.duplicatedVehicleByRoute),
 		vehiclesByRoute:          maps.Clone(m.vehiclesByRoute),
+		exportVehicles:           slices.Clone(m.exportVehicles),
 		alerts: alertIndex{
 			byTrip:   maps.Clone(m.alerts.byTrip),
 			byRoute:  maps.Clone(m.alerts.byRoute),
@@ -108,6 +111,9 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 	}
 	return out
 }
+
+// realtimeLogComponent names the GTFS-RT ingestion component in logs.
+const realtimeLogComponent = "gtfs_realtime"
 
 // staleVehicleTimeout is the duration after which a vehicle is considered stale
 const staleVehicleTimeout = 15 * time.Minute
@@ -367,7 +373,7 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 // It updates the per-feed sub-maps and then calls rebuildMergedRealtimeLocked.
 // Returns true if new data was successfully fetched and processed.
 func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedConfig) bool {
-	logger := logging.ForComponent(ctx, "gtfs_realtime")
+	logger := logging.ForComponent(ctx, realtimeLogComponent)
 	feedID := feedCfg.ID
 
 	var wg sync.WaitGroup
@@ -421,6 +427,19 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		return false
 	}
 
+	// Block matching queries static data, so it runs before realTimeMutex is
+	// taken, and on the unfiltered feed because the export keeps what the
+	// agency filter drops.
+	var unfilteredVehicles []gtfs.Vehicle
+	if vehicleData != nil && vehicleErr == nil {
+		unfilteredVehicles = vehicleData.Vehicles
+	}
+	var tripUpdates *gtfs.Realtime
+	if tripData != nil && tripErr == nil {
+		tripUpdates = tripData
+	}
+	vehicleExport := manager.resolveVehicleExportRefresh(ctx, feedID, tripUpdates, unfilteredVehicles)
+
 	// Apply agency-based filtering if configured for this feed.
 	// This runs before acquiring realTimeMutex to keep the critical section short.
 	agencyFilter := manager.feedAgencyFilter[feedID]
@@ -459,7 +478,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			manager.feedUnattributedTrips = make(map[string][]gtfs.Trip)
 		}
 		manager.feedUnattributedTrips[feedID] = unattributedTrips
+		manager.storeTripUpdateExportStateLocked(feedID, vehicleExport.tripUpdateRefs, vehicleExport.tripUpdateBlocks)
 	}
+	manager.storeStaticTripRoutesLocked(feedID, vehicleExport.staticRoutes)
 
 	if vehicleData != nil && vehicleErr == nil {
 		applyVehicleUpdate := true
@@ -559,6 +580,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			}
 
 			manager.feedVehicles[feedID] = validVehicles
+			manager.storeFilteredOutVehiclesLocked(feedID, vehiclesMissingFrom(unfilteredVehicles, vehicleData.Vehicles))
 		} else {
 			// Even when skipping the vehicle update due to staleness, still clean up
 			// expired vehicles based on the last-seen timeout windows
@@ -977,6 +999,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		duplicatedVehicleByRoute: duplicatedVehicleByRoute,
 		vehiclesByRoute:          vehiclesByRoute,
 		alerts:                   idx,
+		exportVehicles:           manager.buildExportVehiclesLocked(vehicleFeedIDs),
 	})
 }
 
