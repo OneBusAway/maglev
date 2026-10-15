@@ -353,7 +353,7 @@ func (api *RestAPI) onDemandCalendars(ctx context.Context, gtfsServices map[agen
 		return nil, nil, fmt.Errorf("load calendar dates: %w", err)
 	}
 	datesByService := make(map[string][]gtfsdb.CalendarDate)
-	for _, row := range dateRows {
+	for _, row := range wellFormedCalendarDates(logging.ForComponent(ctx, "ondemand"), dateRows) {
 		datesByService[row.ServiceID] = append(datesByService[row.ServiceID], row)
 	}
 

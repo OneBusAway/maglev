@@ -1,10 +1,12 @@
 package restapi
 
 import (
+	"log/slog"
 	"slices"
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -55,6 +57,23 @@ func compileOnDemandCalendars(agencyID, serviceID string, base *gtfsdb.Calendar,
 		})
 	}
 	return calendars
+}
+
+// wellFormedCalendarDates drops, with a warning, any row whose date is not
+// YYYYMMDD. Such a date has no weekday or ISO form, so it would otherwise go
+// out as a calendar clients cannot parse. The importer writes every date from
+// a parsed time, so this only guards against a hand-edited database.
+func wellFormedCalendarDates(logger *slog.Logger, rows []gtfsdb.CalendarDate) []gtfsdb.CalendarDate {
+	wellFormed := make([]gtfsdb.CalendarDate, 0, len(rows))
+	for _, row := range rows {
+		if _, err := time.Parse(gtfsDateLayout, row.Date); err != nil {
+			logging.LogError(logger, "Skipping malformed calendar date", err,
+				slog.String("service_id", row.ServiceID))
+			continue
+		}
+		wellFormed = append(wellFormed, row)
+	}
+	return wellFormed
 }
 
 func calendarHasServiceDays(calendar gtfsdb.Calendar) bool {
