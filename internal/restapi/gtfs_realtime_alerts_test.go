@@ -104,6 +104,8 @@ func TestBuildAlertsFeedPayload(t *testing.T) {
 	alert.Alert.Header = []gtfs.AlertText{{Text: "Closed", Language: "en"}, {Text: "Cerrado", Language: "es"}}
 	alert.Alert.Description = []gtfs.AlertText{{Text: "Use 3rd Ave", Language: "en"}, {Text: "Use la 3a", Language: "es"}}
 	alert.Alert.URL = []gtfs.AlertText{{Text: "https://example.com/notice", Language: "en"}}
+	startOnly := alertExportNow
+	alert.Alert.ActivePeriods = []gtfs.AlertActivePeriod{{StartsAt: &startOnly}}
 
 	feed := buildAlertsFeed([]internalgtfs.ExportAlert{alert}, alertExportRequest("40"))
 
@@ -115,6 +117,9 @@ func TestBuildAlertsFeedPayload(t *testing.T) {
 	assert.ElementsMatch(t, []string{"en:Closed", "es:Cerrado"}, translations(got.GetHeaderText()))
 	assert.ElementsMatch(t, []string{"en:Use 3rd Ave", "es:Use la 3a"}, translations(got.GetDescriptionText()))
 	assert.ElementsMatch(t, []string{"en:https://example.com/notice"}, translations(got.GetUrl()))
+	require.Len(t, got.GetActivePeriod(), 1)
+	assert.Equal(t, uint64(alertExportNow.Unix()), got.GetActivePeriod()[0].GetStart())
+	assert.Nil(t, got.GetActivePeriod()[0].End, "an open-ended period has no end")
 
 	selectors := got.GetInformedEntity()
 	require.Len(t, selectors, 4)
@@ -198,6 +203,20 @@ func TestNextFallbackAlertIDSkipsUsedIDs(t *testing.T) {
 	used := map[string]bool{"2": true, "3": true}
 
 	assert.Equal(t, "4", nextFallbackAlertID(2, used))
+}
+
+func TestExportDirectionID(t *testing.T) {
+	tests := []struct {
+		direction gtfs.DirectionID
+		want      *uint32
+	}{
+		{gtfs.DirectionID_True, proto.Uint32(1)},
+		{gtfs.DirectionID_False, proto.Uint32(0)},
+		{gtfs.DirectionID_Unspecified, nil},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, exportDirectionID(tt.direction), "direction %v", tt.direction)
+	}
 }
 
 func TestBuildAlertsFeedKeepsRouteType(t *testing.T) {

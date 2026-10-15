@@ -416,6 +416,11 @@ func TestExportAlertsResolveSelectorOwners(t *testing.T) {
 			{Trip: &gtfsrt.TripDescriptor{TripId: proto.String(rabaTripID)}},
 			{StopId: proto.String("1030")},
 			{RouteId: proto.String("unknown-route"), StopId: proto.String("unknown-stop")},
+			{Trip: &gtfsrt.TripDescriptor{TripId: proto.String("unknown-trip"), RouteId: proto.String("151")}},
+			{Trip: &gtfsrt.TripDescriptor{
+				RouteId: proto.String("unknown-route"), DirectionId: proto.Uint32(0),
+				StartTime: proto.String("08:00:00"), StartDate: proto.String("20261009"),
+			}},
 		}},
 	})
 
@@ -424,9 +429,11 @@ func TestExportAlertsResolveSelectorOwners(t *testing.T) {
 	alerts := manager.ExportAlerts()
 	require.Len(t, alerts, 1)
 	selectors := alerts[0].Selectors
-	require.Len(t, selectors, 4)
+	require.Len(t, selectors, 6)
 	assert.Equal(t, "25", selectors[0].RouteOwner, "route")
 	assert.Equal(t, "25", selectors[1].TripOwner, "trip known only by ID")
+	assert.Equal(t, "25", selectors[4].TripOwner, "trip owned through its descriptor's route")
+	assert.Empty(t, selectors[5].TripOwner, "trip with no ID and an unknown route")
 	assert.Equal(t, []string{"25"}, selectors[2].StopOwners, "stop")
 	assert.False(t, selectors[3].AffectsAgency("25"), "unknown entities")
 	agencyID, _ := selectors[2].AgencyID()
