@@ -191,7 +191,7 @@ func alertTripDescriptor(tripID gtfs.TripID, owner string, removeAgencyIDs bool)
 	if tripID.RouteID != "" {
 		descriptor.RouteId = proto.String(exportPayloadID(tripID.RouteID, owner, removeAgencyIDs))
 	}
-	applyRetainedTripFields(descriptor, tripID)
+	applyFeedTripFields(descriptor, tripID)
 	return descriptor
 }
 

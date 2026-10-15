@@ -115,6 +115,9 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 	return out
 }
 
+// realtimeLogComponent names the GTFS-RT ingestion component in logs.
+const realtimeLogComponent = "gtfs_realtime"
+
 // staleVehicleTimeout is the duration after which a vehicle is considered stale
 const staleVehicleTimeout = 15 * time.Minute
 
@@ -373,7 +376,7 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 // It updates the per-feed sub-maps and then calls rebuildMergedRealtimeLocked.
 // Returns true if new data was successfully fetched and processed.
 func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedConfig) bool {
-	logger := logging.ForComponent(ctx, "gtfs_realtime")
+	logger := logging.ForComponent(ctx, realtimeLogComponent)
 	feedID := feedCfg.ID
 
 	var wg sync.WaitGroup
@@ -434,14 +437,11 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	if vehicleData != nil && vehicleErr == nil {
 		unfilteredVehicles = vehicleData.Vehicles
 	}
-	var tripRefs []tripUpdateRef
-	var tripUpdateBlocks map[string]*BlockMatch
+	var tripUpdates *gtfs.Realtime
 	if tripData != nil && tripErr == nil {
-		tripRefs = tripUpdateRefsInFeedOrder(tripData.Trips)
-		tripRefs = manager.assignTripUpdateVehicles(ctx, feedID, tripRefs, unfilteredVehicles)
-		tripUpdateBlocks = manager.tripUpdateBlockMatches(ctx, feedID, tripRefs, tripData.CreatedAt)
+		tripUpdates = tripData
 	}
-	manager.resolveStaticTripRoutes(ctx, feedID, tripRefs, unfilteredVehicles)
+	vehicleExport := manager.resolveVehicleExportRefresh(ctx, feedID, tripUpdates, unfilteredVehicles)
 
 	// Captured before the agency filter: the export keeps what it drops.
 	exportAlerts, applyExportAlerts := manager.exportAlertRefresh(ctx, feedCfg, alertData, alertErr)
@@ -484,8 +484,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			manager.feedUnattributedTrips = make(map[string][]gtfs.Trip)
 		}
 		manager.feedUnattributedTrips[feedID] = unattributedTrips
-		manager.storeTripUpdateExportStateLocked(feedID, tripRefs, tripUpdateBlocks)
+		manager.storeTripUpdateExportStateLocked(feedID, vehicleExport.tripUpdateRefs, vehicleExport.tripUpdateBlocks)
 	}
+	manager.storeStaticTripRoutesLocked(feedID, vehicleExport.staticRoutes)
 
 	if vehicleData != nil && vehicleErr == nil {
 		applyVehicleUpdate := true

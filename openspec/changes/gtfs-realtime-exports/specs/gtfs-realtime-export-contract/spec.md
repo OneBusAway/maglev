@@ -92,15 +92,19 @@ An authorized, valid request for an unknown agency, an agency without retained m
 - **THEN** it returns 200 and a valid empty FeedMessage
 
 ### Requirement: Payload ID normalization
-Payload trip, route, and stop IDs SHALL default to raw IDs, removing only known agency qualification and preserving arbitrary raw underscores. `removeAgencyIds=false` SHALL emit `{owningAgencyID}_{rawID}` without double-prefixing known qualified inputs. Vehicle IDs SHALL use the separate legacy interpretation requirement. Alert selector agency IDs SHALL remain intact; entity IDs follow their separate conventions.
+Payload trip, route, and stop IDs SHALL default to raw IDs, removing only known agency qualification and preserving arbitrary raw underscores. Qualification is known from where an ID came from, never from its text: realtime trip, route, and stop IDs are raw upstream IDs even when they contain an underscore, as in legacy, while IDs stored with their agency qualification are known qualified. `removeAgencyIds=false` SHALL emit `{owningAgencyID}_{rawID}` without double-prefixing known qualified inputs. Vehicle IDs SHALL use the separate legacy interpretation requirement. Alert selector agency IDs SHALL remain intact; entity IDs follow their separate conventions.
 
 #### Scenario: First underscore only
-- **WHEN** a payload ID is `40_trip_with_underscores` and normalization is enabled
+- **WHEN** a known qualified payload ID is `40_trip_with_underscores` and normalization is enabled
 - **THEN** the exported payload ID is `trip_with_underscores`
 
 #### Scenario: Raw IDs containing underscores
 - **WHEN** raw upstream ID `trip_with_underscores` belongs to agency 40
 - **THEN** default output remains `trip_with_underscores` and `removeAgencyIds=false` produces `40_trip_with_underscores`
+
+#### Scenario: Raw ID that looks qualified
+- **WHEN** raw upstream trip ID `40_123` belongs to agency 40
+- **THEN** default output remains `40_123` and `removeAgencyIds=false` produces `40_40_123`
 
 #### Scenario: Known qualified input
 - **WHEN** input identity is known to be qualified as `40_trip_with_underscores`

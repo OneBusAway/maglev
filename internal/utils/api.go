@@ -15,6 +15,9 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
+// GtfsDateLayout is the time layout of GTFS service dates, YYYYMMDD.
+const GtfsDateLayout = "20060102"
+
 func CalculateServiceDate(currentTime time.Time) time.Time {
 	year, month, day := currentTime.Date()
 	return time.Date(year, month, day, 0, 0, 0, 0, currentTime.Location())

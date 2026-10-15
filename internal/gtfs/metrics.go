@@ -164,7 +164,7 @@ func (manager *Manager) activeTripsForAgency(ctx context.Context, now time.Time,
 type serviceIDsByDate map[string][]string
 
 func (cache serviceIDsByDate) forDate(ctx context.Context, queries *gtfsdb.Queries, serviceDay time.Time) ([]string, error) {
-	date := serviceDay.Format("20060102")
+	date := serviceDay.Format(utils.GtfsDateLayout)
 	if ids, cached := cache[date]; cached {
 		return ids, nil
 	}

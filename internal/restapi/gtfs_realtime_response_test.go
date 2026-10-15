@@ -81,6 +81,10 @@ func TestExportPayloadID(t *testing.T) {
 	assert.Equal(t, "trip_with_underscores", exportPayloadID("trip_with_underscores", "40", true))
 	assert.Equal(t, "40_trip_with_underscores", exportPayloadID("trip_with_underscores", "40", false))
 	assert.Equal(t, "trip", exportPayloadID("trip", "", false), "unknown owner is not invented")
+
+	// A raw realtime ID can look qualified; legacy treats it as raw too.
+	assert.Equal(t, "40_123", exportPayloadID("40_123", "40", true), "a raw ID is not stripped by its text")
+	assert.Equal(t, "40_40_123", exportPayloadID("40_123", "40", false))
 }
 
 func TestFormatGtfsServiceTime(t *testing.T) {
