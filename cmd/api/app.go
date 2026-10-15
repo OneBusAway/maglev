@@ -51,6 +51,8 @@ func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 			Headers:             feedData.Headers,
 			RefreshInterval:     feedData.RefreshInterval,
 			Enabled:             feedData.Enabled,
+
+			FallbackAlertRecordAgencyID: feedData.FallbackAlertRecordAgencyID,
 		})
 	}
 
@@ -350,6 +352,9 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 		}
 		if len(feedCfg.AgencyIDs) > 0 {
 			feed["agency-ids"] = feedCfg.AgencyIDs
+		}
+		if feedCfg.FallbackAlertRecordAgencyID != "" {
+			feed["fallback-alert-record-agency-id"] = feedCfg.FallbackAlertRecordAgencyID
 		}
 		if len(redactedHeaders) > 0 {
 			feed["headers"] = redactedHeaders

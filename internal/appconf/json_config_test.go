@@ -1,6 +1,7 @@
 package appconf
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -729,4 +730,21 @@ func TestToGtfsConfigData_DuplicateIDs(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "duplicate feed ID")
+}
+
+func TestToGtfsConfigData_FallbackAlertRecordAgencyID(t *testing.T) {
+	var jsonConfig JSONConfig
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"gtfs-rt-feeds": [{
+			"service-alerts-url": "https://api.example.com/alerts.pb",
+			"fallback-alert-record-agency-id": "40"
+		}]
+	}`), &jsonConfig))
+
+	gtfsConfig, err := jsonConfig.ToGtfsConfigData()
+	require.NoError(t, err)
+
+	require.Len(t, gtfsConfig.RTFeeds, 1)
+	assert.Equal(t, "40", gtfsConfig.RTFeeds[0].FallbackAlertRecordAgencyID)
+	assert.Empty(t, gtfsConfig.RTFeeds[0].AgencyIDs)
 }

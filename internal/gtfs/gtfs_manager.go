@@ -74,8 +74,14 @@ type Manager struct {
 	feedTripUpdateBlocks    map[string]map[string]*BlockMatch
 	feedStaticTripRoutes    map[string]map[string]string
 	feedFilteredOutVehicles map[string][]gtfs.Vehicle
-	blockMatcher            *blockMatcher
-	staticTripRoutes        staticTripRoutes
+	// Alert export state: the current record per legacy alert key, a
+	// counter ordering applications, and each feed's anonymous alerts.
+	// Unlike feedAlerts it is not cleared when a feed goes stale.
+	exportAlertsByKey         map[exportAlertKey]appliedExportAlert
+	exportAlertSequence       uint64
+	feedAnonymousExportAlerts map[string][]ExportAlert
+	blockMatcher              *blockMatcher
+	staticTripRoutes          staticTripRoutes
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
 	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
 	// No lock is required for reads.
@@ -215,6 +221,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	}
 
 	enabledFeeds := config.enabledFeeds()
+	warnFeedsWithoutAlertRecordAgency(logger, enabledFeeds)
 	for _, feedCfg := range enabledFeeds {
 		if len(feedCfg.AgencyIDs) > 0 {
 			logger.Info("realtime feed agency filtering active",

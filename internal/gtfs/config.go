@@ -1,6 +1,7 @@
 package gtfs
 
 import (
+	"log/slog"
 	"strings"
 	"time"
 
@@ -18,6 +19,31 @@ type RTFeedConfig struct {
 	Headers             map[string]string
 	RefreshInterval     int // seconds, default 30
 	Enabled             bool
+	// FallbackAlertRecordAgencyID owns this feed's alert IDs in GTFS-RT
+	// exports when AgencyIDs is empty. Unlike AgencyIDs it never filters.
+	FallbackAlertRecordAgencyID string
+}
+
+// alertRecordAgencyID returns the agency that namespaces this feed's alert
+// IDs, as legacy OneBusAway does: the first agency-ids entry, else the
+// fallback. ok is false when neither is configured.
+func (feed RTFeedConfig) alertRecordAgencyID() (string, bool) {
+	if len(feed.AgencyIDs) > 0 {
+		return feed.AgencyIDs[0], true
+	}
+	return feed.FallbackAlertRecordAgencyID, feed.FallbackAlertRecordAgencyID != ""
+}
+
+// warnFeedsWithoutAlertRecordAgency flags alert feeds whose alerts the
+// GTFS-RT export must leave out because nothing names their record agency.
+func warnFeedsWithoutAlertRecordAgency(logger *slog.Logger, feeds []RTFeedConfig) {
+	for _, feed := range feeds {
+		if _, ok := feed.alertRecordAgencyID(); ok || feed.ServiceAlertsURL == "" {
+			continue
+		}
+		logger.Warn("realtime feed alerts are excluded from GTFS-RT exports: set agency-ids or fallback-alert-record-agency-id",
+			slog.String("feed", feed.ID))
+	}
 }
 
 // Config holds GTFS configuration for the manager.
