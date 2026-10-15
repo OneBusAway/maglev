@@ -334,3 +334,34 @@ func TestStoreGtfsData_GroupMemberWithoutCoordinatesGetsNoAgency(t *testing.T) {
 	assert.Contains(t, agencyStops, "s1")
 	assert.NotContains(t, agencyStops, "s3", "an unstored stop cannot join the stop agency index")
 }
+
+func TestTimedStopTimes(t *testing.T) {
+	parsed, err := ParseGtfsData(flexfixtures.ZipBytes(t, flexfixtures.GroupDeviatedFiles()), "flex-group-deviated")
+	require.NoError(t, err)
+	trips := make(map[string]*gtfs.ScheduledTrip, len(parsed.Static.Trips))
+	for i := range parsed.Static.Trips {
+		trips[parsed.Static.Trips[i].ID] = &parsed.Static.Trips[i]
+	}
+
+	deviated := trips[flexfixtures.GDHerTripID]
+	timed := timedStopTimes(deviated)
+	assert.Len(t, timed, 3, "the zone records are dropped")
+	for _, st := range timed {
+		assert.False(t, st.IsWindowed())
+	}
+
+	flexOnly := trips[flexfixtures.GDRufTripID]
+	assert.Empty(t, timedStopTimes(flexOnly))
+}
+
+func TestTimedStopTimes_FixedTripIsNotCopied(t *testing.T) {
+	rabaBytes, err := os.ReadFile("../testdata/raba.zip")
+	require.NoError(t, err)
+	parsed, err := ParseGtfsData(rabaBytes, "test-raba")
+	require.NoError(t, err)
+
+	trip := &parsed.Static.Trips[0]
+	require.NotEmpty(t, trip.StopTimes)
+	timed := timedStopTimes(trip)
+	assert.Same(t, &trip.StopTimes[0], &timed[0], "a trip with no windowed record shares its slice")
+}

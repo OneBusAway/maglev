@@ -1629,8 +1629,13 @@ func stopTimeReferenceError(st gtfs.ScheduledStopTime) string {
 
 // timedStopTimes returns the trip's records that carry arrival/departure
 // times, in stop_sequence order. Windowed (flex) records are excluded: they
-// have no times and, for zone and group records, no stop.
+// have no times and, for zone and group records, no stop. A trip with no
+// windowed record gets its own slice back, so fixed-route feeds pay no copy;
+// callers must not modify the result.
 func timedStopTimes(trip *gtfs.ScheduledTrip) []gtfs.ScheduledStopTime {
+	if !slices.ContainsFunc(trip.StopTimes, gtfs.ScheduledStopTime.IsWindowed) {
+		return trip.StopTimes
+	}
 	timed := make([]gtfs.ScheduledStopTime, 0, len(trip.StopTimes))
 	for _, st := range trip.StopTimes {
 		if !st.IsWindowed() {
