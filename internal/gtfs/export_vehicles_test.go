@@ -373,6 +373,56 @@ func TestExportVehiclesUseStaticTripRoute(t *testing.T) {
 		"a vehicle kept from an earlier refresh keeps its static route")
 }
 
+// An older position for a vehicle does not replace its newer retained
+// record, so the export keeps the retained trip; its static route must
+// still be resolved even though the fetch reported the vehicle. The feed
+// names RABA route 151, which passes the agency filter, while the trip's
+// static route is 24.
+func TestExportVehiclesKeepRouteOfNewerRetainedRecord(t *testing.T) {
+	// No trip update names the trip, so only the retained record does.
+	tripUpdates, err := proto.Marshal(&gtfsrt.FeedMessage{Header: &gtfsrt.FeedHeader{
+		GtfsRealtimeVersion: proto.String("2.0"), Timestamp: proto.Uint64(1)}})
+	require.NoError(t, err)
+	raw, err := os.ReadFile(filepath.Join("../../testdata", "raba-vehicle-positions.pb"))
+	require.NoError(t, err)
+	var first, second gtfsrt.FeedMessage
+	require.NoError(t, proto.Unmarshal(raw, &first))
+	require.NoError(t, proto.Unmarshal(raw, &second))
+	for _, entity := range first.GetEntity() {
+		if entity.GetVehicle().GetVehicle().GetId() == "5701" {
+			entity.Vehicle.Trip.RouteId = proto.String("151")
+		}
+	}
+	second.Header.Timestamp = proto.Uint64(second.GetHeader().GetTimestamp() + 60)
+	for _, entity := range second.GetEntity() {
+		if entity.GetVehicle().GetVehicle().GetId() == "5701" {
+			entity.Vehicle.Trip.TripId = proto.String("T_OLDER")
+			entity.Vehicle.Trip.RouteId = proto.String("151")
+			entity.Vehicle.Timestamp = proto.Uint64(entity.GetVehicle().GetTimestamp() - 60)
+		}
+	}
+	firstFeed, err := proto.Marshal(&first)
+	require.NoError(t, err)
+	secondFeed, err := proto.Marshal(&second)
+	require.NoError(t, err)
+	var serveSecond atomic.Bool
+	manager, feed := newRabaExportManagerServing(t, tripUpdates, func(w http.ResponseWriter, r *http.Request) {
+		if serveSecond.Load() {
+			_, _ = w.Write(secondFeed)
+			return
+		}
+		_, _ = w.Write(firstFeed)
+	})
+	require.Equal(t, "24", exportVehiclesByID(manager)["5701"].ActiveRouteID)
+
+	serveSecond.Store(true)
+	manager.updateFeedRealtime(context.Background(), feed)
+
+	vehicle := exportVehiclesByID(manager)["5701"]
+	assert.Equal(t, "28c61524-6da8-4506-9a92-22f2f6e91872", vehicle.ActiveTripID, "the newer retained record wins")
+	assert.Equal(t, "24", vehicle.ActiveRouteID, "its static route stays resolved, so route filters still match")
+}
+
 // A static reload empties the shared route cache, and any feed's refresh
 // rebuilds every feed's export vehicles. Feeds that have not refreshed
 // since keep the static routes their own last refresh resolved.

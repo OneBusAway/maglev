@@ -51,7 +51,8 @@ type vehicleExportRefresh struct {
 // row at most once. tripUpdates is nil when the trip-update fetch failed. It
 // queries static data, so the caller must not hold realTimeMutex.
 func (manager *Manager) resolveVehicleExportRefresh(ctx context.Context, feedID string, tripUpdates *gtfs.Realtime, fetched []gtfs.Vehicle) vehicleExportRefresh {
-	earlier, refs := manager.earlierExportInputs(feedID, fetched)
+	retained, refs := manager.earlierExportInputs(feedID)
+	earlier := vehiclesMissingFrom(retained, fetched)
 	lookups := newBlockMatchLookups()
 	var refresh vehicleExportRefresh
 	if tripUpdates != nil {
@@ -60,18 +61,19 @@ func (manager *Manager) resolveVehicleExportRefresh(ctx context.Context, feedID 
 		refresh.tripUpdateRefs = refs
 		refresh.tripUpdateBlocks = manager.tripUpdateBlockMatches(ctx, feedID, refs, tripUpdates.CreatedAt, lookups)
 	}
-	exportTripIDs := realtimeTripIDs(refs, slices.Concat(fetched, earlier))
+	// A fetched record older than the retained one does not replace it, so
+	// every retained vehicle's trip needs its route, not only earlier ones.
+	exportTripIDs := realtimeTripIDs(refs, slices.Concat(fetched, retained))
 	refresh.staticRoutes = manager.resolveStaticTripRoutes(ctx, feedID, exportTripIDs, lookups.trips)
 	return refresh
 }
 
 // earlierExportInputs returns, from the feed's earlier refreshes, the
-// retained vehicles fetched does not report and the stored trip updates.
-func (manager *Manager) earlierExportInputs(feedID string, fetched []gtfs.Vehicle) ([]gtfs.Vehicle, []tripUpdateRef) {
+// retained vehicles and the stored trip updates.
+func (manager *Manager) earlierExportInputs(feedID string) ([]gtfs.Vehicle, []tripUpdateRef) {
 	manager.realTimeMutex.RLock()
 	defer manager.realTimeMutex.RUnlock()
-	earlier := vehiclesMissingFrom(manager.retainedExportVehiclesLocked(feedID), fetched)
-	return earlier, manager.feedTripUpdateRefs[feedID]
+	return manager.retainedExportVehiclesLocked(feedID), manager.feedTripUpdateRefs[feedID]
 }
 
 // tripUpdateBlockMatches resolves the block of every trip-update trip; the
