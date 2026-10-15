@@ -378,6 +378,7 @@ func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedVehicleTimestamp: make(map[string]uint64),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
+		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 	}
 
 	cfg := RTFeedConfig{
@@ -838,6 +839,52 @@ func TestVehicleMerge_RetainedVehicleKeepsUntakenTrip(t *testing.T) {
 	vehicle := manager.GetVehicleForTrip(context.Background(), "trip-x")
 	require.NotNil(t, vehicle)
 	assert.Equal(t, "V1", vehicle.ID.ID)
+}
+
+// TestVehicleMerge_RetainedVehicleReleasesTripTakenInAnotherFeed checks that a
+// retained vehicle loses its trip to a live vehicle from a different feed,
+// whichever feed sorts first.
+func TestVehicleMerge_RetainedVehicleReleasesTripTakenInAnotherFeed(t *testing.T) {
+	tests := []struct {
+		name          string
+		retainedFeed  string
+		liveFeed      string
+		liveTripID    string
+		wantTripOwner string
+	}{
+		{"retained feed sorts first", "feed-a", "feed-b", "trip-x", "V2"},
+		{"retained feed sorts last", "feed-b", "feed-a", "trip-x", "V2"},
+		{"live vehicle serves another trip", "feed-a", "feed-b", "trip-y", "V1"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := newTestManager()
+			now := time.Now().Truncate(time.Second)
+			updateFeed := func(feedID string, feedTime time.Time, positions ...*gtfsrt.VehiclePosition) {
+				feed := serveVehicleFeed(t, feedTime, positions)
+				feed.ID = feedID
+				manager.updateFeedRealtime(context.Background(), feed)
+			}
+
+			updateFeed(tc.retainedFeed, now.Add(-time.Minute), positionOnTrip("V1", "trip-x", 47.1, nil))
+			updateFeed(tc.retainedFeed, now.Add(-30*time.Second))
+			updateFeed(tc.liveFeed, now, positionOnTrip("V2", tc.liveTripID, 47.4, nil))
+
+			vehicle := manager.GetVehicleForTrip(context.Background(), "trip-x")
+			require.NotNil(t, vehicle)
+			assert.Equal(t, tc.wantTripOwner, vehicle.ID.ID)
+
+			var routeVehicleIDs []string
+			for _, v := range manager.mergedRealtime().vehiclesByRoute["route-x"] {
+				if v.Trip.ID.ID == "trip-x" {
+					routeVehicleIDs = append(routeVehicleIDs, v.ID.ID)
+				}
+			}
+			assert.Equal(t, []string{tc.wantTripOwner}, routeVehicleIDs, "only the trip's owner should be listed on it")
+			assert.Len(t, manager.GetRealTimeVehicles(), 2, "V1 should still be retained within the stale-vehicle window")
+		})
+	}
 }
 
 // TestIsVehicleStale verifies the isVehicleStale function correctly compares
@@ -1521,6 +1568,7 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedVehicleTimestamp: make(map[string]uint64),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
+		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 	}
 
 	// 1. Test partial success (OR logic): Trip updates succeed, Vehicle positions fail
