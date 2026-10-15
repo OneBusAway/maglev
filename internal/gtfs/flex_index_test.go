@@ -249,3 +249,18 @@ func TestReloadStatic_PublishesETagWithIndex(t *testing.T) {
 	assert.Equal(t, readSystemETag(ctx, manager.GtfsDB), manager.GetSystemETag())
 	assert.Equal(t, served, manager.GetSystemETag(), "the same feed reimported keeps its hash")
 }
+
+func TestFlexIndex_PointerToUnstoredStopKeepsPointer(t *testing.T) {
+	manager := newFlexTestManager(t, "charlevoix-flex.zip")
+	ctx := context.Background()
+	// A rule-referenced stop that was never stored, as when the feed gives it
+	// no coordinates.
+	_, err := manager.GtfsDB.DB.ExecContext(ctx, "INSERT INTO ondemand_stop_services (stop_id, service_id) VALUES ('unstored', 'CC3')")
+	require.NoError(t, err)
+
+	idx, err := buildFlexIndex(ctx, manager.GtfsDB, slog.Default())
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"CC_CC3"}, idx.OnDemandServiceIDsForStop("unstored"), "the pointer survives without coordinates")
+	assert.Len(t, idx.ServiceStops["CC_CC3"], 2, "but the stop adds no point to match against")
+}
