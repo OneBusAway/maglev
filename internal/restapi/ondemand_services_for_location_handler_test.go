@@ -187,7 +187,17 @@ func TestOnDemandServicesForLocationHandler_NonFlexFeed(t *testing.T) {
 func TestOnDemandOutOfRange_NoBoundsAtAll(t *testing.T) {
 	api := NewRestAPI(&app.Application{GtfsManager: newTestManagerNoData(t)})
 	search := utils.CalculateBounds(47.6, -122.3, 600)
-	assert.False(t, api.onDemandOutOfRange(search, gtfs.NewEmptyFlexIndex(), nil), "no stop or service bounds means nothing is out of range")
+	assert.False(t, api.onDemandOutOfRange(search, gtfs.NewEmptyFlexIndex()), "no stop or service bounds means nothing is out of range")
+}
+
+func TestOnDemandOutOfRange_ServiceOutsideEveryRegion(t *testing.T) {
+	api := createTestApi(t) // RABA: regions exist, all in northern California
+	search := utils.CalculateBounds(47.6, -122.3, 600)
+	idx := gtfs.NewEmptyFlexIndex()
+	assert.True(t, api.onDemandOutOfRange(search, idx), "no region and no service overlaps the search")
+
+	idx.ServiceBounds["X_zone"] = utils.CalculateBounds(47.6, -122.3, 5000)
+	assert.False(t, api.onDemandOutOfRange(search, idx), "a service overlapping the search keeps it in range")
 }
 
 // An agency id containing "_" cannot be split back out of a combined service
