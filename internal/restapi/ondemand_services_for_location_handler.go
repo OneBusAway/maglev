@@ -29,11 +29,10 @@ func newOnDemandSearch(loc *gtfs.LocationParams) onDemandSearch {
 		// zone must survive a zoomed-out map.
 		return onDemandSearch{Viewport: true, Point: point, Bounds: gtfs.BoundsFromParams(loc)}
 	}
-	radius := utils.ClampRadius(loc.RadiusOrDefault())
 	return onDemandSearch{
 		Point:  point,
-		Radius: radius,
-		Bounds: geo.CalculateBounds(loc.Lat, loc.Lon, radius),
+		Radius: utils.ClampRadius(loc.RadiusOrDefault()),
+		Bounds: gtfs.BoundsFromParams(loc, true),
 	}
 }
 
