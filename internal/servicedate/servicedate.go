@@ -38,9 +38,16 @@ func (d Date) Start(loc *time.Location) time.Time {
 	return time.Date(d.Year, d.Month, d.Day, 12, 0, 0, 0, loc).Add(-12 * time.Hour)
 }
 
-// Midnight is local midnight on d, the serviceDate value Maglev reports.
+// Midnight is local midnight on d. GTFS offsets are added to Start, which differs from Midnight on DST days.
 func (d Date) Midnight(loc *time.Location) time.Time {
 	return time.Date(d.Year, d.Month, d.Day, 0, 0, 0, 0, loc)
+}
+
+// OffsetBase is the instant GTFS stop-time and frequency offsets are added to.
+// serviceDate may be local midnight, Start itself, or any other instant on that service date.
+func OffsetBase(serviceDate time.Time) time.Time {
+	loc := serviceDate.Location()
+	return FromInstant(serviceDate, loc).Start(loc)
 }
 
 // AddDays returns the service date n days after d.
