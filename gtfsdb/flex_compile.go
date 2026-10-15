@@ -102,9 +102,8 @@ func (c *onDemandCompiler) addTrip(trip *gtfs.ScheduledTrip) {
 	if !tripHasFlexRecord(trip) {
 		return
 	}
-	ordered := recordsBySequence(trip)
-	c.recordsForRoute(trip.Route).add(ordered)
-	for _, candidate := range compileTripRules(trip, ordered) {
+	c.recordsForRoute(trip.Route).add(trip.StopTimes)
+	for _, candidate := range compileTripRules(trip) {
 		c.addRule(candidate)
 	}
 }
@@ -121,7 +120,9 @@ func (c *onDemandCompiler) recordsForRoute(route *gtfs.Route) *routeFlexRecords 
 }
 
 // addRule keeps the first rule of each distinct tuple, so its trip becomes
-// the representative, and points the rule's stops at its service.
+// the representative, and points the rule's stops at its service. Repeated
+// tuples are common (every trip of a pattern yields the same ones), so the
+// endpoints' stops are only expanded for a rule seen for the first time.
 func (c *onDemandCompiler) addRule(candidate tripRule) {
 	key := ruleKeyOf(candidate.rule)
 	if _, seen := c.seenRules[key]; seen {
@@ -129,8 +130,10 @@ func (c *onDemandCompiler) addRule(candidate tripRule) {
 	}
 	c.seenRules[key] = struct{}{}
 	c.rules = append(c.rules, candidate.rule)
-	for _, stopID := range candidate.stopIDs {
-		c.addStopService(stopID, candidate.rule.ServiceID)
+	for _, record := range []gtfs.ScheduledStopTime{candidate.pickupRecord, candidate.dropOffRecord} {
+		for _, stopID := range endpointStopIDs(record) {
+			c.addStopService(stopID, candidate.rule.ServiceID)
+		}
 	}
 }
 
@@ -239,36 +242,30 @@ func tripHasFlexRecord(trip *gtfs.ScheduledTrip) bool {
 	return slices.ContainsFunc(trip.StopTimes, gtfs.ScheduledStopTime.IsFlex)
 }
 
-func recordsBySequence(trip *gtfs.ScheduledTrip) []gtfs.ScheduledStopTime {
-	ordered := slices.Clone(trip.StopTimes)
-	slices.SortStableFunc(ordered, func(a, b gtfs.ScheduledStopTime) int {
-		return cmp.Compare(a.StopSequence, b.StopSequence)
-	})
-	return ordered
-}
-
-// tripRule pairs a compiled rule with the stops it references (directly or as
-// group members), which feed the stop → service pointer set.
+// tripRule pairs a compiled rule with the records it joins, whose stops
+// (directly or as group members) feed the stop → service pointer set.
 type tripRule struct {
-	rule    CompiledRule
-	stopIDs []string
+	rule                        CompiledRule
+	pickupRecord, dropOffRecord gtfs.ScheduledStopTime
 }
 
 // compileTripRules pairs every pickup-capable record with every later
-// drop-off-capable record, the GTFS-Flex reachability model.
-func compileTripRules(trip *gtfs.ScheduledTrip, ordered []gtfs.ScheduledStopTime) []tripRule {
+// drop-off-capable record, the GTFS-Flex reachability model. go-gtfs keeps a
+// trip's records sorted by stop_sequence, so "later" is slice order.
+func compileTripRules(trip *gtfs.ScheduledTrip) []tripRule {
 	var rules []tripRule
-	for i, pickupRecord := range ordered {
+	for i, pickupRecord := range trip.StopTimes {
 		if !pickupCapable(pickupRecord) {
 			continue
 		}
-		for _, dropOffRecord := range ordered[i+1:] {
+		for _, dropOffRecord := range trip.StopTimes[i+1:] {
 			if !isOnDemandPair(pickupRecord, dropOffRecord) {
 				continue
 			}
 			rules = append(rules, tripRule{
-				rule:    compileRule(trip, pickupRecord, dropOffRecord),
-				stopIDs: append(endpointStopIDs(pickupRecord), endpointStopIDs(dropOffRecord)...),
+				rule:          compileRule(trip, pickupRecord, dropOffRecord),
+				pickupRecord:  pickupRecord,
+				dropOffRecord: dropOffRecord,
 			})
 		}
 	}
