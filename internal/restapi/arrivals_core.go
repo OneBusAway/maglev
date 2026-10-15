@@ -475,14 +475,10 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 		return nil, err
 	}
 
-	// Stop-level alerts, once per stop — mirrors the per-stop pipeline.
-	for _, stop := range in.Stops {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), in.Agencies.agencyIDFor(stop.ID))
-	}
-
+	// Stop-level alerts are not collected here: the location handler recollects
+	// them after truncation over every found stop, so ones maxCount trimmed
+	// away still reach situationIds. Only the route lookup stays scoped to
+	// the retained stops.
 	return arrivals, nil
 }
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	gogtfs "github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -574,4 +575,91 @@ func TestParseMinutesValueCapsBeforeDurationOverflow(t *testing.T) {
 	assert.Equal(t, 5*time.Minute,
 		parseMinutesValue(url.Values{"minutesBefore": {"-5"}}, "minutesBefore", 5*time.Minute, maxArrivalWindow, addError))
 	assert.Contains(t, collected, "minutesBefore")
+}
+
+// A route alert with no arrival in the window and a stop alert on a matched
+// stop must both reach situationIds, even when the window holds no arrivals.
+func TestLocationSituationsWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	overnightMs := func() string {
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		return strconv.FormatInt(time.Date(2025, 6, 13, 2, 0, 0, 0, loc).UnixMilli(), 10)
+	}()
+	overnight := url.Values{
+		"lat":           {"40.539367"},
+		"lon":           {"-122.34952"},
+		"radius":        {"2500"},
+		"time":          {overnightMs},
+		"minutesBefore": {"0"},
+		"minutesAfter":  {"1"},
+	}
+	_, probe := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
+		arrivalsForLocationURL(overnight))
+	require.Empty(t, probe.Data.Entry.ArrivalsAndDepartures, "02:00 must have no arrivals on the fixture")
+	require.NotEmpty(t, probe.Data.Entry.StopIDs, "the search must still match stops")
+
+	_, stopCode, err := utils.ExtractAgencyIDAndCodeID(probe.Data.Entry.StopIDs[0])
+	require.NoError(t, err)
+
+	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(context.Background(), []string{stopCode})
+	require.NoError(t, err)
+	require.NotEmpty(t, routes, "matched stop must serve at least one route")
+
+	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
+		ID:               "route-only-alert",
+		InformedEntities: []gogtfs.AlertInformedEntity{{RouteID: &routes[0].ID}},
+	})
+	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
+		ID:               "stop-only-alert",
+		InformedEntities: []gogtfs.AlertInformedEntity{{StopID: &stopCode}},
+	})
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
+		arrivalsForLocationURL(overnight))
+
+	assert.Empty(t, model.Data.Entry.ArrivalsAndDepartures)
+	assert.Contains(t, model.Data.Entry.SituationIDs, utils.FormCombinedID(routes[0].AgencyID, "route-only-alert"))
+	assert.Contains(t, model.Data.Entry.SituationIDs, utils.FormCombinedID(routes[0].AgencyID, "stop-only-alert"))
+}
+
+// Situations from arrivals that maxCount trimmed away must not leak into
+// references: only retained arrivals' IDs survive.
+func TestRetainedAccumulatorDropsUnretainedSituations(t *testing.T) {
+	acc := newArrivalsAccumulator("")
+	acc.situations.addRefs([]situationRef{
+		{ID: "25_kept", Alert: gogtfs.Alert{ID: "kept"}},
+		{ID: "25_dropped", Alert: gogtfs.Alert{ID: "dropped"}},
+	})
+
+	arrivals := []models.ArrivalAndDeparture{{SituationIDs: []string{"25_kept"}}}
+	refAcc := retainedAccumulator(arrivals, nil, nil, acc)
+
+	assert.Equal(t, []string{"25_kept"}, situationIDsFromRefs(refAcc.situations.refs))
+}
+
+// A stop alert on a stop that maxCount trims must still reach situationIds:
+// Java collects stop alerts for every found stop before trimming.
+func TestLocationStopAlertSurvivesMaxCountTrim(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, full := callArrivalsForLocation(t, api)
+	require.Greater(t, len(full.Data.Entry.StopIDs), 1, "need several stops to observe truncation")
+	last := full.Data.Entry.StopIDs[len(full.Data.Entry.StopIDs)-1]
+	agencyID, trimmedCode, err := utils.ExtractAgencyIDAndCodeID(last)
+	require.NoError(t, err)
+
+	api.GtfsManager.AddAlertForTest(gogtfs.Alert{
+		ID:               "trimmed-stop-alert",
+		InformedEntities: []gogtfs.AlertInformedEntity{{StopID: &trimmedCode}},
+	})
+
+	_, limited := callArrivalsForLocation(t, api, url.Values{"maxCount": {"1"}})
+	assert.NotContains(t, limited.Data.Entry.StopIDs, last, "the alerted stop must be trimmed for this test")
+	assert.Contains(t, limited.Data.Entry.SituationIDs, utils.FormCombinedID(agencyID, "trimmed-stop-alert"))
 }

@@ -115,6 +115,10 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// References cover only the retained entry results, not the stops and
 	// arrivals maxCount trimmed away.
 	refAcc := retainedAccumulator(lists.arrivals, lists.stopIDs, lists.nearby, acc)
+	if err := api.collectSituationsForRetainedStops(ctx, stops, lists.stopIDs, agencies, refAcc); err != nil {
+		api.sendArrivalsForLocationError(w, r, ctx, err)
+		return
+	}
 
 	references, err := api.locationReferences(ctx, params.IncludeReferences, agencies, refAcc)
 	if err != nil {
@@ -172,8 +176,7 @@ func combinedStopIDs(stops []gtfsdb.Stop, agencies *stopAgencyIndex) []string {
 
 // retainedAccumulator rebuilds an accumulator holding only what the truncated
 // entry lists reference, so references do not serialize the stops, trips and
-// routes maxCount trimmed away. Situation references stay global: alerts are
-// few, and tracking them per trip would require invasive accumulator changes.
+// routes and situations maxCount trimmed away.
 //
 // The retained arrivals are a reference source in their own right, not just a
 // filter over the stop lists: maxCount trims stopIDs and arrivals
@@ -187,7 +190,24 @@ func retainedAccumulator(
 	acc *arrivalsAccumulator,
 ) *arrivalsAccumulator {
 	refAcc := newArrivalsAccumulator("")
-	refAcc.situations = acc.situations
+
+	// Trip situations come from every arrival built before truncation, so keep
+	// only the ones the retained arrivals name. Stop and route situations join
+	// below in collectSituationsForRetainedStops.
+	retainedIDs := make(map[string]bool)
+	for _, a := range arrivals {
+		for _, id := range a.SituationIDs {
+			retainedIDs[id] = true
+		}
+	}
+	kept := make([]situationRef, 0, len(acc.situations.refs))
+	for _, ref := range acc.situations.refs {
+		if retainedIDs[ref.ID] {
+			kept = append(kept, ref)
+		}
+	}
+	refAcc.situations = newSituationCollector()
+	refAcc.situations.addRefs(kept)
 
 	for _, id := range stopIDs {
 		retainStop(refAcc, id)
@@ -204,6 +224,39 @@ func retainedAccumulator(
 	}
 
 	return refAcc
+}
+
+// collectSituationsForRetainedStops gathers the alerts affecting the search:
+// route alerts for every route serving the retained stops — even with no
+// arrival in the window — and stop alerts for every found stop, including
+// ones maxCount trimmed away. Trip situations for retained arrivals are
+// already in the accumulator; the route lookup alone is scoped to the
+// truncated lists so trimmed results leave no route alerts behind.
+func (api *RestAPI) collectSituationsForRetainedStops(ctx context.Context, stops []gtfsdb.Stop, stopIDs []string, agencies *stopAgencyIndex, acc *arrivalsAccumulator) error {
+	bareIDs := make([]string, 0, len(stopIDs))
+	for _, id := range stopIDs {
+		if _, bareID, err := utils.ExtractAgencyIDAndCodeID(id); err == nil {
+			bareIDs = append(bareIDs, bareID)
+		}
+	}
+
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, bareIDs)
+	if err != nil {
+		return err
+	}
+	seenRoutes := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		if seenRoutes[row.ID] {
+			continue
+		}
+		seenRoutes[row.ID] = true
+		acc.situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), row.AgencyID)
+	}
+
+	for _, stop := range stops {
+		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), agencies.agencyIDFor(stop.ID))
+	}
+	return nil
 }
 
 // retainTripStatusEntities retains the stops and the reassigned active trip a
