@@ -466,17 +466,17 @@ func (api *RestAPI) fillOnDemandReferences(ctx context.Context, references *mode
 	}
 
 	agencyIDs := make(map[string]struct{})
+	serviceRoutes := make([]gtfsdb.Route, 0, len(services))
 	for _, service := range services {
 		agencyIDs[service.AgencyID] = struct{}{}
-		route, ok := routes[service.RouteID]
-		if !ok {
-			continue
+		if route, ok := routes[service.RouteID]; ok {
+			serviceRoutes = append(serviceRoutes, route)
 		}
-		routeModels, err := buildRouteModels(ctx, service.AgencyID, []gtfsdb.Route{route})
-		if err != nil {
-			return err
-		}
-		references.Routes = append(references.Routes, routeModels...)
+	}
+	// The importer fills every routes.agency_id (the feed's sole agency stands
+	// in for a blank one), so no fallback agency is needed.
+	if references.Routes, err = buildRouteModels(ctx, "", serviceRoutes); err != nil {
+		return err
 	}
 
 	if err := api.appendOnDemandStopReferences(ctx, references, ids.stops, agencyIDs); err != nil {
