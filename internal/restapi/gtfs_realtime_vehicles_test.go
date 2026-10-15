@@ -148,6 +148,7 @@ func TestBuildVehiclePositionsFeedPayload(t *testing.T) {
 		ServiceDate: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC), TripStart: 25 * time.Hour}
 	rich.Vehicle.Trip = &gtfs.Trip{ID: gtfs.TripID{ID: "tripA", RouteID: "A",
 		HasStartDate: true, StartDate: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)}}
+	rich.ActiveTripDescriptor = &rich.Vehicle.Trip.ID
 	rich.Vehicle.Position.Bearing = proto.Float32(90)
 	rich.Vehicle.Position.Speed = proto.Float32(12.5)
 	rich.Vehicle.Position.Odometer = proto.Float64(1000)
@@ -205,6 +206,7 @@ func TestBuildVehiclePositionsFeedKeepsFrequencyTripStart(t *testing.T) {
 	headway.Vehicle.Trip = &gtfs.Trip{ID: gtfs.TripID{ID: "freqTrip", RouteID: "A",
 		HasStartDate: true, StartDate: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC),
 		HasStartTime: true, StartTime: 8*time.Hour + 15*time.Minute}}
+	headway.ActiveTripDescriptor = &headway.Vehicle.Trip.ID
 
 	req := vehicleExportRequest("40")
 	feed := buildVehiclePositionsFeed(selectExportVehicles([]internalgtfs.ExportVehicle{headway}, req), req, nil)
@@ -213,6 +215,28 @@ func TestBuildVehiclePositionsFeedKeepsFrequencyTripStart(t *testing.T) {
 	trip := feed.Entity[0].GetVehicle().GetTrip()
 	assert.Equal(t, "20261006", trip.GetStartDate())
 	assert.Equal(t, "08:15:00", trip.GetStartTime())
+}
+
+// A duplicated trip runs the static trip at another time, which its own
+// start_time names, so a tripless position's trip update keeps its values
+// rather than take the scheduled trip's start.
+func TestBuildVehiclePositionsFeedKeepsDuplicatedTripUpdateStart(t *testing.T) {
+	duplicate := exportVehicleOnRoute("1234", "tripA", "A")
+	duplicate.Block = &internalgtfs.BlockMatch{TripID: "tripA", RouteID: "A", AgencyID: "40",
+		ServiceDate: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC), TripStart: 6 * time.Hour}
+	duplicate.ActiveTripDescriptor = &gtfs.TripID{ID: "tripA", RouteID: "A",
+		ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+		HasStartDate:         true, StartDate: time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC),
+		HasStartTime: true, StartTime: 10*time.Hour + 30*time.Minute}
+
+	req := vehicleExportRequest("40")
+	feed := buildVehiclePositionsFeed(selectExportVehicles([]internalgtfs.ExportVehicle{duplicate}, req), req, nil)
+
+	require.Len(t, feed.Entity, 1)
+	trip := feed.Entity[0].GetVehicle().GetTrip()
+	assert.Equal(t, "20261006", trip.GetStartDate())
+	assert.Equal(t, "10:30:00", trip.GetStartTime())
+	assert.Equal(t, gtfsrt.TripDescriptor_DUPLICATED, trip.GetScheduleRelationship())
 }
 
 func TestBuildVehiclePositionsFeedKeepsAgencyPrefixes(t *testing.T) {

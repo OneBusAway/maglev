@@ -8,19 +8,19 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 )
 
-// tripUpdateRef is what the GTFS-RT exports need from one trip update: the
-// trip, route and vehicle it names and its own timestamp. It is taken before
-// the agency filter runs, so the export sees every update the feed sent.
+// tripUpdateRef is what the GTFS-RT exports need from one trip update: its
+// trip descriptor, the vehicle it names and its own timestamp. It is taken
+// before the agency filter runs, so the export sees every update the feed
+// sent.
 type tripUpdateRef struct {
-	TripID    string
-	RouteID   string
+	Trip      gtfs.TripID
 	VehicleID string
 	Timestamp *time.Time
 }
 
 // isAnonymous reports whether the update names a trip but no vehicle.
 func (ref tripUpdateRef) isAnonymous() bool {
-	return ref.VehicleID == "" && ref.TripID != ""
+	return ref.VehicleID == "" && ref.Trip.ID != ""
 }
 
 // tripUpdateRefsInFeedOrder lists the trip updates among trips in the order
@@ -40,7 +40,7 @@ func tripUpdateRefsInFeedOrder(trips []gtfs.Trip) []tripUpdateRef {
 
 	refs := make([]tripUpdateRef, 0, len(updates))
 	for _, trip := range updates {
-		ref := tripUpdateRef{TripID: trip.ID.ID, RouteID: trip.ID.RouteID, Timestamp: trip.Timestamp}
+		ref := tripUpdateRef{Trip: trip.ID, Timestamp: trip.Timestamp}
 		if trip.Vehicle != nil && trip.Vehicle.ID != nil {
 			ref.VehicleID = trip.Vehicle.ID.ID
 		}

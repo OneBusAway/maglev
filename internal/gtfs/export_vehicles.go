@@ -21,6 +21,9 @@ type ExportVehicle struct {
 	Vehicle       gtfs.Vehicle
 	ActiveTripID  string
 	ActiveRouteID string
+	// ActiveTripDescriptor is the feed descriptor that named the active
+	// trip: the position's own, else the vehicle's first trip update's.
+	ActiveTripDescriptor *gtfs.TripID
 	// Block is the legacy-matched block of the active trip; nil when the trip
 	// is missing or unresolved.
 	Block *BlockMatch
@@ -38,10 +41,10 @@ func (manager *Manager) tripUpdateBlockMatches(ctx context.Context, feedID strin
 	matches := make(map[string]*BlockMatch)
 	lookups := newBlockMatchLookups()
 	for _, ref := range refs {
-		if _, seen := matches[ref.TripID]; seen || ref.TripID == "" {
+		if _, seen := matches[ref.Trip.ID]; seen || ref.Trip.ID == "" {
 			continue
 		}
-		matches[ref.TripID] = manager.matchBlock(ctx, feedID, ref.TripID, tripUpdateMatchingReference(ref, feedCreatedAt), lookups)
+		matches[ref.Trip.ID] = manager.matchBlock(ctx, feedID, ref.Trip.ID, tripUpdateMatchingReference(ref, feedCreatedAt), lookups)
 	}
 	return matches
 }
@@ -69,8 +72,8 @@ func (manager *Manager) resolveStaticTripRoutes(ctx context.Context, feedID stri
 func realtimeTripIDs(refs []tripUpdateRef, vehicles []gtfs.Vehicle) map[string]struct{} {
 	tripIDs := make(map[string]struct{}, len(refs)+len(vehicles))
 	for _, ref := range refs {
-		if ref.TripID != "" {
-			tripIDs[ref.TripID] = struct{}{}
+		if ref.Trip.ID != "" {
+			tripIDs[ref.Trip.ID] = struct{}{}
 		}
 	}
 	for _, vehicle := range vehicles {
@@ -140,15 +143,17 @@ func newExportVehicle(vehicle gtfs.Vehicle, tripByVehicle map[string]tripUpdateR
 	export := ExportVehicle{Vehicle: vehicle}
 	ref, hasTripUpdate := tripByVehicle[vehicle.ID.ID]
 	if hasTripUpdate {
-		export.Block = tripUpdateBlocks[ref.TripID]
+		export.Block = tripUpdateBlocks[ref.Trip.ID]
 	}
 	switch {
 	case vehicle.Trip != nil && vehicle.Trip.ID.ID != "":
-		export.ActiveTripID = vehicle.Trip.ID.ID
-		export.ActiveRouteID = vehicle.Trip.ID.RouteID
+		export.ActiveTripDescriptor = &vehicle.Trip.ID
 	case hasTripUpdate:
-		export.ActiveTripID = ref.TripID
-		export.ActiveRouteID = ref.RouteID
+		export.ActiveTripDescriptor = &ref.Trip
+	}
+	if export.ActiveTripDescriptor != nil {
+		export.ActiveTripID = export.ActiveTripDescriptor.ID
+		export.ActiveRouteID = export.ActiveTripDescriptor.RouteID
 	}
 	if staticRouteID := staticRouteOf(export.ActiveTripID); staticRouteID != "" {
 		export.ActiveRouteID = staticRouteID
@@ -275,7 +280,7 @@ func anonymousAssignmentTripIDs(refs []tripUpdateRef, vehicles []gtfs.Vehicle) [
 	tripIDs := make(map[string]struct{})
 	for _, ref := range refs {
 		if ref.isAnonymous() {
-			tripIDs[ref.TripID] = struct{}{}
+			tripIDs[ref.Trip.ID] = struct{}{}
 		}
 	}
 	if len(tripIDs) == 0 {
@@ -301,7 +306,7 @@ func assignAnonymousTripUpdates(refs []tripUpdateRef, vehicles []gtfs.Vehicle, b
 		if ref.VehicleID != "" {
 			continue
 		}
-		if blockKey, ok := blockKeys[ref.TripID]; ok {
+		if blockKey, ok := blockKeys[ref.Trip.ID]; ok {
 			assigned[i].VehicleID = vehicleByBlock[blockKey]
 		}
 	}

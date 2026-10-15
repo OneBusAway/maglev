@@ -183,7 +183,8 @@ func isBlockMatchedActiveTrip(vehicle internalgtfs.ExportVehicle) bool {
 
 // activeTripDescriptor describes the vehicle's active trip. An ordinary trip
 // with a block match carries the resolved service date and start rather than
-// the update's hints; other trips keep their retained descriptor values.
+// the feed's hints; other trips keep the values of the feed descriptor that
+// named them.
 func activeTripDescriptor(vehicle internalgtfs.ExportVehicle, owner string, removeAgencyIDs bool) *gtfsrt.TripDescriptor {
 	if vehicle.ActiveTripID == "" {
 		return nil
@@ -192,28 +193,18 @@ func activeTripDescriptor(vehicle internalgtfs.ExportVehicle, owner string, remo
 	if vehicle.ActiveRouteID != "" {
 		descriptor.RouteId = proto.String(exportPayloadID(vehicle.ActiveRouteID, owner, removeAgencyIDs))
 	}
-	retained := retainedTripID(vehicle)
-	if retained != nil {
-		applyRetainedTripFields(descriptor, *retained)
+	feedDescriptor := vehicle.ActiveTripDescriptor
+	if feedDescriptor != nil {
+		applyFeedTripFields(descriptor, *feedDescriptor)
 	}
-	if isResolvedOrdinaryTrip(vehicle, retained) {
+	if isResolvedOrdinaryTrip(vehicle, feedDescriptor) {
 		descriptor.StartDate = proto.String(vehicle.Block.ServiceDate.Format(utils.GtfsDateLayout))
 		descriptor.StartTime = proto.String(formatGtfsServiceTime(vehicle.Block.TripStart))
 	}
 	return descriptor
 }
 
-// retainedTripID is the vehicle position's own descriptor when it names the
-// active trip.
-func retainedTripID(vehicle internalgtfs.ExportVehicle) *gtfs.TripID {
-	trip := vehicle.Vehicle.Trip
-	if trip == nil || trip.ID.ID != vehicle.ActiveTripID {
-		return nil
-	}
-	return &trip.ID
-}
-
-func applyRetainedTripFields(descriptor *gtfsrt.TripDescriptor, trip gtfs.TripID) {
+func applyFeedTripFields(descriptor *gtfsrt.TripDescriptor, trip gtfs.TripID) {
 	switch trip.DirectionID {
 	case gtfs.DirectionID_True:
 		descriptor.DirectionId = proto.Uint32(1)
@@ -235,10 +226,11 @@ func applyRetainedTripFields(descriptor *gtfsrt.TripDescriptor, trip gtfs.TripID
 
 // isResolvedOrdinaryTrip reports whether the block match's service date and
 // start describe the active trip. A frequency trip's own start_time names
-// the running instance, so it keeps the update's values.
-func isResolvedOrdinaryTrip(vehicle internalgtfs.ExportVehicle, retained *gtfs.TripID) bool {
+// the running instance, and an added or duplicated trip names its own
+// instance, so both keep the feed's values.
+func isResolvedOrdinaryTrip(vehicle internalgtfs.ExportVehicle, feedDescriptor *gtfs.TripID) bool {
 	if !isBlockMatchedActiveTrip(vehicle) || vehicle.Block.FrequencyBased {
 		return false
 	}
-	return retained == nil || retained.ScheduleRelationship == gtfsrt.TripDescriptor_SCHEDULED
+	return feedDescriptor == nil || feedDescriptor.ScheduleRelationship == gtfsrt.TripDescriptor_SCHEDULED
 }

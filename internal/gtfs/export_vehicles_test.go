@@ -29,7 +29,7 @@ func vehicleWithTrip(vehicleID, tripID, routeID string) gtfs.Vehicle {
 
 func TestNewExportVehicleActiveTrip(t *testing.T) {
 	tripUpdateBlock := &BlockMatch{TripID: "T_TU", RouteID: "R_STATIC", AgencyID: "40"}
-	tripByVehicle := map[string]tripUpdateRef{"V1": {TripID: "T_TU", VehicleID: "V1"}}
+	tripByVehicle := map[string]tripUpdateRef{"V1": {Trip: gtfs.TripID{ID: "T_TU"}, VehicleID: "V1"}}
 	tripUpdateBlocks := map[string]*BlockMatch{"T_TU": tripUpdateBlock}
 	staticRoutes := map[string]string{"T_STATIC": "R_STATIC"}
 	staticRouteOf := func(tripID string) string { return staticRoutes[tripID] }
@@ -57,6 +57,18 @@ func TestNewExportVehicleActiveTrip(t *testing.T) {
 		assert.Equal(t, "T_STATIC", got.ActiveTripID)
 		assert.Equal(t, "R_STATIC", got.ActiveRouteID, "legacy reports the static trip's route, not the feed's route name")
 	})
+	t.Run("active trip keeps the descriptor that named it", func(t *testing.T) {
+		duplicate := gtfs.TripID{ID: "T_TU", ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+			HasStartTime: true, StartTime: 10*time.Hour + 30*time.Minute}
+		byVehicle := map[string]tripUpdateRef{"V1": {Trip: duplicate, VehicleID: "V1"}}
+		fromUpdate := newExportVehicle(vehicleWithTrip("V1", "", ""), byVehicle, tripUpdateBlocks, staticRouteOf)
+		require.NotNil(t, fromUpdate.ActiveTripDescriptor)
+		assert.Equal(t, duplicate, *fromUpdate.ActiveTripDescriptor, "a tripless position takes its trip update's descriptor")
+
+		fromPosition := newExportVehicle(vehicleWithTrip("V1", "T_VP", "R_VP"), byVehicle, tripUpdateBlocks, staticRouteOf)
+		require.NotNil(t, fromPosition.ActiveTripDescriptor)
+		assert.Equal(t, "T_VP", fromPosition.ActiveTripDescriptor.ID, "the position's own descriptor wins")
+	})
 	t.Run("tripless vehicle has no block", func(t *testing.T) {
 		got := newExportVehicle(vehicleWithTrip("V3", "", ""), tripByVehicle, tripUpdateBlocks, staticRouteOf)
 		assert.Empty(t, got.ActiveTripID)
@@ -66,9 +78,9 @@ func TestNewExportVehicleActiveTrip(t *testing.T) {
 
 func TestFirstTripUpdateByVehicleUsesSourceOrder(t *testing.T) {
 	refs := []tripUpdateRef{
-		{TripID: "T_FIRST", VehicleID: "V1"},
-		{TripID: "T_SECOND", VehicleID: "V1"},
-		{TripID: "T_NOVEHICLE"},
+		{Trip: gtfs.TripID{ID: "T_FIRST"}, VehicleID: "V1"},
+		{Trip: gtfs.TripID{ID: "T_SECOND"}, VehicleID: "V1"},
+		{Trip: gtfs.TripID{ID: "T_NOVEHICLE"}},
 	}
 	got := firstTripUpdateByVehicle(refs)
 	assert.Equal(t, map[string]tripUpdateRef{"V1": refs[0]}, got)
@@ -175,10 +187,10 @@ func TestBuildExportVehiclesSkipsVehiclesWithoutID(t *testing.T) {
 
 func TestAssignAnonymousTripUpdates(t *testing.T) {
 	refs := []tripUpdateRef{
-		{TripID: "T_NAMED", VehicleID: "V_NAMED"},
-		{TripID: "T_ON_B1"},
-		{TripID: "T_UNKNOWN_BLOCK"},
-		{TripID: "T_ON_B2"},
+		{Trip: gtfs.TripID{ID: "T_NAMED"}, VehicleID: "V_NAMED"},
+		{Trip: gtfs.TripID{ID: "T_ON_B1"}},
+		{Trip: gtfs.TripID{ID: "T_UNKNOWN_BLOCK"}},
+		{Trip: gtfs.TripID{ID: "T_ON_B2"}},
 	}
 	vehicles := []gtfs.Vehicle{
 		vehicleWithTrip("V_B1_LATER", "T_OTHER_ON_B1", ""),
@@ -202,7 +214,7 @@ func TestAssignAnonymousTripUpdates(t *testing.T) {
 }
 
 func TestAssignFetchedThenEarlierVehicles(t *testing.T) {
-	refs := []tripUpdateRef{{TripID: "T_ON_B1"}, {TripID: "T_ON_B2"}}
+	refs := []tripUpdateRef{{Trip: gtfs.TripID{ID: "T_ON_B1"}}, {Trip: gtfs.TripID{ID: "T_ON_B2"}}}
 	fetched := []gtfs.Vehicle{vehicleWithTrip("V_FRESH", "T_VP_ON_B1", "")}
 	earlier := []gtfs.Vehicle{
 		vehicleWithTrip("V_A_KEPT", "T_OLD_ON_B1", ""),

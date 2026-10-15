@@ -33,8 +33,8 @@ func TestTripUpdateRefsInFeedOrder(t *testing.T) {
 	refs := tripUpdateRefsInFeedOrder(trips)
 
 	assert.Equal(t, []tripUpdateRef{
-		{TripID: "T_B", RouteID: "R_T_B", VehicleID: "V1", Timestamp: &stamp},
-		{TripID: "T_A", RouteID: "R_T_A"},
+		{Trip: gtfs.TripID{ID: "T_B", RouteID: "R_T_B"}, VehicleID: "V1", Timestamp: &stamp},
+		{Trip: gtfs.TripID{ID: "T_A", RouteID: "R_T_A"}},
 	}, refs)
 }
 
