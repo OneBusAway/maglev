@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"strings"
 	"testing"
 
@@ -307,13 +308,13 @@ func TestBuildOnDemandServices_MeasuresAgainstTheGivenSnapshot(t *testing.T) {
 
 func TestBuildOnDemandServices_UnindexedAreaHasNoDistance(t *testing.T) {
 	api := createTestApiWithFeed(t, models.GetFixturePath(t, "charlevoix-flex.zip"))
-	ctx := context.Background()
-	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(ctx, "UPDATE locations SET geometry = 'not geojson' WHERE id = 'gaylord'")
-	require.NoError(t, err)
-	_, err = api.GtfsManager.ReloadStatic(ctx)
-	require.NoError(t, err)
+	// An index built while gaylord's stored geometry was unparseable has no
+	// area for it.
+	unindexed := *api.GtfsManager.FlexIndex()
+	unindexed.Areas = maps.Clone(unindexed.Areas)
+	delete(unindexed.Areas, "gaylord")
 
-	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, AreaDistances: newAreaDistances(api.GtfsManager.FlexIndex(), geoPoint{Lat: 45.3, Lon: -85.2})})
+	_, refs := buildAllOnDemandServices(t, api, onDemandBuildOptions{GeometryDetail: GeometryDetailNone, AreaDistances: newAreaDistances(&unindexed, geoPoint{Lat: 45.3, Lon: -85.2})})
 
 	for _, area := range refs.ServiceAreas {
 		if area.ID == "CC_gaylord" {

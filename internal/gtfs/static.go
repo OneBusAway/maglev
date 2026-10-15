@@ -190,21 +190,28 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 }
 
 // nextFlexIndex never fails the reload: the database has already been
-// swapped, so the rest of the in-memory state must still follow it. When the
-// build fails on unchanged data the current index still matches the database
-// and is kept; after a data change it would not, so on-demand lookups go dark
-// until the next successful reload.
+// swapped, so the rest of the in-memory state must still follow it. Unchanged
+// data keeps the index already built from it, so a periodic refresh does not
+// re-read the on-demand tables and re-parse every zone. A failed build
+// publishes no index (FlexIndex serves an empty one), so on-demand lookups go
+// dark and the next reload tries again even when the data is unchanged.
 func (manager *Manager) nextFlexIndex(ctx context.Context, dataChanged bool, logger *slog.Logger) *FlexIndex {
+	if current := manager.builtFlexIndex(); current != nil && !dataChanged {
+		return current
+	}
 	flexIndex, err := buildFlexIndex(ctx, manager.GtfsDB, logger)
-	if err == nil {
-		return flexIndex
+	if err != nil {
+		logging.LogError(logger, "Error building on-demand index; serving none", err)
+		return nil
 	}
-	if !dataChanged {
-		logging.LogError(logger, "Error building on-demand index; keeping the current one", err)
-		return manager.FlexIndex()
-	}
-	logging.LogError(logger, "Error building on-demand index; serving none", err)
-	return NewEmptyFlexIndex()
+	return flexIndex
+}
+
+// builtFlexIndex returns the published index, or nil when none has been built.
+func (manager *Manager) builtFlexIndex() *FlexIndex {
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+	return manager.flexIndex
 }
 
 // ReloadStatic is the single code path for importing GTFS static data into
