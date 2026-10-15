@@ -54,7 +54,6 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	api.attachOnDemandPointersToReferences(&references)
 	response := models.NewEntryResponse(blockEntry, references, api.Clock)
 	api.sendResponse(w, r, response)
 }

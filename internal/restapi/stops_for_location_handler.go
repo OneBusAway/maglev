@@ -241,8 +241,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		references.Routes = routes
 	}
 
-	api.attachOnDemandPointers(nil, results)
-	api.attachOnDemandPointersToReferences(references)
 	response := models.NewListResponseWithRange(results, *references, outOfRange, api.Clock, isLimitExceeded)
 	api.sendResponse(w, r, response)
 }
