@@ -39,11 +39,6 @@ func apiWithClosedDB(t *testing.T) *RestAPI {
 // CONTRIBUTING.md asks handlers to distinguish "not found" from "the query
 // itself failed", so a database failure must not be reported to the client as a
 // missing entity.
-//
-// tripHandler is not covered here: its GetTrip lookup runs first and still maps
-// every error to 404, so a closed database never reaches the agency lookup this
-// change fixes. That blanket 404 is shared with trip_details_handler.go and is
-// left for a separate change.
 func TestDatabaseFailureIsNotReportedAsNotFound(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -51,6 +46,12 @@ func TestDatabaseFailureIsNotReportedAsNotFound(t *testing.T) {
 	}{
 		{name: "shapes", endpoint: shapeURL("agency_shape")},
 		{name: "schedule-for-route", endpoint: scheduleForRouteURL("agency_route", "")},
+		{name: "trip", endpoint: tripURL("agency_trip")},
+		{name: "trip-details", endpoint: "/api/where/trip-details/agency_trip.json?key=TEST"},
+		{name: "stop", endpoint: stopURL("agency_stop")},
+		{name: "schedule-for-stop", endpoint: "/api/where/schedule-for-stop/agency_stop.json?key=TEST"},
+		{name: "stops-for-route", endpoint: "/api/where/stops-for-route/agency_route.json?key=TEST"},
+		{name: "block", endpoint: blockURL("agency_block")},
 	}
 
 	for _, tt := range tests {
