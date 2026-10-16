@@ -3,8 +3,6 @@ package restapi
 import (
 	"cmp"
 	"context"
-	"database/sql"
-	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -52,11 +50,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 
 	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, nulls.String(blockID))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-			return
-		}
-		api.serverErrorResponse(w, r, err)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
