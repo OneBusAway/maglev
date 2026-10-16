@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/OneBusAway/go-gtfs v1.2.0
-	github.com/getkin/kin-openapi v0.149.0
+	github.com/getkin/kin-openapi v0.150.0
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.20.1
 	github.com/mattn/go-sqlite3 v1.14.52
