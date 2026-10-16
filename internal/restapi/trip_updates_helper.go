@@ -600,18 +600,19 @@ func sequenceIdentifiesVisit(stu gtfs.StopTimeUpdate, staticStops map[int64]stri
 	return ok && staticStop == *stu.StopID
 }
 
-// staticStopsForTrip loads a trip's static schedule as a stop_sequence to
-// stop_id map. It returns an empty map when the lookup fails.
-func (api *RestAPI) staticStopsForTrip(ctx context.Context, tripID string) map[int64]string {
-	stops := map[int64]string{}
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
-	if err != nil {
-		return stops
+// tripSchedule retains the caller's stop times and indexes stop IDs once per trip.
+// Its zero value represents an unavailable static schedule.
+type tripSchedule struct {
+	stopTimes []gtfsdb.StopTime
+	stopIDs   map[int64]string
+}
+
+func newTripSchedule(stopTimes []gtfsdb.StopTime) tripSchedule {
+	stopIDs := make(map[int64]string, len(stopTimes))
+	for _, stopTime := range stopTimes {
+		stopIDs[stopTime.StopSequence] = stopTime.StopID
 	}
-	for _, st := range stopTimes {
-		stops[st.StopSequence] = st.StopID
-	}
-	return stops
+	return tripSchedule{stopTimes: stopTimes, stopIDs: stopIDs}
 }
 
 // stopTimeUpdateSequence resolves an update to a visit in the static trip.
@@ -637,37 +638,46 @@ func stopTimeUpdateSequence(update gtfs.StopTimeUpdate, staticStops map[int64]st
 }
 
 // predictionUpdatesForStop selects the target update and closest prior update.
-// SKIPPED updates cannot replace an earlier propagation source. NO_DATA and
-// SCHEDULED updates remain boundaries even when they contain no timing events.
-func (api *RestAPI) predictionUpdatesForStop(ctx context.Context, tripID string, updates []gtfs.StopTimeUpdate, stopCode string, targetSequence int64) (target, prior *gtfs.StopTimeUpdate, priorSequence int64) {
+// SKIPPED updates cannot replace an earlier propagation source. SCHEDULED
+// time-only updates without a source row are ignored; empty SCHEDULED updates
+// and NO_DATA remain propagation boundaries.
+func predictionUpdatesForStop(updates []gtfs.StopTimeUpdate, stopCode string, targetSequence int64, schedule tripSchedule) (target, prior *gtfs.StopTimeUpdate, priorSequence int64) {
 	if target = exactStopTimeUpdate(updates, stopCode, targetSequence); target != nil {
 		return target, nil, -1
 	}
 	priorSequence = -1
-	var staticStops map[int64]string
+	staticStops := schedule.stopIDs
 	for i := range updates {
 		update := &updates[i]
 		matchesStop := update.StopID != nil && *update.StopID == stopCode
-		if update.StopID != nil && staticStops == nil {
-			staticStops = api.staticStopsForTrip(ctx, tripID)
-		}
 		sequence, resolved := stopTimeUpdateSequence(*update, staticStops)
-		matchesTarget := resolved && sequence == targetSequence
-		if target == nil && matchesStop && (matchesTarget || (!resolved && len(staticStops) == 0)) {
+		matchesTargetVisit := matchesStop && resolved && sequence == targetSequence
+		matchesIDWithoutSchedule := matchesStop && !resolved && len(staticStops) == 0
+		if target == nil && (matchesTargetVisit || matchesIDWithoutSchedule) {
 			// Preserve direct ID-only predictions when no static schedule is
 			// available. They need no source schedule to derive their offset.
 			target = update
 		}
-		if resolved && sequence < targetSequence && sequence > priorSequence &&
-			update.ScheduleRelationship != gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED {
-			priorSequence, prior = sequence, update
+		if !resolved || sequence >= targetSequence || sequence <= priorSequence ||
+			update.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED {
+			continue
 		}
+		event, _ := propagationEvent(update)
+		_, hasScheduledStop := staticStops[sequence]
+		timeNeedsSchedule := event != nil && event.Time != nil && event.Delay == nil
+		// A timestamp without its source schedule cannot replace a usable delay.
+		// Keep NO_DATA and empty SCHEDULED updates as propagation boundaries.
+		if update.ScheduleRelationship != gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA &&
+			timeNeedsSchedule && !hasScheduledStop {
+			continue
+		}
+		priorSequence, prior = sequence, update
 	}
 	return target, prior, priorSequence
 }
 
 // exactStopTimeUpdate prefers a sequenced target over ID-only fallbacks and
-// avoids schedule queries when the feed already identifies the requested visit.
+// avoids fallback matching when the feed already identifies the requested visit.
 func exactStopTimeUpdate(updates []gtfs.StopTimeUpdate, stopID string, sequence int64) *gtfs.StopTimeUpdate {
 	for i := range updates {
 		update := &updates[i]
@@ -694,22 +704,25 @@ func stopTimeEventOffset(event *gtfs.StopTimeEvent, scheduled time.Time) *time.D
 	return event.Delay
 }
 
+// propagationEvent selects departure timing when usable, otherwise arrival.
+func propagationEvent(update *gtfs.StopTimeUpdate) (event *gtfs.StopTimeEvent, useDeparture bool) {
+	event = update.Departure
+	if event != nil && (event.Time != nil || event.Delay != nil) {
+		return event, true
+	}
+	return update.Arrival, false
+}
+
 // propagatedDelayFromUpdate resolves the onward delay from a prior stop update.
 // Departure takes precedence over arrival; time takes precedence over delay.
-func (api *RestAPI) propagatedDelayFromUpdate(
-	ctx context.Context,
-	tripID string,
+func propagatedDelayFromUpdate(
+	schedule tripSchedule,
 	update *gtfs.StopTimeUpdate,
 	priorStopSequence int64,
 	targetStopSequence int64,
 	scheduledArrivalTime time.Time,
 ) (time.Duration, bool) {
-	event := update.Departure
-	useDeparture := true
-	if event == nil || (event.Time == nil && event.Delay == nil) {
-		event = update.Arrival
-		useDeparture = false
-	}
+	event, useDeparture := propagationEvent(update)
 	if event == nil {
 		return 0, false
 	}
@@ -722,11 +735,7 @@ func (api *RestAPI) propagatedDelayFromUpdate(
 	if event.Time == nil {
 		return explicitDelay()
 	}
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
-	if err != nil {
-		warnIfRealDBError(err, "propagatedDelayFromUpdate: failed to load static schedule")
-		return explicitDelay()
-	}
+	stopTimes := schedule.stopTimes
 	var priorStop, targetStop *gtfsdb.StopTime
 	for i := range stopTimes {
 		stopTime := &stopTimes[i]
