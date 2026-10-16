@@ -114,22 +114,16 @@ func TestLongerTimeoutContextHandling(t *testing.T) {
 	})
 }
 
-func TestContextCancellationInGetStopsForLocation(t *testing.T) {
-	// Test the GTFS manager's GetStopsForLocation method with context cancellation
+func TestContextCancellationInGetStopsInBounds(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	// This test verifies that our current implementation works normally
-	// since it uses context.Background() internally
-	stops := api.GtfsManager.GetStopsInBounds(context.Background(), &gtfs.LocationParams{Lat: 38.9, Lon: -77.0, Radius: 1000}, 10)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	stops, err := api.GtfsManager.GetStopsInBounds(ctx, &gtfs.LocationParams{Lat: 38.9, Lon: -77.0, Radius: 1000}, 10)
 
-	// Current implementation should return a slice (possibly empty)
-	// The function should not panic and should return a valid slice
-	if stops == nil {
-		t.Log("GetStopsForLocation returned nil - this may indicate an issue")
-	}
-	// After our fix, this should handle cancellation gracefully
-	assert.True(t, stops != nil || len(stops) == 0, "Function should return valid slice or nil")
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, stops)
 }
 
 func TestContextCancellationDuringDatabaseQueries(t *testing.T) {

@@ -1,16 +1,21 @@
+
 package restapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -140,70 +145,168 @@ func BenchmarkTripDetails(b *testing.B) {
 func BenchmarkGetPredictedTimesRABA(b *testing.B) {
 	api, cleanup := createTestApiWithRealTimeData(b, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
+
 	agencies := mustGetAgencies(b, api)
 	require.Len(b, agencies, 1, "this benchmark uses the single-agency RABA fixture")
+
 	loc, err := time.LoadLocation(agencies[0].Timezone)
 	require.NoError(b, err)
+
 	serviceStart := servicedate.FromInstant(arrivalsTestClock, loc).Start(loc)
+
 	type input struct {
 		tripID, stopID     string
 		sequence           int64
 		arrival, departure time.Time
 		schedule           tripSchedule
 	}
+
 	var inputs []input
 	trips := api.GtfsManager.GetRealTimeTrips()
-	sort.Slice(trips, func(i, j int) bool { return trips[i].ID.ID < trips[j].ID.ID })
+	sort.Slice(trips, func(i, j int) bool {
+		return trips[i].ID.ID < trips[j].ID.ID
+	})
+
 	for _, trip := range trips {
 		rows, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(b.Context(), trip.ID.ID)
 		require.NoError(b, err)
+
 		schedule := newTripSchedule(rows)
 		for _, row := range rows {
 			inputs = append(inputs, input{
-				tripID: trip.ID.ID, stopID: row.StopID, sequence: row.StopSequence,
-				arrival:   serviceStart.Add(time.Duration(row.ArrivalTime)),
-				departure: serviceStart.Add(time.Duration(row.DepartureTime)),
-				schedule:  schedule,
+				tripID:   trip.ID.ID,
+				stopID:   row.StopID,
+				sequence: row.StopSequence,
+				arrival:  serviceStart.Add(time.Duration(row.ArrivalTime)),
+				departure: serviceStart.Add(
+					time.Duration(row.DepartureTime),
+				),
+				schedule: schedule,
 			})
 		}
 	}
+
 	require.Len(b, trips, 9)
 	require.Len(b, inputs, 204)
+
 	ctx := b.Context()
+
 	// Frozen fixture expectations, independent of the prediction helpers: one
 	// trip has an arrival at seq 1; its later visits inherit that offset. All
 	// other realtime trips contain only SKIPPED updates and cannot predict.
 	const timingTrip = "28c61524-6da8-4506-9a92-22f2f6e91872"
+
 	expectedTimes := map[int64][2]int64{
 		1: {1749418441, 1749418441},
 		2: {1749422041, 1749422641},
 		3: {1749422641, 1749422641},
 	}
+
 	predictions := 0
 	for _, in := range inputs {
-		arrival, departure, predicted := api.getPredictedTimes(ctx, in.tripID, in.stopID, in.sequence, in.arrival, in.departure, in.schedule)
+		arrival, departure, predicted := api.getPredictedTimes(
+			ctx,
+			in.tripID,
+			in.stopID,
+			in.sequence,
+			in.arrival,
+			in.departure,
+			in.schedule,
+		)
+
 		expected, hasTiming := expectedTimes[in.sequence]
 		wantPrediction := in.tripID == timingTrip && hasTiming
+
 		require.Equal(b, wantPrediction, predicted, "trip=%s seq=%d", in.tripID, in.sequence)
+
 		if !wantPrediction {
 			require.True(b, arrival.IsZero() && departure.IsZero())
 			continue
 		}
+
 		if in.sequence == 1 {
 			// Predictions based on absolute Time can hide an incorrect anchor
 			// through offset cancellation, so check the scheduled input too.
-			require.Equal(b, time.Date(2025, time.June, 13, 14, 25, 0, 0, loc), in.arrival)
+			require.Equal(
+				b,
+				time.Date(2025, time.June, 13, 14, 25, 0, 0, loc),
+				in.arrival,
+			)
 		}
+
 		require.True(b, arrival.Equal(time.Unix(expected[0], 0)))
 		require.True(b, departure.Equal(time.Unix(expected[1], 0)))
 		predictions++
 	}
+
 	require.Equal(b, 3, predictions)
+
 	b.ReportAllocs()
 	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
 		in := inputs[i%len(inputs)]
-		api.getPredictedTimes(ctx, in.tripID, in.stopID, in.sequence, in.arrival, in.departure, in.schedule)
+		api.getPredictedTimes(
+			ctx,
+			in.tripID,
+			in.stopID,
+			in.sequence,
+			in.arrival,
+			in.departure,
+			in.schedule,
+		)
 	}
+
 	b.StopTimer()
+}
+
+// BenchmarkVehiclesForAgencyVehicleCount measures vehicle endpoint performance
+// with different numbers of realtime vehicles.
+func BenchmarkVehiclesForAgencyVehicleCount(b *testing.B) {
+	for _, vehicleCount := range []int{1, 10, 50} {
+		b.Run(strconv.Itoa(vehicleCount)+"Vehicles", func(b *testing.B) {
+			now := time.Date(2024, 11, 4, 12, 0, 0, 0, time.UTC)
+			api := createTestApiWithClock(b, clock.NewMockClock(now))
+			defer api.Shutdown()
+			b.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			trips, err := api.GtfsManager.GetTrips(context.Background(), int64(vehicleCount))
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			for i, trip := range trips {
+				api.GtfsManager.MockAddVehicleWithOptions(
+					"bench_v_"+strconv.Itoa(i),
+					trip.ID,
+					trip.RouteID,
+					gtfs.MockVehicleOptions{Timestamp: &now},
+				)
+			}
+
+			mux := http.NewServeMux()
+			api.SetRoutes(mux)
+
+			req := httptest.NewRequest(
+				http.MethodGet,
+				"/api/where/vehicles-for-agency/"+testdata.Raba.ID+".json?key=TEST",
+				nil,
+			)
+
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				b.Fatalf("expected 200, got %d", w.Code)
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
+			}
+		})
+	}
 }
