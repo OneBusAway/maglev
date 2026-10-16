@@ -179,6 +179,48 @@ func releaseTakenTrip(retained gtfs.Vehicle, liveTripIDs map[string]struct{}) gt
 	return retained
 }
 
+// releaseTripsTakenAcrossFeeds drops the trip of each retained vehicle whose
+// trip a live vehicle in any feed now serves. Each feed already releases trips
+// taken within its own update, but a live vehicle in another feed can also take
+// a trip; otherwise feed order would decide which vehicle the trip resolves to.
+// The released copy is stored in the retained vehicle's feed, so the old vehicle
+// doesn't get the trip back if the new one drops out too.
+func (manager *Manager) releaseTripsTakenAcrossFeeds(feedIDs []string) {
+	liveTripIDs := tripIDsServedBy(manager.liveVehicles(feedIDs))
+	for _, feedID := range feedIDs {
+		vehicles := manager.feedVehicles[feedID]
+		for i, vehicle := range vehicles {
+			if manager.isRetainedVehicle(feedID, vehicle) {
+				vehicles[i] = releaseTakenTrip(vehicle, liveTripIDs)
+			}
+		}
+	}
+}
+
+// liveVehicles returns the vehicles in the feeds' latest updates, leaving out
+// retained ones.
+func (manager *Manager) liveVehicles(feedIDs []string) []gtfs.Vehicle {
+	var live []gtfs.Vehicle
+	for _, feedID := range feedIDs {
+		for _, vehicle := range manager.feedVehicles[feedID] {
+			if !manager.isRetainedVehicle(feedID, vehicle) {
+				live = append(live, vehicle)
+			}
+		}
+	}
+	return live
+}
+
+// isRetainedVehicle reports whether the vehicle was kept after dropping out of
+// the feed's latest update.
+func (manager *Manager) isRetainedVehicle(feedID string, vehicle gtfs.Vehicle) bool {
+	if vehicle.ID == nil {
+		return false
+	}
+	_, retained := manager.feedRetainedVehicles[feedID][newVehicleKey(vehicle.ID)]
+	return retained
+}
+
 // vehicleKey identifies a vehicle across feed updates. Exactly one field is
 // set, recording which descriptor field the identity came from, so a real ID
 // never equals a label or license plate with the same text.
@@ -546,6 +588,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			// Retain recently-disappeared vehicles whose last-seen time hasn't expired
 			prevVehicles = manager.feedVehicles[feedID]
 			liveTripIDs := tripIDsServedBy(validVehicles)
+			retainedKeys := make(map[vehicleKey]struct{})
 			for _, pv := range prevVehicles {
 				if pv.ID == nil {
 					continue
@@ -554,11 +597,13 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				if _, current := currentVehicleIDs[key]; !current {
 					if lastSeen, ok := lastSeenMap[key]; ok && now.Sub(lastSeen) <= staleVehicleTimeout {
 						validVehicles = append(validVehicles, releaseTakenTrip(pv, liveTripIDs))
+						retainedKeys[key] = struct{}{}
 					}
 				}
 			}
 
 			manager.feedVehicles[feedID] = validVehicles
+			manager.feedRetainedVehicles[feedID] = retainedKeys
 		} else {
 			// Even when skipping the vehicle update due to staleness, still clean up
 			// expired vehicles based on the last-seen timeout windows
@@ -876,6 +921,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	}
 	slices.Sort(vehicleFeedIDs)
 
+	manager.releaseTripsTakenAcrossFeeds(vehicleFeedIDs)
 	allVehicles := make([]gtfs.Vehicle, 0, totalVehicles)
 	for _, id := range vehicleFeedIDs {
 		allVehicles = append(allVehicles, manager.feedVehicles[id]...)
