@@ -3,8 +3,6 @@ package restapi
 import (
 	"cmp"
 	"context"
-	"database/sql"
-	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -41,11 +39,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-			return
-		}
-		api.serverErrorResponse(w, r, err)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
