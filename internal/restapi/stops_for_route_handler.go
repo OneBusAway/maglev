@@ -71,7 +71,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	_, err = api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
