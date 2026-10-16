@@ -850,11 +850,14 @@ func TestVehicleMerge_RetainedVehicleReleasesTripTakenInAnotherFeed(t *testing.T
 		retainedFeed  string
 		liveFeed      string
 		liveTripID    string
+		takerDropsOut bool
 		wantTripOwner string
 	}{
-		{"retained feed sorts first", "feed-a", "feed-b", "trip-x", "V2"},
-		{"retained feed sorts last", "feed-b", "feed-a", "trip-x", "V2"},
-		{"live vehicle serves another trip", "feed-a", "feed-b", "trip-y", "V1"},
+		{"retained feed sorts first", "feed-a", "feed-b", "trip-x", false, "V2"},
+		{"retained feed sorts last", "feed-b", "feed-a", "trip-x", false, "V2"},
+		{"live vehicle serves another trip", "feed-a", "feed-b", "trip-y", false, "V1"},
+		{"taker drops out, retained feed sorts first", "feed-a", "feed-b", "trip-x", true, "V2"},
+		{"taker drops out, retained feed sorts last", "feed-b", "feed-a", "trip-x", true, "V2"},
 	}
 
 	for _, tc := range tests {
@@ -870,6 +873,10 @@ func TestVehicleMerge_RetainedVehicleReleasesTripTakenInAnotherFeed(t *testing.T
 			updateFeed(tc.retainedFeed, now.Add(-time.Minute), positionOnTrip("V1", "trip-x", 47.1, nil))
 			updateFeed(tc.retainedFeed, now.Add(-30*time.Second))
 			updateFeed(tc.liveFeed, now, positionOnTrip("V2", tc.liveTripID, 47.4, nil))
+			if tc.takerDropsOut {
+				// Both vehicles are now retained; V1 must not get the trip back.
+				updateFeed(tc.liveFeed, now.Add(30*time.Second))
+			}
 
 			vehicle := manager.GetVehicleForTrip(context.Background(), "trip-x")
 			require.NotNil(t, vehicle)
