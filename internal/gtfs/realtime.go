@@ -187,31 +187,36 @@ func releaseTakenTrip(retained gtfs.Vehicle, liveTripIDs map[string]struct{}) gt
 	return retained
 }
 
-// mergeFeedVehicles concatenates the feeds' vehicles in feed-ID order. Each
-// feed releases its own retained vehicles' trips, but a live vehicle in another
-// feed can also take a trip, so a retained vehicle drops its trip here when a
-// live vehicle in any feed serves it. Otherwise feed order would decide which
-// vehicle the trip resolves to.
-func (manager *Manager) mergeFeedVehicles(feedIDs []string, totalVehicles int) []gtfs.Vehicle {
-	vehicles := make([]gtfs.Vehicle, 0, totalVehicles)
-	liveVehicles := make([]gtfs.Vehicle, 0, totalVehicles)
-	var retainedIndexes []int
+// releaseTripsTakenAcrossFeeds drops the trip of each retained vehicle whose
+// trip a live vehicle in any feed now serves. Each feed already releases trips
+// taken within its own update, but a live vehicle in another feed can also take
+// a trip; otherwise feed order would decide which vehicle the trip resolves to.
+// The released copy is stored in the retained vehicle's feed, so the old vehicle
+// doesn't get the trip back if the new one drops out too.
+func (manager *Manager) releaseTripsTakenAcrossFeeds(feedIDs []string) {
+	liveTripIDs := tripIDsServedBy(manager.liveVehicles(feedIDs))
 	for _, feedID := range feedIDs {
-		for _, vehicle := range manager.feedVehicles[feedID] {
+		vehicles := manager.feedVehicles[feedID]
+		for i, vehicle := range vehicles {
 			if manager.isRetainedVehicle(feedID, vehicle) {
-				retainedIndexes = append(retainedIndexes, len(vehicles))
-			} else {
-				liveVehicles = append(liveVehicles, vehicle)
+				vehicles[i] = releaseTakenTrip(vehicle, liveTripIDs)
 			}
-			vehicles = append(vehicles, vehicle)
 		}
 	}
+}
 
-	liveTripIDs := tripIDsServedBy(liveVehicles)
-	for _, index := range retainedIndexes {
-		vehicles[index] = releaseTakenTrip(vehicles[index], liveTripIDs)
+// liveVehicles returns the vehicles in the feeds' latest updates, leaving out
+// retained ones.
+func (manager *Manager) liveVehicles(feedIDs []string) []gtfs.Vehicle {
+	var live []gtfs.Vehicle
+	for _, feedID := range feedIDs {
+		for _, vehicle := range manager.feedVehicles[feedID] {
+			if !manager.isRetainedVehicle(feedID, vehicle) {
+				live = append(live, vehicle)
+			}
+		}
 	}
-	return vehicles
+	return live
 }
 
 // isRetainedVehicle reports whether the vehicle was kept after dropping out of
@@ -1076,7 +1081,11 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	}
 	slices.Sort(vehicleFeedIDs)
 
-	allVehicles := manager.mergeFeedVehicles(vehicleFeedIDs, totalVehicles)
+	manager.releaseTripsTakenAcrossFeeds(vehicleFeedIDs)
+	allVehicles := make([]gtfs.Vehicle, 0, totalVehicles)
+	for _, id := range vehicleFeedIDs {
+		allVehicles = append(allVehicles, manager.feedVehicles[id]...)
+	}
 
 	alertFeedIDs := make([]string, 0, len(manager.feedAlerts))
 	for id := range manager.feedAlerts {
