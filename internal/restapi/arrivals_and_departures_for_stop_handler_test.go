@@ -1059,7 +1059,7 @@ func TestGetPredictedTimes_SkipsSkippedPriorStop(t *testing.T) {
 
 	serviceDay := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	arrival, departure, predicted := api.getPredictedTimes(t.Context(), tripID, stopCode, 3,
-		serviceDay.Add(8*time.Hour), serviceDay.Add(8*time.Hour+5*time.Minute))
+		serviceDay.Add(8*time.Hour), serviceDay.Add(8*time.Hour+5*time.Minute), loadPredictionSchedule(t, api, tripID))
 	assert.True(t, predicted, "a skipped stop must not hide the earlier valid delay")
 	assert.Equal(t, serviceDay.Add(8*time.Hour+5*time.Minute), arrival)
 	assert.Equal(t, serviceDay.Add(8*time.Hour+10*time.Minute), departure)
@@ -1106,7 +1106,7 @@ func TestGetPredictedTimes_NoDataStopsPropagation(t *testing.T) {
 			})
 
 			arrival, departure, predicted := api.getPredictedTimes(t.Context(), tripID, stopCode, 3,
-				serviceDay.Add(8*time.Hour), serviceDay.Add(8*time.Hour+5*time.Minute))
+				serviceDay.Add(8*time.Hour), serviceDay.Add(8*time.Hour+5*time.Minute), loadPredictionSchedule(t, api, tripID))
 			assert.False(t, predicted, "NO_DATA must stop propagation of earlier delays")
 			assert.True(t, arrival.IsZero())
 			assert.True(t, departure.IsZero())

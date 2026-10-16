@@ -73,7 +73,7 @@ func TestArrivalDelayPropagationFromAbsoluteTime(t *testing.T) {
 
 		scheduledOffset := 8*time.Hour + time.Duration(i)*10*time.Minute
 		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
-			TripID: trip, StopID: stop, StopSequence: int64(i + 1),
+			TripID: trip, StopID: stop, StopSequence: int64(1 + 2*i),
 			ArrivalTime:   int64(scheduledOffset),
 			DepartureTime: int64(scheduledOffset),
 		})
@@ -87,7 +87,8 @@ func TestArrivalDelayPropagationFromAbsoluteTime(t *testing.T) {
 	earlyDeparture := day.Add(8*time.Hour - 2*time.Minute)
 	conflictingDelay := time.Minute
 	sequence := uint32(1)
-	targetSequence := uint32(2)
+	targetSequence := uint32(3)
+	missingSequence := uint32(2)
 	skippedTarget := gtfs.StopTimeUpdate{StopSequence: &targetSequence, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED}
 	skippedTargetWithEvents := skippedTarget
 	skippedTargetWithEvents.Departure = &gtfs.StopTimeEvent{Time: &departureAtFirst}
@@ -99,6 +100,7 @@ func TestArrivalDelayPropagationFromAbsoluteTime(t *testing.T) {
 		wantDelay    time.Duration
 		idOnly       bool
 		target       *gtfs.StopTimeUpdate
+		intermediate *gtfs.StopTimeUpdate
 		tripDelay    *time.Duration
 		noPrediction bool
 	}{
@@ -117,6 +119,45 @@ func TestArrivalDelayPropagationFromAbsoluteTime(t *testing.T) {
 		{name: "early-departure", event: &gtfs.StopTimeEvent{Time: &earlyDeparture}, wantDelay: -2 * time.Minute},
 		{name: "id-only-time", event: &gtfs.StopTimeEvent{Time: &departureAtFirst}, idOnly: true, wantDelay: delay},
 		{name: "id-only-delay", event: &gtfs.StopTimeEvent{Delay: &delay}, idOnly: true, wantDelay: delay},
+		// A SCHEDULED timestamp without its source row cannot supply an offset;
+		// ignore it so the earlier valid delay remains available.
+		{
+			name:  "missing-sequence-time-only-keeps-earlier-delay",
+			event: &gtfs.StopTimeEvent{Delay: &delay}, wantDelay: delay,
+			intermediate: &gtfs.StopTimeUpdate{StopSequence: &missingSequence, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SCHEDULED, Departure: &gtfs.StopTimeEvent{Time: &departureAtFirst}},
+		},
+		{
+			name:  "missing-sequence-explicit-delay",
+			event: &gtfs.StopTimeEvent{Delay: &delay}, wantDelay: conflictingDelay,
+			intermediate: &gtfs.StopTimeUpdate{StopSequence: &missingSequence, Departure: &gtfs.StopTimeEvent{Delay: &conflictingDelay}},
+		},
+		{
+			name:  "missing-sequence-time-with-delay-fallback",
+			event: &gtfs.StopTimeEvent{Delay: &delay}, wantDelay: conflictingDelay,
+			intermediate: &gtfs.StopTimeUpdate{StopSequence: &missingSequence, Departure: &gtfs.StopTimeEvent{Time: &departureAtFirst, Delay: &conflictingDelay}},
+		},
+		{
+			name:  "missing-sequence-no-data-boundary",
+			event: &gtfs.StopTimeEvent{Delay: &delay}, tripDelay: &conflictingDelay, noPrediction: true,
+			intermediate: &gtfs.StopTimeUpdate{StopSequence: &missingSequence, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA},
+		},
+		// NO_DATA stays a boundary even with an uninterpretable timestamp.
+		{
+			name:  "missing-sequence-no-data-departure-time-boundary",
+			event: &gtfs.StopTimeEvent{Delay: &delay}, tripDelay: &conflictingDelay, noPrediction: true,
+			intermediate: &gtfs.StopTimeUpdate{StopSequence: &missingSequence, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA, Departure: &gtfs.StopTimeEvent{Time: &departureAtFirst}},
+		},
+		{
+			name:  "missing-sequence-no-data-arrival-time-boundary",
+			event: &gtfs.StopTimeEvent{Delay: &delay}, tripDelay: &conflictingDelay, noPrediction: true,
+			intermediate: &gtfs.StopTimeUpdate{StopSequence: &missingSequence, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA, Arrival: &gtfs.StopTimeEvent{Time: &departureAtFirst}},
+		},
+		// An empty SCHEDULED update ends propagation rather than reusing a delay.
+		{
+			name:  "missing-sequence-empty-scheduled-boundary",
+			event: &gtfs.StopTimeEvent{Delay: &delay}, tripDelay: &conflictingDelay, noPrediction: true,
+			intermediate: &gtfs.StopTimeUpdate{StopSequence: &missingSequence, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SCHEDULED},
+		},
 		{name: "skipped-target-after-time", event: &gtfs.StopTimeEvent{Time: &departureAtFirst}, target: &skippedTarget, noPrediction: true},
 		{name: "skipped-target-after-delay", event: &gtfs.StopTimeEvent{Delay: &delay}, target: &skippedTarget, noPrediction: true},
 		{name: "skipped-target-with-events-and-trip-delay", event: &gtfs.StopTimeEvent{Time: &departureAtFirst}, target: &skippedTargetWithEvents, tripDelay: &delay, noPrediction: true},
@@ -133,6 +174,9 @@ func TestArrivalDelayPropagationFromAbsoluteTime(t *testing.T) {
 				update.StopSequence = nil
 			}
 			updates := []gtfs.StopTimeUpdate{update}
+			if tt.intermediate != nil {
+				updates = append(updates, *tt.intermediate)
+			}
 			if tt.target != nil {
 				updates = append(updates, *tt.target)
 			}
@@ -263,6 +307,7 @@ func TestGetPredictedTimes_PropagationRules(t *testing.T) {
 		{"uncertainty-only-target", []gtfs.StopTimeUpdate{{StopSequence: &seq3, Arrival: &gtfs.StopTimeEvent{Uncertainty: &uncertainty}}}, nil, nil},
 		{"empty-prior-does-not-fall-back-to-trip-delay", []gtfs.StopTimeUpdate{prior, {StopSequence: &seq2}}, &delay, nil},
 		{"trip-delay-with-skipped-prior", []gtfs.StopTimeUpdate{skipped}, &delay, &delay},
+		{"skipped-only-without-trip-delay", []gtfs.StopTimeUpdate{skipped}, nil, nil},
 		{"trip-delay-only", nil, &delay, &delay},
 		{"target-event-overrides-prior-and-trip-delay", []gtfs.StopTimeUpdate{prior, {StopSequence: &seq3, Departure: &gtfs.StopTimeEvent{Delay: &zero}}}, &olderDelay, &zero},
 		{"sequenced-target-overrides-id-fallback", []gtfs.StopTimeUpdate{{StopID: &target, Arrival: &gtfs.StopTimeEvent{Delay: &olderDelay}}, {StopSequence: &seq3, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}}, nil, &delay},
@@ -273,7 +318,7 @@ func TestGetPredictedTimes_PropagationRules(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{ID: gtfs.TripID{ID: trip}, Delay: tt.tripDelay, StopTimeUpdates: tt.updates}})
 			scheduledArrival, scheduledDeparture := day.Add(8*time.Hour), day.Add(8*time.Hour+5*time.Minute)
-			arrival, departure, predicted := api.getPredictedTimes(t.Context(), trip, target, 3, scheduledArrival, scheduledDeparture)
+			arrival, departure, predicted := api.getPredictedTimes(t.Context(), trip, target, 3, scheduledArrival, scheduledDeparture, loadPredictionSchedule(t, api, trip))
 			if tt.wantDelay == nil {
 				assert.False(t, predicted)
 				assert.True(t, arrival.IsZero())
@@ -289,7 +334,7 @@ func TestGetPredictedTimes_PropagationRules(t *testing.T) {
 	// to that visit when there is no sequence to distinguish them.
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{ID: gtfs.TripID{ID: trip}, StopTimeUpdates: []gtfs.StopTimeUpdate{{StopID: &middle, Departure: &gtfs.StopTimeEvent{Delay: &delay}}}}})
 	for _, sequence := range []int64{2, 4} {
-		arrival, departure, predicted := api.getPredictedTimes(t.Context(), trip, middle, sequence, day, day)
+		arrival, departure, predicted := api.getPredictedTimes(t.Context(), trip, middle, sequence, day, day, loadPredictionSchedule(t, api, trip))
 		assert.False(t, predicted)
 		assert.True(t, arrival.IsZero())
 		assert.True(t, departure.IsZero())
@@ -309,7 +354,7 @@ func TestGetPredictedTimes_PropagationRules(t *testing.T) {
 			start := date.Start(location)
 			actualDeparture := start.Add(7*time.Hour + 47*time.Minute)
 			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{ID: gtfs.TripID{ID: trip}, StopTimeUpdates: []gtfs.StopTimeUpdate{{StopID: &first, Departure: &gtfs.StopTimeEvent{Time: &actualDeparture}}}}})
-			arrival, departure, predicted := api.getPredictedTimes(t.Context(), trip, middle, 5, start.Add(32*time.Hour), start.Add(32*time.Hour+5*time.Minute))
+			arrival, departure, predicted := api.getPredictedTimes(t.Context(), trip, middle, 5, start.Add(32*time.Hour), start.Add(32*time.Hour+5*time.Minute), loadPredictionSchedule(t, api, trip))
 			require.True(t, predicted)
 			assert.Equal(t, start.Add(32*time.Hour+5*time.Minute), arrival)
 			assert.Equal(t, start.Add(32*time.Hour+10*time.Minute), departure)
@@ -317,22 +362,45 @@ func TestGetPredictedTimes_PropagationRules(t *testing.T) {
 	}
 }
 
-func TestGetPredictedTimes_TimeOnlyWithoutStaticSchedule(t *testing.T) {
+func TestGetPredictedTimes_WithoutStaticSchedule(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	now := time.Date(2011, 7, 1, 8, 5, 0, 0, time.UTC)
 	sequence := uint32(1)
-	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
-		ID: gtfs.TripID{ID: "time-only-missing-static-schedule"},
-		StopTimeUpdates: []gtfs.StopTimeUpdate{{
-			StopSequence: &sequence,
-			Departure:    &gtfs.StopTimeEvent{Time: &now},
-		}},
-	}})
-	arrival, departure, predicted := api.getPredictedTimes(t.Context(),
-		"time-only-missing-static-schedule", "missing-stop", 2, now, now)
-	assert.False(t, predicted, "a missing schedule must not imply an on-time prediction")
-	assert.True(t, arrival.IsZero())
-	assert.True(t, departure.IsZero())
+	delay := 5 * time.Minute
+	for _, tt := range []struct {
+		name      string
+		event     *gtfs.StopTimeEvent
+		predicted bool
+	}{
+		{"time-only", &gtfs.StopTimeEvent{Time: &now}, false},
+		{"explicit-delay", &gtfs.StopTimeEvent{Delay: &delay}, true},
+		{"time-and-delay-fallback", &gtfs.StopTimeEvent{Time: &now, Delay: &delay}, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+				ID:              gtfs.TripID{ID: "missing-static-schedule"},
+				StopTimeUpdates: []gtfs.StopTimeUpdate{{StopSequence: &sequence, Departure: tt.event}},
+			}})
+			arrival, departure, predicted := api.getPredictedTimes(t.Context(),
+				"missing-static-schedule", "missing-stop", 2, now, now, tripSchedule{})
+			assert.Equal(t, tt.predicted, predicted)
+			if tt.predicted {
+				assert.Equal(t, now.Add(delay), arrival)
+				assert.Equal(t, now.Add(delay), departure)
+			} else {
+				assert.True(t, arrival.IsZero())
+				assert.True(t, departure.IsZero())
+			}
+		})
+	}
+}
+
+// loadPredictionSchedule supplies the caller-owned schedule to direct helper tests.
+func loadPredictionSchedule(t testing.TB, api *RestAPI, tripID string) tripSchedule {
+	t.Helper()
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(t.Context(), tripID)
+	require.NoError(t, err)
+	return newTripSchedule(stopTimes)
 }

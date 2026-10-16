@@ -346,7 +346,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(
+			ctx, tripID, stopCode, matchedStopTime.StopSequence,
+			scheduledArrivalTime, scheduledDepartureTime, newTripSchedule(orderedStopTimes),
+		)
 
 		if isPredicted {
 			predictedArrivalTime = predictedArrival
@@ -582,6 +585,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 // getPredictedTimes computes predicted arrival/departure times from GTFS-RT
 // data, preferring a target event, then a prior stop update, then trip delay.
 // SKIPPED targets have no prediction; NO_DATA interrupts onward propagation.
+// The caller supplies the static schedule; prediction performs no database reads.
 // Returns zero times and false when no supported prediction is available.
 func (api *RestAPI) getPredictedTimes(
 	ctx context.Context,
@@ -589,14 +593,14 @@ func (api *RestAPI) getPredictedTimes(
 	stopCode string,
 	targetStopSequence int64,
 	scheduledArrivalTime, scheduledDepartureTime time.Time,
+	schedule tripSchedule,
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
 	if realTimeTrip == nil {
 		return time.Time{}, time.Time{}, false
 	}
 
-	target, prior, priorSequence := api.predictionUpdatesForStop(ctx, tripID,
-		realTimeTrip.StopTimeUpdates, stopCode, targetStopSequence)
+	target, prior, priorSequence := predictionUpdatesForStop(realTimeTrip.StopTimeUpdates, stopCode, targetStopSequence, schedule)
 	var arrivalOffset, departureOffset *time.Duration
 	if target != nil {
 		switch target.ScheduleRelationship {
@@ -614,7 +618,7 @@ func (api *RestAPI) getPredictedTimes(
 		if prior.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA {
 			return time.Time{}, time.Time{}, false
 		}
-		delay, ok := api.propagatedDelayFromUpdate(ctx, tripID, prior,
+		delay, ok := propagatedDelayFromUpdate(schedule, prior,
 			priorSequence, targetStopSequence, scheduledArrivalTime)
 		if !ok {
 			return time.Time{}, time.Time{}, false
