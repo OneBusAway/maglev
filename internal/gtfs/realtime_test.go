@@ -1049,11 +1049,11 @@ func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
 			expectMatch: false,
 		},
 		{
-			// {agencyID+stopID} has no route/trip restriction, so it is filed in byAgency
-			// AND byStop. An agency-only lookup should therefore still match.
-			name:        "agency+stop entity matches agency-only query",
+			// {agencyID+stopID} is stop-specific: it is filed in byStop only, so an
+			// agency-only lookup must not match it (as in Java's AffectsAgencyKeyFactory).
+			name:        "agency+stop entity does not match agency-only query",
 			entities:    []gtfs.AlertInformedEntity{{AgencyID: &agencyID, StopID: func() *string { s := "stop99"; return &s }()}},
-			expectMatch: true,
+			expectMatch: false,
 		},
 	}
 
@@ -1258,10 +1258,11 @@ func TestAlertIndex_EmptyIDAlertExcluded(t *testing.T) {
 	assert.Empty(t, tripAlerts)
 }
 
-// TestAlertIndex_AgencyStopEntityAlsoIndexedByStop verifies the symmetric half
-// of the agency+stop scoping rule: an entity with both agencyID and stopID is
-// filed in byStop (so stop-scoped lookups find it) in addition to byAgency.
-func TestAlertIndex_AgencyStopEntityAlsoIndexedByStop(t *testing.T) {
+// TestAlertIndex_AgencyStopEntityIndexedByStopOnly verifies the agency+stop
+// scoping rule: an entity with both agencyID and stopID is filed in byStop (so
+// stop-scoped lookups find it) but not in byAgency, so it doesn't reach every
+// trip of the agency.
+func TestAlertIndex_AgencyStopEntityIndexedByStopOnly(t *testing.T) {
 	agencyID := "agency40"
 	stopID := "stop99"
 
@@ -1282,9 +1283,8 @@ func TestAlertIndex_AgencyStopEntityAlsoIndexedByStop(t *testing.T) {
 	assert.Len(t, stopAlerts, 1, "agency+stop entity should appear in byStop")
 	assert.Equal(t, "alert1", stopAlerts[0].ID)
 
-	agencyAlerts := manager.GetAlertsByIDs("", "", agencyID)
-	assert.Len(t, agencyAlerts, 1, "agency+stop entity should also appear in byAgency")
-	assert.Equal(t, "alert1", agencyAlerts[0].ID)
+	agencyAlerts := manager.GetAlertsByIDs("unrelated-trip", "unrelated-route", agencyID)
+	assert.Empty(t, agencyAlerts, "agency+stop entity should not reach other trips of the agency")
 }
 
 // TestAlertIndex_RouteStopEntityAlsoIndexedByStop verifies the positive half
