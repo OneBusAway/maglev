@@ -1,6 +1,8 @@
 package restapi
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -25,7 +27,11 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, id)
 	if err != nil {
-		api.sendNotFound(w, r)
+		if errors.Is(err, sql.ErrNoRows) {
+			api.sendNotFound(w, r)
+			return
+		}
+		api.serverErrorResponse(w, r, err)
 		return
 	}
 
