@@ -86,25 +86,23 @@ func TestModelDuration(t *testing.T) {
 		assert.Equal(t, d, md.Duration)
 	})
 
-	t.Run("serializes duration as seconds integer", func(t *testing.T) {
-		d := 120 * time.Second
-		md := NewModelDuration(d)
-
-		bytes, err := json.Marshal(md)
+	t.Run("serializes duration as seconds integer and truncates sub-second values", func(t *testing.T) {
+		// Whole seconds serialize to integer string
+		wholeDuration := 120 * time.Second
+		modelDur := NewModelDuration(wholeDuration)
+		marshaledBytes, err := json.Marshal(modelDur)
 		require.NoError(t, err)
-		assert.Equal(t, "120", string(bytes))
-	})
+		assert.Equal(t, "120", string(marshaledBytes))
 
-	t.Run("truncates sub-second durations to whole seconds", func(t *testing.T) {
 		// Positive sub-second duration truncates towards zero (1500ms -> 1s)
-		pos := NewModelDuration(1500 * time.Millisecond)
-		bytesPos, err := json.Marshal(pos)
+		posSubSecond := NewModelDuration(1500 * time.Millisecond)
+		bytesPos, err := json.Marshal(posSubSecond)
 		require.NoError(t, err)
 		assert.Equal(t, "1", string(bytesPos))
 
 		// Negative sub-second duration truncates towards zero (-1500ms -> -1s)
-		neg := NewModelDuration(-1500 * time.Millisecond)
-		bytesNeg, err := json.Marshal(neg)
+		negSubSecond := NewModelDuration(-1500 * time.Millisecond)
+		bytesNeg, err := json.Marshal(negSubSecond)
 		require.NoError(t, err)
 		assert.Equal(t, "-1", string(bytesNeg))
 	})
