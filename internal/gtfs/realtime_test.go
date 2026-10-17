@@ -1022,7 +1022,7 @@ func TestAlertIndex_RouteTripEntityIndexedUnderByTrip(t *testing.T) {
 }
 
 // TestGetAlertsByIDs_AgencyScoping verifies that agency-wide matching only fires
-// for entities that have agencyId with no route or trip restriction.
+// for entities that have agencyId with no route, trip or stop restriction.
 func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
 	agencyID := "agency40"
 	routeID := "route123"
