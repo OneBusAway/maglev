@@ -503,3 +503,19 @@ curl http://localhost:4000/healthz
 
 * The container runs as a non-root user (maglev:1000).
 * Ensure mounted volumes are accessible.
+
+
+## Deploying Behind a CDN
+
+A CDN or caching proxy in front of Maglev may serve a cached response without contacting Maglev, so API-key validation may not run for that request. Successful responses and `304 Not Modified` responses from the routes listed below send `Cache-Control: public`.
+
+**If your deployment enforces API keys, configure your CDN to include the `key` query parameter in its cache key.** Otherwise, a response cached for a valid key could be returned to a request with an invalid key.
+
+Including `key` in the cache key creates separate cache entries for different API keys, which can reduce your cache hit rate. Consider this tradeoff when configuring your CDN.
+
+These routes send `Cache-Control: public` (see `internal/restapi/routes.go`):
+
+- **30 seconds:** `/api/v2/metadata.json`; and the following routes under `/api/where/`: `current-time.json`, `search/stop.json`, `search/route.json`, `stops-for-location.json`, `routes-for-location.json`, `trips-for-location.json`, `arrivals-and-departures-for-location.json`, `vehicles-for-agency/{id}`, `route/{id}`, `trip-details/{id}`, `trip-for-vehicle/{id}`, `arrival-and-departure-for-stop/{id}`, `trips-for-route/{id}`, `arrivals-and-departures-for-stop/{id}`.
+- **300 seconds:** the following routes under `/api/where/`: `agencies-with-coverage.json`, `agency/{id}`, `routes-for-agency/{id}`, `stop-ids-for-agency/{id}`, `stops-for-agency/{id}`, `route-ids-for-agency/{id}`, `trip/{id}`, `stop/{id}`, `shape/{id}`, `stops-for-route/{id}`, `schedule-for-stop/{id}`, `schedule-for-route/{id}`, `block/{id}`.
+
+For routes wrapped by `CacheControlMiddleware`, error responses send `Cache-Control: no-cache, no-store, must-revalidate`.
