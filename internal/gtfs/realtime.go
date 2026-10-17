@@ -199,6 +199,30 @@ func decideVehicleFeedTimestamp(prev uint64, createdAt, now time.Time) vehicleFe
 	return vehicleFeedTimestampDecision{apply: false, watermark: prev, reason: vehicleFeedSkipStale}
 }
 
+// tripIDsServedBy returns the IDs of the trips the given vehicles serve.
+func tripIDsServedBy(vehicles []gtfs.Vehicle) map[string]struct{} {
+	tripIDs := make(map[string]struct{}, len(vehicles))
+	for _, v := range vehicles {
+		if v.Trip != nil && v.Trip.ID.ID != "" {
+			tripIDs[v.Trip.ID.ID] = struct{}{}
+		}
+	}
+	return tripIDs
+}
+
+// releaseTakenTrip returns a retained vehicle without its trip when a vehicle
+// in the current update now serves that trip. A retained vehicle is no longer
+// reported, so it must not compete with the live vehicle for the trip.
+func releaseTakenTrip(retained gtfs.Vehicle, liveTripIDs map[string]struct{}) gtfs.Vehicle {
+	if retained.Trip == nil {
+		return retained
+	}
+	if _, taken := liveTripIDs[retained.Trip.ID.ID]; taken {
+		retained.Trip = nil
+	}
+	return retained
+}
+
 // vehicleKey identifies a vehicle across feed updates. Exactly one field is
 // set, recording which descriptor field the identity came from, so a real ID
 // never equals a label or license plate with the same text.
@@ -570,6 +594,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 			// Retain recently-disappeared vehicles whose last-seen time hasn't expired
 			prevVehicles = manager.feedVehicles[feedID]
+			liveTripIDs := tripIDsServedBy(validVehicles)
 			for _, pv := range prevVehicles {
 				if pv.ID == nil {
 					continue
@@ -577,7 +602,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				key := newVehicleKey(pv.ID)
 				if _, current := currentVehicleIDs[key]; !current {
 					if lastSeen, ok := lastSeenMap[key]; ok && now.Sub(lastSeen) <= staleVehicleTimeout {
-						validVehicles = append(validVehicles, pv)
+						validVehicles = append(validVehicles, releaseTakenTrip(pv, liveTripIDs))
 					}
 				}
 			}
