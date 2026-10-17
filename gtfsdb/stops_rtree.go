@@ -8,6 +8,8 @@ import (
 
 // Implemented manually because sqlc doesn't support the virtual tables from the RTree module.
 
+// RTree bounds are rounded outward. Use index overlap to find candidates, then
+// check the original stop coordinates to include only stops inside the box.
 const getActiveStopsWithinBounds = `
 SELECT
     s.id,
@@ -26,8 +28,10 @@ SELECT
     s.parent_station
 FROM stops s
 INNER JOIN stops_rtree sr ON sr.id = s.rowid
-WHERE sr.min_lat >= ? AND sr.max_lat <= ?
-  AND sr.min_lon >= ? AND sr.max_lon <= ?
+WHERE sr.max_lat >= ?1 AND sr.min_lat <= ?2
+  AND sr.max_lon >= ?3 AND sr.min_lon <= ?4
+  AND s.lat BETWEEN ?1 AND ?2
+  AND s.lon BETWEEN ?3 AND ?4
   AND EXISTS (SELECT 1 FROM stop_times st WHERE st.stop_id = s.id)
 `
 
@@ -79,8 +83,10 @@ const getStopIDsWithinBounds = `
 SELECT s.id
 FROM stops s
 INNER JOIN stops_rtree sr ON sr.id = s.rowid
-WHERE sr.min_lat >= ? AND sr.max_lat <= ?
-  AND sr.min_lon >= ? AND sr.max_lon <= ?
+WHERE sr.max_lat >= ?1 AND sr.min_lat <= ?2
+  AND sr.max_lon >= ?3 AND sr.min_lon <= ?4
+  AND s.lat BETWEEN ?1 AND ?2
+  AND s.lon BETWEEN ?3 AND ?4
   AND EXISTS (SELECT 1 FROM stop_times st WHERE st.stop_id = s.id)
 `
 
@@ -133,8 +139,10 @@ WITH nearby_stops AS (
         ) AS distance
     FROM stops
     JOIN stops_rtree r ON r.id = stops.rowid
-    WHERE r.min_lat >= ?3 AND r.max_lat <= ?4
-      AND r.min_lon >= ?5 AND r.max_lon <= ?6
+    WHERE r.max_lat >= ?3 AND r.min_lat <= ?4
+      AND r.max_lon >= ?5 AND r.min_lon <= ?6
+      AND stops.lat BETWEEN ?3 AND ?4
+      AND stops.lon BETWEEN ?5 AND ?6
 ),
 stop_routes AS (
     SELECT DISTINCT stop_times.stop_id, trips.route_id
