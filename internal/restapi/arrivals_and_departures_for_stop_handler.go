@@ -74,7 +74,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopCode)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
