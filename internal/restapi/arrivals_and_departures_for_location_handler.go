@@ -82,9 +82,9 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
-	// Nearest stop first, then predicted or scheduled time. Neither needs trip
-	// status. Trip, route and agency alerts are recorded for every row before
-	// the trim, so a dropped arrival still contributes its alerts.
+	// Nearest stop first, then the shared best-arrival comparison. Neither needs
+	// trip status. Trip, route and agency alerts are recorded for every row
+	// before the trim, so a dropped arrival still contributes its alerts.
 	distances := stopDistances(stops, agencies, params.Location)
 	sortStatusPendingArrivals(pending.Arrivals, distances)
 	api.addPendingArrivalAlerts(pending.Arrivals, acc)
@@ -630,15 +630,15 @@ func sortStopsByDistance(stops []gtfsdb.Stop, loc *internalgtfs.LocationParams) 
 }
 
 // sortStatusPendingArrivals orders arrivals before trip status is built.
-// Nearest stop first, then the predicted-or-scheduled time, matching the
-// built-arrival order. The pending slice and the copied arrivals must stay
-// aligned so finishArrivalTripStatus attaches status to the right row.
+// Nearest stop first, then compareBestArrival within a stop. The pending
+// slice and the copied arrivals must stay aligned so finishArrivalTripStatus
+// attaches status to the right row.
 func sortStatusPendingArrivals(arrivals []statusPendingArrival, distances map[string]float64) {
 	slices.SortStableFunc(arrivals, func(a, b statusPendingArrival) int {
 		if d := distances[a.arrival.StopID] - distances[b.arrival.StopID]; d != 0 {
 			return cmp.Compare(d, 0)
 		}
-		return cmp.Compare(effectiveArrivalTime(a.arrival), effectiveArrivalTime(b.arrival))
+		return compareBestArrival(a.arrival, b.arrival)
 	})
 }
 
@@ -662,15 +662,6 @@ func stopDistances(stops []gtfsdb.Stop, agencies *stopAgencyIndex, loc *internal
 		distances[combined] = utils.Distance(loc.Lat, loc.Lon, stop.Lat, stop.Lon)
 	}
 	return distances
-}
-
-// effectiveArrivalTime is when a rider would actually see the arrival,
-// preferring the predicted time when one exists.
-func effectiveArrivalTime(a models.ArrivalAndDeparture) int64 {
-	if a.PredictedArrivalTime.UnixMilli() > 0 {
-		return a.PredictedArrivalTime.UnixMilli()
-	}
-	return a.ScheduledArrivalTime.UnixMilli()
 }
 
 // truncateSlice trims items to maxCount, reporting whether anything was dropped

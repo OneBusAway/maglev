@@ -781,6 +781,35 @@ func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes
 	return routesLookup, tripsLookup, api.tripStopCounts(ctx, uniqueTripIDs), freqMap, nil
 }
 
+// bestArrivalMillis is the instant Java's ArrivalAndDepartureComparator sorts
+// on. A positive predicted arrival is hasPredictedArrivalTime(); otherwise
+// the scheduled arrival is used.
+func bestArrivalMillis(a models.ArrivalAndDeparture) int64 {
+	if a.PredictedArrivalTime.UnixMilli() > 0 {
+		return a.PredictedArrivalTime.UnixMilli()
+	}
+	return a.ScheduledArrivalTime.UnixMilli()
+}
+
+// compareBestArrival orders two arrivals by bestArrivalMillis, then by trip ID
+// and stop sequence so equal times come out the same on every request.
+// arrivals-and-departures-for-stop sorts on this alone. The location endpoint
+// sorts by stop distance first and uses this only within one stop.
+func compareBestArrival(a, b models.ArrivalAndDeparture) int {
+	if c := cmp.Compare(bestArrivalMillis(a), bestArrivalMillis(b)); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.TripID, b.TripID); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.StopSequence, b.StopSequence)
+}
+
+// sortArrivalsByBestTime orders a single stop's arrivals with compareBestArrival.
+func sortArrivalsByBestTime(arrivals []models.ArrivalAndDeparture) {
+	slices.SortStableFunc(arrivals, compareBestArrival)
+}
+
 // uniqueRouteAndTripIDs collects the distinct route and trip IDs referenced by
 // a set of matched stop_times.
 func uniqueRouteAndTripIDs(allActiveStopTimes []activeStopTime) (routeIDs, tripIDs []string) {
