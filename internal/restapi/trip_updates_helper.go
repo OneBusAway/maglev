@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -599,16 +600,163 @@ func sequenceIdentifiesVisit(stu gtfs.StopTimeUpdate, staticStops map[int64]stri
 	return ok && staticStop == *stu.StopID
 }
 
-// staticStopsForTrip loads a trip's static schedule as a stop_sequence to
-// stop_id map. It returns an empty map when the lookup fails.
-func (api *RestAPI) staticStopsForTrip(ctx context.Context, tripID string) map[int64]string {
-	stops := map[int64]string{}
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
-	if err != nil {
-		return stops
+// tripSchedule retains the caller's stop times and indexes stop IDs once per trip.
+// Its zero value represents an unavailable static schedule.
+type tripSchedule struct {
+	stopTimes []gtfsdb.StopTime
+	stopIDs   map[int64]string
+}
+
+func newTripSchedule(stopTimes []gtfsdb.StopTime) tripSchedule {
+	stopIDs := make(map[int64]string, len(stopTimes))
+	for _, stopTime := range stopTimes {
+		stopIDs[stopTime.StopSequence] = stopTime.StopID
 	}
-	for _, st := range stopTimes {
-		stops[st.StopSequence] = st.StopID
+	return tripSchedule{stopTimes: stopTimes, stopIDs: stopIDs}
+}
+
+// stopTimeUpdateSequence resolves an update to a visit in the static trip.
+// An ID fallback is usable only when it names exactly one visit.
+func stopTimeUpdateSequence(update gtfs.StopTimeUpdate, staticStops map[int64]string) (int64, bool) {
+	if sequenceIdentifiesVisit(update, staticStops) {
+		return int64(*update.StopSequence), true
 	}
-	return stops
+	if update.StopID == nil {
+		return 0, false
+	}
+	sequence, found := int64(0), false
+	for seq, stopID := range staticStops {
+		if stopID != *update.StopID {
+			continue
+		}
+		if found {
+			return 0, false
+		}
+		sequence, found = seq, true
+	}
+	return sequence, found
+}
+
+// predictionUpdatesForStop selects the target update and closest prior update.
+// SKIPPED updates cannot replace an earlier propagation source. SCHEDULED
+// time-only updates without a source row are ignored; empty SCHEDULED updates
+// and NO_DATA remain propagation boundaries.
+func predictionUpdatesForStop(updates []gtfs.StopTimeUpdate, stopCode string, targetSequence int64, schedule tripSchedule) (target, prior *gtfs.StopTimeUpdate, priorSequence int64) {
+	if target = exactStopTimeUpdate(updates, stopCode, targetSequence); target != nil {
+		return target, nil, -1
+	}
+	priorSequence = -1
+	staticStops := schedule.stopIDs
+	for i := range updates {
+		update := &updates[i]
+		matchesStop := update.StopID != nil && *update.StopID == stopCode
+		sequence, resolved := stopTimeUpdateSequence(*update, staticStops)
+		matchesTargetVisit := matchesStop && resolved && sequence == targetSequence
+		matchesIDWithoutSchedule := matchesStop && !resolved && len(staticStops) == 0
+		if target == nil && (matchesTargetVisit || matchesIDWithoutSchedule) {
+			// Preserve direct ID-only predictions when no static schedule is
+			// available. They need no source schedule to derive their offset.
+			target = update
+		}
+		if !resolved || sequence >= targetSequence || sequence <= priorSequence ||
+			update.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED {
+			continue
+		}
+		event, _ := propagationEvent(update)
+		_, hasScheduledStop := staticStops[sequence]
+		timeNeedsSchedule := event != nil && event.Time != nil && event.Delay == nil
+		// A timestamp without its source schedule cannot replace a usable delay.
+		// Keep NO_DATA and empty SCHEDULED updates as propagation boundaries.
+		if update.ScheduleRelationship != gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA &&
+			timeNeedsSchedule && !hasScheduledStop {
+			continue
+		}
+		priorSequence, prior = sequence, update
+	}
+	return target, prior, priorSequence
+}
+
+// exactStopTimeUpdate prefers a sequenced target over ID-only fallbacks and
+// avoids fallback matching when the feed already identifies the requested visit.
+func exactStopTimeUpdate(updates []gtfs.StopTimeUpdate, stopID string, sequence int64) *gtfs.StopTimeUpdate {
+	for i := range updates {
+		update := &updates[i]
+		if update.StopSequence == nil || int64(*update.StopSequence) != sequence {
+			continue
+		}
+		if update.StopID == nil || *update.StopID == stopID {
+			return update
+		}
+	}
+	return nil
+}
+
+// stopTimeEventOffset prefers an absolute time over an explicit delay.
+// An event with neither field does not provide a prediction.
+func stopTimeEventOffset(event *gtfs.StopTimeEvent, scheduled time.Time) *time.Duration {
+	if event == nil {
+		return nil
+	}
+	if event.Time != nil {
+		offset := event.Time.Sub(scheduled)
+		return &offset
+	}
+	return event.Delay
+}
+
+// propagationEvent selects departure timing when usable, otherwise arrival.
+func propagationEvent(update *gtfs.StopTimeUpdate) (event *gtfs.StopTimeEvent, useDeparture bool) {
+	event = update.Departure
+	if event != nil && (event.Time != nil || event.Delay != nil) {
+		return event, true
+	}
+	return update.Arrival, false
+}
+
+// propagatedDelayFromUpdate resolves the onward delay from a prior stop update.
+// Departure takes precedence over arrival; time takes precedence over delay.
+func propagatedDelayFromUpdate(
+	schedule tripSchedule,
+	update *gtfs.StopTimeUpdate,
+	priorStopSequence int64,
+	targetStopSequence int64,
+	scheduledArrivalTime time.Time,
+) (time.Duration, bool) {
+	event, useDeparture := propagationEvent(update)
+	if event == nil {
+		return 0, false
+	}
+	explicitDelay := func() (time.Duration, bool) {
+		if event.Delay != nil {
+			return *event.Delay, true
+		}
+		return 0, false
+	}
+	if event.Time == nil {
+		return explicitDelay()
+	}
+	stopTimes := schedule.stopTimes
+	var priorStop, targetStop *gtfsdb.StopTime
+	for i := range stopTimes {
+		stopTime := &stopTimes[i]
+		switch stopTime.StopSequence {
+		case priorStopSequence:
+			priorStop = stopTime
+		case targetStopSequence:
+			targetStop = stopTime
+		}
+	}
+	if priorStop == nil || targetStop == nil {
+		return explicitDelay()
+	}
+
+	// Recover the caller's service-day start rather than assuming midnight,
+	// preserving DST anchoring and stop-time offsets beyond 24 hours.
+	serviceStart := scheduledArrivalTime.Add(-time.Duration(targetStop.ArrivalTime))
+	scheduledOffset := priorStop.ArrivalTime
+	if useDeparture {
+		scheduledOffset = priorStop.DepartureTime
+	}
+	priorScheduledTime := serviceStart.Add(time.Duration(scheduledOffset))
+	return event.Time.Sub(priorScheduledTime), true
 }
