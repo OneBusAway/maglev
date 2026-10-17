@@ -518,4 +518,4 @@ These routes send `Cache-Control: public` (see `internal/restapi/routes.go`):
 - **30 seconds:** `/api/v2/metadata.json`; and the following routes under `/api/where/`: `current-time.json`, `search/stop.json`, `search/route.json`, `stops-for-location.json`, `routes-for-location.json`, `trips-for-location.json`, `arrivals-and-departures-for-location.json`, `vehicles-for-agency/{id}`, `route/{id}`, `trip-details/{id}`, `trip-for-vehicle/{id}`, `arrival-and-departure-for-stop/{id}`, `trips-for-route/{id}`, `arrivals-and-departures-for-stop/{id}`.
 - **300 seconds:** the following routes under `/api/where/`: `agencies-with-coverage.json`, `agency/{id}`, `routes-for-agency/{id}`, `stop-ids-for-agency/{id}`, `stops-for-agency/{id}`, `route-ids-for-agency/{id}`, `trip/{id}`, `stop/{id}`, `shape/{id}`, `stops-for-route/{id}`, `schedule-for-stop/{id}`, `schedule-for-route/{id}`, `block/{id}`.
 
-Error responses send `Cache-Control: no-cache, no-store, must-revalidate`.
+For routes wrapped by `CacheControlMiddleware`, error responses send `Cache-Control: no-cache, no-store, must-revalidate`.
