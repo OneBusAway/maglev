@@ -955,8 +955,14 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 					seenRoute[*entity.RouteID] = true
 					idx.byRoute[*entity.RouteID] = append(idx.byRoute[*entity.RouteID], alert)
 				}
-				// Only match agency-wide alerts: entity has agencyId but no route or trip restriction.
-				if entity.AgencyID != nil && entity.RouteID == nil && entity.TripID == nil && !seenAgency[*entity.AgencyID] {
+				// Only match agency-wide alerts: entity has agencyId but no route, trip
+				// or stop restriction. Entities with {agencyId + stopId} are stop-specific
+				// and are filed in byStop only, matching Java's AffectsAgencyKeyFactory.
+				isAgencyWide := entity.AgencyID != nil &&
+					entity.RouteID == nil &&
+					entity.TripID == nil &&
+					entity.StopID == nil
+				if isAgencyWide && !seenAgency[*entity.AgencyID] {
 					seenAgency[*entity.AgencyID] = true
 					idx.byAgency[*entity.AgencyID] = append(idx.byAgency[*entity.AgencyID], alert)
 				}
