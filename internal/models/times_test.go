@@ -25,12 +25,24 @@ func TestModelTime(t *testing.T) {
 		assert.Equal(t, "1609459200000", string(bytes))
 	})
 
-	t.Run("serializes zero time as 0", func(t *testing.T) {
-		mt := NewModelTime(time.Time{})
-
-		bytes, err := json.Marshal(mt)
+	t.Run("serializes zero time and epoch zero as 0 and unmarshals back to zero time", func(t *testing.T) {
+		// Zero value time.Time marshals to 0
+		mtZero := NewModelTime(time.Time{})
+		bytesZero, err := json.Marshal(mtZero)
 		require.NoError(t, err)
-		assert.Equal(t, "0", string(bytes))
+		assert.Equal(t, "0", string(bytesZero))
+
+		// Unix epoch 0 (1970-01-01 00:00:00 UTC) also marshals to 0
+		mtEpoch := NewModelTime(time.UnixMilli(0))
+		bytesEpoch, err := json.Marshal(mtEpoch)
+		require.NoError(t, err)
+		assert.Equal(t, "0", string(bytesEpoch))
+
+		// Unmarshaling 0 yields zero time.Time{} as documented
+		var unmarshaled ModelTime
+		err = json.Unmarshal([]byte("0"), &unmarshaled)
+		require.NoError(t, err)
+		assert.True(t, unmarshaled.IsZero())
 	})
 
 	t.Run("unmarshals valid unix milliseconds into time.Time", func(t *testing.T) {
@@ -39,14 +51,6 @@ func TestModelTime(t *testing.T) {
 		err := json.Unmarshal(raw, &mt)
 		require.NoError(t, err)
 		assert.Equal(t, int64(1609459200000), mt.UnixMilli())
-	})
-
-	t.Run("unmarshals 0 into zero time.Time", func(t *testing.T) {
-		raw := []byte("0")
-		var mt ModelTime
-		err := json.Unmarshal(raw, &mt)
-		require.NoError(t, err)
-		assert.True(t, mt.IsZero())
 	})
 
 	t.Run("returns error when unmarshaling invalid time string", func(t *testing.T) {
@@ -89,6 +93,20 @@ func TestModelDuration(t *testing.T) {
 		bytes, err := json.Marshal(md)
 		require.NoError(t, err)
 		assert.Equal(t, "120", string(bytes))
+	})
+
+	t.Run("truncates sub-second durations to whole seconds", func(t *testing.T) {
+		// Positive sub-second duration truncates towards zero (1500ms -> 1s)
+		pos := NewModelDuration(1500 * time.Millisecond)
+		bytesPos, err := json.Marshal(pos)
+		require.NoError(t, err)
+		assert.Equal(t, "1", string(bytesPos))
+
+		// Negative sub-second duration truncates towards zero (-1500ms -> -1s)
+		neg := NewModelDuration(-1500 * time.Millisecond)
+		bytesNeg, err := json.Marshal(neg)
+		require.NoError(t, err)
+		assert.Equal(t, "-1", string(bytesNeg))
 	})
 
 	t.Run("serializes zero duration as 0", func(t *testing.T) {
