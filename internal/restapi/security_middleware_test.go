@@ -149,3 +149,68 @@ func TestSecurityHeadersNoCORSWithoutOrigin(t *testing.T) {
 	assert.Equal(t, "nosniff", headers.Get("X-Content-Type-Options"))
 	assert.Equal(t, "DENY", headers.Get("X-Frame-Options"))
 }
+
+func TestSecurityHeadersCSP(t *testing.T) {
+	const strictCSP = "default-src 'none'; frame-ancestors 'none';"
+	const relaxedCSP = "default-src 'self'; style-src 'unsafe-inline'; img-src 'self'; frame-ancestors 'none';"
+
+	tests := []struct {
+		name        string
+		path        string
+		expectedCSP string
+	}{
+		{
+			name:        "root web UI path",
+			path:        "/",
+			expectedCSP: relaxedCSP,
+		},
+		{
+			name:        "debug web UI path with trailing slash",
+			path:        "/debug/",
+			expectedCSP: relaxedCSP,
+		},
+		{
+			name:        "debug web UI path without trailing slash",
+			path:        "/debug",
+			expectedCSP: relaxedCSP,
+		},
+		{
+			name:        "debug web UI path with query param",
+			path:        "/debug?dataType=agencies",
+			expectedCSP: relaxedCSP,
+		},
+		{
+			name:        "debug web UI subpath",
+			path:        "/debug/subpath",
+			expectedCSP: relaxedCSP,
+		},
+		{
+			name:        "api path",
+			path:        "/api/where/agency/1.json",
+			expectedCSP: strictCSP,
+		},
+		{
+			name:        "arbitrary endpoint",
+			path:        "/test",
+			expectedCSP: strictCSP,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+
+			secureHandler := securityHeaders(handler)
+
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+
+			secureHandler.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, tc.expectedCSP, rec.Header().Get("Content-Security-Policy"))
+		})
+	}
+}
