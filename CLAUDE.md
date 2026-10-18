@@ -307,6 +307,7 @@ reload and read through `GetRegionBounds()`.
 - `feedVehicles` - `map[string][]gtfs.Vehicle` — vehicles per feed
 - `feedAlerts` - `map[string][]gtfs.Alert` — alerts per feed
 - `feedVehicleLastSeen` - `map[string]map[string]time.Time` — per-feed, per-vehicle last-seen timestamps for stale vehicle expiry (15 min window)
+- `feedVehicleAgency` - `map[string]map[vehicleKey]string`: the one agency each vehicle was attributed to at ingestion (its route's agency, else the feed's first `agency-ids` entry)
 
 *Derived merged view*, published by `rebuildMergedRealtimeLocked` after each feed
 update as one immutable `mergedRealtime` snapshot held in `merged
@@ -318,6 +319,7 @@ needs **no lock**. Never mutate what it returns:
 - `vehicleLookupByTrip` - Map of trip ID → vehicle index
 - `vehicleLookupByVehicle` - Map of vehicle ID → vehicle index
 - `duplicatedVehicleByRoute` - Map of route ID → DUPLICATED-trip vehicles
+- `vehiclesByAgency` - Map of agency ID → vehicles attributed to it, read with `GetVehiclesForAgency`
 - `alerts` - `alertIndex` of alerts by trip, route, agency and stop
 
 When a single feed refreshes, only its per-feed sub-map is overwritten; other feeds' data is untouched. A fresh snapshot is then built from all sub-maps and swapped in.
