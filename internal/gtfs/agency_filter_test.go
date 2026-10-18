@@ -719,10 +719,10 @@ func positionOnRoute(vehicleID, tripID, routeID string, timestamp time.Time) *gt
 	return position
 }
 
-// agencyVehicleIDs returns the sorted IDs of the vehicles indexed under an agency.
+// agencyVehicleIDs returns the sorted IDs of the vehicles exported for an agency.
 func agencyVehicleIDs(manager *Manager, agencyID string) []string {
 	var ids []string
-	for _, vehicle := range manager.GetVehiclesForAgency(agencyID) {
+	for _, vehicle := range manager.VehiclePositionsForAgency(agencyID).Vehicles {
 		ids = append(ids, vehicle.ID.ID)
 	}
 	slices.Sort(ids)
@@ -774,7 +774,7 @@ func TestVehicleAgencyIndex(t *testing.T) {
 		manager := newAttributionTestManager(t)
 		require.True(t, manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now, positions)))
 
-		assert.Empty(t, manager.GetVehiclesForAgency("nope"))
+		assert.Empty(t, manager.VehiclePositionsForAgency("nope").Vehicles)
 	})
 }
 
@@ -931,7 +931,5 @@ func TestVehicleAgencyIndex_LabelOnlyVehicle(t *testing.T) {
 
 	manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now, []*gtfsrt.VehiclePosition{position}))
 
-	vehicles := manager.GetVehiclesForAgency("agency-A")
-	require.Len(t, vehicles, 1)
-	assert.Equal(t, "bus-7", vehicles[0].ID.Label)
+	assert.Equal(t, map[vehicleKey]string{{label: "bus-7"}: "agency-A"}, manager.feedVehicleAgency["test-feed"])
 }

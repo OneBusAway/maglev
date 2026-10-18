@@ -44,8 +44,9 @@ type mergedRealtime struct {
 	vehicleLookupByVehicle   map[string]int
 	duplicatedVehicleByRoute map[string][]gtfs.Vehicle
 	vehiclesByRoute          map[string][]gtfs.Vehicle
-	vehiclesByAgency         map[string][]gtfs.Vehicle
+	vehiclePositionsByAgency map[string]AgencyVehiclePositions
 	alerts                   alertIndex
+	builtAt                  time.Time
 }
 
 // emptyMergedRealtime is returned before the first publish so a zero-value
@@ -56,7 +57,7 @@ var emptyMergedRealtime = &mergedRealtime{
 	vehicleLookupByVehicle:   map[string]int{},
 	duplicatedVehicleByRoute: map[string][]gtfs.Vehicle{},
 	vehiclesByRoute:          map[string][]gtfs.Vehicle{},
-	vehiclesByAgency:         map[string][]gtfs.Vehicle{},
+	vehiclePositionsByAgency: map[string]AgencyVehiclePositions{},
 	alerts: alertIndex{
 		byTrip:   map[string][]gtfs.Alert{},
 		byRoute:  map[string][]gtfs.Alert{},
@@ -86,13 +87,14 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 		vehicleLookupByVehicle:   maps.Clone(m.vehicleLookupByVehicle),
 		duplicatedVehicleByRoute: maps.Clone(m.duplicatedVehicleByRoute),
 		vehiclesByRoute:          maps.Clone(m.vehiclesByRoute),
-		vehiclesByAgency:         maps.Clone(m.vehiclesByAgency),
+		vehiclePositionsByAgency: maps.Clone(m.vehiclePositionsByAgency),
 		alerts: alertIndex{
 			byTrip:   maps.Clone(m.alerts.byTrip),
 			byRoute:  maps.Clone(m.alerts.byRoute),
 			byAgency: maps.Clone(m.alerts.byAgency),
 			byStop:   maps.Clone(m.alerts.byStop),
 		},
+		builtAt: m.builtAt,
 	}
 	if out.tripLookup == nil {
 		out.tripLookup = map[string]int{}
@@ -109,8 +111,8 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 	if out.vehiclesByRoute == nil {
 		out.vehiclesByRoute = map[string][]gtfs.Vehicle{}
 	}
-	if out.vehiclesByAgency == nil {
-		out.vehiclesByAgency = map[string][]gtfs.Vehicle{}
+	if out.vehiclePositionsByAgency == nil {
+		out.vehiclePositionsByAgency = map[string]AgencyVehiclePositions{}
 	}
 	return out
 }
@@ -253,13 +255,6 @@ func (manager *Manager) GetRealTimeTrips() []gtfs.Trip {
 // read-only contract as GetRealTimeTrips.
 func (manager *Manager) GetRealTimeVehicles() []gtfs.Vehicle {
 	return manager.mergedRealtime().vehicles
-}
-
-// GetVehiclesForAgency returns the current snapshot's vehicles attributed to
-// the agency at ingestion. The result is shared with every other reader and
-// must not be modified.
-func (manager *Manager) GetVehiclesForAgency(agencyID string) []gtfs.Vehicle {
-	return manager.mergedRealtime().vehiclesByAgency[agencyID]
 }
 
 func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.Alert {
@@ -595,6 +590,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				manager.feedVehicleAgency = make(map[string]map[vehicleKey]string)
 			}
 			manager.feedVehicleAgency[feedID] = agencies
+			manager.recordVehicleDataTime(feedID, vehicleData.CreatedAt)
 		} else {
 			// Even when skipping the vehicle update due to staleness, still clean up
 			// expired vehicles based on the last-seen timeout windows
@@ -892,6 +888,18 @@ func (manager *Manager) attributeFeedVehicles(ctx context.Context, logger *slog.
 	return vehicles, nil, keepUnattributed
 }
 
+// recordVehicleDataTime stores when a feed's vehicle data was produced: its
+// header timestamp, else now, the fetch time.
+func (manager *Manager) recordVehicleDataTime(feedID string, headerTime time.Time) {
+	if manager.feedVehicleDataTime == nil {
+		manager.feedVehicleDataTime = make(map[string]time.Time)
+	}
+	if headerTime.IsZero() {
+		headerTime = time.Now()
+	}
+	manager.feedVehicleDataTime[feedID] = headerTime
+}
+
 // copyVehicleAgency carries a vehicle's agency, if it has one, from src to dst.
 func copyVehicleAgency(dst, src map[vehicleKey]string, key vehicleKey) {
 	if agencyID, ok := src[key]; ok {
@@ -1006,6 +1014,7 @@ func routeBelongsToAllowedAgency(routeID string, allowed map[string]bool, routeA
 }
 
 func (manager *Manager) rebuildMergedRealtimeLocked() {
+	builtAt := time.Now()
 	feedIDs := make([]string, 0, len(manager.feedTrips))
 	totalTrips := 0
 	for id, trips := range manager.feedTrips {
@@ -1028,10 +1037,8 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	slices.Sort(vehicleFeedIDs)
 
 	allVehicles := make([]gtfs.Vehicle, 0, totalVehicles)
-	vehiclesByAgency := make(map[string][]gtfs.Vehicle)
 	for _, id := range vehicleFeedIDs {
 		allVehicles = append(allVehicles, manager.feedVehicles[id]...)
-		indexVehiclesByAgency(vehiclesByAgency, manager.feedVehicles[id], manager.feedVehicleAgency[id])
 	}
 
 	alertFeedIDs := make([]string, 0, len(manager.feedAlerts))
@@ -1135,22 +1142,10 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		vehicleLookupByVehicle:   vehicleLookupByVehicle,
 		duplicatedVehicleByRoute: duplicatedVehicleByRoute,
 		vehiclesByRoute:          vehiclesByRoute,
-		vehiclesByAgency:         vehiclesByAgency,
+		vehiclePositionsByAgency: manager.buildVehiclePositionsByAgency(vehicleFeedIDs, builtAt),
 		alerts:                   idx,
+		builtAt:                  builtAt,
 	})
-}
-
-// indexVehiclesByAgency files one feed's vehicles under the agency each was
-// attributed to at ingestion. Unattributed vehicles are left out.
-func indexVehiclesByAgency(vehiclesByAgency map[string][]gtfs.Vehicle, vehicles []gtfs.Vehicle, agencies map[vehicleKey]string) {
-	for _, vehicle := range vehicles {
-		if vehicle.ID == nil {
-			continue
-		}
-		if agencyID, ok := agencies[newVehicleKey(vehicle.ID)]; ok {
-			vehiclesByAgency[agencyID] = append(vehiclesByAgency[agencyID], vehicle)
-		}
-	}
 }
 
 // calculateBackoff computes the next polling interval using exponential backoff with jitter
