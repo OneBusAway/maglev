@@ -869,6 +869,23 @@ func TestVehicleAgencyIndex_LookupFailureInFilteredFeedSkipsTheUpdate(t *testing
 	assert.Equal(t, []string{"V1"}, agencyVehicleIDs(manager, "agency-A"), "the previous update stays in place")
 }
 
+func TestVehicleAgencyIndex_LookupFailureInUnfilteredFeedKeepsKnownAgencies(t *testing.T) {
+	manager := newAttributionTestManager(t)
+	now := time.Now().Truncate(time.Second)
+	require.True(t, manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now.Add(-time.Minute), []*gtfsrt.VehiclePosition{
+		positionOnRoute("V1", "T9", "R1", now.Add(-time.Minute)),
+	})))
+	require.NoError(t, manager.GtfsDB.DB.Close())
+
+	require.True(t, manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now, []*gtfsrt.VehiclePosition{
+		positionOnRoute("V1", "T9", "R1", now),
+		positionOnRoute("V2", "T9", "R1", now),
+	})))
+
+	assert.Len(t, manager.GetRealTimeVehicles(), 2)
+	assert.Equal(t, []string{"V1"}, agencyVehicleIDs(manager, "agency-A"), "V1 keeps its last agency; V2 waits for a successful lookup")
+}
+
 func TestAttributeVehiclesStaticTripLookupError(t *testing.T) {
 	manager := newAttributionTestManager(t)
 	require.NoError(t, manager.GtfsDB.DB.Close())

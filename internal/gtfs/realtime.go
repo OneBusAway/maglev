@@ -519,6 +519,12 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 			prevAgencies := manager.feedVehicleAgency[feedID]
 			agencies := make(map[vehicleKey]string, len(vehicleData.Vehicles))
+			// vehicleAgencies is nil only when the attribution lookup failed.
+			// Each vehicle then keeps its last known agency until a lookup succeeds.
+			incomingAgencies := vehicleAgencies
+			if incomingAgencies == nil {
+				incomingAgencies = prevAgencies
+			}
 
 			validVehicles := make([]gtfs.Vehicle, 0, len(vehicleData.Vehicles))
 			for _, v := range vehicleData.Vehicles {
@@ -543,7 +549,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				}
 
 				validVehicles = append(validVehicles, v)
-				copyVehicleAgency(agencies, vehicleAgencies, newVehicleKey(v.ID))
+				copyVehicleAgency(agencies, incomingAgencies, newVehicleKey(v.ID))
 			}
 
 			now := time.Now()
@@ -872,8 +878,9 @@ func (manager *Manager) attributeVehicles(ctx context.Context, vehicles []gtfs.V
 
 // attributeFeedVehicles runs attributeVehicles for a feed update. When the
 // lookup fails, a feed with agency-ids skips the update, as its agency filter
-// does; a feed without them keeps its vehicles, unattributed. ok is false
-// when the update must be skipped.
+// does; a feed without them keeps its vehicles with nil agencies, so they
+// keep their previous attribution. ok is false when the update must be
+// skipped.
 func (manager *Manager) attributeFeedVehicles(ctx context.Context, logger *slog.Logger, feedCfg RTFeedConfig, vehicles []gtfs.Vehicle) (kept []gtfs.Vehicle, agencies map[vehicleKey]string, ok bool) {
 	kept, agencies, err := manager.attributeVehicles(ctx, vehicles, feedCfg)
 	if err == nil {
