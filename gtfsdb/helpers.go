@@ -223,6 +223,14 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		hasExisting = true
 		// We have existing metadata, check if hash matches
 		if existingMetadata.FileHash == data.Hash && existingMetadata.FileSource == data.Source {
+			// Backfill legacy empty block IDs to NULL for existing databases
+			if _, err := c.DB.ExecContext(ctx, "UPDATE trips SET block_id = NULL WHERE block_id = ''"); err != nil {
+				return false, fmt.Errorf("error backfilling trips block_id: %w", err)
+			}
+			if _, err := c.DB.ExecContext(ctx, "UPDATE block_trip_entry SET block_id = NULL WHERE block_id = ''"); err != nil {
+				return false, fmt.Errorf("error backfilling block_trip_entry block_id: %w", err)
+			}
+
 			logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import",
 				slog.String("hash", data.Hash[:8]))
 			return false, nil
