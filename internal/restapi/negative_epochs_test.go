@@ -94,7 +94,9 @@ func TestNegativeEpochsReturnFieldErrors(t *testing.T) {
 	trip := mustGetTrip(t, api)
 	const mockVehicleID = "NEGATIVE_EPOCH_VEHICLE"
 	api.GtfsManager.MockAddVehicle(mockVehicleID, trip.ID, trip.RouteID)
-	vehicleID := utils.FormCombinedID(mustGetAgencies(t, api)[0].ID, mockVehicleID)
+	agencyID := mustGetAgencies(t, api)[0].ID
+	vehicleID := utils.FormCombinedID(agencyID, mockVehicleID)
+	routeID := utils.FormCombinedID(agencyID, trip.RouteID)
 	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
 	for _, endpoint := range []struct {
 		path   string
@@ -104,6 +106,9 @@ func TestNegativeEpochsReturnFieldErrors(t *testing.T) {
 		{path: "trip-for-vehicle/" + vehicleID, fields: []string{"time", "serviceDate"}},
 		{path: "arrival-and-departure-for-stop/1_unknown", fields: []string{"time", "serviceDate"}},
 		{path: "arrivals-and-departures-for-stop/1_unknown", fields: []string{"time"}},
+		{path: "stops-for-route/" + routeID, fields: []string{"time"}},
+		{path: "trips-for-route/" + routeID, fields: []string{"time"}},
+		{path: "vehicles-for-agency/" + agencyID, fields: []string{"time"}},
 	} {
 		for _, field := range endpoint.fields {
 			for _, raw := range []string{"-5", "-0", "+5"} {

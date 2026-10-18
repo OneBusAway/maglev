@@ -77,7 +77,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 	// Validate time
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, ok := utils.ParseEpochMillis(timeStr); ok {
-			timeParam := time.Unix(timeMs/1000, 0)
+			timeParam := time.UnixMilli(timeMs)
 			params.Time = &timeParam
 		} else {
 			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
@@ -92,7 +92,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 	// Validate serviceDate
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
 		if serviceDateMs, ok := utils.ParseEpochMillis(serviceDateStr); ok {
-			serviceDate := time.Unix(serviceDateMs/1000, 0)
+			serviceDate := time.UnixMilli(serviceDateMs)
 			params.ServiceDate = &serviceDate
 		} else {
 			fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds"}
