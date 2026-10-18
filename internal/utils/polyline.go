@@ -14,6 +14,9 @@ func EncodePolyline(coords [][]float64) string {
 	var b []byte
 	var plat, plng int
 	for _, c := range coords {
+		if len(c) < 2 {
+			continue
+		}
 		late5 := floor1e5(c[0])
 		lnge5 := floor1e5(c[1])
 		b = encodeSignedNumber(b, late5-plat)

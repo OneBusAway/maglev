@@ -57,3 +57,41 @@ func TestEncodePolyline_Empty(t *testing.T) {
 		t.Errorf("EncodePolyline(nil) = %q, want empty string", got)
 	}
 }
+
+func TestEncodePolyline_MalformedOrEmptyCoords(t *testing.T) {
+	tests := []struct {
+		name   string
+		coords [][]float64
+		want   string
+	}{
+		{
+			name:   "empty inner slice",
+			coords: [][]float64{{}},
+			want:   "",
+		},
+		{
+			name:   "single coordinate element",
+			coords: [][]float64{{47.6}},
+			want:   "",
+		},
+		{
+			name:   "multiple malformed coordinates",
+			coords: [][]float64{{}, {47.6}, nil},
+			want:   "",
+		},
+		{
+			name:   "valid coordinate flanked by malformed coordinates",
+			coords: [][]float64{{}, {38.5, -120.2}, {47.6}},
+			want:   EncodePolyline([][]float64{{38.5, -120.2}}),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EncodePolyline(tt.coords)
+			if got != tt.want {
+				t.Errorf("EncodePolyline(%v) = %q, want %q", tt.coords, got, tt.want)
+			}
+		})
+	}
+}
