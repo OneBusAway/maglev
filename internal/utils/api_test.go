@@ -972,6 +972,46 @@ func TestPaginateSlice(t *testing.T) {
 			expected:      []int{},
 			limitExceeded: false,
 		},
+		{
+			name:          "Negative offset with no limit",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        -1,
+			limit:         -1,
+			expected:      []int{1, 2, 3, 4, 5},
+			limitExceeded: false,
+		},
+		{
+			name:          "Negative offset with limit",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        -2,
+			limit:         2,
+			expected:      []int{1, 2},
+			limitExceeded: true,
+		},
+		{
+			name:          "Negative limit less than -1",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        0,
+			limit:         -2,
+			expected:      []int{},
+			limitExceeded: true,
+		},
+		{
+			name:          "Negative limit less than -1 with offset",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        1,
+			limit:         -5,
+			expected:      []int{},
+			limitExceeded: true,
+		},
+		{
+			name:          "Negative offset on empty slice",
+			items:         []int{},
+			offset:        -1,
+			limit:         5,
+			expected:      []int{},
+			limitExceeded: false,
+		},
 	}
 
 	for _, tt := range tests {
