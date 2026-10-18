@@ -1544,3 +1544,9 @@ FROM
     JOIN stops s ON s.id = st.stop_id
 GROUP BY
     r.agency_id;
+
+-- name: BackfillTripsBlockID :exec
+UPDATE trips SET block_id = NULL WHERE block_id = '';
+
+-- name: BackfillBlockTripEntryBlockID :exec
+UPDATE block_trip_entry SET block_id = NULL WHERE block_id = '';
