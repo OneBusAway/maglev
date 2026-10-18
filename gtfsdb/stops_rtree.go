@@ -6,10 +6,13 @@ import (
 	"strings"
 )
 
-// Implemented manually because sqlc doesn't support the virtual tables from the RTree module.
+// Maintained manually because sqlc does not support RTree virtual tables.
+//
+// All three spatial queries (active stops, stop IDs, and routes) use RTree
+// overlap to find candidates, then check the original stop coordinates against
+// the exact bounds. RTree bounds are rounded outward, so index containment
+// alone can exclude valid stops.
 
-// RTree bounds are rounded outward. Use index overlap to find candidates, then
-// check the original stop coordinates to include only stops inside the box.
 const getActiveStopsWithinBounds = `
 SELECT
     s.id,
