@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 func TestPerformDatabaseMigration_Idempotency(t *testing.T) {
@@ -343,4 +344,65 @@ func TestUpdateFeedExpiresAtFromCalendar(t *testing.T) {
 	got = readExpiresAt(t)
 	require.True(t, got.Valid)
 	assert.Equal(t, expected2.Unix(), got.Int64)
+}
+
+func blocklessTripFeedZip(t *testing.T) []byte {
+	t.Helper()
+
+	files := map[string]string{
+		"agency.txt":     "agency_id,agency_name,agency_url,agency_timezone\nA,Test,http://example.com,America/Los_Angeles\n",
+		"routes.txt":     "route_id,agency_id,route_short_name,route_type\nR1,A,1,3\n",
+		"stops.txt":      "stop_id,stop_name,stop_lat,stop_lon\nS1,Stop 1,47.60,-122.30\nS2,Stop 2,47.61,-122.31\n",
+		"calendar.txt":   "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\nWK,1,1,1,1,1,1,1,20250101,20351231\n",
+		"trips.txt":      "route_id,service_id,trip_id,block_id\nR1,WK,T1,\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nT1,08:00:00,08:00:00,S1,1\nT1,08:10:00,08:10:00,S2,2\n",
+	}
+
+	buf := new(bytes.Buffer)
+	w := zip.NewWriter(buf)
+	for name, content := range files {
+		f, err := w.Create(name)
+		require.NoError(t, err)
+		_, err = f.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+
+	return buf.Bytes()
+}
+
+func TestStoreGtfsData_BlocklessTripStoresNullBlockID(t *testing.T) {
+	ctx := context.Background()
+
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	data, err := ParseGtfsData(blocklessTripFeedZip(t), "test-blockless")
+	require.NoError(t, err)
+
+	_, err = client.StoreGtfsData(ctx, data)
+	require.NoError(t, err)
+
+	var blockIDIsNull bool
+	err = client.DB.QueryRowContext(ctx,
+		"SELECT block_id IS NULL FROM trips WHERE id = 'T1'").Scan(&blockIDIsNull)
+	require.NoError(t, err)
+	assert.True(t, blockIDIsNull, "a trip with no block_id should be stored as NULL, not ''")
+
+	tripIDs, err := client.Queries.GetActiveTripsWithNullBlockForRoute(ctx,
+		GetActiveTripsWithNullBlockForRouteParams{
+			RouteID:        "R1",
+			ServiceIds:     []string{"WK"},
+			TimeRangeStart: nulls.Int64(0),
+			TimeRangeEnd:   nulls.Int64(int64(24 * time.Hour)),
+		})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"T1"}, tripIDs, "the null-block query should find the blockless trip")
+
+	var entryBlockIDIsNull bool
+	err = client.DB.QueryRowContext(ctx,
+		"SELECT block_id IS NULL FROM block_trip_entry WHERE trip_id = 'T1'").Scan(&entryBlockIDIsNull)
+	require.NoError(t, err)
+	assert.True(t, entryBlockIDIsNull, "block_trip_entry should also store NULL for a blockless trip")
 }
