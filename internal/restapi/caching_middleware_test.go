@@ -196,3 +196,27 @@ func TestETagMiddleware(t *testing.T) {
 		assert.Empty(t, rr.Header().Get("ETag"))
 	})
 }
+
+func TestIfNoneMatchHits(t *testing.T) {
+	const etag = `W/"abc"`
+	tests := []struct {
+		name        string
+		ifNoneMatch string
+		want        bool
+	}{
+		{"absent", "", false},
+		{"wildcard", "*", true},
+		{"exact", `W/"abc"`, true},
+		{"in a list", `"x", W/"abc"`, true},
+		{"different", `W/"other"`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tt.ifNoneMatch != "" {
+				req.Header.Set("If-None-Match", tt.ifNoneMatch)
+			}
+			assert.Equal(t, tt.want, ifNoneMatchHits(req, etag))
+		})
+	}
+}
