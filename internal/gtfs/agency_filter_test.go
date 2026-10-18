@@ -170,6 +170,14 @@ func TestAttributeVehicles(t *testing.T) {
 			wantRouteID: "X",
 		},
 		{
+			name:          "unknown feed route in a feed with agency-ids resolves through the static trip",
+			vehicle:       vehicleOnTrip("V1", "T1", "X"),
+			feedAgencyIDs: []string{"agency-A"},
+			wantKept:      true,
+			wantAgency:    "agency-A",
+			wantRouteID:   "X",
+		},
+		{
 			name:          "no trip gets the first configured agency",
 			vehicle:       gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "V1"}},
 			feedAgencyIDs: []string{"agency-B", "agency-A"},

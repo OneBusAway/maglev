@@ -836,7 +836,8 @@ func (manager *Manager) staticTripRoutes(ctx context.Context, tripIDs []string) 
 // Vehicles that resolve to neither are kept without one. A missing route_id
 // is filled from the static trip. Vehicles without an ID are dropped, because
 // retention can't key them. In a feed with agency-ids, vehicles on another
-// agency's route, or on a route the static data doesn't know, are dropped too.
+// agency's route, or whose route_id resolves through neither the static
+// routes nor the static trip, are dropped too.
 func (manager *Manager) attributeVehicles(ctx context.Context, vehicles []gtfs.Vehicle, feedCfg RTFeedConfig) ([]gtfs.Vehicle, map[vehicleKey]string, error) {
 	routeIDs := make(map[string]struct{})
 	collectVehicleRouteIDs(routeIDs, vehicles)
