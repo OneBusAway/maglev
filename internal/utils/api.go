@@ -191,12 +191,6 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location, c cloc
 
 	// Check if it's epoch timestamp
 	if epochTime, ok := ParseEpochMillis(timeParam); ok {
-		if epochTime > maxUnixMillis {
-			fieldErrors := map[string][]string{
-				"time": {`Invalid field value for field "time".`},
-			}
-			return "", time.Time{}, fieldErrors, false
-		}
 		// Convert epoch to time preserving milliseconds
 		parsedTime = time.UnixMilli(epochTime).In(currentLocation)
 		validFormat = true

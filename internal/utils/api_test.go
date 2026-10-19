@@ -672,6 +672,13 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 		assert.Equal(t, int64(1710979086123), parsedTime.UnixMilli())
 		assert.Equal(t, 123_000_000, parsedTime.Nanosecond())
 	})
+
+	t.Run("Far future epoch timestamp is accepted matching Java", func(t *testing.T) {
+		_, parsedTime, fieldErrors, valid := ParseTimeParameter("32503680000001", loc, clock.RealClock{})
+		require.True(t, valid)
+		require.Nil(t, fieldErrors)
+		assert.Equal(t, int64(32503680000001), parsedTime.UnixMilli())
+	})
 }
 
 func TestParseTimeParameter_DateStringUsesProvidedLocation(t *testing.T) {

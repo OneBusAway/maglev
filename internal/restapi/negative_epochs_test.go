@@ -109,6 +109,7 @@ func TestNegativeEpochsReturnFieldErrors(t *testing.T) {
 		{path: "stops-for-route/" + routeID, fields: []string{"time"}},
 		{path: "trips-for-route/" + routeID, fields: []string{"time"}},
 		{path: "vehicles-for-agency/" + agencyID, fields: []string{"time"}},
+		{path: "trips-for-location", fields: []string{"time"}},
 	} {
 		for _, field := range endpoint.fields {
 			for _, raw := range []string{"-5", "-0", "+5"} {
