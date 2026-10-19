@@ -289,14 +289,16 @@ After modifying SQL queries or schema, run `make models` to regenerate the Go co
 
 ## In-Memory Data Structures
 
-The GTFS Manager (`internal/gtfs/gtfs_manager.go`) maintains:
+What the GTFS Manager (`internal/gtfs/gtfs_manager.go`) does and does not keep
+in memory:
 
-**Static Data** (from `manager.gtfsData`):
-- `Agencies` - Transit agency information
-- `Routes` - All routes
-- `Stops` - All stops
-- `Trips` - Scheduled trips
-- Accessed via: `GetAgencies()`, `GetTrips()`, `GetStops()`, `GetStaticData()`
+**Static Data** is not held in memory. It lives in SQLite and is read on demand:
+`GetAgencies(ctx)`, `GetTrips(ctx, limit)` and `GetStops(ctx)` are thin wrappers
+over the `ListAgencies`, `ListTripsWithLimit` and `ListStops` queries.
+
+The only static state the manager keeps in memory is `regionBounds`
+(`map[agencyID]*RegionBounds`, guarded by `staticMutex`), recomputed after each
+reload and read through `GetRegionBounds()`.
 
 **Real-Time Data** (protected by `realTimeMutex`):
 
@@ -329,15 +331,20 @@ When a single feed refreshes, only its per-feed sub-map is overwritten; other fe
 
 ### GTFS Manager vs Database Access
 
-**In-Memory Data** (from `manager.gtfsData`):
-- `FindAgency(id)` - Direct O(1) agency lookup
-- `FindRoute(id)` - Direct O(1) route lookup
-- `RoutesForAgencyID(id)` - Routes for an agency
-- `VehiclesForAgencyID(id)` - Real-time vehicle data
-- `GetVehicleForTrip(tripID)` - Vehicle for a trip (checks block)
+**In-Memory Data** — served from the `mergedRealtime` snapshot, which readers
+load without taking a lock:
 - `GetVehicleByID(vehicleID)` - Vehicle by ID
 - `GetTripUpdateByID(tripID)` - Real-time trip update
-- Access via: `api.GtfsManager.FindAgency()`, etc.
+- `GetVehicleForTrip(ctx, tripID)` - Vehicle for a trip; when no vehicle reports
+  that trip it falls back to the trip's block, which does query the DB
+- `VehiclesForAgencyID(ctx, agencyID)` - Resolves the agency's routes from the
+  DB, then reads those routes' vehicles from the snapshot
+
+**Manager methods that query the database** — these look like in-memory
+lookups but each wraps a sqlc query:
+- `FindAgency(ctx, id)` - `GetAgency`; returns `(nil, nil)` when the row is absent
+- `RoutesForAgencyID(ctx, agencyID)` - `GetRoutesForAgency`
+- Access via: `api.GtfsManager.FindAgency(ctx, id)`, etc.
 
 **Database Queries** (via sqlc):
 - `GetRoute(ctx, id)` - Single route by ID
