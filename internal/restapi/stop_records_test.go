@@ -132,7 +132,7 @@ func TestParentStopsAcrossScheduleTripAndArrivalEndpoints(t *testing.T) {
 			name: "arrival-and-departure-for-stop",
 			path: fmt.Sprintf("/api/where/arrival-and-departure-for-stop/s1547_nullstop.json?key=TEST&tripId=s1547_trip1547&serviceDate=%d", serviceDate),
 		},
-		{name: "trips-for-route", path: "/api/where/trips-for-route/s1547_r1.json?key=TEST"},
+		{name: "trips-for-route", path: "/api/where/trips-for-route/s1547_r1.json?key=TEST&includeSchedule=true"},
 	}
 
 	for _, tt := range tests {
