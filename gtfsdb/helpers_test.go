@@ -203,7 +203,13 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
     );
     CREATE TABLE IF NOT EXISTS trips (
         id TEXT PRIMARY KEY,
-        route_id TEXT NOT NULL
+        route_id TEXT NOT NULL,
+		block_id TEXT,
+		service_id TEXT NOT NULL
+    );
+	CREATE TABLE IF NOT EXISTS block_trip_entry (
+        trip_id TEXT NOT NULL,
+        block_id TEXT
     );
     CREATE TABLE IF NOT EXISTS stop_times (
         trip_id TEXT NOT NULL
