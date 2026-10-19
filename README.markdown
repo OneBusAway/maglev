@@ -155,7 +155,7 @@ A JSON schema file is provided at `config.schema.json` for IDE autocomplete and 
 | `exempt-api-keys`    | array   | (Sound Transit) | API keys exempt from rate limiting          |
 | `log-level`          | string  | "info"          | Log level (debug, info, warn, error)        |
 | `log-format`         | string  | "text"          | Log format (text, json)                     |
-| `rate-limit`         | integer | 100             | Requests per second per API key             |
+| `rate-limit`         | integer | 100             | Requests per second across the whole service (shared bucket; exempt keys bypass it) |
 | `gtfs-static-feed`   | object  | (Sound Transit) | Static GTFS feed configuration              |
 | `gtfs-rt-feeds`      | array   | (Sound Transit) | GTFS-RT feed configurations (see below)     |
 | `data-path`          | string  | "./gtfs.db"     | Path to SQLite database                     |

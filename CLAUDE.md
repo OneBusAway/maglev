@@ -183,7 +183,7 @@ Located in `internal/restapi/`:
 | Middleware | File | Description |
 |------------|------|-------------|
 | **Compression** | `compression_middleware.go` | Gzip compression using `klauspost/compress/gzhttp`. Default: 1KB min size, level 6 |
-| **Rate Limiting** | `rate_limit_middleware.go` | Per-API-key rate limiting with `golang.org/x/time/rate`. Auto-cleanup of idle limiters |
+| **Rate Limiting** | `rate_limit_middleware.go` | One shared `golang.org/x/time/rate` limiter for the whole service. Keys listed in `exempt-api-keys` bypass it |
 | **Request Logging** | `request_logging_middleware.go` | HTTP request/response logging |
 | **Security** | `security_middleware.go` | Security headers and protections |
 
