@@ -8,6 +8,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestGetActiveRoutesWithinBounds_CenteredOnStop checks that a query centered
+// exactly on a stop doesn't fail. Rounding can push the distance formula's acos
+// argument just above 1 there, which made acos return NULL and the scan fail.
+func TestGetActiveRoutesWithinBounds_CenteredOnStop(t *testing.T) {
+	client := newTestClientWithRABA(t)
+	ctx := context.Background()
+
+	stops, err := client.Queries.ListStops(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, stops)
+
+	const boxSpan = 0.0005
+	for _, stop := range stops {
+		_, err := client.Queries.GetActiveRoutesWithinBounds(ctx, GetActiveRoutesWithinBoundsParams{
+			Lat:      stop.Lat,
+			Lon:      stop.Lon,
+			MinLat:   stop.Lat - boxSpan,
+			MaxLat:   stop.Lat + boxSpan,
+			MinLon:   stop.Lon - boxSpan,
+			MaxLon:   stop.Lon + boxSpan,
+			MaxCount: 100,
+		})
+		assert.NoError(t, err, "query centered on stop %s", stop.ID)
+	}
+}
+
 // TestGetActiveRoutesWithinBounds_EmptyRouteIDsMeansNoFilter pins the invariant that
 // GetActiveRoutesWithinBoundsParams.RouteIDs being empty means "no filter" rather than
 // "match nothing". Callers that derive RouteIDs from a candidate search (e.g.
