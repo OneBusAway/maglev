@@ -79,7 +79,8 @@ func TestManager_GetStopsForLocation_UsesSpatialIndex(t *testing.T) {
 			assert.NotNil(t, manager)
 
 			// Get stops using the manager method
-			stops := manager.GetStopsInBounds(ctx, &LocationParams{Lat: tc.lat, Lon: tc.lon, Radius: tc.radius}, 100)
+			stops, err := manager.GetStopsInBounds(ctx, &LocationParams{Lat: tc.lat, Lon: tc.lon, Radius: tc.radius}, 100)
+			require.NoError(t, err)
 
 			// The test expects that the spatial index query is used
 			assert.GreaterOrEqual(t, len(stops), tc.expectedStops, "Should find stops within radius")

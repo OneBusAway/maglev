@@ -2,6 +2,10 @@
 
 ## Pull Request Guidelines
 
+### Start From a Triaged Issue
+
+Every PR must link an issue that a maintainer has triaged or assigned to you: labeled it, commented to confirm the problem, or assigned it. If no such issue exists, open one and wait for a maintainer to confirm the problem and the approach before writing code. A PR without one will be converted back to Draft. Small fixes such as typos or broken links are the exception.
+
 ### Size
 
 Keep PRs as short as possible, ideally no more than 200 lines. Large or multi-issue PRs should usually be split into one PR per issue — reviewers will ask for this if scope creeps, so it's cheaper to split upfront. Tightly coupled fixes that can't be reviewed independently are a reasonable exception.
