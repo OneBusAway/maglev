@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -574,4 +575,129 @@ func TestParseMinutesValueCapsBeforeDurationOverflow(t *testing.T) {
 	assert.Equal(t, 5*time.Minute,
 		parseMinutesValue(url.Values{"minutesBefore": {"-5"}}, "minutesBefore", 5*time.Minute, maxArrivalWindow, addError))
 	assert.Contains(t, collected, "minutesBefore")
+}
+
+// A route that serves a searched stop still contributes its alert when the
+// window contains none of that route's arrivals, and a stop alert is recorded
+// even when the window matches no stop_time.
+func TestArrivalsAndDeparturesForLocationKeepsAlertsWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, wide := callArrivalsForLocation(t, api)
+	require.NotEmpty(t, wide.Data.Entry.ArrivalsAndDepartures)
+	require.Contains(t, wide.Data.Entry.StopIDs, arrivalsTestStopID)
+
+	agencyID, stopCode, err := utils.ExtractAgencyIDAndCodeID(arrivalsTestStopID)
+	require.NoError(t, err)
+
+	var routeCode string
+	for _, arrival := range wide.Data.Entry.ArrivalsAndDepartures {
+		if arrival.StopID != arrivalsTestStopID {
+			continue
+		}
+		_, routeCode, err = utils.ExtractAgencyIDAndCodeID(arrival.RouteID)
+		require.NoError(t, err)
+		break
+	}
+	require.NotEmpty(t, routeCode)
+
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID: "loc-route-alert",
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			AgencyID: &agencyID,
+			RouteID:  &routeCode,
+		}},
+		Header: []gtfs.AlertText{{Text: "route without an arrival", Language: "en"}},
+	})
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID: "loc-stop-alert",
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			AgencyID: &agencyID,
+			StopID:   &stopCode,
+		}},
+		Header: []gtfs.AlertText{{Text: "stop with no stop time", Language: "en"}},
+	})
+
+	// Ten years on, the same stops are still in the box and none of them have
+	// an arrival. The alerts cannot have come from an arrival row.
+	far := strconv.FormatInt(arrivalsTestClock.AddDate(10, 0, 0).UnixMilli(), 10)
+	resp, narrow := callArrivalsForLocation(t, api, url.Values{"time": {far}})
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, narrow.Data.Entry.ArrivalsAndDepartures)
+	require.Contains(t, narrow.Data.Entry.StopIDs, arrivalsTestStopID)
+
+	wantRoute := utils.FormCombinedID(agencyID, "loc-route-alert")
+	wantStop := utils.FormCombinedID(agencyID, "loc-stop-alert")
+	assert.Contains(t, narrow.Data.Entry.SituationIDs, wantRoute)
+	assert.Contains(t, narrow.Data.Entry.SituationIDs, wantStop)
+
+	var sawRoute, sawStop bool
+	for _, situation := range narrow.Data.References.Situations {
+		switch situation.ID {
+		case wantRoute:
+			sawRoute = true
+			require.NotNil(t, situation.Summary)
+			assert.Equal(t, "route without an arrival", situation.Summary.Value)
+		case wantStop:
+			sawStop = true
+			require.NotNil(t, situation.Summary)
+			assert.Equal(t, "stop with no stop time", situation.Summary.Value)
+		}
+	}
+	assert.True(t, sawRoute, "references must include the route alert")
+	assert.True(t, sawStop, "references must include the stop alert")
+}
+
+func TestRetainedStopCodes(t *testing.T) {
+	assert.Equal(t, []string{"4062", "4063"}, retainedStopCodes([]string{
+		"25_4062",
+		"not-a-combined-id",
+		"25_4062",
+		"25_",
+		"40_4063",
+		"",
+	}))
+	assert.Empty(t, retainedStopCodes(nil))
+}
+
+func TestSplitCombinedRouteID(t *testing.T) {
+	tests := []struct {
+		name       string
+		routeID    any
+		wantAgency string
+		wantCode   string
+		wantOK     bool
+	}{
+		{name: "combined", routeID: "25_154", wantAgency: "25", wantCode: "154", wantOK: true},
+		{name: "not a string", routeID: 154, wantOK: false},
+		{name: "nil", routeID: nil, wantOK: false},
+		{name: "no underscore", routeID: "154", wantOK: false},
+		{name: "empty", routeID: "", wantOK: false},
+		{name: "empty code", routeID: "25_", wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			agencyID, codeID, ok := splitCombinedRouteID(tt.routeID)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantAgency, agencyID)
+			assert.Equal(t, tt.wantCode, codeID)
+		})
+	}
+}
+
+func TestAddRouteAlertsForRetainedStopsSkipsBadIDs(t *testing.T) {
+	api := createTestApi(t)
+	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{"not-combined"}, newSituationCollector()))
+}
+
+func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
+	api := createTestApi(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := api.addRouteAlertsForRetainedStops(ctx, []string{arrivalsTestStopID}, newSituationCollector())
+	require.Error(t, err)
 }

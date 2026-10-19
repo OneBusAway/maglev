@@ -450,6 +450,15 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 		return nil, err
 	}
 
+	// Stop alerts belong to the searched stops, including a stop whose window
+	// matched no stop_time.
+	for _, stop := range in.Stops {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), in.Agencies.agencyIDFor(stop.ID))
+	}
+
 	if len(allActive) == 0 {
 		return arrivals, nil
 	}
@@ -473,14 +482,6 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 	})
 	if err != nil {
 		return nil, err
-	}
-
-	// Stop-level alerts, once per stop — mirrors the per-stop pipeline.
-	for _, stop := range in.Stops {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), in.Agencies.agencyIDFor(stop.ID))
 	}
 
 	return arrivals, nil
