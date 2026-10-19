@@ -768,7 +768,7 @@ func TestTripsForRouteHandler_StatusFields(t *testing.T) {
 	api := createTestApiWithScheduledRealtimePosition(t, clock.NewMockClock(tripsForRouteTestClock))
 
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
-	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d",
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
 		combinedRouteID, tripsForRouteTestClock.UnixMilli())
 
 	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
@@ -1501,7 +1501,7 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 		want       bool
 		wantStatus int
 	}{
-		{name: "omitted defaults to true", query: "", want: true, wantStatus: http.StatusOK},
+		{name: "omitted", query: "", want: true, wantStatus: http.StatusOK},
 		{name: "explicit true", query: "=true", want: true, wantStatus: http.StatusOK},
 		{name: "explicit false", query: "=false", want: false, wantStatus: http.StatusOK},
 		{name: "empty value", query: "=", want: false, wantStatus: http.StatusOK},
@@ -1556,10 +1556,25 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 		}
 	}
 
+	// OpenAPI defaults includeSchedule and includeStatus to false. includeTrip
+	// and includeReferences stay true.
+	omittedDefault := map[string]bool{
+		"includeSchedule":   false,
+		"includeStatus":     false,
+		"includeTrip":       true,
+		"includeReferences": true,
+	}
+
 	for _, flag := range []string{"includeSchedule", "includeStatus", "includeTrip", "includeReferences"} {
 		for _, tt := range values {
 			t.Run(flag+"/"+tt.name, func(t *testing.T) {
 				url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, timeMs)
+				// Stops are referenced only from a schedule or a status. The
+				// includeReferences cases ask for a schedule so a true value
+				// still has stops to put in the references.
+				if flag == "includeReferences" {
+					url += "&includeSchedule=true"
+				}
 				if tt.query != "" {
 					url += "&" + flag + tt.query
 				}
@@ -1570,20 +1585,30 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 				if tt.wantStatus != http.StatusOK {
 					return
 				}
-				assertFlag(t, &model, flag, tt.want)
+				want := tt.want
+				if tt.query == "" {
+					want = omittedDefault[flag]
+				}
+				assertFlag(t, &model, flag, want)
 			})
 		}
 	}
 
-	t.Run("all omitted default to true", func(t *testing.T) {
+	t.Run("omitted flags use their own defaults", func(t *testing.T) {
 		url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, timeMs)
 
 		resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		for _, flag := range []string{"includeSchedule", "includeStatus", "includeTrip", "includeReferences"} {
-			assertFlag(t, &model, flag, true)
+		require.NotEmpty(t, model.Data.List)
+		for _, entry := range model.Data.List {
+			assert.Nil(t, entry.Schedule)
+			assert.Nil(t, entry.Status)
 		}
+		assert.NotEmpty(t, model.Data.References.Agencies)
+		assert.NotEmpty(t, model.Data.References.Routes)
+		assert.NotEmpty(t, model.Data.References.Trips)
+		assert.Empty(t, model.Data.References.Stops)
 	})
 }
 
@@ -2045,7 +2070,7 @@ func TestTripsForRouteHandler_PastMidnightServiceDate(t *testing.T) {
 		"trips-for-route-overnight.zip", overnightFiles())
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 	timeMs := afterMidnightClock.UnixMilli()
-	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d",
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
 		combinedRouteID, timeMs)
 
 	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
@@ -2235,7 +2260,7 @@ func TestTripsForRouteHandler_NullBlockServiceDayGuard(t *testing.T) {
 		"trips-for-route-null-guard.zip", nullBlockDailyCrossMidnightFiles())
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 	timeMs := afterMidnightClock.UnixMilli()
-	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d",
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
 		combinedRouteID, timeMs)
 
 	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
@@ -2267,7 +2292,7 @@ func TestTripsForRouteHandler_DuplicatedTripPastMidnight(t *testing.T) {
 
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 	timeMs := afterMidnightClock.UnixMilli()
-	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&time=%d",
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeStatus=true&time=%d",
 		combinedRouteID, timeMs)
 
 	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
@@ -2307,7 +2332,7 @@ func TestTripsForRouteHandler_PastMidnightServiceDate_BlockTrip(t *testing.T) {
 		"trips-for-route-overnight-block.zip", overnightBlockFiles())
 	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
 	timeMs := afterMidnightClock.UnixMilli()
-	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d",
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true&time=%d",
 		combinedRouteID, timeMs)
 
 	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)

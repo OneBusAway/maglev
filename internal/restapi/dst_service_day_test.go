@@ -329,7 +329,7 @@ func TestTripsForRouteAndLocation_ReportServiceDayStartOnDSTServiceDays(t *testi
 			})
 
 			resp, routeTrips := callAPIHandler[dstTripListResponse](t, api, fmt.Sprintf(
-				"/api/where/trips-for-route/%s.json?key=TEST", routeID))
+				"/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true", routeID))
 			require.Equal(t, 200, resp.StatusCode)
 			require.NotEmpty(t, routeTrips.Data.List)
 			assert.Equal(t, start.UnixMilli(), routeTrips.Data.List[0].ServiceDate)
@@ -406,7 +406,7 @@ func TestTripsForRoute_IncludesTripMeasuredFromServiceStartOnSpringForward(t *te
 	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now), "dst-early-spring.zip", files)
 	routeID := utils.FormCombinedID("dst-agency", "dst-route")
 	resp, routeTrips := callAPIHandler[dstTripListResponse](t, api, fmt.Sprintf(
-		"/api/where/trips-for-route/%s.json?key=TEST", routeID))
+		"/api/where/trips-for-route/%s.json?key=TEST&includeStatus=true", routeID))
 	require.Equal(t, 200, resp.StatusCode)
 	require.Len(t, routeTrips.Data.List, 1)
 	assert.Equal(t, utils.FormCombinedID("dst-agency", "dst-early"), routeTrips.Data.List[0].TripId)

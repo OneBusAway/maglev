@@ -42,8 +42,8 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	query := r.URL.Query()
-	includeSchedule, fieldErrors := utils.ParseBoolParam(query, "includeSchedule", true, referenceErrors)
-	includeStatus, fieldErrors := utils.ParseBoolParam(query, "includeStatus", true, fieldErrors)
+	includeSchedule, fieldErrors := utils.ParseBoolParam(query, "includeSchedule", false, referenceErrors)
+	includeStatus, fieldErrors := utils.ParseBoolParam(query, "includeStatus", false, fieldErrors)
 	includeTrip, fieldErrors := utils.ParseBoolParam(query, "includeTrip", true, fieldErrors)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
