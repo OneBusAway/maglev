@@ -31,7 +31,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 0,
-                  "distanceAlongBlock": 2052.7423789549525,
+                  "distanceAlongBlock": 2052.74237895,
                   "stopTime": {
                     "arrivalTime": 55457,
                     "departureTime": 55457,
@@ -46,7 +46,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 1,
-                  "distanceAlongBlock": 3349.7599189917564,
+                  "distanceAlongBlock": 3349.75991899,
                   "stopTime": {
                     "arrivalTime": 55620,
                     "departureTime": 55620,
@@ -61,7 +61,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 2,
-                  "distanceAlongBlock": 8814.809413734578,
+                  "distanceAlongBlock": 8814.80941373,
                   "stopTime": {
                     "arrivalTime": 55920,
                     "departureTime": 55920,
@@ -76,7 +76,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 3,
-                  "distanceAlongBlock": 19246.87300469033,
+                  "distanceAlongBlock": 19246.8730047,
                   "stopTime": {
                     "arrivalTime": 56640,
                     "departureTime": 56640,
@@ -91,7 +91,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 4,
-                  "distanceAlongBlock": 26356.011357465177,
+                  "distanceAlongBlock": 26356.0113575,
                   "stopTime": {
                     "arrivalTime": 57120,
                     "departureTime": 57120,
@@ -106,7 +106,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 5,
-                  "distanceAlongBlock": 30733.783593882945,
+                  "distanceAlongBlock": 30733.7835939,
                   "stopTime": {
                     "arrivalTime": 57720,
                     "departureTime": 57720,
@@ -121,7 +121,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 6,
-                  "distanceAlongBlock": 31263.832368557778,
+                  "distanceAlongBlock": 31263.8323686,
                   "stopTime": {
                     "arrivalTime": 58020,
                     "departureTime": 58020,
@@ -136,7 +136,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 7,
-                  "distanceAlongBlock": 35069.32380549927,
+                  "distanceAlongBlock": 35069.3238055,
                   "stopTime": {
                     "arrivalTime": 58560,
                     "departureTime": 58560,
@@ -151,7 +151,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 8,
-                  "distanceAlongBlock": 38919.745532876725,
+                  "distanceAlongBlock": 38919.7455329,
                   "stopTime": {
                     "arrivalTime": 58920,
                     "departureTime": 58920,
@@ -166,7 +166,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 9,
-                  "distanceAlongBlock": 44455.23766969325,
+                  "distanceAlongBlock": 44455.2376697,
                   "stopTime": {
                     "arrivalTime": 59220,
                     "departureTime": 59220,
@@ -181,7 +181,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 10,
-                  "distanceAlongBlock": 45794.87315620968,
+                  "distanceAlongBlock": 45794.8731562,
                   "stopTime": {
                     "arrivalTime": 59410,
                     "departureTime": 59410,
@@ -196,7 +196,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 11,
-                  "distanceAlongBlock": 47934.00624764075,
+                  "distanceAlongBlock": 47934.0062476,
                   "stopTime": {
                     "arrivalTime": 59700,
                     "departureTime": 59700,
@@ -209,7 +209,7 @@
                   }
                 }
               ],
-              "distanceAlongBlock": 47934.00624764075,
+              "distanceAlongBlock": 47934.0062476,
               "tripId": "25_t_290969_b_80332_tn_0"
             },
             {
@@ -218,7 +218,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": -1,
-                  "distanceAlongBlock": 47934.00624764075,
+                  "distanceAlongBlock": 47934.0062476,
                   "stopTime": {
                     "arrivalTime": 37200,
                     "departureTime": 37200,
@@ -233,7 +233,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 0,
-                  "distanceAlongBlock": 49986.7486265957,
+                  "distanceAlongBlock": 49986.7486266,
                   "stopTime": {
                     "arrivalTime": 37457,
                     "departureTime": 37457,
@@ -248,7 +248,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 1,
-                  "distanceAlongBlock": 51283.7661666325,
+                  "distanceAlongBlock": 51283.7661666,
                   "stopTime": {
                     "arrivalTime": 37620,
                     "departureTime": 37620,
@@ -263,7 +263,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 2,
-                  "distanceAlongBlock": 56748.81566137532,
+                  "distanceAlongBlock": 56748.8156614,
                   "stopTime": {
                     "arrivalTime": 37920,
                     "departureTime": 37920,
@@ -278,7 +278,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 3,
-                  "distanceAlongBlock": 67180.87925233107,
+                  "distanceAlongBlock": 67180.8792523,
                   "stopTime": {
                     "arrivalTime": 38640,
                     "departureTime": 38640,
@@ -293,7 +293,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 4,
-                  "distanceAlongBlock": 74290.01760510592,
+                  "distanceAlongBlock": 74290.0176051,
                   "stopTime": {
                     "arrivalTime": 39120,
                     "departureTime": 39120,
@@ -308,7 +308,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 5,
-                  "distanceAlongBlock": 78667.7898415237,
+                  "distanceAlongBlock": 78667.7898415,
                   "stopTime": {
                     "arrivalTime": 39720,
                     "departureTime": 39720,
@@ -323,7 +323,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 6,
-                  "distanceAlongBlock": 79197.83861619854,
+                  "distanceAlongBlock": 79197.8386162,
                   "stopTime": {
                     "arrivalTime": 40020,
                     "departureTime": 40020,
@@ -338,7 +338,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 7,
-                  "distanceAlongBlock": 83003.33005314003,
+                  "distanceAlongBlock": 83003.3300531,
                   "stopTime": {
                     "arrivalTime": 40560,
                     "departureTime": 40560,
@@ -353,7 +353,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 8,
-                  "distanceAlongBlock": 86853.75178051749,
+                  "distanceAlongBlock": 86853.7517805,
                   "stopTime": {
                     "arrivalTime": 40920,
                     "departureTime": 40920,
@@ -368,7 +368,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 9,
-                  "distanceAlongBlock": 92389.24391733401,
+                  "distanceAlongBlock": 92389.2439173,
                   "stopTime": {
                     "arrivalTime": 41220,
                     "departureTime": 41220,
@@ -383,7 +383,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 10,
-                  "distanceAlongBlock": 93728.87940385044,
+                  "distanceAlongBlock": 93728.8794039,
                   "stopTime": {
                     "arrivalTime": 41410,
                     "departureTime": 41410,
@@ -398,7 +398,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 11,
-                  "distanceAlongBlock": 95868.01249528151,
+                  "distanceAlongBlock": 95868.0124953,
                   "stopTime": {
                     "arrivalTime": 41700,
                     "departureTime": 41700,
@@ -411,7 +411,7 @@
                   }
                 }
               ],
-              "distanceAlongBlock": 47934.00624764076,
+              "distanceAlongBlock": 47934.0062476,
               "tripId": "25_t_88586_b_80332_tn_0"
             },
             {
@@ -420,7 +420,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": -1,
-                  "distanceAlongBlock": 95868.01249528151,
+                  "distanceAlongBlock": 95868.0124953,
                   "stopTime": {
                     "arrivalTime": 44400,
                     "departureTime": 44400,
@@ -435,7 +435,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 0,
-                  "distanceAlongBlock": 97920.75487423646,
+                  "distanceAlongBlock": 97920.7548742,
                   "stopTime": {
                     "arrivalTime": 44657,
                     "departureTime": 44657,
@@ -450,7 +450,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 1,
-                  "distanceAlongBlock": 99217.77241427326,
+                  "distanceAlongBlock": 99217.7724143,
                   "stopTime": {
                     "arrivalTime": 44820,
                     "departureTime": 44820,
@@ -465,7 +465,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 2,
-                  "distanceAlongBlock": 104682.82190901609,
+                  "distanceAlongBlock": 104682.821909,
                   "stopTime": {
                     "arrivalTime": 45120,
                     "departureTime": 45120,
@@ -480,7 +480,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 3,
-                  "distanceAlongBlock": 115114.88549997183,
+                  "distanceAlongBlock": 115114.8855,
                   "stopTime": {
                     "arrivalTime": 45840,
                     "departureTime": 45840,
@@ -495,7 +495,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 4,
-                  "distanceAlongBlock": 122224.02385274669,
+                  "distanceAlongBlock": 122224.023853,
                   "stopTime": {
                     "arrivalTime": 46320,
                     "departureTime": 46320,
@@ -510,7 +510,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 5,
-                  "distanceAlongBlock": 126601.79608916446,
+                  "distanceAlongBlock": 126601.796089,
                   "stopTime": {
                     "arrivalTime": 46920,
                     "departureTime": 46920,
@@ -525,7 +525,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 6,
-                  "distanceAlongBlock": 127131.8448638393,
+                  "distanceAlongBlock": 127131.844864,
                   "stopTime": {
                     "arrivalTime": 47220,
                     "departureTime": 47220,
@@ -540,7 +540,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 7,
-                  "distanceAlongBlock": 130937.3363007808,
+                  "distanceAlongBlock": 130937.336301,
                   "stopTime": {
                     "arrivalTime": 47760,
                     "departureTime": 47760,
@@ -555,7 +555,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 8,
-                  "distanceAlongBlock": 134787.75802815825,
+                  "distanceAlongBlock": 134787.758028,
                   "stopTime": {
                     "arrivalTime": 48120,
                     "departureTime": 48120,
@@ -570,7 +570,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 9,
-                  "distanceAlongBlock": 140323.25016497477,
+                  "distanceAlongBlock": 140323.250165,
                   "stopTime": {
                     "arrivalTime": 48420,
                     "departureTime": 48420,
@@ -585,7 +585,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 10,
-                  "distanceAlongBlock": 141662.8856514912,
+                  "distanceAlongBlock": 141662.885651,
                   "stopTime": {
                     "arrivalTime": 48610,
                     "departureTime": 48610,
@@ -600,7 +600,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 11,
-                  "distanceAlongBlock": 143802.0187429223,
+                  "distanceAlongBlock": 143802.018743,
                   "stopTime": {
                     "arrivalTime": 48900,
                     "departureTime": 48900,
@@ -613,7 +613,7 @@
                   }
                 }
               ],
-              "distanceAlongBlock": 47934.00624764078,
+              "distanceAlongBlock": 47934.0062476,
               "tripId": "25_t_88587_b_80332_tn_0"
             },
             {
@@ -622,7 +622,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": -1,
-                  "distanceAlongBlock": 143802.0187429223,
+                  "distanceAlongBlock": 143802.018743,
                   "stopTime": {
                     "arrivalTime": 62400,
                     "departureTime": 62400,
@@ -637,7 +637,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 0,
-                  "distanceAlongBlock": 145854.76112187724,
+                  "distanceAlongBlock": 145854.761122,
                   "stopTime": {
                     "arrivalTime": 62657,
                     "departureTime": 62657,
@@ -652,7 +652,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 1,
-                  "distanceAlongBlock": 147151.77866191405,
+                  "distanceAlongBlock": 147151.778662,
                   "stopTime": {
                     "arrivalTime": 62820,
                     "departureTime": 62820,
@@ -667,7 +667,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 2,
-                  "distanceAlongBlock": 152616.82815665688,
+                  "distanceAlongBlock": 152616.828157,
                   "stopTime": {
                     "arrivalTime": 63120,
                     "departureTime": 63120,
@@ -682,7 +682,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 3,
-                  "distanceAlongBlock": 163048.89174761262,
+                  "distanceAlongBlock": 163048.891748,
                   "stopTime": {
                     "arrivalTime": 63840,
                     "departureTime": 63840,
@@ -697,7 +697,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 4,
-                  "distanceAlongBlock": 170158.03010038746,
+                  "distanceAlongBlock": 170158.0301,
                   "stopTime": {
                     "arrivalTime": 64320,
                     "departureTime": 64320,
@@ -712,7 +712,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 5,
-                  "distanceAlongBlock": 174535.80233680524,
+                  "distanceAlongBlock": 174535.802337,
                   "stopTime": {
                     "arrivalTime": 64920,
                     "departureTime": 64920,
@@ -727,7 +727,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 6,
-                  "distanceAlongBlock": 175065.85111148006,
+                  "distanceAlongBlock": 175065.851111,
                   "stopTime": {
                     "arrivalTime": 65220,
                     "departureTime": 65220,
@@ -742,7 +742,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 7,
-                  "distanceAlongBlock": 178871.34254842155,
+                  "distanceAlongBlock": 178871.342548,
                   "stopTime": {
                     "arrivalTime": 65760,
                     "departureTime": 65760,
@@ -757,7 +757,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 8,
-                  "distanceAlongBlock": 182721.764275799,
+                  "distanceAlongBlock": 182721.764276,
                   "stopTime": {
                     "arrivalTime": 66120,
                     "departureTime": 66120,
@@ -772,7 +772,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 9,
-                  "distanceAlongBlock": 188257.25641261553,
+                  "distanceAlongBlock": 188257.256413,
                   "stopTime": {
                     "arrivalTime": 66420,
                     "departureTime": 66420,
@@ -787,7 +787,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 10,
-                  "distanceAlongBlock": 189596.89189913197,
+                  "distanceAlongBlock": 189596.891899,
                   "stopTime": {
                     "arrivalTime": 66610,
                     "departureTime": 66610,
@@ -802,7 +802,7 @@
                 {
                   "accumulatedSlackTime": 0,
                   "blockSequence": 11,
-                  "distanceAlongBlock": 191736.02499056305,
+                  "distanceAlongBlock": 191736.024991,
                   "stopTime": {
                     "arrivalTime": 66900,
                     "departureTime": 66900,
@@ -815,7 +815,7 @@
                   }
                 }
               ],
-              "distanceAlongBlock": 47934.00624764076,
+              "distanceAlongBlock": 47934.0062476,
               "tripId": "25_t_88588_b_80332_tn_0"
             }
           ]
