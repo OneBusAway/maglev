@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"fmt"
+	"iter"
 	"log/slog"
 	"runtime"
 	"slices"
@@ -417,26 +418,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		return false, fmt.Errorf("unable to create trips: %w", err)
 	}
 
-	var allStopTimeParams []CreateStopTimeParams
-	for _, t := range data.Static.Trips {
-		for _, st := range t.StopTimes {
-			params := CreateStopTimeParams{
-				TripID:            t.ID,
-				ArrivalTime:       int64(st.ArrivalTime),
-				DepartureTime:     int64(st.DepartureTime),
-				StopID:            st.Stop.Id,
-				StopSequence:      int64(st.StopSequence),
-				StopHeadsign:      nulls.String(st.Headsign),
-				PickupType:        toNullInt64(int64(st.PickupType)),
-				DropOffType:       toNullInt64(int64(st.DropOffType)),
-				ShapeDistTraveled: nulls.Float64FromPtr(st.ShapeDistanceTraveled),
-				Timepoint:         toNullInt64(boolToInt(st.ExactTimes)),
-			}
-
-			allStopTimeParams = append(allStopTimeParams, params)
-		}
-	}
-	if err := c.bulkInsertStopTimes(ctx, allStopTimeParams, tx); err != nil {
+	if err := c.bulkInsertStopTimes(ctx, stopTimeRows(data.Static.Trips), tx); err != nil {
 		return false, fmt.Errorf("unable to create stop times: %w", err)
 	}
 
@@ -570,6 +552,32 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 
 	return true, nil
+}
+
+// stopTimeRows yields the stop times of every trip, in trip order, building
+// each row only when it is needed.
+func stopTimeRows(trips []gtfs.ScheduledTrip) iter.Seq[CreateStopTimeParams] {
+	return func(yield func(CreateStopTimeParams) bool) {
+		for _, t := range trips {
+			for _, st := range t.StopTimes {
+				row := CreateStopTimeParams{
+					TripID:            t.ID,
+					ArrivalTime:       int64(st.ArrivalTime),
+					DepartureTime:     int64(st.DepartureTime),
+					StopID:            st.Stop.Id,
+					StopSequence:      int64(st.StopSequence),
+					StopHeadsign:      nulls.String(st.Headsign),
+					PickupType:        toNullInt64(int64(st.PickupType)),
+					DropOffType:       toNullInt64(int64(st.DropOffType)),
+					ShapeDistTraveled: nulls.Float64FromPtr(st.ShapeDistanceTraveled),
+					Timepoint:         toNullInt64(boolToInt(st.ExactTimes)),
+				}
+				if !yield(row) {
+					return
+				}
+			}
+		}
+	}
 }
 
 // buildStopAgencyIndex repopulates stop_agencies from the routes currently serving each
@@ -818,168 +826,35 @@ func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams, 
 	return nil
 }
 
-// preparedStopTimeBatch holds a prepared SQL statement with its arguments
-type preparedStopTimeBatch struct {
-	query string
-	args  []any
-	index int // Original index for ordering
-	end   int // End position for progress logging
+// stopTimeInsert inserts stop_times rows for insertInBatches.
+var stopTimeInsert = batchInsert[CreateStopTimeParams]{
+	table: "stop_times",
+	columns: []string{"trip_id", "arrival_time", "departure_time", "stop_id", "stop_sequence",
+		"stop_headsign", "pickup_type", "drop_off_type", "shape_dist_traveled", "timepoint"},
+	appendArgs: func(args []any, st CreateStopTimeParams) []any {
+		return append(args, st.TripID, st.ArrivalTime, st.DepartureTime, st.StopID, st.StopSequence,
+			st.StopHeadsign, st.PickupType, st.DropOffType, st.ShapeDistTraveled, st.Timepoint)
+	},
 }
 
-// bulkInsertStopTimes inserts stop times. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStopTimeParams, tx *sql.Tx) error {
+// bulkInsertStopTimes inserts stop times in the order they arrive, holding one
+// batch at a time. If tx is non-nil it uses that transaction and does not
+// commit; if nil it starts its own and commits.
+func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes iter.Seq[CreateStopTimeParams], tx *sql.Tx) error {
 	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+	logging.LogOperation(logger, "inserting_stop_times")
 
-	logging.LogOperation(logger, "inserting_stop_times",
-		slog.Int("count", len(stopTimes)))
-
-	// ===== PIPELINE: PARALLEL PREPARATION + SEQUENTIAL EXECUTION =====
-	const stopTimeFieldsPerRow = 10 // 10 fields per stop_time row
-	batchSize := c.config.SafeBatchSize(stopTimeFieldsPerRow)
-	const baseQuery = `INSERT INTO stop_times (
-		trip_id, arrival_time, departure_time, stop_id, stop_sequence,
-		stop_headsign, pickup_type, drop_off_type, shape_dist_traveled, timepoint
-	) VALUES `
-
-	// Calculate number of batches
-	numBatches := (len(stopTimes) + batchSize - 1) / batchSize
-
-	// Create channels for pipeline
-	numWorkers := runtime.NumCPU()
-	batchChan := make(chan int, numWorkers)
-	resultsChan := make(chan preparedStopTimeBatch, numWorkers*4) // Larger buffer for pipeline
-
-	// Start worker pool for parallel preparation
-	var wg sync.WaitGroup
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for batchIndex := range batchChan {
-				// Check context for cancellation
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
-				// Calculate batch boundaries
-				start := batchIndex * batchSize
-				end := start + batchSize
-				if end > len(stopTimes) {
-					end = len(stopTimes)
-				}
-				batch := stopTimes[start:end]
-
-				// Build multi-row INSERT query
-				// SECURITY: Only use placeholders (?) for values. Never concatenate user input directly
-				// into the query string to prevent SQL injection attacks.
-				var query strings.Builder
-				query.WriteString(baseQuery)
-				args := make([]any, 0, len(batch)*stopTimeFieldsPerRow)
-
-				for j, params := range batch {
-					if j > 0 {
-						query.WriteString(", ")
-					}
-					query.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-
-					args = append(args,
-						params.TripID,
-						params.ArrivalTime,
-						params.DepartureTime,
-						params.StopID,
-						params.StopSequence,
-						params.StopHeadsign,
-						params.PickupType,
-						params.DropOffType,
-						params.ShapeDistTraveled,
-						params.Timepoint,
-					)
-				}
-
-				// Send prepared batch to results channel
-				resultsChan <- preparedStopTimeBatch{
-					query: query.String(),
-					args:  args,
-					index: batchIndex,
-					end:   end,
-				}
-			}
-		}()
-	}
-
-	// Feed batch indices to workers
-	go func() {
-		defer close(batchChan)
-		for i := 0; i < numBatches; i++ {
-			select {
-			case <-ctx.Done():
-				return
-			case batchChan <- i:
-			}
-		}
-	}()
-
-	// Close results channel when all workers are done
-	go func() {
-		wg.Wait()
-		close(resultsChan)
-	}()
-
-	// Execute batches as they're prepared (overlapping preparation and execution)
-	// Collect batches and sort them to maintain insertion order
-	preparedBatches := make([]preparedStopTimeBatch, 0, numBatches)
-	for batch := range resultsChan {
-		preparedBatches = append(preparedBatches, batch)
-	}
-
-	// Check if context was canceled during preparation
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-
-	// Sort batches by index to maintain insertion order
-	slices.SortFunc(preparedBatches, func(a, b preparedStopTimeBatch) int {
-		return cmp.Compare(a.index, b.index)
-	})
-
-	logging.LogOperation(
-		logger,
-		"stop_times_progress",
-		slog.Int("inserted", 0),
-		slog.Int("total", len(stopTimes)),
-	)
-
+	batchSize := c.config.SafeBatchSize(len(stopTimeInsert.columns))
+	var inserted int
 	if err := c.withTransaction(ctx, tx, "bulk_insert_stop_times", func(tx *sql.Tx) error {
-		// Execute sorted batches
-		for _, batch := range preparedBatches {
-			// Check context before executing
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-
-			// Execute the batch insert
-			_, err := tx.ExecContext(ctx, batch.query, batch.args...)
-			if err != nil {
-				return fmt.Errorf("failed to insert stop_times batch: %w", err)
-			}
-
-			// Log progress every 100k records
-			if (batch.end)%100000 == 0 || batch.end == len(stopTimes) {
-				logging.LogOperation(logger, "stop_times_progress",
-					slog.Int("inserted", batch.end),
-					slog.Int("total", len(stopTimes)))
-			}
-		}
-		return nil
+		var err error
+		inserted, err = insertInBatches(ctx, tx, batchSize, stopTimeInsert, stopTimes)
+		return err
 	}); err != nil {
 		return err
 	}
 
-	logging.LogOperation(logger, "stop_times_inserted",
-		slog.Int("count", len(stopTimes)))
-
+	logging.LogOperation(logger, "stop_times_inserted", slog.Int("count", inserted))
 	return nil
 }
 
