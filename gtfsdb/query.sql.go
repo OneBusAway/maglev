@@ -933,7 +933,7 @@ type GetActiveBlockIDsForAgencyParams struct {
 // block_layover table) doesn't require consecutive trips to share a stop.
 // block_id is optional in GTFS, so trips.id is substituted for trips with no
 // block_id, matching them 1:1 to their own "block" rather than dropping them.
-// The importer stores a missing block_id as ” rather than NULL, hence NULLIF.
+// The importer stores NULL for missing block_id, but NULLIF handles legacy ” rows.
 // Callers run this once for today's service (at the current time-of-day) and
 // once for yesterday's service (the same instant shifted +24h) to catch
 // after-midnight trips, mirroring the today/yesterday pattern in
