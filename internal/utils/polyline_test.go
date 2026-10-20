@@ -4,7 +4,7 @@ import "testing"
 
 func TestEncodePolyline_GoogleExample(t *testing.T) {
 	// Canonical example from Google's polyline algorithm documentation.
-	coords := [][]float64{
+	coords := [][2]float64{
 		{38.5, -120.2},
 		{40.7, -120.95},
 		{43.252, -126.453},
@@ -19,9 +19,9 @@ func TestEncodePolyline_GoogleExample(t *testing.T) {
 func TestEncodePolyline_FloorsNotRounds(t *testing.T) {
 	// 0.000019 * 1e5 = 1.9. Java floors to 1 (same as 0.00001); a rounding
 	// encoder would yield 2 (same as 0.00002). Verify we floor.
-	got := EncodePolyline([][]float64{{0.000019, 0}})
-	floored := EncodePolyline([][]float64{{0.00001, 0}})
-	rounded := EncodePolyline([][]float64{{0.00002, 0}})
+	got := EncodePolyline([][2]float64{{0.000019, 0}})
+	floored := EncodePolyline([][2]float64{{0.00001, 0}})
+	rounded := EncodePolyline([][2]float64{{0.00002, 0}})
 	if got != floored {
 		t.Errorf("floor(0.000019*1e5) should match 0.00001 encoding; got %q want %q", got, floored)
 	}
@@ -31,9 +31,9 @@ func TestEncodePolyline_FloorsNotRounds(t *testing.T) {
 
 	// Negative boundary: -0.000019 * 1e5 = -1.9. Java floors to -2 (same as
 	// -0.00002); truncation or rounding would give -1 (same as -0.00001).
-	gotNeg := EncodePolyline([][]float64{{-0.000019, 0}})
-	flooredNeg := EncodePolyline([][]float64{{-0.00002, 0}})
-	truncOrRoundNeg := EncodePolyline([][]float64{{-0.00001, 0}})
+	gotNeg := EncodePolyline([][2]float64{{-0.000019, 0}})
+	flooredNeg := EncodePolyline([][2]float64{{-0.00002, 0}})
+	truncOrRoundNeg := EncodePolyline([][2]float64{{-0.00001, 0}})
 	if gotNeg != flooredNeg {
 		t.Errorf("floor(-0.000019*1e5) should match -0.00002 encoding; got %q want %q", gotNeg, flooredNeg)
 	}
@@ -44,9 +44,9 @@ func TestEncodePolyline_FloorsNotRounds(t *testing.T) {
 
 func TestEncodePolyline_PreservesDuplicates(t *testing.T) {
 	// A consecutive duplicate point must still be encoded (delta 0,0), not dropped.
-	coords := [][]float64{{1.0, 1.0}, {1.0, 1.0}, {2.0, 2.0}}
+	coords := [][2]float64{{1.0, 1.0}, {1.0, 1.0}, {2.0, 2.0}}
 	withDup := EncodePolyline(coords)
-	withoutDup := EncodePolyline([][]float64{{1.0, 1.0}, {2.0, 2.0}})
+	withoutDup := EncodePolyline([][2]float64{{1.0, 1.0}, {2.0, 2.0}})
 	if withDup == withoutDup {
 		t.Errorf("duplicate point should add a zero-delta segment; encodings should differ")
 	}
@@ -55,43 +55,5 @@ func TestEncodePolyline_PreservesDuplicates(t *testing.T) {
 func TestEncodePolyline_Empty(t *testing.T) {
 	if got := EncodePolyline(nil); got != "" {
 		t.Errorf("EncodePolyline(nil) = %q, want empty string", got)
-	}
-}
-
-func TestEncodePolyline_MalformedOrEmptyCoords(t *testing.T) {
-	tests := []struct {
-		name   string
-		coords [][]float64
-		want   string
-	}{
-		{
-			name:   "empty inner slice",
-			coords: [][]float64{{}},
-			want:   "",
-		},
-		{
-			name:   "single coordinate element",
-			coords: [][]float64{{47.6}},
-			want:   "",
-		},
-		{
-			name:   "multiple malformed coordinates",
-			coords: [][]float64{{}, {47.6}, nil},
-			want:   "",
-		},
-		{
-			name:   "valid coordinate flanked by malformed coordinates",
-			coords: [][]float64{{}, {38.5, -120.2}, {47.6}},
-			want:   EncodePolyline([][]float64{{38.5, -120.2}}),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := EncodePolyline(tt.coords)
-			if got != tt.want {
-				t.Errorf("EncodePolyline(%v) = %q, want %q", tt.coords, got, tt.want)
-			}
-		})
 	}
 }
