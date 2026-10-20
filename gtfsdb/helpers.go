@@ -1,6 +1,7 @@
 package gtfsdb
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -26,35 +27,22 @@ var ddl string
 
 // GtfsData bundles parsed static GTFS data with the hash that identifies the
 // feed in import_metadata. The hash is used to skip reimport when the feed is
-// unchanged.
+// unchanged. Make one with ParseGtfsStream or ParseGtfsData: StoreGtfsData
+// reads the stop times and shape points from the stream they keep.
 type GtfsData struct {
 	Static *gtfs.Static
 	Hash   string
 	Source string
+
+	// stream reads the stop times and shape points, which Static lacks.
+	stream *gtfs.StaticStream
 }
 
 // ParseGtfsData hashes, parses, and structurally validates GTFS zip bytes.
 // The given source is stored on the returned struct for later use by StoreGtfsData.
 func ParseGtfsData(b []byte, source string) (*GtfsData, error) {
-	hash := sha256.Sum256(b)
-	return ParseGtfsDataWithHash(b, hex.EncodeToString(hash[:]), source)
-}
-
-// ParseGtfsDataWithHash parses and structurally validates GTFS zip bytes whose
-// identifying hash the caller has already computed.
-func ParseGtfsDataWithHash(b []byte, hash, source string) (*GtfsData, error) {
-	logger := slog.Default().With(slog.String("component", "gtfs_parser"))
-	logging.LogOperation(logger, "parsing_gtfs_data", slog.Int("bytes", len(b)))
-	staticData, err := gtfs.ParseStatic(b, gtfs.ParseStaticOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("error parsing GTFS data: %w", err)
-	}
-
-	if err := ValidateAndFilterGTFSData(staticData, logger); err != nil {
-		return nil, fmt.Errorf("GTFS validation failed: %w", err)
-	}
-
-	return &GtfsData{Static: staticData, Hash: hash, Source: source}, nil
+	sum := sha256.Sum256(b)
+	return ParseGtfsStream(bytes.NewReader(b), int64(len(b)), hex.EncodeToString(sum[:]), source)
 }
 
 // metricsWrapper wraps *sql.DB for metric reporting purposes
@@ -449,8 +437,12 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		return false, fmt.Errorf("unable to create trips: %w", err)
 	}
 
-	if err := c.bulkInsertStopTimes(ctx, stopTimeRows(data.Static.Trips), tx); err != nil {
+	feedRows := data.rows()
+	if err := c.bulkInsertStopTimes(ctx, feedRows.stopTimes(), tx); err != nil {
 		return false, fmt.Errorf("unable to create stop times: %w", err)
+	}
+	if err := feedRows.err; err != nil {
+		return false, fmt.Errorf("unable to read stop times: %w", err)
 	}
 
 	// Collect frequency entries from all trips
@@ -473,8 +465,11 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 	}
 
-	if err := c.bulkInsertShapes(ctx, shapeRows(data.Static.Shapes), tx); err != nil {
+	if err := c.bulkInsertShapes(ctx, feedRows.shapes(), tx); err != nil {
 		return false, fmt.Errorf("unable to create shapes: %w", err)
+	}
+	if err := feedRows.err; err != nil {
+		return false, fmt.Errorf("unable to read shapes: %w", err)
 	}
 
 	logging.LogOperation(logger, "updating_import_metadata",
@@ -525,7 +520,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 
 	logging.LogOperation(logger, "building_block_trip_index")
-	allTripEnds := tripEndsOf(data.Static.Trips)
+	allTripEnds := feedRows.tripEnds
 	if err := c.buildBlockTripIndex(ctx, allTripEnds, tx); err != nil {
 		logging.LogError(logger, "Unable to build block trip index", err)
 		return false, fmt.Errorf("unable to build block trip index: %w", err)
@@ -573,50 +568,29 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	return true, nil
 }
 
-// stopTimeRows yields the stop times of every trip, in trip order, building
-// each row only when it is needed.
-func stopTimeRows(trips []gtfs.ScheduledTrip) iter.Seq[CreateStopTimeParams] {
-	return func(yield func(CreateStopTimeParams) bool) {
-		for _, t := range trips {
-			for _, st := range t.StopTimes {
-				row := CreateStopTimeParams{
-					TripID:            t.ID,
-					ArrivalTime:       int64(st.ArrivalTime),
-					DepartureTime:     int64(st.DepartureTime),
-					StopID:            st.Stop.Id,
-					StopSequence:      int64(st.StopSequence),
-					StopHeadsign:      nulls.String(st.Headsign),
-					PickupType:        toNullInt64(int64(st.PickupType)),
-					DropOffType:       toNullInt64(int64(st.DropOffType)),
-					ShapeDistTraveled: nulls.Float64FromPtr(st.ShapeDistanceTraveled),
-					Timepoint:         toNullInt64(boolToInt(st.ExactTimes)),
-				}
-				if !yield(row) {
-					return
-				}
-			}
-		}
+func stopTimeParams(tripID string, st gtfs.ScheduledStopTime) CreateStopTimeParams {
+	return CreateStopTimeParams{
+		TripID:            tripID,
+		ArrivalTime:       int64(st.ArrivalTime),
+		DepartureTime:     int64(st.DepartureTime),
+		StopID:            st.Stop.Id,
+		StopSequence:      int64(st.StopSequence),
+		StopHeadsign:      nulls.String(st.Headsign),
+		PickupType:        toNullInt64(int64(st.PickupType)),
+		DropOffType:       toNullInt64(int64(st.DropOffType)),
+		ShapeDistTraveled: nulls.Float64FromPtr(st.ShapeDistanceTraveled),
+		Timepoint:         toNullInt64(boolToInt(st.ExactTimes)),
 	}
 }
 
-// shapeRows yields the points of every shape, numbered by their position in
-// the shape, building each row only when it is needed.
-func shapeRows(shapes []gtfs.Shape) iter.Seq[CreateShapeParams] {
-	return func(yield func(CreateShapeParams) bool) {
-		for _, s := range shapes {
-			for idx, pt := range s.Points {
-				row := CreateShapeParams{
-					ShapeID:           s.ID,
-					Lat:               pt.Latitude,
-					Lon:               pt.Longitude,
-					ShapePtSequence:   int64(idx),
-					ShapeDistTraveled: nulls.Float64FromPtr(pt.Distance),
-				}
-				if !yield(row) {
-					return
-				}
-			}
-		}
+// shapePointParams numbers a shape's points by their position in the shape.
+func shapePointParams(shapeID string, idx int, pt gtfs.ShapePoint) CreateShapeParams {
+	return CreateShapeParams{
+		ShapeID:           shapeID,
+		Lat:               pt.Latitude,
+		Lon:               pt.Longitude,
+		ShapePtSequence:   int64(idx),
+		ShapeDistTraveled: nulls.Float64FromPtr(pt.Distance),
 	}
 }
 
@@ -1050,19 +1024,6 @@ func newTripEnds(trip *gtfs.ScheduledTrip, first, last gtfs.ScheduledStopTime) t
 	}
 }
 
-// tripEndsOf returns the ends of every trip that has stop times, in trip order.
-func tripEndsOf(trips []gtfs.ScheduledTrip) []tripEnds {
-	ends := make([]tripEnds, 0, len(trips))
-	for i := range trips {
-		stopTimes := trips[i].StopTimes
-		if len(stopTimes) == 0 {
-			continue
-		}
-		ends = append(ends, newTripEnds(&trips[i], stopTimes[0], stopTimes[len(stopTimes)-1]))
-	}
-	return ends
-}
-
 // blockTripIndexKey represents the grouping key for BlockTripIndex
 type blockTripIndexKey struct {
 	serviceIDs      string // comma-separated sorted service IDs
@@ -1251,6 +1212,15 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, trips []tripEnds, t
 // It ensures that required files are present and filters out structurally invalid trips.
 // Note: Orphaned entities (routes/stops/services with no remaining trips) are retained.
 func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
+	return validateAndFilterGTFSData(data, logger, func(tripIndex int) int {
+		return len(data.Trips[tripIndex].StopTimes)
+	})
+}
+
+// validateAndFilterGTFSData is ValidateAndFilterGTFSData for a feed whose stop
+// times may not be in memory: stopTimeCount gives the number of stop times of
+// the trip at an index in data.Trips.
+func validateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger, stopTimeCount func(tripIndex int) int) error {
 	if data == nil {
 		return fmt.Errorf("parsed GTFS data is nil")
 	}
@@ -1307,6 +1277,11 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 				slog.String("stop_id", data.Stops[i].Id),
 				slog.String("parent_station", parent.Id),
 			)
+			if orphanedParentRefs == 0 {
+				// A streamed feed still reads from the parsed stops, so
+				// change a copy.
+				data.Stops = slices.Clone(data.Stops)
+			}
 			data.Stops[i].Parent = nil
 			orphanedParentRefs++
 		}
@@ -1319,7 +1294,7 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 
 	// Foreign Key / Relationship Checks (Warnings & Filtering)
 	var validTrips []gtfs.ScheduledTrip
-	for _, trip := range data.Trips {
+	for i, trip := range data.Trips {
 		// Ensure the trip points to a valid route
 		if trip.Route == nil || trip.Route.Id == "" {
 			logger.Warn("trip references missing or invalid route, skipping trip", slog.String("trip_id", trip.ID))
@@ -1333,7 +1308,7 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 		}
 
 		// Ensure the trip has stop times
-		if len(trip.StopTimes) == 0 {
+		if stopTimeCount(i) == 0 {
 			logger.Warn("trip has no stop times, skipping trip", slog.String("trip_id", trip.ID))
 			continue
 		}
