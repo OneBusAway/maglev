@@ -10,10 +10,8 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
-	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -435,20 +433,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 	}
 
-	var allShapeParams []CreateShapeParams
-	for _, s := range data.Static.Shapes {
-		for idx, pt := range s.Points {
-			params := CreateShapeParams{
-				ShapeID:           s.ID,
-				Lat:               pt.Latitude,
-				Lon:               pt.Longitude,
-				ShapePtSequence:   int64(idx),
-				ShapeDistTraveled: nulls.Float64FromPtr(pt.Distance),
-			}
-			allShapeParams = append(allShapeParams, params)
-		}
-	}
-	if err := c.bulkInsertShapes(ctx, allShapeParams, tx); err != nil {
+	if err := c.bulkInsertShapes(ctx, shapeRows(data.Static.Shapes), tx); err != nil {
 		return false, fmt.Errorf("unable to create shapes: %w", err)
 	}
 
@@ -564,6 +549,27 @@ func stopTimeRows(trips []gtfs.ScheduledTrip) iter.Seq[CreateStopTimeParams] {
 					DropOffType:       toNullInt64(int64(st.DropOffType)),
 					ShapeDistTraveled: nulls.Float64FromPtr(st.ShapeDistanceTraveled),
 					Timepoint:         toNullInt64(boolToInt(st.ExactTimes)),
+				}
+				if !yield(row) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// shapeRows yields the points of every shape, numbered by their position in
+// the shape, building each row only when it is needed.
+func shapeRows(shapes []gtfs.Shape) iter.Seq[CreateShapeParams] {
+	return func(yield func(CreateShapeParams) bool) {
+		for _, s := range shapes {
+			for idx, pt := range s.Points {
+				row := CreateShapeParams{
+					ShapeID:           s.ID,
+					Lat:               pt.Latitude,
+					Lon:               pt.Longitude,
+					ShapePtSequence:   int64(idx),
+					ShapeDistTraveled: nulls.Float64FromPtr(pt.Distance),
 				}
 				if !yield(row) {
 					return
@@ -800,186 +806,23 @@ var stopTimeInsert = batchInsert[CreateStopTimeParams]{
 // batch at a time. If tx is non-nil it uses that transaction and does not
 // commit; if nil it starts its own and commits.
 func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes iter.Seq[CreateStopTimeParams], tx *sql.Tx) error {
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
-	logging.LogOperation(logger, "inserting_stop_times")
-
-	batchSize := c.config.SafeBatchSize(len(stopTimeInsert.columns))
-	var inserted int
-	if err := c.withTransaction(ctx, tx, "bulk_insert_stop_times", func(tx *sql.Tx) error {
-		var err error
-		inserted, err = insertInBatches(ctx, tx, batchSize, stopTimeInsert, stopTimes)
-		return err
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "stop_times_inserted", slog.Int("count", inserted))
-	return nil
+	return bulkInsertRows(ctx, c, tx, stopTimeInsert, stopTimes)
 }
 
-// preparedShapeBatch holds a prepared SQL statement with its arguments
-type preparedShapeBatch struct {
-	query string
-	args  []any
-	index int // Original index for ordering
-	end   int // End position for progress logging
+// shapeInsert inserts shapes rows for insertInBatches.
+var shapeInsert = batchInsert[CreateShapeParams]{
+	table:   "shapes",
+	columns: []string{"shape_id", "lat", "lon", "shape_pt_sequence", "shape_dist_traveled"},
+	appendArgs: func(args []any, s CreateShapeParams) []any {
+		return append(args, s.ShapeID, s.Lat, s.Lon, s.ShapePtSequence, s.ShapeDistTraveled)
+	},
 }
 
-// bulkInsertShapes inserts shapes. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParams, tx *sql.Tx) error {
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
-
-	logging.LogOperation(logger, "inserting_shapes",
-		slog.Int("count", len(shapes)))
-
-	// ===== PHASE 1: PARALLEL STATEMENT PREPARATION =====
-	const shapeFieldsPerRow = 5 // 5 fields per shape row
-	batchSize := c.config.SafeBatchSize(shapeFieldsPerRow)
-	const baseQuery = `INSERT INTO shapes (
-		shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
-	) VALUES `
-
-	// Calculate number of batches
-	numBatches := (len(shapes) + batchSize - 1) / batchSize
-
-	// Create worker pool for parallel statement preparation
-	numWorkers := runtime.NumCPU()
-	batchChan := make(chan int, numWorkers)
-	resultsChan := make(chan preparedShapeBatch, numWorkers*2)
-
-	// Start worker pool
-	var wg sync.WaitGroup
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for batchIndex := range batchChan {
-				// Check context for cancellation
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
-				// Calculate batch boundaries
-				start := batchIndex * batchSize
-				end := start + batchSize
-				if end > len(shapes) {
-					end = len(shapes)
-				}
-				batch := shapes[start:end]
-
-				// Build multi-row INSERT query
-				// SECURITY: Only use placeholders (?) for values. Never concatenate user input directly
-				// into the query string to prevent SQL injection attacks.
-				var query strings.Builder
-				query.WriteString(baseQuery)
-				args := make([]any, 0, len(batch)*shapeFieldsPerRow)
-
-				for j, params := range batch {
-					if j > 0 {
-						query.WriteString(", ")
-					}
-					query.WriteString("(?, ?, ?, ?, ?)")
-
-					args = append(args,
-						params.ShapeID,
-						params.Lat,
-						params.Lon,
-						params.ShapePtSequence,
-						params.ShapeDistTraveled,
-					)
-				}
-
-				// Send prepared batch to results channel
-				resultsChan <- preparedShapeBatch{
-					query: query.String(),
-					args:  args,
-					index: batchIndex,
-					end:   end,
-				}
-			}
-		}()
-	}
-
-	// Feed batch indices to workers
-	go func() {
-		defer close(batchChan)
-		for i := 0; i < numBatches; i++ {
-			select {
-			case <-ctx.Done():
-				return
-			case batchChan <- i:
-			}
-		}
-	}()
-
-	// ===== PHASE 2: COLLECT PREPARED BATCHES =====
-	// Close results channel when all workers are done
-	go func() {
-		wg.Wait()
-		close(resultsChan)
-	}()
-
-	// Collect prepared batches as they arrive with progress logging
-	preparedBatches := make([]preparedShapeBatch, 0, numBatches)
-	lastLoggedCount := 0
-	for batch := range resultsChan {
-		preparedBatches = append(preparedBatches, batch)
-
-		// Log preparation progress every 50 batches (~327k records with batch size 6553)
-		if len(preparedBatches)-lastLoggedCount >= 50 {
-			logging.LogOperation(logger, "shapes_preparation_progress",
-				slog.Int("batches_prepared", len(preparedBatches)),
-				slog.Int("total_batches", numBatches))
-			lastLoggedCount = len(preparedBatches)
-		}
-	}
-
-	logging.LogOperation(logger, "shapes_preparation_complete",
-		slog.Int("batches_prepared", len(preparedBatches)),
-		slog.Int("total_batches", numBatches))
-
-	// Check if context was canceled during preparation
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-
-	// Sort batches by index to maintain insertion order
-	slices.SortFunc(preparedBatches, func(a, b preparedShapeBatch) int {
-		return cmp.Compare(a.index, b.index)
-	})
-
-	// ===== PHASE 3: SEQUENTIAL DATABASE EXECUTION =====
-	if err := c.withTransaction(ctx, tx, "bulk_insert_shapes", func(tx *sql.Tx) error {
-		for _, batch := range preparedBatches {
-			// Check context before executing
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-
-			// Execute the batch insert
-			_, err := tx.ExecContext(ctx, batch.query, batch.args...)
-			if err != nil {
-				return fmt.Errorf("failed to insert shapes batch: %w", err)
-			}
-
-			// Log progress every 50k records
-			if (batch.end)%50000 == 0 || batch.end == len(shapes) {
-				logging.LogOperation(logger, "shapes_progress",
-					slog.Int("inserted", batch.end),
-					slog.Int("total", len(shapes)))
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "shapes_inserted",
-		slog.Int("count", len(shapes)))
-
-	return nil
+// bulkInsertShapes inserts shape points in the order they arrive, holding one
+// batch at a time. If tx is non-nil it uses that transaction and does not
+// commit; if nil it starts its own and commits.
+func (c *Client) bulkInsertShapes(ctx context.Context, shapes iter.Seq[CreateShapeParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, shapeInsert, shapes)
 }
 
 // bulkInsertFrequencies inserts frequencies. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
