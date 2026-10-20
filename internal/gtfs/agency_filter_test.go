@@ -192,10 +192,12 @@ func TestAttributeVehicles(t *testing.T) {
 			wantAgency:    "agency-B",
 		},
 		{
-			name:          "unknown route in a feed with agency-ids is filtered out",
+			name:          "unknown route in a feed with agency-ids gets the first configured agency",
 			vehicle:       vehicleOnTrip("V1", "T9", "X"),
-			feedAgencyIDs: []string{"agency-A"},
-			wantKept:      false,
+			feedAgencyIDs: []string{"agency-B", "agency-A"},
+			wantKept:      true,
+			wantAgency:    "agency-B",
+			wantRouteID:   "X",
 		},
 		{
 			name:     "unknown route in a feed without agency-ids is kept without an agency",
