@@ -209,7 +209,8 @@ func TestFilterRoutes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FilterRoutes(client.Queries, ctx, tt.present)
+			result, err := FilterRoutes(client.Queries, ctx, tt.present)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, len(result))
 
 			// Verify that returned routes are correct
@@ -228,7 +229,8 @@ func TestFilterRoutes_VerifyFields(t *testing.T) {
 	ctx := context.Background()
 	present := map[string]bool{"agency1_route1": true}
 
-	result := FilterRoutes(client.Queries, ctx, present)
+	result, err := FilterRoutes(client.Queries, ctx, present)
+	require.NoError(t, err)
 
 	require.Len(t, result, 1)
 	route := result[0]
@@ -260,7 +262,8 @@ func TestFilterRoutes_DatabaseError(t *testing.T) {
 	ctx := context.Background()
 	present := map[string]bool{"route1": true}
 
-	result := FilterRoutes(client.Queries, ctx, present)
+	result, err := FilterRoutes(client.Queries, ctx, present)
 
+	require.Error(t, err)
 	assert.Nil(t, result, "Should return nil on database error")
 }

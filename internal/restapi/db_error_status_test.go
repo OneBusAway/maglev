@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -154,4 +155,20 @@ func TestLocationSpatialQueryFailure(t *testing.T) {
 		require.ErrorContains(t, err, "stops_rtree")
 		assert.Nil(t, nearby)
 	})
+}
+
+func TestStopsForLocationRoutesQueryFailure(t *testing.T) {
+	api := createTestApiWithFeed(t, models.GetFixturePath(t, "raba.zip"))
+	api.Clock = clock.NewMockClock(time.Date(2025, 12, 26, 14, 0, 0, 0, time.UTC))
+
+	// Break ListRoutes by renaming a column it selects, leaving other queries operational.
+	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(),
+		`ALTER TABLE routes RENAME COLUMN continuous_pickup TO continuous_pickup_broken`)
+	require.NoError(t, err)
+
+	endpoint := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=2500"
+	resp, model := callAPIHandler[models.ResponseModel](t, api, endpoint)
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, http.StatusInternalServerError, model.Code)
+	assert.Equal(t, "internal server error", model.Text)
 }
