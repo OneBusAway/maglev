@@ -17,10 +17,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The parity tests pin what an import of the RABA fixture stores. A change
-// that is meant to keep behavior must leave the golden files untouched; a
-// change that is meant to alter it shows what changed as a diff of the golden
-// files.
+// The parity tests pin what an import of the RABA fixture stores and what a
+// fixed set of API requests returns. A change that is meant to keep behavior
+// must leave the golden files untouched; a change that is meant to alter it
+// shows what changed as a diff of the golden files.
 //
 // Regenerate the golden files with:
 //

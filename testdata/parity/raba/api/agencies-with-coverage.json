@@ -1,0 +1,39 @@
+{
+  "code": 200,
+  "currentTime": 1749740400000,
+  "data": {
+    "limitExceeded": false,
+    "list": [
+      {
+        "agencyId": "25",
+        "lat": 40.3304015,
+        "latSpan": 1.213889,
+        "lon": -122.098197,
+        "lonSpan": 0.984394
+      }
+    ],
+    "references": {
+      "agencies": [
+        {
+          "disclaimer": "",
+          "email": "",
+          "fareUrl": "",
+          "id": "25",
+          "lang": "en",
+          "name": "Redding Area Bus Authority",
+          "phone": "530-241-2877",
+          "privateService": false,
+          "timezone": "America/Los_Angeles",
+          "url": "http://www.rabaride.com/"
+        }
+      ],
+      "routes": [],
+      "situations": [],
+      "stopTimes": [],
+      "stops": [],
+      "trips": []
+    }
+  },
+  "text": "OK",
+  "version": 2
+}
