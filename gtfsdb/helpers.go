@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -23,9 +24,9 @@ import (
 //go:embed schema.sql
 var ddl string
 
-// GtfsData bundles parsed static GTFS data with the sha256 hash of the
-// bytes it was parsed from. The hash is used to skip reimport when the
-// source data is unchanged.
+// GtfsData bundles parsed static GTFS data with the hash that identifies the
+// feed in import_metadata. The hash is used to skip reimport when the feed is
+// unchanged.
 type GtfsData struct {
 	Static *gtfs.Static
 	Hash   string
@@ -36,8 +37,12 @@ type GtfsData struct {
 // The given source is stored on the returned struct for later use by StoreGtfsData.
 func ParseGtfsData(b []byte, source string) (*GtfsData, error) {
 	hash := sha256.Sum256(b)
-	hashStr := hex.EncodeToString(hash[:])
+	return ParseGtfsDataWithHash(b, hex.EncodeToString(hash[:]), source)
+}
 
+// ParseGtfsDataWithHash parses and structurally validates GTFS zip bytes whose
+// identifying hash the caller has already computed.
+func ParseGtfsDataWithHash(b []byte, hash, source string) (*GtfsData, error) {
 	logger := slog.Default().With(slog.String("component", "gtfs_parser"))
 	logging.LogOperation(logger, "parsing_gtfs_data", slog.Int("bytes", len(b)))
 	staticData, err := gtfs.ParseStatic(b, gtfs.ParseStaticOptions{})
@@ -49,7 +54,7 @@ func ParseGtfsData(b []byte, source string) (*GtfsData, error) {
 		return nil, fmt.Errorf("GTFS validation failed: %w", err)
 	}
 
-	return &GtfsData{Static: staticData, Hash: hashStr, Source: source}, nil
+	return &GtfsData{Static: staticData, Hash: hash, Source: source}, nil
 }
 
 // metricsWrapper wraps *sql.DB for metric reporting purposes
@@ -203,6 +208,38 @@ func (c *Client) withTransaction(ctx context.Context, tx *sql.Tx, label string, 
 	return nil
 }
 
+// HasImported reports whether the database already holds the feed with this
+// hash from this source, so a caller can skip parsing it.
+func (c *Client) HasImported(ctx context.Context, hash, source string) (bool, error) {
+	metadata, err := c.Queries.GetImportMetadata(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("error checking import metadata: %w", err)
+	}
+	return isSameFeed(metadata, hash, source), nil
+}
+
+// isSameFeed reports whether import_metadata describes the feed with this hash
+// from this source.
+func isSameFeed(metadata ImportMetadatum, hash, source string) bool {
+	return metadata.FileHash == hash && metadata.FileSource == source
+}
+
+// RefreshFeedExpiry recomputes feed_expires_at from the stored calendar. It
+// runs when a feed is found unchanged, so existing databases pick up
+// corrections to the expiry calculation on upgrade without a re-import.
+func (c *Client) RefreshFeedExpiry(ctx context.Context) error {
+	err := c.withTransaction(ctx, nil, "refresh_feed_expiry", func(tx *sql.Tx) error {
+		return updateFeedExpiresAtFromCalendar(ctx, c.Queries.WithTx(tx))
+	})
+	if err != nil {
+		return fmt.Errorf("failed to refresh feed expiry: %w", err)
+	}
+	return nil
+}
+
 func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error) {
 	logger := slog.Default().With(slog.String("component", "gtfs_importer"))
 
@@ -223,13 +260,9 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	if err == nil {
 		hasExisting = true
 		// We have existing metadata, check if hash matches
-		if existingMetadata.FileHash == data.Hash && existingMetadata.FileSource == data.Source {
-			// Refresh derived metadata even when the feed is unchanged, so existing
-			// databases pick up corrections to the expiry calculation on upgrade.
-			if err := c.withTransaction(ctx, nil, "refresh_feed_expiry", func(tx *sql.Tx) error {
-				return updateFeedExpiresAtFromCalendar(ctx, c.Queries.WithTx(tx))
-			}); err != nil {
-				return false, fmt.Errorf("failed to refresh feed expiry: %w", err)
+		if isSameFeed(existingMetadata, data.Hash, data.Source) {
+			if err := c.RefreshFeedExpiry(ctx); err != nil {
+				return false, err
 			}
 			logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import",
 				slog.String("hash", data.Hash[:8]))

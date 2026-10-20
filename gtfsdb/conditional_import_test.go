@@ -325,3 +325,33 @@ func TestClearAllGTFSData(t *testing.T) {
 	require.NoError(t, err, "Import metadata should still exist after clear")
 	assert.NotEmpty(t, metadata.FileHash, "Import metadata should not be cleared")
 }
+
+func TestHasImported(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	imported, err := client.HasImported(t.Context(), "hash", "source")
+	require.NoError(t, err)
+	assert.False(t, imported, "an empty database holds no feed")
+
+	raba, err := os.ReadFile("../testdata/raba.zip")
+	require.NoError(t, err)
+	parsed, err := ParseGtfsData(raba, "source")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsed)
+	require.NoError(t, err)
+
+	for _, tt := range []struct {
+		hash, source string
+		want         bool
+	}{
+		{parsed.Hash, "source", true},
+		{parsed.Hash, "other-source", false},
+		{"other-hash", "source", false},
+	} {
+		imported, err := client.HasImported(t.Context(), tt.hash, tt.source)
+		require.NoError(t, err)
+		assert.Equal(t, tt.want, imported, "%s from %s", tt.hash, tt.source)
+	}
+}
