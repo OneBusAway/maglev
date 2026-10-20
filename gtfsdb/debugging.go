@@ -55,7 +55,6 @@ func (c *Client) staticDataCounts(staticData *gtfs.Static) map[string]int {
 		"transfers":   len(staticData.Transfers),
 		"trips":       len(staticData.Trips),
 		"calendar":    len(staticData.Services),
-		"shapes":      len(staticData.Shapes),
 		"frequencies": frequencyCount,
 	}
 }

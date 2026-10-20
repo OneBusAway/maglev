@@ -367,3 +367,17 @@ func TestTripEndsOf(t *testing.T) {
 			lastStopID: "C", lastDeparture: 4*time.Hour + 5*time.Minute},
 	}, tripEndsOf(trips))
 }
+
+// tripEndsOf returns the ends of every trip that has stop times, in trip
+// order, the way a streamed import collects them.
+func tripEndsOf(trips []gtfs.ScheduledTrip) []tripEnds {
+	ends := make([]tripEnds, 0, len(trips))
+	for i := range trips {
+		stopTimes := trips[i].StopTimes
+		if len(stopTimes) == 0 {
+			continue
+		}
+		ends = append(ends, newTripEnds(&trips[i], stopTimes[0], stopTimes[len(stopTimes)-1]))
+	}
+	return ends
+}

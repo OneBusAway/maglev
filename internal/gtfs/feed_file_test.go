@@ -25,13 +25,14 @@ func rabaContentHash(t *testing.T) string {
 }
 
 func TestFetchFeedFileLocal(t *testing.T) {
+	dbDir := t.TempDir()
 	path := models.GetFixturePath(t, "raba.zip")
-	feed, err := fetchFeedFile(context.Background(), Config{GtfsURL: path})
+	feed, err := fetchFeedFile(context.Background(), Config{GtfsURL: path, GTFSDataPath: filepath.Join(dbDir, "gtfs.db")})
 	require.NoError(t, err)
-	defer feed.cleanup()
+	defer feed.close()
 
-	assert.Equal(t, path, feed.path, "a local feed is read where it is")
-	assert.Equal(t, rabaContentHash(t), feed.hash)
+	assert.Equal(t, dbDir, filepath.Dir(feed.path), "a local feed is copied next to the database")
+	assert.Equal(t, rabaContentHash(t), feed.contentHash)
 }
 
 func TestFetchFeedFileDownload(t *testing.T) {
@@ -57,10 +58,10 @@ func TestFetchFeedFileDownload(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, dbDir, filepath.Dir(feed.path), "the download goes next to the database")
-	assert.Equal(t, rabaContentHash(t), feed.hash)
-	feed.cleanup()
+	assert.Equal(t, rabaContentHash(t), feed.contentHash)
+	feed.close()
 	_, err = os.Stat(feed.path)
-	assert.True(t, os.IsNotExist(err), "cleanup removes the download")
+	assert.True(t, os.IsNotExist(err), "close removes the download")
 
 	config.StaticAuthHeaderValue = "wrong"
 	_, err = fetchFeedFile(context.Background(), config)
@@ -109,7 +110,7 @@ func TestFetchFeedFileRemovesStaleDownloads(t *testing.T) {
 
 	feed, err := fetchFeedFile(context.Background(), Config{GtfsURL: server.URL, GTFSDataPath: filepath.Join(dbDir, "gtfs.db")})
 	require.NoError(t, err)
-	defer feed.cleanup()
+	defer feed.close()
 	_, err = os.Stat(stale)
 	assert.True(t, os.IsNotExist(err))
 }
@@ -120,13 +121,34 @@ func TestFetchFeedFileRemovesStaleDownloads(t *testing.T) {
 func TestParseHashMarksTidyOnlyWhenItRan(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // no gtfstidy binary, so tidying fails
 	path := models.GetFixturePath(t, "raba.zip")
-	config := Config{GtfsURL: path, EnableGTFSTidy: true}
+	config := Config{GtfsURL: path, GTFSDataPath: filepath.Join(t.TempDir(), "gtfs.db"), EnableGTFSTidy: true}
 
 	feed, err := fetchFeedFile(context.Background(), config)
 	require.NoError(t, err)
-	assert.Equal(t, rabaContentHash(t)+"+gtfstidy", feed.hash, "the check looks for a tidied import")
+	defer feed.close()
+	assert.Equal(t, rabaContentHash(t)+"+gtfstidy", feed.importHash(config), "the check looks for a tidied import")
 
 	data, err := feed.parse(context.Background(), config)
 	require.NoError(t, err)
 	assert.Equal(t, rabaContentHash(t), data.Hash, "an untidied import is stored under the plain hash")
+}
+
+// TestParsedFeedFileIsClosedAndRemoved checks that the import streams from the
+// copy it already holds open, and that close closes and removes it.
+func TestParsedFeedFileIsClosedAndRemoved(t *testing.T) {
+	config := Config{GtfsURL: models.GetFixturePath(t, "raba.zip"), GTFSDataPath: filepath.Join(t.TempDir(), "gtfs.db")}
+	feed, err := fetchFeedFile(context.Background(), config)
+	require.NoError(t, err)
+
+	// Removing the copy by name doesn't stop the import reading it.
+	require.NoError(t, os.Remove(feed.path))
+	data, err := feed.parse(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, rabaContentHash(t), data.Hash)
+
+	feed.close()
+	_, err = feed.open.Stat()
+	assert.ErrorIs(t, err, os.ErrClosed)
+	_, err = os.Stat(feed.path)
+	assert.True(t, os.IsNotExist(err))
 }
