@@ -20,13 +20,10 @@ import (
 var parityTime = time.Date(2025, 6, 12, 15, 0, 0, 0, time.UTC)
 
 // parityOrderDependentEndpoints lists endpoints whose response is known to
-// change with SQLite's unordered row order, with the issue that tracks each.
-// The reversed-order pass skips them until the issue is fixed.
-var parityOrderDependentEndpoints = map[string]string{
-	"route-ids-for-agency": "https://github.com/OneBusAway/maglev/issues/1661",
-	"routes-for-agency":    "https://github.com/OneBusAway/maglev/issues/1661",
-	"stop-ids-for-agency":  "https://github.com/OneBusAway/maglev/issues/1661",
-}
+// change with SQLite's unordered row order, each with the issue that tracks
+// it, so the reversed-order pass can skip them until it is fixed. None is
+// known today.
+var parityOrderDependentEndpoints = map[string]string{}
 
 type parityEndpoint struct {
 	name string
