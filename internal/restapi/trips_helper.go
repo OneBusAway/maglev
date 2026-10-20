@@ -508,6 +508,21 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 	}, nil
 }
 
+// blockServiceIDs returns the services whose trips make up a block on
+// serviceDate: every service active that day, since Java chains the trips of
+// all of them into one block configuration, plus the trip's own service, so a
+// trip asked about on a day it doesn't run still has neighbours.
+func (api *RestAPI) blockServiceIDs(ctx context.Context, trip *gtfsdb.Trip, serviceDate time.Time) ([]string, error) {
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(serviceIDs, trip.ServiceID) {
+		serviceIDs = append(serviceIDs, trip.ServiceID)
+	}
+	return serviceIDs, nil
+}
+
 func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.Trip, agencyID string, serviceDate time.Time) (nextTripID string, previousTripID string, stopTimes []gtfsdb.StopTime, err error) {
 	if !trip.BlockID.Valid {
 		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
@@ -517,10 +532,14 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 		return "", "", stopTimes, nil
 	}
 
+	serviceIDs, err := api.blockServiceIDs(ctx, trip, serviceDate)
+	if err != nil {
+		return "", "", nil, err
+	}
 	navResult, err := api.GtfsManager.GtfsDB.Queries.GetNextAndPreviousTripsInBlock(ctx, gtfsdb.GetNextAndPreviousTripsInBlockParams{
 		TripID:     trip.ID,
 		BlockID:    trip.BlockID,
-		ServiceIds: []string{trip.ServiceID},
+		ServiceIds: serviceIDs,
 	})
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {

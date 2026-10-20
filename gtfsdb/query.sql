@@ -1500,15 +1500,30 @@ WITH BlockTrips AS (
 SELECT seq FROM BlockTrips WHERE id = @trip_id;
 
 -- name: GetNextAndPreviousTripsInBlock :one
--- Uses LAG/LEAD window functions to find prev/next trip IDs in one query,
-WITH NavTrips AS (
+-- Finds a trip's neighbours in its block among the trips of the given
+-- services, in Java's block order: by each trip's average departure time in
+-- whole seconds (BlockConfigurationEntriesFactory.BlockTripComparator), then
+-- by trip ID. Trips without stop times have no place in the order.
+WITH BlockTrips AS (
+    SELECT
+        trips.id,
+        SUM(stop_times.departure_time / 1000000000) / COUNT(*) AS average_departure
+    FROM
+        trips
+        JOIN stop_times ON stop_times.trip_id = trips.id
+    WHERE
+        trips.block_id = @block_id
+        AND trips.service_id IN (sqlc.slice('service_ids'))
+    GROUP BY
+        trips.id
+),
+NavTrips AS (
     SELECT
         id,
-        LAG(id)  OVER (ORDER BY min_arrival_time) AS prev_trip_id,
-        LEAD(id) OVER (ORDER BY min_arrival_time) AS next_trip_id
-    FROM trips
-    WHERE block_id = @block_id
-      AND service_id IN (sqlc.slice('service_ids'))
+        LAG(id) OVER (ORDER BY average_departure, id) AS prev_trip_id,
+        LEAD(id) OVER (ORDER BY average_departure, id) AS next_trip_id
+    FROM
+        BlockTrips
 )
 SELECT prev_trip_id, next_trip_id
 FROM NavTrips

@@ -2413,14 +2413,26 @@ func (q *Queries) GetInServiceTripIDsForStops(ctx context.Context, arg GetInServ
 }
 
 const getNextAndPreviousTripsInBlock = `-- name: GetNextAndPreviousTripsInBlock :one
-WITH NavTrips AS (
+WITH BlockTrips AS (
+    SELECT
+        trips.id,
+        SUM(stop_times.departure_time / 1000000000) / COUNT(*) AS average_departure
+    FROM
+        trips
+        JOIN stop_times ON stop_times.trip_id = trips.id
+    WHERE
+        trips.block_id = ?2
+        AND trips.service_id IN (/*SLICE:service_ids*/?)
+    GROUP BY
+        trips.id
+),
+NavTrips AS (
     SELECT
         id,
-        LAG(id)  OVER (ORDER BY min_arrival_time) AS prev_trip_id,
-        LEAD(id) OVER (ORDER BY min_arrival_time) AS next_trip_id
-    FROM trips
-    WHERE block_id = ?2
-      AND service_id IN (/*SLICE:service_ids*/?)
+        LAG(id) OVER (ORDER BY average_departure, id) AS prev_trip_id,
+        LEAD(id) OVER (ORDER BY average_departure, id) AS next_trip_id
+    FROM
+        BlockTrips
 )
 SELECT prev_trip_id, next_trip_id
 FROM NavTrips
@@ -2438,7 +2450,10 @@ type GetNextAndPreviousTripsInBlockRow struct {
 	NextTripID interface{}
 }
 
-// Uses LAG/LEAD window functions to find prev/next trip IDs in one query,
+// Finds a trip's neighbours in its block among the trips of the given
+// services, in Java's block order: by each trip's average departure time in
+// whole seconds (BlockConfigurationEntriesFactory.BlockTripComparator), then
+// by trip ID. Trips without stop times have no place in the order.
 func (q *Queries) GetNextAndPreviousTripsInBlock(ctx context.Context, arg GetNextAndPreviousTripsInBlockParams) (GetNextAndPreviousTripsInBlockRow, error) {
 	query := getNextAndPreviousTripsInBlock
 	var queryParams []interface{}

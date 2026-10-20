@@ -5,8 +5,8 @@
     "entry": {
       "schedule": {
         "frequency": null,
-        "nextTripId": "",
-        "previousTripId": "25_9d4d92fc-c5dd-4763-939b-60ab3cac0eb9",
+        "nextTripId": "25_Route15-Northbound-MonFri-1",
+        "previousTripId": "25_Route15-Northbound-MonFri",
         "stopTimes": [
           {
             "arrivalTime": 26400,
@@ -663,16 +663,29 @@
       "trips": [
         {
           "blockId": "25_15",
-          "directionId": "0",
-          "id": "25_9d4d92fc-c5dd-4763-939b-60ab3cac0eb9",
+          "directionId": "1",
+          "id": "25_Route15-Northbound-MonFri",
           "peakOffpeak": 0,
           "routeId": "25_15",
           "routeShortName": "15",
-          "serviceId": "25_c_1658_b_18260_d_31",
-          "shapeId": "25_lt05",
+          "serviceId": "25_c_868_b_79978_d_31",
+          "shapeId": "25_qy7v",
           "timeZone": "",
-          "tripHeadsign": "Southbound",
-          "tripShortName": ""
+          "tripHeadsign": "Northbound",
+          "tripShortName": "Canby Road Transfer Facility"
+        },
+        {
+          "blockId": "25_15",
+          "directionId": "1",
+          "id": "25_Route15-Northbound-MonFri-1",
+          "peakOffpeak": 0,
+          "routeId": "25_15",
+          "routeShortName": "15",
+          "serviceId": "25_c_868_b_79978_d_31",
+          "shapeId": "25_qy7v",
+          "timeZone": "",
+          "tripHeadsign": "Northbound",
+          "tripShortName": "Canby Road Transfer Facility"
         },
         {
           "blockId": "25_15",

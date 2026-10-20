@@ -2317,3 +2317,37 @@ func TestBuildTripSchedule_ShapeLookupFailureLogsAndContinues(t *testing.T) {
 	assert.Contains(t, logBuf.String(), tripRow.ID)
 	assert.Contains(t, logBuf.String(), "forced shape lookup failure")
 }
+
+func TestBlockServiceIDs(t *testing.T) {
+	// A fresh import: other tests add calendars to the shared test database.
+	api := createTestApiWithFeed(t, "../../testdata/raba.zip")
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(context.Background(), "Route15-Southbound-MonFri")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		serviceDate time.Time
+		want        []string
+	}{
+		{
+			// All five RABA weekday services run that Thursday, the trip's
+			// own among them, so it isn't added twice.
+			name:        "every service active that day",
+			serviceDate: time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC),
+			want: []string{"c_1658_b_18260_d_31", "c_1658_b_18260_d_63", "c_2713_b_80332_d_49 (MoTuWeThFrSaSu)",
+				"c_2713_b_80332_d_56", "c_868_b_79978_d_31"},
+		},
+		{
+			name:        "the trip's own service on a day nothing runs",
+			serviceDate: time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC),
+			want:        []string{"c_1658_b_18260_d_31"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := api.blockServiceIDs(context.Background(), &trip, tt.serviceDate)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, tt.want, got)
+		})
+	}
+}
