@@ -157,6 +157,8 @@ func TestLocationSpatialQueryFailure(t *testing.T) {
 	})
 }
 
+// TestStopsForLocationRoutesQueryFailure verifies that a database failure during
+// route reference lookup returns an internal server error response.
 func TestStopsForLocationRoutesQueryFailure(t *testing.T) {
 	api := createTestApiWithFeed(t, models.GetFixturePath(t, "raba.zip"))
 	api.Clock = clock.NewMockClock(time.Date(2025, 12, 26, 14, 0, 0, 0, time.UTC))

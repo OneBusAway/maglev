@@ -157,6 +157,7 @@ func setupTestClientWithRoutes(t *testing.T) (*gtfsdb.Client, func()) {
 	return client, cleanup
 }
 
+// TestFilterRoutes tests filtering GTFS routes by a map of present route IDs.
 func TestFilterRoutes(t *testing.T) {
 	client, cleanup := setupTestClientWithRoutes(t)
 	defer cleanup()
@@ -222,6 +223,7 @@ func TestFilterRoutes(t *testing.T) {
 	}
 }
 
+// TestFilterRoutes_VerifyFields tests that all route fields are populated correctly during filtering.
 func TestFilterRoutes_VerifyFields(t *testing.T) {
 	client, cleanup := setupTestClientWithRoutes(t)
 	defer cleanup()
@@ -246,6 +248,7 @@ func TestFilterRoutes_VerifyFields(t *testing.T) {
 	assert.Equal(t, "FFFFFF", route.TextColor)
 }
 
+// TestFilterRoutes_DatabaseError verifies that FilterRoutes returns an error when the database query fails.
 func TestFilterRoutes_DatabaseError(t *testing.T) {
 	// Create client but close it immediately to trigger error
 	config := gtfsdb.Config{
