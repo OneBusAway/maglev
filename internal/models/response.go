@@ -53,7 +53,21 @@ func NewEntryResponse(entry any, references ReferencesModel, c clock.Clock) Resp
 	return NewOKResponse(data, c)
 }
 
-func NewArrivalsAndDepartureResponse(arrivalsAndDepartures any, references ReferencesModel, nearbyStopIds []string, situationIds []string, stopId string, c clock.Clock) ResponseModel {
+// NewArrivalsAndDepartureResponse builds the entry envelope for
+// arrivals-and-departures-for-stop. Nil slices are emitted as empty JSON arrays,
+// as Java does: an isolated stop has no nearby stops, and clients such as OBAKit
+// reject "nearbyStopIds": null.
+func NewArrivalsAndDepartureResponse(arrivalsAndDepartures []ArrivalAndDeparture, references ReferencesModel, nearbyStopIds []string, situationIds []string, stopId string, c clock.Clock) ResponseModel {
+	if arrivalsAndDepartures == nil {
+		arrivalsAndDepartures = []ArrivalAndDeparture{}
+	}
+	if nearbyStopIds == nil {
+		nearbyStopIds = []string{}
+	}
+	if situationIds == nil {
+		situationIds = []string{}
+	}
+
 	entryData := map[string]any{
 		"arrivalsAndDepartures": arrivalsAndDepartures,
 		"nearbyStopIds":         nearbyStopIds,

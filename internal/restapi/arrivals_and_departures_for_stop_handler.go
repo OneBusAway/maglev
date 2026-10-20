@@ -134,7 +134,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// lookups, but keep the stop's alerts, which don't depend on arrivals.
 	if !result.Matched {
 		situationIDs := api.addStopSituations(ctx, references, acc, stopCode, stopAgencyID)
-		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, []string{}, situationIDs, stopID, api.Clock)
+		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nil, situationIDs, stopID, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
