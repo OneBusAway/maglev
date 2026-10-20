@@ -179,7 +179,7 @@ func TestBulkInsertShapes(t *testing.T) {
 			}
 
 			// Perform bulk insert
-			err = client.bulkInsertShapes(ctx, shapes, nil)
+			err = client.bulkInsertShapes(ctx, slices.Values(shapes), nil)
 			require.NoError(t, err, "Bulk insert should succeed")
 
 			// Verify all records were inserted
@@ -237,7 +237,7 @@ func TestBulkInsertWithNullValues(t *testing.T) {
 		},
 	}
 
-	err = client.bulkInsertShapes(ctx, shapes, nil)
+	err = client.bulkInsertShapes(ctx, slices.Values(shapes), nil)
 	require.NoError(t, err, "Should handle NULL values")
 
 	// Verify NULL was inserted correctly
