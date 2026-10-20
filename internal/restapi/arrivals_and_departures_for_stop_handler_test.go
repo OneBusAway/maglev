@@ -1619,3 +1619,30 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 	require.Len(t, model.Data.Entry.ArrivalsAndDepartures, 1)
 	assert.Equal(t, utils.FormCombinedID(agencyPrimary, tripPrimary), model.Data.Entry.ArrivalsAndDepartures[0].TripID)
 }
+
+// An isolated stop has no other stop within 100m. Java emits "nearbyStopIds": []
+// for it; null makes OBAKit reject the whole response.
+func TestArrivalsAndDeparturesForStopHandler_IsolatedStopEmitsEmptyNearbyStopIDs(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	candidates, err := api.GtfsManager.GetStopsInBounds(ctx,
+		&internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 5000}, 200)
+	require.NoError(t, err)
+	var isolated *gtfsdb.Stop
+	for i, c := range candidates {
+		if len(getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "25")) == 0 {
+			isolated = &candidates[i]
+			break
+		}
+	}
+	if isolated == nil {
+		t.Skip("every RABA stop has a neighbour within 100m — test fixture too dense")
+	}
+
+	resp, model := callAPIHandler[map[string]any](t, api, arrivalsAndDeparturesURL(utils.FormCombinedID("25", isolated.ID)))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	entry := model["data"].(map[string]any)["entry"].(map[string]any)
+	assert.Equal(t, []any{}, entry["nearbyStopIds"])
+}
