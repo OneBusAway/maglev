@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -90,7 +91,7 @@ func runParityEndpoints(t *testing.T, api *RestAPI, endpoints []parityEndpoint, 
 }
 
 // parityResponse requests the endpoint and returns its body with reference
-// lists sorted. Numbers are kept as written, not converted to float64.
+// lists sorted and decimals rounded.
 func parityResponse(t *testing.T, api *RestAPI, path string) any {
 	t.Helper()
 	resp, raw := callAPIHandler[json.RawMessage](t, api, path)
@@ -101,7 +102,30 @@ func parityResponse(t *testing.T, api *RestAPI, path string) any {
 	var body map[string]any
 	require.NoError(t, decoder.Decode(&body))
 	sortReferences(body)
-	return body
+	return roundDecimals(body)
+}
+
+// roundDecimals rounds every non-integer number to 12 significant digits.
+// Computed values such as distanceAlongBlock differ in the last bits between
+// amd64 and arm64, where Go fuses multiply-adds. Integers are kept exactly.
+func roundDecimals(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, field := range typed {
+			typed[key] = roundDecimals(field)
+		}
+	case []any:
+		for i, item := range typed {
+			typed[i] = roundDecimals(item)
+		}
+	case json.Number:
+		if strings.ContainsAny(typed.String(), ".eE") {
+			if f, err := typed.Float64(); err == nil {
+				return json.Number(strconv.FormatFloat(f, 'g', 12, 64))
+			}
+		}
+	}
+	return value
 }
 
 // sortReferences orders each reference list by ID, then by content. The lists
