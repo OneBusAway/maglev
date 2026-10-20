@@ -525,7 +525,8 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 
 	logging.LogOperation(logger, "building_block_trip_index")
-	if err := c.buildBlockTripIndex(ctx, data.Static, tx); err != nil {
+	allTripEnds := tripEndsOf(data.Static.Trips)
+	if err := c.buildBlockTripIndex(ctx, allTripEnds, tx); err != nil {
 		logging.LogError(logger, "Unable to build block trip index", err)
 		return false, fmt.Errorf("unable to build block trip index: %w", err)
 	}
@@ -544,7 +545,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	logging.LogOperation(logger, "stop_agency_index_built")
 
 	logging.LogOperation(logger, "building_block_layover_index")
-	if err := c.buildBlockLayoverIndex(ctx, data.Static, tx); err != nil {
+	if err := c.buildBlockLayoverIndex(ctx, allTripEnds, tx); err != nil {
 		logging.LogError(logger, "Unable to build block layover index", err)
 		return false, fmt.Errorf("unable to build block layover index: %w", err)
 	}
@@ -1025,6 +1026,43 @@ func configureConnectionPool(db *sql.DB, config Config) {
 	}
 }
 
+// tripEnds is what the block indexes need from a trip: who it is, and its
+// first and last stop times.
+type tripEnds struct {
+	tripID, routeID, serviceID, blockID string
+	firstStopID                         string
+	firstArrival, firstDeparture        time.Duration
+	lastStopID                          string
+	lastDeparture                       time.Duration
+}
+
+func newTripEnds(trip *gtfs.ScheduledTrip, first, last gtfs.ScheduledStopTime) tripEnds {
+	return tripEnds{
+		tripID:         trip.ID,
+		routeID:        trip.Route.Id,
+		serviceID:      trip.Service.Id,
+		blockID:        trip.BlockID,
+		firstStopID:    first.Stop.Id,
+		firstArrival:   first.ArrivalTime,
+		firstDeparture: first.DepartureTime,
+		lastStopID:     last.Stop.Id,
+		lastDeparture:  last.DepartureTime,
+	}
+}
+
+// tripEndsOf returns the ends of every trip that has stop times, in trip order.
+func tripEndsOf(trips []gtfs.ScheduledTrip) []tripEnds {
+	ends := make([]tripEnds, 0, len(trips))
+	for i := range trips {
+		stopTimes := trips[i].StopTimes
+		if len(stopTimes) == 0 {
+			continue
+		}
+		ends = append(ends, newTripEnds(&trips[i], stopTimes[0], stopTimes[len(stopTimes)-1]))
+	}
+	return ends
+}
+
 // blockTripIndexKey represents the grouping key for BlockTripIndex
 type blockTripIndexKey struct {
 	serviceIDs      string // comma-separated sorted service IDs
@@ -1033,44 +1071,23 @@ type blockTripIndexKey struct {
 
 // buildBlockTripIndex creates BlockTripIndex entries by grouping trips with identical
 // service IDs and stop sequences. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Static, tx *sql.Tx) error {
+func (c *Client) buildBlockTripIndex(ctx context.Context, trips []tripEnds, tx *sql.Tx) error {
 	logger := slog.Default().With(slog.String("component", "block_trip_index_builder"))
 
-	// Build terminal layover location for each trip
-	type tripInfo struct {
-		tripID        string
-		routeID       string
-		serviceID     string
-		blockID       string
-		layoverStopID string
-	}
-
-	tripMap := make(map[string]*tripInfo)
-
-	for _, trip := range staticData.Trips {
-		if len(trip.StopTimes) == 0 {
-			continue
-		}
-
-		// Get the FIRST stop - this is the layover location where the trip starts
-		firstStop := trip.StopTimes[0].Stop.Id
-
-		tripMap[trip.ID] = &tripInfo{
-			tripID:        trip.ID,
-			routeID:       trip.Route.Id,
-			serviceID:     trip.Service.Id,
-			blockID:       trip.BlockID,
-			layoverStopID: firstStop,
-		}
+	// A trip's first stop is the layover location where it starts. When a
+	// trip ID repeats, the last trip with it wins.
+	tripMap := make(map[string]tripEnds)
+	for _, trip := range trips {
+		tripMap[trip.tripID] = trip
 	}
 
 	// Group trips by (serviceID, layoverStopID)
-	indexGroups := make(map[blockTripIndexKey][]*tripInfo)
+	indexGroups := make(map[blockTripIndexKey][]tripEnds)
 
 	for _, info := range tripMap {
 		key := blockTripIndexKey{
 			serviceIDs:      info.serviceID,
-			stopSequenceKey: info.layoverStopID, // Use first stop (layover) as the key
+			stopSequenceKey: info.firstStopID,
 		}
 		indexGroups[key] = append(indexGroups[key], info)
 	}
@@ -1100,7 +1117,7 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 			}
 
 			// Sort trips within the group by block_id and then trip_id for deterministic ordering
-			slices.SortFunc(trips, func(a, b *tripInfo) int {
+			slices.SortFunc(trips, func(a, b tripEnds) int {
 				if c := cmp.Compare(a.blockID, b.blockID); c != 0 {
 					return c
 				}
@@ -1143,21 +1160,20 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 // (the gap between two consecutive trips in the same block that share a terminal
 // stop). Layover bounds are stored as nanoseconds since service-day midnight so
 // handlers can match against the same units used by stop_times.
-func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.Static, tx *sql.Tx) error {
+func (c *Client) buildBlockLayoverIndex(ctx context.Context, trips []tripEnds, tx *sql.Tx) error {
 	logger := slog.Default().With(slog.String("component", "block_layover_builder"))
 
 	type blockKey struct {
 		blockID   string
 		serviceID string
 	}
-	blockTrips := make(map[blockKey][]*gtfs.ScheduledTrip)
+	blockTrips := make(map[blockKey][]tripEnds)
 
-	for i := range staticData.Trips {
-		trip := &staticData.Trips[i]
-		if trip.BlockID == "" || len(trip.StopTimes) == 0 {
+	for _, trip := range trips {
+		if trip.blockID == "" {
 			continue
 		}
-		key := blockKey{blockID: trip.BlockID, serviceID: trip.Service.Id}
+		key := blockKey{blockID: trip.blockID, serviceID: trip.serviceID}
 		blockTrips[key] = append(blockTrips[key], trip)
 	}
 
@@ -1174,10 +1190,10 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 
 			// Trips that depart at the same time are ordered by ID, so the
 			// layovers don't depend on the order of the rows in the feed.
-			slices.SortFunc(trips, func(a, b *gtfs.ScheduledTrip) int {
+			slices.SortFunc(trips, func(a, b tripEnds) int {
 				return cmp.Or(
-					cmp.Compare(a.StopTimes[0].DepartureTime, b.StopTimes[0].DepartureTime),
-					cmp.Compare(a.ID, b.ID),
+					cmp.Compare(a.firstDeparture, b.firstDeparture),
+					cmp.Compare(a.tripID, b.tripID),
 				)
 			})
 
@@ -1185,10 +1201,7 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 				currentTrip := trips[i]
 				nextTrip := trips[i+1]
 
-				lastStopCurrent := currentTrip.StopTimes[len(currentTrip.StopTimes)-1]
-				firstStopNext := nextTrip.StopTimes[0]
-
-				if lastStopCurrent.Stop.Id != firstStopNext.Stop.Id {
+				if currentTrip.lastStopID != nextTrip.firstStopID {
 					continue
 				}
 
@@ -1197,8 +1210,8 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 				// ARRIVAL] — i.e. the interval during which the vehicle is idle
 				// at the terminal. Using arrival/departure would widen the
 				// window across in-service dwell times at both ends.
-				layoverStart := int64(lastStopCurrent.DepartureTime)
-				layoverEnd := int64(firstStopNext.ArrivalTime)
+				layoverStart := int64(currentTrip.lastDeparture)
+				layoverEnd := int64(nextTrip.firstArrival)
 				// Skips schedule anomalies where trips overlap at the shared
 				// stop (next arrives before prev departs). Also protects the
 				// CHECK (layover_start <= layover_end) constraint from
@@ -1210,11 +1223,11 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 				err := qtx.CreateBlockLayover(ctx, CreateBlockLayoverParams{
 					BlockID:       key.blockID,
 					ServiceID:     key.serviceID,
-					RouteID:       nextTrip.Route.Id,
-					LayoverStopID: lastStopCurrent.Stop.Id,
+					RouteID:       nextTrip.routeID,
+					LayoverStopID: currentTrip.lastStopID,
 					LayoverStart:  layoverStart,
 					LayoverEnd:    layoverEnd,
-					NextTripID:    nextTrip.ID,
+					NextTripID:    nextTrip.tripID,
 				})
 				if err != nil {
 					return fmt.Errorf("failed to create block layover: %w", err)

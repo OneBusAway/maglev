@@ -136,7 +136,7 @@ func TestBuildBlockLayoverIndex_BoundsMatchJava(t *testing.T) {
 
 	seedBlockTrips(t, client, "BLOCK-1", "trip-A", "trip-B")
 
-	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), staticData, nil))
+	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), tripEndsOf(staticData.Trips), nil))
 
 	var start, end int64
 	var recordedStopID, recordedNextTripID string
@@ -197,7 +197,7 @@ func TestBuildBlockLayoverIndex_SkipsOverlappingTrips(t *testing.T) {
 
 	seedBlockTrips(t, client, "BLOCK-OVERLAP", "trip-A", "trip-B")
 
-	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), staticData, nil))
+	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), tripEndsOf(staticData.Trips), nil))
 
 	var count int
 	err = client.DB.QueryRow(
@@ -302,7 +302,7 @@ func TestBuildBlockLayoverIndex_TiesIgnoreRowOrder(t *testing.T) {
 
 			seedBlockTrips(t, client, "BLOCK-TIE", "trip-A", "trip-B", "trip-C")
 
-			require.NoError(t, client.buildBlockLayoverIndex(context.Background(), &gtfs.Static{Trips: tt.trips}, nil))
+			require.NoError(t, client.buildBlockLayoverIndex(context.Background(), tripEndsOf(tt.trips), nil))
 
 			// trip-B sorts first, so A's layover at TERMINAL leads into B, from
 			// A's 10:00 departure to B's 10:30 arrival. B then returns at 11:00,
@@ -340,4 +340,30 @@ func seedBlockTrips(t *testing.T, client *Client, blockID string, tripIDs ...str
 	}
 	_, err = client.DB.Exec(`PRAGMA foreign_keys = ON`)
 	require.NoError(t, err)
+}
+
+func TestTripEndsOf(t *testing.T) {
+	route := &gtfs.Route{Id: "R1"}
+	svc := &gtfs.Service{Id: "S1"}
+	stop := func(id string) *gtfs.Stop { return &gtfs.Stop{Id: id} }
+	trips := []gtfs.ScheduledTrip{
+		{ID: "no-stop-times", Route: route, Service: svc},
+		{ID: "one-stop", Route: route, Service: svc, BlockID: "B1", StopTimes: []gtfs.ScheduledStopTime{
+			{Stop: stop("A"), ArrivalTime: time.Hour, DepartureTime: time.Hour + time.Minute},
+		}},
+		{ID: "three-stops", Route: route, Service: svc, StopTimes: []gtfs.ScheduledStopTime{
+			{Stop: stop("A"), ArrivalTime: 2 * time.Hour, DepartureTime: 2*time.Hour + time.Minute},
+			{Stop: stop("B"), ArrivalTime: 3 * time.Hour, DepartureTime: 3 * time.Hour},
+			{Stop: stop("C"), ArrivalTime: 4 * time.Hour, DepartureTime: 4*time.Hour + 5*time.Minute},
+		}},
+	}
+
+	assert.Equal(t, []tripEnds{
+		{tripID: "one-stop", routeID: "R1", serviceID: "S1", blockID: "B1",
+			firstStopID: "A", firstArrival: time.Hour, firstDeparture: time.Hour + time.Minute,
+			lastStopID: "A", lastDeparture: time.Hour + time.Minute},
+		{tripID: "three-stops", routeID: "R1", serviceID: "S1",
+			firstStopID: "A", firstArrival: 2 * time.Hour, firstDeparture: 2*time.Hour + time.Minute,
+			lastStopID: "C", lastDeparture: 4*time.Hour + 5*time.Minute},
+	}, tripEndsOf(trips))
 }
