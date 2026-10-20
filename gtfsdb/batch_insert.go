@@ -18,6 +18,26 @@ type batchInsert[T any] struct {
 	appendArgs func(args []any, row T) []any // appends one row's values in column order
 }
 
+// bulkInsertRows runs insertInBatches in tx, or in a transaction of its own
+// when tx is nil, and logs the start and the number of rows inserted.
+func bulkInsertRows[T any](ctx context.Context, c *Client, tx *sql.Tx, insert batchInsert[T], rows iter.Seq[T]) error {
+	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+	logging.LogOperation(logger, "inserting_"+insert.table)
+
+	batchSize := c.config.SafeBatchSize(len(insert.columns))
+	var inserted int
+	if err := c.withTransaction(ctx, tx, "bulk_insert_"+insert.table, func(tx *sql.Tx) error {
+		var err error
+		inserted, err = insertInBatches(ctx, tx, batchSize, insert, rows)
+		return err
+	}); err != nil {
+		return err
+	}
+
+	logging.LogOperation(logger, insert.table+"_inserted", slog.Int("count", inserted))
+	return nil
+}
+
 // insertInBatches inserts rows in multi-row INSERT statements of up to
 // batchSize rows, in the order the rows arrive. It holds one batch at a time,
 // so its memory doesn't grow with the number of rows. Full batches share one
