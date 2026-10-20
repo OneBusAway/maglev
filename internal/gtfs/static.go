@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -82,7 +83,7 @@ func rawGtfsData(ctx context.Context, source string, config Config) ([]byte, err
 }
 
 // openGtfsDB opens (or creates) the single SQLite database used by the manager.
-// No import work happens here — use importStaticIntoDB against the returned client.
+// No import work happens here — ReloadStatic imports into the returned client.
 func openGtfsDB(config Config) (*gtfsdb.Client, error) {
 	dbConfig := newGTFSDBConfig(config.GTFSDataPath, config)
 	client, err := gtfsdb.NewClient(dbConfig)
@@ -92,28 +93,15 @@ func openGtfsDB(config Config) (*gtfsdb.Client, error) {
 	return client, nil
 }
 
-// importStaticIntoDB imports the already-parsed GTFS data into the provided client.
-// Returns (changed, err): changed is true when the DB was actually updated. When changed,
-// it also precomputes stop directions. Trip time bounds are now computed inside the
-// import transaction by ImportParsedGTFS itself.
-func importStaticIntoDB(ctx context.Context, client *gtfsdb.Client, data *gtfsdb.GtfsData) (bool, error) {
-	changed, err := client.StoreGtfsData(ctx, data)
-	if err != nil {
-		return false, err
-	}
-
-	if !changed {
-		return false, nil
-	}
-
-	logger := slog.Default().With(slog.String("component", "gtfs_db_builder"))
+// precomputeStopDirections stores each stop's direction for the feed now in
+// the database. A failure is logged, not returned: the API computes missing
+// directions on demand.
+func precomputeStopDirections(ctx context.Context, client *gtfsdb.Client) {
 	precomputer := NewDirectionPrecomputer(client.Queries, client.DB)
 	if err := precomputer.PrecomputeAllDirections(ctx); err != nil {
-		// Log error but don't fail the entire import
+		logger := slog.Default().With(slog.String("component", "gtfs_db_builder"))
 		logging.LogError(logger, "Failed to precompute stop directions - API will fallback to on-demand calculation", err)
 	}
-
-	return true, nil
 }
 
 func newGTFSDBConfig(dbPath string, config Config) gtfsdb.Config {
@@ -199,26 +187,20 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	defer manager.staticUpdateMutex.Unlock()
 	logger := slog.Default().With(slog.String("component", "gtfs_updater"))
 
-	newData, err := loadGTFSData(ctx, manager.config)
+	changed, err := manager.storeConfiguredFeed(ctx, logger)
 	if err != nil {
-		logging.LogError(logger, "Error loading GTFS data", err,
-			slog.String("source", manager.config.GtfsURL))
 		return false, err
 	}
 
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-
-	changed, err := importStaticIntoDB(ctx, manager.GtfsDB, newData)
-	if err != nil {
-		logging.LogError(logger, "Error importing GTFS data", err)
-		return false, err
-	}
-
-	if !changed {
+	if changed {
+		// The parsed feed became garbage when storeConfiguredFeed returned.
+		// Collecting it now, and returning its pages to the OS, keeps it out
+		// of the precompute's memory and out of the process's footprint.
+		debug.FreeOSMemory()
+		precomputeStopDirections(ctx, manager.GtfsDB)
+	} else {
 		logging.LogOperation(logger, "gtfs_static_data_unchanged",
-			slog.String("source", newData.Source))
+			slog.String("source", manager.config.GtfsURL))
 	}
 
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
@@ -246,6 +228,29 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	manager.PrintStatistics()
 	manager.logFeedExpiry(ctx, logger)
 
+	return changed, nil
+}
+
+// storeConfiguredFeed loads the configured feed and stores it in the
+// database. The parsed feed is reachable only from here, so it can be freed
+// as soon as this returns. It reports whether the database changed.
+func (manager *Manager) storeConfiguredFeed(ctx context.Context, logger *slog.Logger) (bool, error) {
+	newData, err := loadGTFSData(ctx, manager.config)
+	if err != nil {
+		logging.LogError(logger, "Error loading GTFS data", err,
+			slog.String("source", manager.config.GtfsURL))
+		return false, err
+	}
+
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+
+	changed, err := manager.GtfsDB.StoreGtfsData(ctx, newData)
+	if err != nil {
+		logging.LogError(logger, "Error importing GTFS data", err)
+		return false, err
+	}
 	return changed, nil
 }
 
