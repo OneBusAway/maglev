@@ -134,17 +134,7 @@ func TestBuildBlockLayoverIndex_BoundsMatchJava(t *testing.T) {
 	}
 	staticData := &gtfs.Static{Trips: trips}
 
-	// Seed the trips table so the block_layover FK on next_trip_id resolves.
-	// Disable FK enforcement during setup so we can avoid seeding the full
-	// routes/calendar chain — this test only exercises layover bounds math.
-	_, err = client.DB.Exec(`PRAGMA foreign_keys = OFF`)
-	require.NoError(t, err)
-	_, err = client.DB.Exec(`INSERT INTO trips (id, route_id, service_id, block_id) VALUES
-		('trip-A', 'R1', 'SVC-WEEKDAY', 'BLOCK-1'),
-		('trip-B', 'R1', 'SVC-WEEKDAY', 'BLOCK-1')`)
-	require.NoError(t, err)
-	_, err = client.DB.Exec(`PRAGMA foreign_keys = ON`)
-	require.NoError(t, err)
+	seedBlockTrips(t, client, "BLOCK-1", "trip-A", "trip-B")
 
 	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), staticData, nil))
 
@@ -205,14 +195,7 @@ func TestBuildBlockLayoverIndex_SkipsOverlappingTrips(t *testing.T) {
 	}
 	staticData := &gtfs.Static{Trips: trips}
 
-	_, err = client.DB.Exec(`PRAGMA foreign_keys = OFF`)
-	require.NoError(t, err)
-	_, err = client.DB.Exec(`INSERT INTO trips (id, route_id, service_id, block_id) VALUES
-		('trip-A', 'R1', 'SVC-WEEKDAY', 'BLOCK-OVERLAP'),
-		('trip-B', 'R1', 'SVC-WEEKDAY', 'BLOCK-OVERLAP')`)
-	require.NoError(t, err)
-	_, err = client.DB.Exec(`PRAGMA foreign_keys = ON`)
-	require.NoError(t, err)
+	seedBlockTrips(t, client, "BLOCK-OVERLAP", "trip-A", "trip-B")
 
 	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), staticData, nil))
 
@@ -275,4 +258,86 @@ func TestGetActiveLayoverBlockIDsForRoute_MatchesWindow(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Empty(t, wrongService)
+}
+
+// TestBuildBlockLayoverIndex_TiesIgnoreRowOrder covers two trips in one block
+// that leave at the same time. The layovers must not depend on which of them
+// comes first in the feed.
+func TestBuildBlockLayoverIndex_TiesIgnoreRowOrder(t *testing.T) {
+	route := &gtfs.Route{Id: "R1"}
+	svc := &gtfs.Service{Id: "SVC-WEEKDAY"}
+	terminalStop := &gtfs.Stop{Id: "TERMINAL"}
+	otherStop := &gtfs.Stop{Id: "OTHER"}
+
+	// Both loops leave TERMINAL at 10:30 and return at 11:00.
+	loop := func(id string) gtfs.ScheduledTrip {
+		return gtfs.ScheduledTrip{
+			ID: id, Route: route, Service: svc, BlockID: "BLOCK-TIE",
+			StopTimes: []gtfs.ScheduledStopTime{
+				{Stop: terminalStop, StopSequence: 1, ArrivalTime: 10*time.Hour + 30*time.Minute, DepartureTime: 10*time.Hour + 30*time.Minute},
+				{Stop: terminalStop, StopSequence: 2, ArrivalTime: 11 * time.Hour, DepartureTime: 11 * time.Hour},
+			},
+		}
+	}
+	tripA := gtfs.ScheduledTrip{
+		ID: "trip-A", Route: route, Service: svc, BlockID: "BLOCK-TIE",
+		StopTimes: []gtfs.ScheduledStopTime{
+			{Stop: otherStop, StopSequence: 1, ArrivalTime: 9 * time.Hour, DepartureTime: 9 * time.Hour},
+			{Stop: terminalStop, StopSequence: 2, ArrivalTime: 10 * time.Hour, DepartureTime: 10 * time.Hour},
+		},
+	}
+
+	tests := []struct {
+		name  string
+		trips []gtfs.ScheduledTrip
+	}{
+		{"B before C", []gtfs.ScheduledTrip{tripA, loop("trip-B"), loop("trip-C")}},
+		{"C before B", []gtfs.ScheduledTrip{tripA, loop("trip-C"), loop("trip-B")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = client.Close() })
+
+			seedBlockTrips(t, client, "BLOCK-TIE", "trip-A", "trip-B", "trip-C")
+
+			require.NoError(t, client.buildBlockLayoverIndex(context.Background(), &gtfs.Static{Trips: tt.trips}, nil))
+
+			// trip-B sorts first, so A's layover at TERMINAL leads into B, from
+			// A's 10:00 departure to B's 10:30 arrival. B then returns at 11:00,
+			// after C has left, so B→C is not a layover.
+			type layover struct {
+				nextTripID, stopID string
+				start, end         int64
+			}
+			var layovers []layover
+			rows, err := client.DB.Query(`SELECT next_trip_id, layover_stop_id, layover_start, layover_end
+				FROM block_layover WHERE block_id = 'BLOCK-TIE'`)
+			require.NoError(t, err)
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				var l layover
+				require.NoError(t, rows.Scan(&l.nextTripID, &l.stopID, &l.start, &l.end))
+				layovers = append(layovers, l)
+			}
+			require.NoError(t, rows.Err())
+			assert.Equal(t, []layover{{"trip-B", "TERMINAL", int64(10 * time.Hour), int64(10*time.Hour + 30*time.Minute)}}, layovers)
+		})
+	}
+}
+
+// seedBlockTrips inserts the trips a block_layover row can point to. Foreign
+// keys are off while it does, so the test doesn't need the routes and
+// calendar rows the trips would otherwise reference.
+func seedBlockTrips(t *testing.T, client *Client, blockID string, tripIDs ...string) {
+	t.Helper()
+	_, err := client.DB.Exec(`PRAGMA foreign_keys = OFF`)
+	require.NoError(t, err)
+	for _, tripID := range tripIDs {
+		_, err = client.DB.Exec(`INSERT INTO trips (id, route_id, service_id, block_id) VALUES (?, 'R1', 'SVC-WEEKDAY', ?)`, tripID, blockID)
+		require.NoError(t, err)
+	}
+	_, err = client.DB.Exec(`PRAGMA foreign_keys = ON`)
+	require.NoError(t, err)
 }
