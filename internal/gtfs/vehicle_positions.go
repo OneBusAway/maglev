@@ -52,7 +52,7 @@ type exportCandidate struct {
 // the per-feed vehicles and their ingestion-time agencies. feedIDs must be
 // sorted. Caller must hold realTimeMutex.
 func (manager *Manager) buildVehiclePositionsByAgency(feedIDs []string, builtAt time.Time) map[string]AgencyVehiclePositions {
-	feedRanks := manager.vehicleFeedRanks(feedIDs)
+	feedRanks := manager.feedConfigRanks(feedIDs)
 	newestByAgency := make(map[string]map[string]exportCandidate)
 	for _, feedID := range feedIDs {
 		for _, vehicle := range manager.feedVehicles[feedID] {
@@ -82,10 +82,10 @@ func (manager *Manager) buildVehiclePositionsByAgency(feedIDs []string, builtAt 
 	return positionsByAgency
 }
 
-// vehicleFeedRanks orders feeds for the duplicate-vehicle tie-break: the
+// feedConfigRanks orders feeds for the exports' duplicate tie-breaks: the
 // configured feed order first, then feeds missing from the configuration
 // (such as test feeds) in feed ID order.
-func (manager *Manager) vehicleFeedRanks(sortedFeedIDs []string) map[string]int {
+func (manager *Manager) feedConfigRanks(sortedFeedIDs []string) map[string]int {
 	ranks := make(map[string]int, len(sortedFeedIDs))
 	configuredFeeds := manager.config.enabledFeeds()
 	for i, feed := range configuredFeeds {
