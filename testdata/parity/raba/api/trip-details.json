@@ -1,0 +1,805 @@
+{
+  "code": 200,
+  "currentTime": 1749740400000,
+  "data": {
+    "entry": {
+      "schedule": {
+        "frequency": null,
+        "nextTripId": "25_109522ca-5218-47f9-9cd0-123648acfe17",
+        "previousTripId": "",
+        "stopTimes": [
+          {
+            "arrivalTime": 21060,
+            "departureTime": 21060,
+            "distanceAlongTrip": 0,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1030"
+          },
+          {
+            "arrivalTime": 21060,
+            "departureTime": 21060,
+            "distanceAlongTrip": 521.0075815800666,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1031"
+          },
+          {
+            "arrivalTime": 21060,
+            "departureTime": 21060,
+            "distanceAlongTrip": 853.5693565797551,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1032"
+          },
+          {
+            "arrivalTime": 21060,
+            "departureTime": 21060,
+            "distanceAlongTrip": 1136.2565858604999,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1033"
+          },
+          {
+            "arrivalTime": 21060,
+            "departureTime": 21060,
+            "distanceAlongTrip": 1591.3579734934328,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1034"
+          },
+          {
+            "arrivalTime": 21540,
+            "departureTime": 21540,
+            "distanceAlongTrip": 2785.4074953662293,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1036"
+          },
+          {
+            "arrivalTime": 21540,
+            "departureTime": 21540,
+            "distanceAlongTrip": 4150.761303992403,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1037"
+          },
+          {
+            "arrivalTime": 21540,
+            "departureTime": 21540,
+            "distanceAlongTrip": 4928.436205842028,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1038"
+          },
+          {
+            "arrivalTime": 21540,
+            "departureTime": 21540,
+            "distanceAlongTrip": 5371.914519738407,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1039"
+          },
+          {
+            "arrivalTime": 21540,
+            "departureTime": 21540,
+            "distanceAlongTrip": 5741.72999462422,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1040"
+          },
+          {
+            "arrivalTime": 21540,
+            "departureTime": 21540,
+            "distanceAlongTrip": 6972.250584607047,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1041"
+          },
+          {
+            "arrivalTime": 21540,
+            "departureTime": 21540,
+            "distanceAlongTrip": 7730.290045113622,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1042"
+          },
+          {
+            "arrivalTime": 21540,
+            "departureTime": 21540,
+            "distanceAlongTrip": 9385.468177494986,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1043"
+          },
+          {
+            "arrivalTime": 21540,
+            "departureTime": 21540,
+            "distanceAlongTrip": 10099.740902577523,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1044"
+          },
+          {
+            "arrivalTime": 21540,
+            "departureTime": 21540,
+            "distanceAlongTrip": 10875.973436019944,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1045"
+          },
+          {
+            "arrivalTime": 21960,
+            "departureTime": 21960,
+            "distanceAlongTrip": 11615.480797850723,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1046"
+          },
+          {
+            "arrivalTime": 21960,
+            "departureTime": 21960,
+            "distanceAlongTrip": 11966.819279465986,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1047"
+          },
+          {
+            "arrivalTime": 21960,
+            "departureTime": 21960,
+            "distanceAlongTrip": 12461.964582914397,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1048"
+          },
+          {
+            "arrivalTime": 21960,
+            "departureTime": 21960,
+            "distanceAlongTrip": 13137.700031683486,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1049"
+          },
+          {
+            "arrivalTime": 22200,
+            "departureTime": 22200,
+            "distanceAlongTrip": 13588.877676622718,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_7017"
+          },
+          {
+            "arrivalTime": 22200,
+            "departureTime": 22200,
+            "distanceAlongTrip": 13826.071023183651,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_7018"
+          },
+          {
+            "arrivalTime": 22680,
+            "departureTime": 22680,
+            "distanceAlongTrip": 17582.121369438788,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_2000"
+          }
+        ],
+        "timeZone": "America/Los_Angeles"
+      },
+      "serviceDate": 1749711600000,
+      "situationIds": [],
+      "tripId": "25_84f4520e-88b6-4ee6-8975-856799bc1359"
+    },
+    "references": {
+      "agencies": [
+        {
+          "disclaimer": "",
+          "email": "",
+          "fareUrl": "",
+          "id": "25",
+          "lang": "en",
+          "name": "Redding Area Bus Authority",
+          "phone": "530-241-2877",
+          "privateService": false,
+          "timezone": "America/Los_Angeles",
+          "url": "http://www.rabaride.com/"
+        }
+      ],
+      "routes": [
+        {
+          "agencyId": "25",
+          "color": "800000",
+          "description": "",
+          "id": "25_15",
+          "longName": "Churn Creek/Knightson/Airport",
+          "nullSafeShortName": "15",
+          "shortName": "15",
+          "textColor": "FFFFFF",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/15-18.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "55d1b0",
+          "description": "",
+          "id": "25_151",
+          "longName": "Route 1",
+          "nullSafeShortName": "1",
+          "shortName": "1",
+          "textColor": "000000",
+          "type": 3,
+          "url": "https://rabaride.com/Document%20Center/Services/Bus/Route01.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "1bb1f6",
+          "description": "",
+          "id": "25_153",
+          "longName": "Route 3",
+          "nullSafeShortName": "3",
+          "shortName": "3",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route03.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "bdadd1",
+          "description": "",
+          "id": "25_154",
+          "longName": "Route 4",
+          "nullSafeShortName": "4",
+          "shortName": "4",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://rabaride.com/Document%20Center/Services/Bus/Route04.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "1886c7",
+          "description": "",
+          "id": "25_157",
+          "longName": "Route 7",
+          "nullSafeShortName": "7",
+          "shortName": "7",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route07.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "93ea5f",
+          "description": "",
+          "id": "25_159",
+          "longName": "Route 11",
+          "nullSafeShortName": "11",
+          "shortName": "11",
+          "textColor": "000000",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route11.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "8c08b1",
+          "description": "",
+          "id": "25_160",
+          "longName": "Route 14",
+          "nullSafeShortName": "14",
+          "shortName": "14",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route14.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "00dffb",
+          "description": "",
+          "id": "25_161",
+          "longName": "Route 299X",
+          "nullSafeShortName": "299X",
+          "shortName": "299X",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://rabaride.com/services/burney_express.php"
+        },
+        {
+          "agencyId": "25",
+          "color": "fbef00",
+          "description": "",
+          "id": "25_1885",
+          "longName": "Shasta View/Shasta College",
+          "nullSafeShortName": "17",
+          "shortName": "17",
+          "textColor": "0e0e0e",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/17.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "9F472E",
+          "description": "",
+          "id": "25_24",
+          "longName": "Route 99X/Amtrak Thruway Route 3",
+          "nullSafeShortName": "99X",
+          "shortName": "99X",
+          "textColor": "FFFFFF",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "2738ec",
+          "description": "",
+          "id": "25_3779",
+          "longName": "Route 19",
+          "nullSafeShortName": "19",
+          "shortName": "19",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/SRTA_BeachBus_20230302_ful.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "F84DF7",
+          "description": "",
+          "id": "25_44X",
+          "longName": "Shingletown Flex",
+          "nullSafeShortName": "44X",
+          "shortName": "44X",
+          "textColor": "000000",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "ec191c",
+          "description": "",
+          "id": "25_6446",
+          "longName": "Route 9",
+          "nullSafeShortName": "9",
+          "shortName": "9",
+          "textColor": "000000",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route09.pdf"
+        }
+      ],
+      "situations": [],
+      "stopTimes": [],
+      "stops": [
+        {
+          "code": "1030",
+          "direction": "SE",
+          "id": "25_1030",
+          "lat": 40.682371,
+          "locationType": 0,
+          "lon": -122.376623,
+          "name": "Shasta Dam Blvd at Givan St",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1031",
+          "direction": "E",
+          "id": "25_1031",
+          "lat": 40.680791,
+          "locationType": 0,
+          "lon": -122.370853,
+          "name": "Shasta Dam Blvd at Montana Ave",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1032",
+          "direction": "E",
+          "id": "25_1032",
+          "lat": 40.680526,
+          "locationType": 0,
+          "lon": -122.366933,
+          "name": "Shasta Dam Blvd at Hardenbrook Ave",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1033",
+          "direction": "E",
+          "id": "25_1033",
+          "lat": 40.680372,
+          "locationType": 0,
+          "lon": -122.363588,
+          "name": "Shasta Dam Blvd at Median Ave",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1034",
+          "direction": "N",
+          "id": "25_1034",
+          "lat": 40.680132,
+          "locationType": 0,
+          "lon": -122.358291,
+          "name": "Shasta Dam Blvd at Grand Coulee Blvd",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1036",
+          "direction": "SW",
+          "id": "25_1036",
+          "lat": 40.675912,
+          "locationType": 0,
+          "lon": -122.353935,
+          "name": "Cascade Blvd at Morningstar Way",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1037",
+          "direction": "SW",
+          "id": "25_1037",
+          "lat": 40.664935,
+          "locationType": 0,
+          "lon": -122.357341,
+          "name": "Cascade Blvd at Cottage Ave",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1038",
+          "direction": "SW",
+          "id": "25_1038",
+          "lat": 40.659037,
+          "locationType": 0,
+          "lon": -122.358114,
+          "name": "Cascade Blvd at Mulberry St",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1039",
+          "direction": "SW",
+          "id": "25_1039",
+          "lat": 40.655245,
+          "locationType": 0,
+          "lon": -122.359732,
+          "name": "Cascade Blvd at Autumn Harvest Way",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1040",
+          "direction": "SW",
+          "id": "25_1040",
+          "lat": 40.652647,
+          "locationType": 0,
+          "lon": -122.362079,
+          "name": "Cascade Blvd at Riddle Rd",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1041",
+          "direction": "S",
+          "id": "25_1041",
+          "lat": 40.642317,
+          "locationType": 0,
+          "lon": -122.367226,
+          "name": "Cascade Blvd at Oasis Rd",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1042",
+          "direction": "SW",
+          "id": "25_1042",
+          "lat": 40.640514,
+          "locationType": 0,
+          "lon": -122.375167,
+          "name": "Oasis Rd at Randolph Rd",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1043",
+          "direction": "SW",
+          "id": "25_1043",
+          "lat": 40.633081,
+          "locationType": 0,
+          "lon": -122.391646,
+          "name": "Oasis Rd at Beltline Rd",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1044",
+          "direction": "SW",
+          "id": "25_1044",
+          "lat": 40.630639,
+          "locationType": 0,
+          "lon": -122.399482,
+          "name": "3711 Oasis Rd",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1045",
+          "direction": "E",
+          "id": "25_1045",
+          "lat": 40.625938,
+          "locationType": 0,
+          "lon": -122.405265,
+          "name": "Lake Blvd at Keswick Dam Rd",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1046",
+          "direction": "SE",
+          "id": "25_1046",
+          "lat": 40.620575,
+          "locationType": 0,
+          "lon": -122.400736,
+          "name": "Lake Blvd at Tamarack Dr",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1047",
+          "direction": "SE",
+          "id": "25_1047",
+          "lat": 40.61893,
+          "locationType": 0,
+          "lon": -122.397178,
+          "name": "Lake Blvd at Panorama Dr",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1048",
+          "direction": "",
+          "id": "25_1048",
+          "lat": 40.616382,
+          "locationType": 0,
+          "lon": -122.392387,
+          "name": "Lake Blvd at St. Marks St",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1049",
+          "direction": "SE",
+          "id": "25_1049",
+          "lat": 40.61359,
+          "locationType": 0,
+          "lon": -122.385336,
+          "name": "Lake Blvd at Clay St",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "2000",
+          "direction": "",
+          "id": "25_2000",
+          "lat": 40.58317,
+          "locationType": 0,
+          "lon": -122.392586,
+          "name": "Downtown Passenger Terminal",
+          "parent": "",
+          "routeIds": [
+            "25_151",
+            "25_153",
+            "25_154",
+            "25_157",
+            "25_6446",
+            "25_159",
+            "25_160",
+            "25_15",
+            "25_1885",
+            "25_3779",
+            "25_44X",
+            "25_24",
+            "25_161"
+          ],
+          "staticRouteIds": [
+            "25_151",
+            "25_153",
+            "25_154",
+            "25_157",
+            "25_6446",
+            "25_159",
+            "25_160",
+            "25_15",
+            "25_1885",
+            "25_3779",
+            "25_44X",
+            "25_24",
+            "25_161"
+          ],
+          "wheelchairBoarding": "ACCESSIBLE"
+        },
+        {
+          "code": "7017",
+          "direction": "SE",
+          "id": "25_7017",
+          "lat": 40.61097,
+          "locationType": 0,
+          "lon": -122.381286,
+          "name": "Lake Blvd at Northpoint Dr (FS)",
+          "parent": "",
+          "routeIds": [
+            "25_151",
+            "25_157"
+          ],
+          "staticRouteIds": [
+            "25_151",
+            "25_157"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "7018",
+          "direction": "SE",
+          "id": "25_7018",
+          "lat": 40.609644,
+          "locationType": 0,
+          "lon": -122.379049,
+          "name": "Lake Blvd at Masonic Dr (FS)",
+          "parent": "",
+          "routeIds": [
+            "25_151",
+            "25_157"
+          ],
+          "staticRouteIds": [
+            "25_151",
+            "25_157"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        }
+      ],
+      "trips": [
+        {
+          "blockId": "25_1",
+          "directionId": "0",
+          "id": "25_109522ca-5218-47f9-9cd0-123648acfe17",
+          "peakOffpeak": 0,
+          "routeId": "25_151",
+          "routeShortName": "1",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_qkk7",
+          "timeZone": "",
+          "tripHeadsign": "Shasta Lake",
+          "tripShortName": "Shasta Lake"
+        },
+        {
+          "blockId": "25_1",
+          "directionId": "1",
+          "id": "25_84f4520e-88b6-4ee6-8975-856799bc1359",
+          "peakOffpeak": 0,
+          "routeId": "25_151",
+          "routeShortName": "1",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_t580",
+          "timeZone": "",
+          "tripHeadsign": "Shasta Lake",
+          "tripShortName": "Shasta Lake"
+        }
+      ]
+    }
+  },
+  "text": "OK",
+  "version": 2
+}
