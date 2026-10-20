@@ -25,10 +25,9 @@ const (
 type AdvancedDirectionCalculator struct {
 	queries                    *gtfsdb.Queries
 	standardDeviationThreshold float64
-	shapeCache                 map[string][]gtfsdb.GetShapePointsWithDistanceRow // Cache of all shape data for bulk operations
-	initialized                atomic.Bool                                       // Tracks whether concurrent operations have started
-	cacheMutex                 sync.RWMutex                                      // Protects shapeCache map access
 	cache                      atomic.Pointer[directionCache]
+	recentShapes               *recentShapes      // optional; only for a calculator that lives for one import, since ClearCache doesn't empty it
+	shapeLoads                 singleflight.Group // merges concurrent reads of one shape into recentShapes
 }
 
 // Each calculation retains its generation so work in flight during a reload cannot
@@ -54,22 +53,6 @@ func NewAdvancedDirectionCalculator(queries *gtfsdb.Queries) *AdvancedDirectionC
 // In-flight calculations can only write to the retired generation.
 func (adc *AdvancedDirectionCalculator) ClearCache() {
 	adc.cache.Store(&directionCache{})
-}
-
-// SetShapeCache is retained exclusively for use by the DirectionPrecomputer during startup.
-// It sets a pre-loaded cache of shape data to avoid thousands of database queries during
-// the precomputation phase, significantly improving startup performance.
-// IMPORTANT: This must be called before any concurrent operations begin.
-// Returns an error if called after CalculateStopDirection has been invoked.
-func (adc *AdvancedDirectionCalculator) SetShapeCache(cache map[string][]gtfsdb.GetShapePointsWithDistanceRow) error {
-	adc.cacheMutex.Lock()
-	defer adc.cacheMutex.Unlock()
-
-	if adc.initialized.Load() {
-		return errors.New("SetShapeCache called after concurrent operations have started")
-	}
-	adc.shapeCache = cache
-	return nil
 }
 
 // shapeDistancesCanLocateAStop reports whether a shape's shape_dist_traveled values
@@ -158,9 +141,6 @@ func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Conte
 	if cached, ok := cache.directionResults.Load(stopID); ok {
 		return cached.(string)
 	}
-
-	// Mark as initialized for concurrency safety
-	adc.initialized.Store(true)
 
 	// Fall back to computing from shapes, protected by singleflight
 	// This ensures concurrent requests for the SAME stopID don't hit the DB multiple times.
@@ -371,36 +351,41 @@ func (adc *AdvancedDirectionCalculator) directionFromOrientations(orientations [
 	return adc.getAngleAsDirection(thetaMedian)
 }
 
+// shapePoints reads a shape's points from the database, through recentShapes
+// when the calculator has one. Concurrent lookups of one shape share a single
+// read.
+func (adc *AdvancedDirectionCalculator) shapePoints(ctx context.Context, shapeID string) ([]gtfsdb.GetShapePointsWithDistanceRow, error) {
+	if adc.recentShapes == nil {
+		return adc.queries.GetShapePointsWithDistance(ctx, shapeID)
+	}
+	loaded, err, _ := adc.shapeLoads.Do(shapeID, func() (any, error) {
+		if points, ok := adc.recentShapes.get(shapeID); ok {
+			return points, nil
+		}
+		points, err := adc.queries.GetShapePointsWithDistance(ctx, shapeID)
+		if err != nil {
+			return nil, err
+		}
+		adc.recentShapes.add(shapeID, points)
+		return points, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return loaded.([]gtfsdb.GetShapePointsWithDistanceRow), nil
+}
+
 // calculateOrientationAtStop calculates the orientation at a stop using a window of shape points
 // If distTraveled is < 0, it uses stopLat/stopLon for geographic matching (when shape_dist_traveled is unavailable)
 func (adc *AdvancedDirectionCalculator) calculateOrientationAtStop(ctx context.Context, shapeID string, distTraveled float64, stopLat, stopLon float64) (float64, error) {
-	var shapePoints []gtfsdb.GetShapePointsWithDistanceRow
-	var err error
-
-	adc.cacheMutex.RLock()
-	hasCache := adc.shapeCache != nil
-	var found bool
-	if hasCache {
-		shapePoints, found = adc.shapeCache[shapeID]
+	shapePoints, err := adc.shapePoints(ctx, shapeID)
+	if err != nil {
+		return 0, err
 	}
-	adc.cacheMutex.RUnlock()
-
-	// Try cache first if available
-	if hasCache {
-		if !found || len(shapePoints) < 2 {
-			return 0, sql.ErrNoRows
-		}
-	} else {
-		// Fall back to database query if no cache
-		shapePoints, err = adc.queries.GetShapePointsWithDistance(ctx, shapeID)
-		if err != nil {
-			return 0, err
-		}
-		if len(shapePoints) < 2 {
-			// Insufficient points is a data condition, not a transient error.
-			// Return ErrNoRows so the caller treats this the same as "no shape data".
-			return 0, sql.ErrNoRows
-		}
+	if len(shapePoints) < 2 {
+		// Insufficient points is a data condition, not a transient error.
+		// Return ErrNoRows so the caller treats this the same as "no shape data".
+		return 0, sql.ErrNoRows
 	}
 
 	closestIdx := 0
