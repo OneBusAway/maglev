@@ -1380,8 +1380,13 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 				continue
 			}
 
+			// Trips that depart at the same time are ordered by ID, so the
+			// layovers don't depend on the order of the rows in the feed.
 			slices.SortFunc(trips, func(a, b *gtfs.ScheduledTrip) int {
-				return cmp.Compare(a.StopTimes[0].DepartureTime, b.StopTimes[0].DepartureTime)
+				return cmp.Or(
+					cmp.Compare(a.StopTimes[0].DepartureTime, b.StopTimes[0].DepartureTime),
+					cmp.Compare(a.ID, b.ID),
+				)
 			})
 
 			for i := 0; i < len(trips)-1; i++ {
