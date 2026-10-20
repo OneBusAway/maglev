@@ -1,0 +1,66 @@
+{
+  "agencies": {
+    "rows": 1,
+    "sha256": "705bd807e7bf9342531545c9471538ed5ed5790e092a2e3814571525255d54cd"
+  },
+  "block_layover": {
+    "rows": 255,
+    "sha256": "a7f68c61162b138aae5b9c791c967567128f7ddd189f231193676d84301a1a01"
+  },
+  "block_trip_entry": {
+    "rows": 282,
+    "sha256": "c448db01916b9e9ae5098b0d80d372fc983e32d8fa305dd276d2cb70f46a0708"
+  },
+  "block_trip_index": {
+    "rows": 24,
+    "sha256": "8a6a70edf034a4e47cfad590db2d010d1d6329df737b18d598cea039ece6ae18"
+  },
+  "calendar": {
+    "rows": 6,
+    "sha256": "ee9f7e9843b395d05a08d8310b3ce5d152887dd9cb97089e51a8305d2744b107"
+  },
+  "calendar_dates": {
+    "rows": 48,
+    "sha256": "cf2f3c6e24f27a249aff341a1da9a733a43d9683f301643bfbda0b92c6e5d3f0"
+  },
+  "frequencies": {
+    "rows": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "import_metadata": {
+    "rows": 1,
+    "sha256": "6614e01341063e79544e7c8848545a6d8513fce3b4cdb5a9429a1d6d60ba47df"
+  },
+  "problem_reports_stop": {
+    "rows": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "problem_reports_trip": {
+    "rows": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "routes": {
+    "rows": 13,
+    "sha256": "d2e177090c1fec89df4d408d3e9be15743d9029bcebb178e70600bce1fb883e7"
+  },
+  "shapes": {
+    "rows": 10597,
+    "sha256": "4e7c52c6b52220ef66835d64cf0e2234fc88fdfa87fb695576aa7199801d6c29"
+  },
+  "stop_agencies": {
+    "rows": 354,
+    "sha256": "bbccc8dd20814ae5f7ee2df2ef5f1969ac68cb204071ab23300aa6fd84ee414e"
+  },
+  "stop_times": {
+    "rows": 7346,
+    "sha256": "45922cd5c808e04f135b5e88a6fb124905d8258351b48a4b122793f74e997dd6"
+  },
+  "stops": {
+    "rows": 375,
+    "sha256": "66f63ec1df18d9e8fe5419579cdac6c2ca4d42b8d366d4ebef7715b7322d7617"
+  },
+  "trips": {
+    "rows": 282,
+    "sha256": "b2641790528d29f9665347276e090c47c9d0dab1a66dc1032f19bc966e970e3a"
+  }
+}
