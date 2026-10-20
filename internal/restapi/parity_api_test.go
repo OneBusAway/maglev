@@ -58,6 +58,8 @@ func TestParityAPI(t *testing.T) {
 		{"stops-for-route", "/api/where/stops-for-route/25_151.json?key=TEST"},
 		{"trip", "/api/where/trip/25_84f4520e-88b6-4ee6-8975-856799bc1359.json?key=TEST"},
 		{"trip-details", fmt.Sprintf("/api/where/trip-details/25_84f4520e-88b6-4ee6-8975-856799bc1359.json?key=TEST&time=%d", timeMs)},
+		// Block 15 chains trips of two services that both run that day.
+		{"trip-details-mixed-service-block", fmt.Sprintf("/api/where/trip-details/25_Route15-Southbound-MonFri.json?key=TEST&time=%d", timeMs)},
 		{"trips-for-location", fmt.Sprintf("/api/where/trips-for-location.json?key=TEST&lat=40.680372&lon=-122.363588&latSpan=0.3&lonSpan=0.3&time=%d", timeMs)},
 		{"trips-for-route", fmt.Sprintf("/api/where/trips-for-route/25_151.json?key=TEST&time=%d&includeSchedule=true", timeMs)},
 	}

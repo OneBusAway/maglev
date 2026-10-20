@@ -1,0 +1,695 @@
+{
+  "code": 200,
+  "currentTime": 1749740400000,
+  "data": {
+    "entry": {
+      "schedule": {
+        "frequency": null,
+        "nextTripId": "",
+        "previousTripId": "25_9d4d92fc-c5dd-4763-939b-60ab3cac0eb9",
+        "stopTimes": [
+          {
+            "arrivalTime": 26400,
+            "departureTime": 26400,
+            "distanceAlongTrip": 0,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_2000"
+          },
+          {
+            "arrivalTime": 26700,
+            "departureTime": 26700,
+            "distanceAlongTrip": 2313.35669747,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1801"
+          },
+          {
+            "arrivalTime": 27060,
+            "departureTime": 27060,
+            "distanceAlongTrip": 5820.74122401,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1115"
+          },
+          {
+            "arrivalTime": 27060,
+            "departureTime": 27060,
+            "distanceAlongTrip": 6172.61103451,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1116"
+          },
+          {
+            "arrivalTime": 27120,
+            "departureTime": 27120,
+            "distanceAlongTrip": 6529.801518,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1421"
+          },
+          {
+            "arrivalTime": 27300,
+            "departureTime": 27360,
+            "distanceAlongTrip": 6882.11196961,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_4000"
+          },
+          {
+            "arrivalTime": 27420,
+            "departureTime": 27420,
+            "distanceAlongTrip": 7171.84981917,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1422"
+          },
+          {
+            "arrivalTime": 27540,
+            "departureTime": 27540,
+            "distanceAlongTrip": 7635.32896334,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1100"
+          },
+          {
+            "arrivalTime": 27720,
+            "departureTime": 27720,
+            "distanceAlongTrip": 7759.91873553,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1408"
+          },
+          {
+            "arrivalTime": 27780,
+            "departureTime": 27780,
+            "distanceAlongTrip": 7979.66272285,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1409"
+          },
+          {
+            "arrivalTime": 27780,
+            "departureTime": 27780,
+            "distanceAlongTrip": 8145.45014098,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1410"
+          },
+          {
+            "arrivalTime": 27840,
+            "departureTime": 27840,
+            "distanceAlongTrip": 8984.28559552,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1411"
+          },
+          {
+            "arrivalTime": 27840,
+            "departureTime": 27840,
+            "distanceAlongTrip": 9218.2108429,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1412"
+          },
+          {
+            "arrivalTime": 27840,
+            "departureTime": 27840,
+            "distanceAlongTrip": 9677.49709048,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1413"
+          },
+          {
+            "arrivalTime": 27840,
+            "departureTime": 27840,
+            "distanceAlongTrip": 9957.29937583,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1414"
+          },
+          {
+            "arrivalTime": 29220,
+            "departureTime": 29220,
+            "distanceAlongTrip": 21820.2965903,
+            "historicalOccupancy": "",
+            "stopHeadsign": "",
+            "stopId": "25_1505"
+          }
+        ],
+        "timeZone": "America/Los_Angeles"
+      },
+      "serviceDate": 1749711600000,
+      "situationIds": [],
+      "tripId": "25_Route15-Southbound-MonFri"
+    },
+    "references": {
+      "agencies": [
+        {
+          "disclaimer": "",
+          "email": "",
+          "fareUrl": "",
+          "id": "25",
+          "lang": "en",
+          "name": "Redding Area Bus Authority",
+          "phone": "530-241-2877",
+          "privateService": false,
+          "timezone": "America/Los_Angeles",
+          "url": "http://www.rabaride.com/"
+        }
+      ],
+      "routes": [
+        {
+          "agencyId": "25",
+          "color": "800000",
+          "description": "",
+          "id": "25_15",
+          "longName": "Churn Creek/Knightson/Airport",
+          "nullSafeShortName": "15",
+          "shortName": "15",
+          "textColor": "FFFFFF",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/15-18.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "55d1b0",
+          "description": "",
+          "id": "25_151",
+          "longName": "Route 1",
+          "nullSafeShortName": "1",
+          "shortName": "1",
+          "textColor": "000000",
+          "type": 3,
+          "url": "https://rabaride.com/Document%20Center/Services/Bus/Route01.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "1bb1f6",
+          "description": "",
+          "id": "25_153",
+          "longName": "Route 3",
+          "nullSafeShortName": "3",
+          "shortName": "3",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route03.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "bdadd1",
+          "description": "",
+          "id": "25_154",
+          "longName": "Route 4",
+          "nullSafeShortName": "4",
+          "shortName": "4",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://rabaride.com/Document%20Center/Services/Bus/Route04.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "1886c7",
+          "description": "",
+          "id": "25_157",
+          "longName": "Route 7",
+          "nullSafeShortName": "7",
+          "shortName": "7",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route07.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "93ea5f",
+          "description": "",
+          "id": "25_159",
+          "longName": "Route 11",
+          "nullSafeShortName": "11",
+          "shortName": "11",
+          "textColor": "000000",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route11.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "8c08b1",
+          "description": "",
+          "id": "25_160",
+          "longName": "Route 14",
+          "nullSafeShortName": "14",
+          "shortName": "14",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route14.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "00dffb",
+          "description": "",
+          "id": "25_161",
+          "longName": "Route 299X",
+          "nullSafeShortName": "299X",
+          "shortName": "299X",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://rabaride.com/services/burney_express.php"
+        },
+        {
+          "agencyId": "25",
+          "color": "fbef00",
+          "description": "",
+          "id": "25_1885",
+          "longName": "Shasta View/Shasta College",
+          "nullSafeShortName": "17",
+          "shortName": "17",
+          "textColor": "0e0e0e",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/17.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "9F472E",
+          "description": "",
+          "id": "25_24",
+          "longName": "Route 99X/Amtrak Thruway Route 3",
+          "nullSafeShortName": "99X",
+          "shortName": "99X",
+          "textColor": "FFFFFF",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "2738ec",
+          "description": "",
+          "id": "25_3779",
+          "longName": "Route 19",
+          "nullSafeShortName": "19",
+          "shortName": "19",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/SRTA_BeachBus_20230302_ful.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "F84DF7",
+          "description": "",
+          "id": "25_44X",
+          "longName": "Shingletown Flex",
+          "nullSafeShortName": "44X",
+          "shortName": "44X",
+          "textColor": "000000",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "ec191c",
+          "description": "",
+          "id": "25_6446",
+          "longName": "Route 9",
+          "nullSafeShortName": "9",
+          "shortName": "9",
+          "textColor": "000000",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route09.pdf"
+        }
+      ],
+      "situations": [],
+      "stopTimes": [],
+      "stops": [
+        {
+          "code": "1100",
+          "direction": "W",
+          "id": "25_1100",
+          "lat": 40.593082,
+          "locationType": 0,
+          "lon": -122.357355,
+          "name": "Browning St at Mission De Oro Dr",
+          "parent": "",
+          "routeIds": [
+            "25_159",
+            "25_160",
+            "25_15"
+          ],
+          "staticRouteIds": [
+            "25_159",
+            "25_160",
+            "25_15"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1115",
+          "direction": "N",
+          "id": "25_1115",
+          "lat": 40.591011,
+          "locationType": 0,
+          "lon": -122.358174,
+          "name": "Hilltop Dr at Rockaway Dr",
+          "parent": "",
+          "routeIds": [
+            "25_159",
+            "25_15"
+          ],
+          "staticRouteIds": [
+            "25_159",
+            "25_15"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1116",
+          "direction": "E",
+          "id": "25_1116",
+          "lat": 40.592917,
+          "locationType": 0,
+          "lon": -122.356838,
+          "name": "Browning St at Mission De Oro Dr",
+          "parent": "",
+          "routeIds": [
+            "25_159",
+            "25_160",
+            "25_15"
+          ],
+          "staticRouteIds": [
+            "25_159",
+            "25_160",
+            "25_15"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1408",
+          "direction": "S",
+          "id": "25_1408",
+          "lat": 40.592636,
+          "locationType": 0,
+          "lon": -122.358552,
+          "name": "Hilltop Dr at Browning St",
+          "parent": "",
+          "routeIds": [
+            "25_160",
+            "25_15"
+          ],
+          "staticRouteIds": [
+            "25_160",
+            "25_15"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1409",
+          "direction": "S",
+          "id": "25_1409",
+          "lat": 40.590677,
+          "locationType": 0,
+          "lon": -122.358402,
+          "name": "Hilltop Dr at Rockaway Dr",
+          "parent": "",
+          "routeIds": [
+            "25_160",
+            "25_15"
+          ],
+          "staticRouteIds": [
+            "25_160",
+            "25_15"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1410",
+          "direction": "S",
+          "id": "25_1410",
+          "lat": 40.589188,
+          "locationType": 0,
+          "lon": -122.358306,
+          "name": "Hilltop Dr at E. Palisades Ave",
+          "parent": "",
+          "routeIds": [
+            "25_160",
+            "25_15"
+          ],
+          "staticRouteIds": [
+            "25_160",
+            "25_15"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1411",
+          "direction": "S",
+          "id": "25_1411",
+          "lat": 40.581679,
+          "locationType": 0,
+          "lon": -122.357907,
+          "name": "Hilltop Dr at Presidio St",
+          "parent": "",
+          "routeIds": [
+            "25_160",
+            "25_15"
+          ],
+          "staticRouteIds": [
+            "25_160",
+            "25_15"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1412",
+          "direction": "S",
+          "id": "25_1412",
+          "lat": 40.579646,
+          "locationType": 0,
+          "lon": -122.357972,
+          "name": "Hilltop Dr at Mistletoe Ln",
+          "parent": "",
+          "routeIds": [
+            "25_160",
+            "25_15"
+          ],
+          "staticRouteIds": [
+            "25_160",
+            "25_15"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1413",
+          "direction": "S",
+          "id": "25_1413",
+          "lat": 40.57566,
+          "locationType": 0,
+          "lon": -122.358093,
+          "name": "Hilltop Dr at Industrial St",
+          "parent": "",
+          "routeIds": [
+            "25_160",
+            "25_15"
+          ],
+          "staticRouteIds": [
+            "25_160",
+            "25_15"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1414",
+          "direction": "S",
+          "id": "25_1414",
+          "lat": 40.573224,
+          "locationType": 0,
+          "lon": -122.358141,
+          "name": "Hilltop Dr at Commerce St",
+          "parent": "",
+          "routeIds": [
+            "25_160",
+            "25_15"
+          ],
+          "staticRouteIds": [
+            "25_160",
+            "25_15"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1421",
+          "direction": "S",
+          "id": "25_1421",
+          "lat": 40.59225,
+          "locationType": 0,
+          "lon": -122.353677,
+          "name": "Canby @ Browning (SB)",
+          "parent": "",
+          "routeIds": [
+            "25_159",
+            "25_160",
+            "25_15",
+            "25_44X"
+          ],
+          "staticRouteIds": [
+            "25_159",
+            "25_160",
+            "25_15",
+            "25_44X"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1422",
+          "direction": "N",
+          "id": "25_1422",
+          "lat": 40.591695,
+          "locationType": 0,
+          "lon": -122.353393,
+          "name": "Canby @ The Home Depot (NB)",
+          "parent": "",
+          "routeIds": [
+            "25_159",
+            "25_160",
+            "25_15"
+          ],
+          "staticRouteIds": [
+            "25_159",
+            "25_160",
+            "25_15"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1505",
+          "direction": "N",
+          "id": "25_1505",
+          "lat": 40.505951,
+          "locationType": 0,
+          "lon": -122.299891,
+          "name": "Redding Regional Airport",
+          "parent": "",
+          "routeIds": [
+            "25_15"
+          ],
+          "staticRouteIds": [
+            "25_15"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1801",
+          "direction": "",
+          "id": "25_1801",
+          "lat": 40.59075,
+          "locationType": 0,
+          "lon": -122.378986,
+          "name": "Turtle Bay Exploration Park (Sheraton)",
+          "parent": "",
+          "routeIds": [
+            "25_15",
+            "25_44X"
+          ],
+          "staticRouteIds": [
+            "25_15",
+            "25_44X"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "2000",
+          "direction": "",
+          "id": "25_2000",
+          "lat": 40.58317,
+          "locationType": 0,
+          "lon": -122.392586,
+          "name": "Downtown Passenger Terminal",
+          "parent": "",
+          "routeIds": [
+            "25_151",
+            "25_153",
+            "25_154",
+            "25_157",
+            "25_6446",
+            "25_159",
+            "25_160",
+            "25_15",
+            "25_1885",
+            "25_3779",
+            "25_44X",
+            "25_24",
+            "25_161"
+          ],
+          "staticRouteIds": [
+            "25_151",
+            "25_153",
+            "25_154",
+            "25_157",
+            "25_6446",
+            "25_159",
+            "25_160",
+            "25_15",
+            "25_1885",
+            "25_3779",
+            "25_44X",
+            "25_24",
+            "25_161"
+          ],
+          "wheelchairBoarding": "ACCESSIBLE"
+        },
+        {
+          "code": "4000",
+          "direction": "",
+          "id": "25_4000",
+          "lat": 40.589312,
+          "locationType": 0,
+          "lon": -122.353633,
+          "name": "Canby Transfer Center",
+          "parent": "",
+          "routeIds": [
+            "25_154",
+            "25_159",
+            "25_160",
+            "25_15",
+            "25_44X"
+          ],
+          "staticRouteIds": [
+            "25_154",
+            "25_159",
+            "25_160",
+            "25_15",
+            "25_44X"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        }
+      ],
+      "trips": [
+        {
+          "blockId": "25_15",
+          "directionId": "0",
+          "id": "25_9d4d92fc-c5dd-4763-939b-60ab3cac0eb9",
+          "peakOffpeak": 0,
+          "routeId": "25_15",
+          "routeShortName": "15",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_lt05",
+          "timeZone": "",
+          "tripHeadsign": "Southbound",
+          "tripShortName": ""
+        },
+        {
+          "blockId": "25_15",
+          "directionId": "0",
+          "id": "25_Route15-Southbound-MonFri",
+          "peakOffpeak": 0,
+          "routeId": "25_15",
+          "routeShortName": "15",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_lt05",
+          "timeZone": "",
+          "tripHeadsign": "Southbound",
+          "tripShortName": ""
+        }
+      ]
+    }
+  },
+  "text": "OK",
+  "version": 2
+}
