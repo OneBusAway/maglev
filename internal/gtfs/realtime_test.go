@@ -71,6 +71,47 @@ func TestGetAlertsForStop(t *testing.T) {
 	assert.Equal(t, "alert1", alerts[0].ID)
 }
 
+func TestUpdateFeedRealtime_DropsDeletedAlerts(t *testing.T) {
+	stopID := "stop123"
+	feed := &gtfsrt.FeedMessage{
+		Header: &gtfsrt.FeedHeader{
+			GtfsRealtimeVersion: proto.String("2.0"),
+			Timestamp:           proto.Uint64(uint64(time.Now().Unix())),
+		},
+		Entity: []*gtfsrt.FeedEntity{
+			{
+				Id:    proto.String("active-alert"),
+				Alert: &gtfsrt.Alert{InformedEntity: []*gtfsrt.EntitySelector{{StopId: proto.String(stopID)}}},
+			},
+			{
+				Id:        proto.String("deleted-alert"),
+				IsDeleted: proto.Bool(true),
+				Alert:     &gtfsrt.Alert{InformedEntity: []*gtfsrt.EntitySelector{{StopId: proto.String(stopID)}}},
+			},
+		},
+	}
+	payload, err := proto.Marshal(feed)
+	require.NoError(t, err)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	manager := newTestManager()
+	manager.updateFeedRealtime(context.Background(), RTFeedConfig{
+		ID:               "alerts-feed",
+		ServiceAlertsURL: server.URL,
+		RefreshInterval:  30,
+		Enabled:          true,
+	})
+
+	alerts := manager.GetAlertsForStop(stopID)
+	require.Len(t, alerts, 1, "an alert whose entity is_deleted must not be served")
+	assert.Equal(t, "active-alert", alerts[0].ID)
+}
+
 func TestRebuildRealTimeTripLookup(t *testing.T) {
 	manager := &Manager{
 		realTimeMutex: sync.RWMutex{},
