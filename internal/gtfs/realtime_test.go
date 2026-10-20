@@ -1458,6 +1458,158 @@ func encodeVehicleFeed(createdAt time.Time, positions []*gtfsrt.VehiclePosition)
 	return b
 }
 
+// encodeAlertFeed constructs a GTFS-RT service-alerts protobuf payload from
+// pre-built feed entities (so callers can set is_deleted on individual entities).
+func encodeAlertFeed(createdAt time.Time, entities []*gtfsrt.FeedEntity) []byte {
+	feed := &gtfsrt.FeedMessage{
+		Header: &gtfsrt.FeedHeader{
+			GtfsRealtimeVersion: proto.String("2.0"),
+			Timestamp:           proto.Uint64(uint64(createdAt.Unix())),
+		},
+		Entity: entities,
+	}
+	b, err := proto.Marshal(feed)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal alert feed: %s", err))
+	}
+	return b
+}
+
+// stopAlertEntity builds a service-alert FeedEntity targeting a single stop.
+// When deleted is true, the entity's is_deleted flag is set (alert payload is
+// still required by the GTFS-realtime spec).
+func stopAlertEntity(id, stopID string, deleted bool) *gtfsrt.FeedEntity {
+	return &gtfsrt.FeedEntity{
+		Id:        proto.String(id),
+		IsDeleted: proto.Bool(deleted),
+		Alert: &gtfsrt.Alert{
+			InformedEntity: []*gtfsrt.EntitySelector{{
+				StopId: proto.String(stopID),
+			}},
+			HeaderText: &gtfsrt.TranslatedString{
+				Translation: []*gtfsrt.TranslatedString_Translation{{
+					Text: proto.String(id),
+				}},
+			},
+		},
+	}
+}
+
+func TestActiveAlerts(t *testing.T) {
+	alerts := []gtfs.Alert{
+		{ID: "keep-1"},
+		{ID: "drop", IsDeleted: true},
+		{ID: "keep-2"},
+	}
+	got := activeAlerts(alerts)
+	require.Len(t, got, 2)
+	assert.Equal(t, []string{"keep-1", "keep-2"}, []string{got[0].ID, got[1].ID})
+	assert.Len(t, alerts, 3, "activeAlerts must not mutate the input slice")
+	assert.True(t, alerts[1].IsDeleted)
+
+	assert.Nil(t, activeAlerts(nil))
+	assert.Empty(t, activeAlerts([]gtfs.Alert{{ID: "gone", IsDeleted: true}}))
+}
+
+func TestUpdateFeedRealtime_SkipsDeletedAlerts(t *testing.T) {
+	stopID := "stop-active"
+	payload := encodeAlertFeed(time.Now(), []*gtfsrt.FeedEntity{
+		stopAlertEntity("alert-active", stopID, false),
+		stopAlertEntity("alert-deleted", stopID, true),
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	manager := newTestManager()
+	applied := manager.updateFeedRealtime(context.Background(), RTFeedConfig{
+		ID:               "alert-feed",
+		ServiceAlertsURL: server.URL,
+	})
+	require.True(t, applied)
+
+	stored := manager.feedAlerts["alert-feed"]
+	require.Len(t, stored, 1, "deleted alert must not be stored")
+	assert.Equal(t, "alert-active", stored[0].ID)
+	assert.False(t, stored[0].IsDeleted)
+
+	lookups := manager.GetAlertsForStop(stopID)
+	require.Len(t, lookups, 1, "merged snapshot must only expose the active alert")
+	assert.Equal(t, "alert-active", lookups[0].ID)
+}
+
+func TestUpdateFeedRealtime_DeletedAlertRemovesPrevious(t *testing.T) {
+	stopID := "stop-withdraw"
+	var (
+		mu      sync.Mutex
+		payload []byte
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	manager := newTestManager()
+	cfg := RTFeedConfig{ID: "alert-feed", ServiceAlertsURL: server.URL}
+
+	mu.Lock()
+	payload = encodeAlertFeed(time.Now(), []*gtfsrt.FeedEntity{
+		stopAlertEntity("alert-1", stopID, false),
+	})
+	mu.Unlock()
+	require.True(t, manager.updateFeedRealtime(context.Background(), cfg))
+	require.Len(t, manager.GetAlertsForStop(stopID), 1)
+
+	mu.Lock()
+	payload = encodeAlertFeed(time.Now(), []*gtfsrt.FeedEntity{
+		stopAlertEntity("alert-1", stopID, true),
+	})
+	mu.Unlock()
+	require.True(t, manager.updateFeedRealtime(context.Background(), cfg))
+
+	assert.Empty(t, manager.feedAlerts["alert-feed"], "is_deleted refresh must clear the stored alert")
+	assert.Empty(t, manager.GetAlertsForStop(stopID), "withdrawn alert must leave the merged snapshot")
+}
+
+func TestUpdateFeedRealtime_AllDeletedAlerts(t *testing.T) {
+	stopID := "stop-all-deleted"
+	payload := encodeAlertFeed(time.Now(), []*gtfsrt.FeedEntity{
+		stopAlertEntity("alert-a", stopID, true),
+		stopAlertEntity("alert-b", stopID, true),
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	manager := newTestManager()
+	// Seed a previous alert so we can confirm a wholesale replace clears it
+	// when the refresh contains only deleted entities.
+	manager.feedAlerts["alert-feed"] = []gtfs.Alert{{
+		ID: "stale",
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			StopID: &stopID,
+		}},
+	}}
+	manager.rebuildMergedRealtimeLocked()
+	require.Len(t, manager.GetAlertsForStop(stopID), 1)
+
+	applied := manager.updateFeedRealtime(context.Background(), RTFeedConfig{
+		ID:               "alert-feed",
+		ServiceAlertsURL: server.URL,
+	})
+	require.True(t, applied)
+
+	assert.Empty(t, manager.feedAlerts["alert-feed"])
+	assert.Empty(t, manager.GetAlertsForStop(stopID))
+}
+
 // ptr is a helper function to create a pointer to a time.Time value.
 func ptr(t time.Time) *time.Time {
 	return &t

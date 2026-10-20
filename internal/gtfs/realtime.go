@@ -567,7 +567,11 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	}
 
 	if alertData != nil && alertErr == nil {
-		manager.feedAlerts[feedID] = alertData.Alerts
+		// Maglev replaces this feed's alerts wholesale on every refresh, so
+		// dropping is_deleted entities here is enough — there is no older
+		// copy to remove. The merged snapshot rebuild below then indexes
+		// only what remains.
+		manager.feedAlerts[feedID] = activeAlerts(alertData.Alerts)
 	}
 
 	tripsUpdated := tripData != nil && tripErr == nil
@@ -806,6 +810,21 @@ func filterVehiclesByAgency(vehicles []gtfs.Vehicle, allowed map[string]bool, ro
 		}
 		if agencyID, ok := routeAgencyMap[v.Trip.ID.RouteID]; ok && allowed[agencyID] {
 			filtered = append(filtered, v)
+		}
+	}
+	return filtered
+}
+
+// activeAlerts returns a new slice of alerts that are not marked IsDeleted,
+// preserving order. The input slice is not mutated.
+func activeAlerts(alerts []gtfs.Alert) []gtfs.Alert {
+	if len(alerts) == 0 {
+		return alerts
+	}
+	filtered := make([]gtfs.Alert, 0, len(alerts))
+	for _, alert := range alerts {
+		if !alert.IsDeleted {
+			filtered = append(filtered, alert)
 		}
 	}
 	return filtered
