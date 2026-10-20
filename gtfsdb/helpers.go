@@ -890,10 +890,6 @@ func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
 		name        string
 		description string
 	}{
-		// Increase cache size to 64MB (negative value means KB)
-		{"PRAGMA cache_size=-64000", "Set cache size to 64MB"},
-		// Store temp tables and indices in memory for faster operations
-		{"PRAGMA temp_store=MEMORY", "Store temporary data in memory"},
 		// Enable Write-Ahead Logging to allow concurrent readers and a single writer
 		{"PRAGMA journal_mode=WAL", "Enable WAL mode"},
 	}
