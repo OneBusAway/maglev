@@ -3,10 +3,7 @@ package gtfs
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
-	"os"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -15,72 +12,6 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 )
-
-func rawGtfsData(ctx context.Context, source string, config Config) ([]byte, error) {
-	var b []byte
-	var err error
-
-	logger := slog.Default().With(slog.String("component", "gtfs_loader"))
-	logging.LogOperation(logger, "reading_gtfs_data", slog.String("source", source))
-
-	if config.isLocalFile() {
-		b, err = os.ReadFile(source)
-		if err != nil {
-			return nil, fmt.Errorf("error reading local GTFS file: %w", err)
-		}
-	} else {
-		req, err := http.NewRequestWithContext(ctx, "GET", source, nil)
-		if err != nil {
-			return nil, fmt.Errorf("error creating GTFS request: %w", err)
-		}
-
-		// Add auth header if provided
-		if config.StaticAuthHeaderKey != "" && config.StaticAuthHeaderValue != "" {
-			req.Header.Set(config.StaticAuthHeaderKey, config.StaticAuthHeaderValue)
-		}
-
-		client := &http.Client{
-			Timeout: 5 * time.Minute,
-			Transport: &http.Transport{
-				TLSHandshakeTimeout:   10 * time.Second,
-				ResponseHeaderTimeout: 30 * time.Second,
-				IdleConnTimeout:       90 * time.Second,
-			}}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("error downloading GTFS data: %w", err)
-		}
-		defer logging.SafeCloseWithLogging(resp.Body,
-			slog.Default().With(slog.String("component", "gtfs_downloader")),
-			"http_response_body")
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("failed to download GTFS data: received HTTP status %s", resp.Status)
-		}
-		const maxStaticSize = 200 * 1024 * 1024
-		b, err = io.ReadAll(io.LimitReader(resp.Body, maxStaticSize+1))
-		if err != nil {
-			return nil, fmt.Errorf("error reading GTFS data: %w", err)
-		}
-		if int64(len(b)) > maxStaticSize {
-			return nil, fmt.Errorf("static GTFS response exceeds size limit of %d bytes", maxStaticSize)
-		}
-	}
-
-	// Process through gtfstidy if enabled
-	if config.EnableGTFSTidy {
-		logging.LogOperation(logger, "gtfstidy_enabled_processing_gtfs_data")
-		tidiedData, err := tidyGTFSData(ctx, b, logger)
-		if err != nil {
-			logging.LogError(logger, "Failed to tidy GTFS data, using original data", err)
-		} else {
-			b = tidiedData
-		}
-	}
-
-	return b, nil
-}
 
 // openGtfsDB opens (or creates) the single SQLite database used by the manager.
 // No import work happens here — ReloadStatic imports into the returned client.
@@ -110,25 +41,6 @@ func newGTFSDBConfig(dbPath string, config Config) gtfsdb.Config {
 		dbConfig.QueryMetricsRecorder = config.Metrics
 	}
 	return dbConfig
-}
-
-// loadGTFSData loads, parses, hashes, and validates GTFS data from either a URL or a local file.
-func loadGTFSData(ctx context.Context, config Config) (*gtfsdb.GtfsData, error) {
-	b, err := rawGtfsData(ctx, config.GtfsURL, config)
-	if err != nil {
-		return nil, fmt.Errorf("error reading GTFS data: %w", err)
-	}
-
-	data, err := gtfsdb.ParseGtfsData(b, config.GtfsURL)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := validateStaticAgencyTimezones(data.Static); err != nil {
-		return nil, fmt.Errorf("invalid GTFS agency timezone: %w", err)
-	}
-
-	return data, nil
 }
 
 func validateStaticAgencyTimezones(staticData *gtfs.Static) error {
@@ -231,11 +143,31 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	return changed, nil
 }
 
-// storeConfiguredFeed loads the configured feed and stores it in the
-// database. The parsed feed is reachable only from here, so it can be freed
-// as soon as this returns. It reports whether the database changed.
+// storeConfiguredFeed fetches the configured feed and, unless the database
+// already holds it, parses and stores it. The parsed feed is reachable only
+// from here, so it can be freed as soon as this returns. It reports whether
+// the database changed.
 func (manager *Manager) storeConfiguredFeed(ctx context.Context, logger *slog.Logger) (bool, error) {
-	newData, err := loadGTFSData(ctx, manager.config)
+	feed, err := fetchFeedFile(ctx, manager.config)
+	if err != nil {
+		logging.LogError(logger, "Error loading GTFS data", err,
+			slog.String("source", manager.config.GtfsURL))
+		return false, err
+	}
+	defer feed.cleanup()
+
+	imported, err := manager.GtfsDB.HasImported(ctx, feed.hash, manager.config.GtfsURL)
+	if err != nil {
+		logging.LogError(logger, "Error checking whether GTFS data is already imported", err,
+			slog.String("source", manager.config.GtfsURL))
+		return false, err
+	}
+	if imported {
+		logging.LogOperation(logger, "gtfs_data_unchanged_skipping_parse", slog.String("hash", feed.hash))
+		return false, nil
+	}
+
+	newData, err := feed.parse(ctx, manager.config)
 	if err != nil {
 		logging.LogError(logger, "Error loading GTFS data", err,
 			slog.String("source", manager.config.GtfsURL))
