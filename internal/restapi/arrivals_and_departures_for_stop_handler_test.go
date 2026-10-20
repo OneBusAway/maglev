@@ -36,7 +36,7 @@ func TestSortArrivalsByBestTime(t *testing.T) {
 	onTime := models.ArrivalAndDeparture{
 		TripID:               "agency_ontime",
 		ScheduledArrivalTime: models.NewModelTime(base.Add(10 * time.Minute)),
-		Predicted:            false,
+		Predicted:            true,
 		StopSequence:         1,
 	}
 	sameTimeEarlierTrip := models.ArrivalAndDeparture{
@@ -953,8 +953,8 @@ func TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime(t *testing.T) {
 		baseline.NumberOfStopsAway, subject.NumberOfStopsAway)
 }
 
-// TestPluralArrivals_NoMatchingOrPriorStop verifies that a TripUpdate with a
-// StopTimeUpdate for a later stop does not mark the arrival as predicted.
+// TestPluralArrivals_NoMatchingOrPriorStop verifies that a later stop update
+// leaves this stop's times unavailable while preserving vehicle tracking.
 func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
@@ -980,9 +980,9 @@ func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 			continue
 		}
 		found = true
-		assert.False(t, a.Predicted, "update for a later stop should not predict current stop")
-		assert.True(t, a.PredictedArrivalTime.IsZero(), "predictedArrivalTime should be zero when not predicted")
-		assert.True(t, a.PredictedDepartureTime.IsZero(), "predictedDepartureTime should be zero when not predicted")
+		assert.True(t, a.Predicted, "the vehicle still tracks this trip")
+		assert.True(t, a.PredictedArrivalTime.IsZero(), "a later stop update cannot predict the current arrival")
+		assert.True(t, a.PredictedDepartureTime.IsZero(), "a later stop update cannot predict the current departure")
 		break
 	}
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
@@ -1023,9 +1023,9 @@ func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
 	t.Fatalf("expected to find arrival for trip %s", expectedTripID)
 }
 
-// TestPluralArrivals_VehiclePositionAloneDoesNotPredict verifies that a vehicle
-// position without any TripUpdate does NOT mark the arrival as predicted.
-func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
+// TestPluralArrivals_VehiclePositionAloneKeepsTracking verifies that a vehicle
+// tracks the trip without inventing times when no TripUpdate is available.
+func TestPluralArrivals_VehiclePositionAloneKeepsTracking(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
@@ -1044,7 +1044,7 @@ func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
 			continue
 		}
 		found = true
-		assert.False(t, a.Predicted, "vehicle position alone should not mark arrival as predicted")
+		assert.True(t, a.Predicted, "the vehicle still tracks this trip")
 		assert.True(t, a.PredictedArrivalTime.IsZero())
 		assert.True(t, a.PredictedDepartureTime.IsZero())
 		break

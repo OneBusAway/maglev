@@ -831,6 +831,47 @@ type arrivalInput struct {
 	freqMap          map[string][]gtfsdb.Frequency
 }
 
+// hasRelevantArrivalUpdate preserves tracking from target or prior stop updates
+// even when their timestamps are unavailable. It does not resolve timing or
+// propagate delays, and uses only the realtime snapshot and supplied schedule.
+func (api *RestAPI) hasRelevantArrivalUpdate(tripID, stopCode string, targetSequence int64, schedule tripSchedule) bool {
+	trip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
+	if trip == nil {
+		return false
+	}
+	if trip.Delay != nil {
+		return true
+	}
+	for _, update := range trip.StopTimeUpdates {
+		if arrivalUpdateTracksStop(update, stopCode, targetSequence, schedule) {
+			return true
+		}
+	}
+	return false
+}
+
+// arrivalUpdateTracksStop checks visit identity independently of usable timing.
+// ID-only updates can establish tracking without choosing a repeated visit.
+func arrivalUpdateTracksStop(update gtfs.StopTimeUpdate, stopCode string, targetSequence int64, schedule tripSchedule) bool {
+	if update.StopSequence == nil {
+		return update.StopID != nil && *update.StopID == stopCode
+	}
+	sequence := int64(*update.StopSequence)
+	if len(schedule.stopIDs) > 0 {
+		scheduledStop, exists := schedule.stopIDs[sequence]
+		matchesID := update.StopID == nil || *update.StopID == scheduledStop
+		if !exists || !matchesID {
+			return false
+		}
+	}
+	// Without a loaded schedule, preserve the existing trust in sequences.
+	if sequence < targetSequence {
+		return true
+	}
+	return sequence == targetSequence &&
+		(update.StopID == nil || *update.StopID == stopCode)
+}
+
 // buildArrival turns one matched stop_time into an ArrivalAndDeparture,
 // resolving its real-time prediction and trip status along the way.
 func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arrivalsAccumulator) *models.ArrivalAndDeparture {
@@ -849,7 +890,7 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
 	vehicleID := api.combinedVehicleID(ctx, vehicle, route.AgencyID, st.TripID)
 
-	predictedArrivalTime, predictedDepartureTime, predicted := api.getPredictedTimes(
+	predictedArrivalTime, predictedDepartureTime, hasPredictionTimes := api.getPredictedTimes(
 		ctx,
 		st.TripID,
 		in.stopCode,
@@ -858,10 +899,14 @@ func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arri
 		scheduledDepartureTime,
 		in.schedule,
 	)
-	if !predicted {
+	if !hasPredictionTimes {
 		predictedArrivalTime = time.Time{}
 		predictedDepartureTime = time.Time{}
 	}
+	// Tracking does not require usable predicted times for this particular stop.
+	hasVehicleTracking := vehicle != nil && vehicle.Trip != nil
+	predicted := hasVehicleTracking || hasPredictionTimes ||
+		api.hasRelevantArrivalUpdate(st.TripID, in.stopCode, int64(st.StopSequence), in.schedule)
 
 	tripStatus, distanceFromStop, numberOfStopsAway, situationRefs := api.tripStatusForArrival(ctx, in, vehicle, acc)
 

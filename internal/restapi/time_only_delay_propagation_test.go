@@ -214,7 +214,7 @@ func TestArrivalDelayPropagationFromAbsoluteTime(t *testing.T) {
 			)
 			require.Equal(t, http.StatusOK, response.StatusCode)
 			for endpoint, arrival := range map[string]models.ArrivalAndDeparture{"plural": plural.Data.Entry.ArrivalsAndDepartures[0], "singular": singular.Data.Entry} {
-				assert.Equal(t, !tt.noPrediction, arrival.Predicted, endpoint)
+				assert.True(t, arrival.Predicted, endpoint)
 				if tt.noPrediction {
 					assert.True(t, arrival.PredictedArrivalTime.IsZero(), endpoint)
 					assert.True(t, arrival.PredictedDepartureTime.IsZero(), endpoint)
@@ -229,6 +229,159 @@ func TestArrivalDelayPropagationFromAbsoluteTime(t *testing.T) {
 
 func stringPointerForPropagationTest(value string) *string {
 	return &value
+}
+
+func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
+	day := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	queryTime := day.Add(8*time.Hour + 2*time.Minute)
+	delay := 5 * time.Minute
+	actualDeparture := day.Add(7*time.Hour + 47*time.Minute)
+	first, middle, target, later := uint32(1), uint32(2), uint32(3), uint32(5)
+	stopID := "dp-stop"
+	prior := gtfs.StopTimeUpdate{StopSequence: &first, Departure: &gtfs.StopTimeEvent{Delay: &delay}}
+	tests := []struct {
+		name         string
+		updates      []gtfs.StopTimeUpdate
+		tripDelay    *time.Duration
+		noTripUpdate bool
+		unrelated    bool
+		wantTracking bool
+		wantTimes    bool
+	}{
+		{name: "no-trip-update", noTripUpdate: true},
+		{name: "unrelated-realtime", noTripUpdate: true, unrelated: true},
+		{name: "empty-trip-update"},
+		{name: "unidentified-stop-update", updates: []gtfs.StopTimeUpdate{{}}},
+		{name: "later-only-update", updates: []gtfs.StopTimeUpdate{{StopSequence: &later, StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}}},
+		{name: "conflicting-stop-id", updates: []gtfs.StopTimeUpdate{{StopSequence: &target, StopID: stringPointerForPropagationTest("other-stop"), Arrival: &gtfs.StopTimeEvent{Delay: &delay}}}},
+		{name: "conflicting-prior-stop-id", updates: []gtfs.StopTimeUpdate{{StopSequence: &first, StopID: stringPointerForPropagationTest("other-stop"), Departure: &gtfs.StopTimeEvent{Time: &actualDeparture}}}},
+		{name: "conflicting-prior-with-target-id", updates: []gtfs.StopTimeUpdate{{StopSequence: &first, StopID: &stopID, Departure: &gtfs.StopTimeEvent{Time: &actualDeparture}}}},
+		{name: "unknown-prior-sequence", updates: []gtfs.StopTimeUpdate{{StopSequence: &middle, Departure: &gtfs.StopTimeEvent{Time: &actualDeparture}}}},
+		{name: "unknown-prior-sequence-with-target-id", updates: []gtfs.StopTimeUpdate{{StopSequence: &middle, StopID: &stopID, Departure: &gtfs.StopTimeEvent{Time: &actualDeparture}}}},
+		{name: "skipped-target", wantTracking: true, updates: []gtfs.StopTimeUpdate{{StopSequence: &target, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED}}},
+		{name: "after-all-skipped", wantTracking: true, updates: []gtfs.StopTimeUpdate{
+			{StopSequence: &first, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED},
+			{StopSequence: &middle, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED},
+		}},
+		{name: "no-data-target", wantTracking: true, updates: []gtfs.StopTimeUpdate{prior,
+			{StopSequence: &target, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA},
+		}},
+		{name: "no-data-boundary", wantTracking: true, tripDelay: &delay, updates: []gtfs.StopTimeUpdate{prior,
+			{StopSequence: &middle, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA},
+		}},
+		{name: "empty-scheduled-boundary", wantTracking: true, tripDelay: &delay, updates: []gtfs.StopTimeUpdate{prior,
+			{StopSequence: &middle, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SCHEDULED},
+		}},
+		{name: "ambiguous-stop-id", wantTracking: true, updates: []gtfs.StopTimeUpdate{{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}}},
+		{name: "absolute-time", wantTimes: true, updates: []gtfs.StopTimeUpdate{
+			{StopSequence: &first, Departure: &gtfs.StopTimeEvent{Time: &actualDeparture}},
+		}},
+		{name: "explicit-delay", wantTimes: true, updates: []gtfs.StopTimeUpdate{
+			{StopSequence: &target, Arrival: &gtfs.StopTimeEvent{Delay: &delay}},
+		}},
+		{name: "skipped-intermediate", wantTimes: true, updates: []gtfs.StopTimeUpdate{prior,
+			{StopSequence: &middle, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED},
+		}},
+		{name: "valid-update-after-no-data", wantTimes: true, updates: []gtfs.StopTimeUpdate{
+			{StopSequence: &first, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA},
+			{StopSequence: &middle, Departure: &gtfs.StopTimeEvent{Delay: &delay}},
+		}},
+	}
+	for _, tt := range tests {
+		for _, withVehicle := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/with-vehicle=%t", tt.name, withVehicle), func(t *testing.T) {
+				api := createTestApiWithClock(t, clock.NewMockClock(queryTime))
+				defer api.Shutdown()
+				t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+				stop, combinedStop, trip, scheduledArrival := setupDelayPropTestData(t, api, int64(target))
+				q := api.GtfsManager.GtfsDB.Queries
+				priorStop := stop + "-prior"
+				_, err := q.CreateStop(t.Context(), gtfsdb.CreateStopParams{
+					ID: priorStop, Name: nulls.String("Prior tracking stop"), Lat: 47, Lon: -122,
+				})
+				require.NoError(t, err)
+				_, err = q.CreateStopTime(t.Context(), gtfsdb.CreateStopTimeParams{
+					TripID: trip, StopID: priorStop, StopSequence: int64(first),
+					ArrivalTime: int64(7*time.Hour + 40*time.Minute), DepartureTime: int64(7*time.Hour + 42*time.Minute),
+				})
+				require.NoError(t, err)
+				// This second visit makes a StopID-only update ambiguous.
+				_, err = q.CreateStopTime(t.Context(), gtfsdb.CreateStopTimeParams{
+					TripID: trip, StopID: stop, StopSequence: int64(later),
+					ArrivalTime: int64(8*time.Hour + 20*time.Minute), DepartureTime: int64(8*time.Hour + 25*time.Minute),
+				})
+				require.NoError(t, err)
+				if !tt.noTripUpdate {
+					api.GtfsManager.MockAddTripUpdate(trip, tt.tripDelay, tt.updates)
+				}
+				if withVehicle {
+					api.GtfsManager.MockAddVehicle("tracking-vehicle", trip, "dp-route")
+				}
+				if tt.unrelated {
+					api.GtfsManager.MockAddVehicle("other-vehicle", "other-trip", "other-route")
+					api.GtfsManager.MockAddTripUpdate("other-trip", &delay, []gtfs.StopTimeUpdate{{
+						StopSequence: &target, StopID: &stop, Arrival: &gtfs.StopTimeEvent{Delay: &delay},
+					}})
+				}
+				rebuildStopAgencyIndex(t, api)
+
+				singularParams := url.Values{
+					"key": {"TEST"}, "tripId": {"dp-agency_" + trip},
+					"serviceDate": {fmt.Sprint(day.UnixMilli())}, "time": {fmt.Sprint(queryTime.UnixMilli())},
+				}
+				endpoints := []struct{ name, url string }{
+					{"singular", "/api/where/arrival-and-departure-for-stop/" + combinedStop + ".json?" + singularParams.Encode()},
+					{"stop", arrivalsAndDeparturesURL(combinedStop, url.Values{"key": {"TEST"}, "minutesBefore": {"10"}, "minutesAfter": {"30"}})},
+					{"location", "/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=47&lon=-122&radius=100&minutesBefore=10&minutesAfter=30"},
+				}
+				for _, endpoint := range endpoints {
+					t.Run(endpoint.name, func(t *testing.T) {
+						type response struct {
+							Code int `json:"code"`
+							Data struct {
+								Entry struct {
+									models.ArrivalAndDeparture
+									Arrivals []models.ArrivalAndDeparture `json:"arrivalsAndDepartures"`
+								} `json:"entry"`
+							} `json:"data"`
+						}
+						resp, body := callAPIHandler[response](t, api, endpoint.url)
+						require.Equal(t, http.StatusOK, resp.StatusCode)
+						require.Equal(t, http.StatusOK, body.Code)
+						arrival := body.Data.Entry.ArrivalAndDeparture
+						if endpoint.name != "singular" {
+							found := false
+							for _, candidate := range body.Data.Entry.Arrivals {
+								if candidate.TripID == "dp-agency_"+trip && candidate.StopSequence == int(target)-1 {
+									arrival, found = candidate, true
+									break
+								}
+							}
+							require.True(t, found, "target visit must remain in the response")
+						}
+						assert.Equal(t, "dp-agency_"+trip, arrival.TripID)
+						assert.Equal(t, combinedStop, arrival.StopID)
+						wantSequence := int(target) - 1
+						if endpoint.name == "singular" {
+							wantSequence = 1 // Position in the ordered trip schedule.
+						}
+						assert.Equal(t, wantSequence, arrival.StopSequence)
+						assert.Equal(t, day.UnixMilli(), arrival.ServiceDate.UnixMilli())
+						assert.Equal(t, scheduledArrival, arrival.ScheduledArrivalTime.UnixMilli())
+						assert.Equal(t, scheduledArrival+(5*time.Minute).Milliseconds(), arrival.ScheduledDepartureTime.UnixMilli())
+						assert.Equal(t, withVehicle || tt.wantTracking || tt.wantTimes, arrival.Predicted)
+						if tt.wantTimes {
+							assert.Equal(t, scheduledArrival+delay.Milliseconds(), arrival.PredictedArrivalTime.UnixMilli())
+							assert.Equal(t, arrival.ScheduledDepartureTime.UnixMilli()+delay.Milliseconds(), arrival.PredictedDepartureTime.UnixMilli())
+						} else {
+							assert.True(t, arrival.PredictedArrivalTime.IsZero())
+							assert.True(t, arrival.PredictedDepartureTime.IsZero())
+						}
+					})
+				}
+			})
+		}
+	}
 }
 
 func TestGetPredictedTimes_PropagationRules(t *testing.T) {

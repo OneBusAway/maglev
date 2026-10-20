@@ -169,7 +169,7 @@ func TestArrivalsReusePredictionSchedules(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		require.Len(t, body.Data.Entry.Arrivals, 3)
 		for _, arrival := range body.Data.Entry.Arrivals {
-			assert.False(t, arrival.Predicted)
+			assert.True(t, arrival.Predicted, "the prior update still tracks this trip")
 			assert.True(t, arrival.PredictedArrivalTime.IsZero())
 			assert.True(t, arrival.PredictedDepartureTime.IsZero())
 			assert.Zero(t, arrival.TotalStopsInTrip)
@@ -181,19 +181,24 @@ func TestArrivalsRABAAllSkippedTrip(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
 	const tripID = "25_03969589-98dc-4fcd-a1c2-ce084b4ca5d2"
-	const endpoint = "/api/where/arrivals-and-departures-for-stop/25_3027.json?key=TEST&minutesAfter=30&minutesBefore=10&time=1749828720000"
-	resp, body := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	for _, arrival := range body.Data.Entry.ArrivalsAndDepartures {
-		if arrival.TripID != tripID {
-			continue
-		}
-		assert.Equal(t, int64(1749828780000), arrival.ScheduledArrivalTime.UnixMilli())
-		assert.Equal(t, int64(1749828780000), arrival.ScheduledDepartureTime.UnixMilli())
-		assert.False(t, arrival.Predicted)
-		assert.True(t, arrival.PredictedArrivalTime.IsZero())
-		assert.True(t, arrival.PredictedDepartureTime.IsZero())
-		return
+	for _, stopID := range []string{"25_3027", "25_9038"} {
+		t.Run(stopID, func(t *testing.T) {
+			endpoint := "/api/where/arrivals-and-departures-for-stop/" + stopID + ".json?key=TEST&minutesAfter=30&minutesBefore=10&time=1749828720000"
+			resp, body := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			for _, arrival := range body.Data.Entry.ArrivalsAndDepartures {
+				if arrival.TripID != tripID {
+					continue
+				}
+				assert.Equal(t, stopID, arrival.StopID)
+				assert.Equal(t, int64(1749828780000), arrival.ScheduledArrivalTime.UnixMilli())
+				assert.Equal(t, int64(1749828780000), arrival.ScheduledDepartureTime.UnixMilli())
+				assert.True(t, arrival.Predicted)
+				assert.True(t, arrival.PredictedArrivalTime.IsZero())
+				assert.True(t, arrival.PredictedDepartureTime.IsZero())
+				return
+			}
+			t.Fatalf("missing RABA arrival for %s", tripID)
+		})
 	}
-	t.Fatalf("missing RABA arrival for %s", tripID)
 }

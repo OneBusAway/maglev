@@ -374,19 +374,18 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		startTripStatusAtServiceStart(status, freqMap, tripID, serviceStart, currentTime)
 		tripStatus = status
 
-		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
-		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(
+		schedule := newTripSchedule(orderedStopTimes)
+		predictedArrival, predictedDeparture, hasPredictionTimes := api.getPredictedTimes(
 			ctx, tripID, stopCode, matchedStopTime.StopSequence,
-			scheduledArrivalTime, scheduledDepartureTime, newTripSchedule(orderedStopTimes),
+			scheduledArrivalTime, scheduledDepartureTime, schedule,
 		)
 
-		if isPredicted {
+		// Tracking can exist even when this stop has no usable predicted times.
+		predicted = predicted || hasPredictionTimes ||
+			api.hasRelevantArrivalUpdate(tripID, stopCode, matchedStopTime.StopSequence, schedule)
+		if hasPredictionTimes {
 			predictedArrivalTime = predictedArrival
 			predictedDepartureTime = predictedDeparture
-			predicted = true
-		} else {
-			predicted = false
 		}
 
 		// Reuse the snapshot BuildTripStatus already computed for this trip.
