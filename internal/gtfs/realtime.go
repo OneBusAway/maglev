@@ -567,7 +567,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	}
 
 	if alertData != nil && alertErr == nil {
-		manager.feedAlerts[feedID] = alertData.Alerts
+		manager.feedAlerts[feedID] = withoutDeletedAlerts(alertData.Alerts)
 	}
 
 	tripsUpdated := tripData != nil && tripErr == nil
@@ -809,6 +809,19 @@ func filterVehiclesByAgency(vehicles []gtfs.Vehicle, allowed map[string]bool, ro
 		}
 	}
 	return filtered
+}
+
+// withoutDeletedAlerts drops alerts whose feed entity has is_deleted set.
+// Each refresh replaces a feed's alerts wholesale, so dropping them is
+// enough to withdraw them: no older copy is left behind.
+func withoutDeletedAlerts(alerts []gtfs.Alert) []gtfs.Alert {
+	active := make([]gtfs.Alert, 0, len(alerts))
+	for _, alert := range alerts {
+		if !alert.IsDeleted {
+			active = append(active, alert)
+		}
+	}
+	return active
 }
 
 // filterAlertsByAgency returns only alerts referencing an allowed agency.
