@@ -223,7 +223,9 @@ FROM
     routes r
     JOIN agencies a ON r.agency_id = a.id
 WHERE
-    a.id = ?;
+    a.id = ?
+ORDER BY
+    r.rowid;
 
 -- name: GetRouteIDsForStop :many
 SELECT DISTINCT
@@ -248,7 +250,9 @@ SELECT
 FROM
     routes
 WHERE
-    routes.agency_id = ?;
+    routes.agency_id = ?
+ORDER BY
+    routes.rowid;
 
 -- name: GetAgencyForStop :one
 SELECT DISTINCT
@@ -280,11 +284,14 @@ FROM
 
 -- name: GetStopIDsForAgency :many
 SELECT
-    stop_id
+    stop_agencies.stop_id
 FROM
     stop_agencies
+    JOIN stops ON stops.id = stop_agencies.stop_id
 WHERE
-    agency_id = ?;
+    stop_agencies.agency_id = ?
+ORDER BY
+    stops.rowid;
 
 -- name: GetTrip :one
 SELECT
