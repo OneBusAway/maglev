@@ -45,16 +45,19 @@ func insertInBatches[T any](ctx context.Context, tx *sql.Tx, batchSize int, inse
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// insert.query writes only the fixed table and column names and "?"
+		// placeholders; every value is bound. Sonar's dynamic-SQL rule (S2077)
+		// can't see that, hence the NOSONAR markers on the two calls below.
 		var err error
 		if rowsInBatch == batchSize {
 			if fullBatch == nil {
-				if fullBatch, err = tx.PrepareContext(ctx, insert.query(batchSize)); err != nil {
+				if fullBatch, err = tx.PrepareContext(ctx, insert.query(batchSize)); err != nil { // NOSONAR
 					return fmt.Errorf("failed to prepare %s batch: %w", insert.table, err)
 				}
 			}
 			_, err = fullBatch.ExecContext(ctx, args...)
 		} else {
-			_, err = tx.ExecContext(ctx, insert.query(rowsInBatch), args...)
+			_, err = tx.ExecContext(ctx, insert.query(rowsInBatch), args...) // NOSONAR
 		}
 		if err != nil {
 			return fmt.Errorf("failed to insert %s batch: %w", insert.table, err)
