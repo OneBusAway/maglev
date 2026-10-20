@@ -1,0 +1,182 @@
+{
+  "code": 200,
+  "currentTime": 1749740400000,
+  "data": {
+    "limitExceeded": false,
+    "list": [
+      {
+        "code": "1032",
+        "direction": "E",
+        "id": "25_1032",
+        "lat": 40.680526,
+        "locationType": 0,
+        "lon": -122.366933,
+        "name": "Shasta Dam Blvd at Hardenbrook Ave",
+        "parent": "",
+        "routeIds": [
+          "25_151"
+        ],
+        "staticRouteIds": [
+          "25_151"
+        ],
+        "wheelchairBoarding": "UNKNOWN"
+      },
+      {
+        "code": "1033",
+        "direction": "E",
+        "id": "25_1033",
+        "lat": 40.680372,
+        "locationType": 0,
+        "lon": -122.363588,
+        "name": "Shasta Dam Blvd at Median Ave",
+        "parent": "",
+        "routeIds": [
+          "25_151"
+        ],
+        "staticRouteIds": [
+          "25_151"
+        ],
+        "wheelchairBoarding": "UNKNOWN"
+      },
+      {
+        "code": "1034",
+        "direction": "N",
+        "id": "25_1034",
+        "lat": 40.680132,
+        "locationType": 0,
+        "lon": -122.358291,
+        "name": "Shasta Dam Blvd at Grand Coulee Blvd",
+        "parent": "",
+        "routeIds": [
+          "25_151"
+        ],
+        "staticRouteIds": [
+          "25_151"
+        ],
+        "wheelchairBoarding": "UNKNOWN"
+      },
+      {
+        "code": "1062",
+        "direction": "W",
+        "id": "25_1062",
+        "lat": 40.680347,
+        "locationType": 0,
+        "lon": -122.357275,
+        "name": "Shasta Dam Blvd at 5001 Oregon",
+        "parent": "",
+        "routeIds": [
+          "25_151"
+        ],
+        "staticRouteIds": [
+          "25_151"
+        ],
+        "wheelchairBoarding": "UNKNOWN"
+      },
+      {
+        "code": "1063",
+        "direction": "W",
+        "id": "25_1063",
+        "lat": 40.680498,
+        "locationType": 0,
+        "lon": -122.361532,
+        "name": "Shasta Dam Blvd and Grand River Ave (NS)",
+        "parent": "",
+        "routeIds": [
+          "25_151"
+        ],
+        "staticRouteIds": [
+          "25_151"
+        ],
+        "wheelchairBoarding": "UNKNOWN"
+      },
+      {
+        "code": "1064",
+        "direction": "W",
+        "id": "25_1064",
+        "lat": 40.680597,
+        "locationType": 0,
+        "lon": -122.364431,
+        "name": "Shasta Dam Blvd at Farmers Marketplace (MB)",
+        "parent": "",
+        "routeIds": [
+          "25_151"
+        ],
+        "staticRouteIds": [
+          "25_151"
+        ],
+        "wheelchairBoarding": "UNKNOWN"
+      },
+      {
+        "code": "1065",
+        "direction": "E",
+        "id": "25_1065",
+        "lat": 40.681067,
+        "locationType": 0,
+        "lon": -122.367715,
+        "name": "Shasta Dam Blvd at Hardenbrook Ave (FS)",
+        "parent": "",
+        "routeIds": [
+          "25_151"
+        ],
+        "staticRouteIds": [
+          "25_151"
+        ],
+        "wheelchairBoarding": "UNKNOWN"
+      },
+      {
+        "code": "1066",
+        "direction": "E",
+        "id": "25_1066",
+        "lat": 40.681122,
+        "locationType": 0,
+        "lon": -122.369262,
+        "name": "Shasta Dam Blvd at Locust Ave (FS)",
+        "parent": "",
+        "routeIds": [
+          "25_151"
+        ],
+        "staticRouteIds": [
+          "25_151"
+        ],
+        "wheelchairBoarding": "UNKNOWN"
+      }
+    ],
+    "outOfRange": false,
+    "references": {
+      "agencies": [
+        {
+          "disclaimer": "",
+          "email": "",
+          "fareUrl": "",
+          "id": "25",
+          "lang": "en",
+          "name": "Redding Area Bus Authority",
+          "phone": "530-241-2877",
+          "privateService": false,
+          "timezone": "America/Los_Angeles",
+          "url": "http://www.rabaride.com/"
+        }
+      ],
+      "routes": [
+        {
+          "agencyId": "25",
+          "color": "55d1b0",
+          "description": "",
+          "id": "25_151",
+          "longName": "Route 1",
+          "nullSafeShortName": "1",
+          "shortName": "1",
+          "textColor": "000000",
+          "type": 3,
+          "url": "https://rabaride.com/Document%20Center/Services/Bus/Route01.pdf"
+        }
+      ],
+      "situations": [],
+      "stopTimes": [],
+      "stops": [],
+      "trips": []
+    }
+  },
+  "text": "OK",
+  "version": 2
+}
