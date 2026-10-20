@@ -1,0 +1,1217 @@
+{
+  "code": 200,
+  "currentTime": 1749740400000,
+  "data": {
+    "entry": {
+      "configurations": [
+        {
+          "activeServiceIds": [
+            "25_c_2713_b_80332_d_56"
+          ],
+          "inactiveServiceIds": [],
+          "trips": [
+            {
+              "accumulatedSlackTime": 0,
+              "blockStopTimes": [
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": -1,
+                  "distanceAlongBlock": 0,
+                  "stopTime": {
+                    "arrivalTime": 55200,
+                    "departureTime": 55200,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2000"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 0,
+                  "distanceAlongBlock": 2052.7423789549525,
+                  "stopTime": {
+                    "arrivalTime": 55457,
+                    "departureTime": 55457,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2023"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 1,
+                  "distanceAlongBlock": 3349.7599189917564,
+                  "stopTime": {
+                    "arrivalTime": 55620,
+                    "departureTime": 55620,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2026"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 2,
+                  "distanceAlongBlock": 8814.809413734578,
+                  "stopTime": {
+                    "arrivalTime": 55920,
+                    "departureTime": 55920,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8014"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 3,
+                  "distanceAlongBlock": 19246.87300469033,
+                  "stopTime": {
+                    "arrivalTime": 56640,
+                    "departureTime": 56640,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_1902"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 4,
+                  "distanceAlongBlock": 26356.011357465177,
+                  "stopTime": {
+                    "arrivalTime": 57120,
+                    "departureTime": 57120,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8013"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 5,
+                  "distanceAlongBlock": 30733.783593882945,
+                  "stopTime": {
+                    "arrivalTime": 57720,
+                    "departureTime": 57720,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8015"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 6,
+                  "distanceAlongBlock": 31263.832368557778,
+                  "stopTime": {
+                    "arrivalTime": 58020,
+                    "departureTime": 58020,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8017"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 7,
+                  "distanceAlongBlock": 35069.32380549927,
+                  "stopTime": {
+                    "arrivalTime": 58560,
+                    "departureTime": 58560,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8018"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 8,
+                  "distanceAlongBlock": 38919.745532876725,
+                  "stopTime": {
+                    "arrivalTime": 58920,
+                    "departureTime": 58920,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8016"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 9,
+                  "distanceAlongBlock": 44455.23766969325,
+                  "stopTime": {
+                    "arrivalTime": 59220,
+                    "departureTime": 59220,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2042"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 10,
+                  "distanceAlongBlock": 45794.87315620968,
+                  "stopTime": {
+                    "arrivalTime": 59410,
+                    "departureTime": 59410,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2045"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 11,
+                  "distanceAlongBlock": 47934.00624764075,
+                  "stopTime": {
+                    "arrivalTime": 59700,
+                    "departureTime": 59700,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2000"
+                  }
+                }
+              ],
+              "distanceAlongBlock": 47934.00624764075,
+              "tripId": "25_t_290969_b_80332_tn_0"
+            },
+            {
+              "accumulatedSlackTime": 0,
+              "blockStopTimes": [
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": -1,
+                  "distanceAlongBlock": 47934.00624764075,
+                  "stopTime": {
+                    "arrivalTime": 37200,
+                    "departureTime": 37200,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2000"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 0,
+                  "distanceAlongBlock": 49986.7486265957,
+                  "stopTime": {
+                    "arrivalTime": 37457,
+                    "departureTime": 37457,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2023"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 1,
+                  "distanceAlongBlock": 51283.7661666325,
+                  "stopTime": {
+                    "arrivalTime": 37620,
+                    "departureTime": 37620,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2026"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 2,
+                  "distanceAlongBlock": 56748.81566137532,
+                  "stopTime": {
+                    "arrivalTime": 37920,
+                    "departureTime": 37920,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8014"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 3,
+                  "distanceAlongBlock": 67180.87925233107,
+                  "stopTime": {
+                    "arrivalTime": 38640,
+                    "departureTime": 38640,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_1902"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 4,
+                  "distanceAlongBlock": 74290.01760510592,
+                  "stopTime": {
+                    "arrivalTime": 39120,
+                    "departureTime": 39120,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8013"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 5,
+                  "distanceAlongBlock": 78667.7898415237,
+                  "stopTime": {
+                    "arrivalTime": 39720,
+                    "departureTime": 39720,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8015"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 6,
+                  "distanceAlongBlock": 79197.83861619854,
+                  "stopTime": {
+                    "arrivalTime": 40020,
+                    "departureTime": 40020,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8017"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 7,
+                  "distanceAlongBlock": 83003.33005314003,
+                  "stopTime": {
+                    "arrivalTime": 40560,
+                    "departureTime": 40560,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8018"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 8,
+                  "distanceAlongBlock": 86853.75178051749,
+                  "stopTime": {
+                    "arrivalTime": 40920,
+                    "departureTime": 40920,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8016"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 9,
+                  "distanceAlongBlock": 92389.24391733401,
+                  "stopTime": {
+                    "arrivalTime": 41220,
+                    "departureTime": 41220,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2042"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 10,
+                  "distanceAlongBlock": 93728.87940385044,
+                  "stopTime": {
+                    "arrivalTime": 41410,
+                    "departureTime": 41410,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2045"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 11,
+                  "distanceAlongBlock": 95868.01249528151,
+                  "stopTime": {
+                    "arrivalTime": 41700,
+                    "departureTime": 41700,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2000"
+                  }
+                }
+              ],
+              "distanceAlongBlock": 47934.00624764076,
+              "tripId": "25_t_88586_b_80332_tn_0"
+            },
+            {
+              "accumulatedSlackTime": 0,
+              "blockStopTimes": [
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": -1,
+                  "distanceAlongBlock": 95868.01249528151,
+                  "stopTime": {
+                    "arrivalTime": 44400,
+                    "departureTime": 44400,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2000"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 0,
+                  "distanceAlongBlock": 97920.75487423646,
+                  "stopTime": {
+                    "arrivalTime": 44657,
+                    "departureTime": 44657,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2023"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 1,
+                  "distanceAlongBlock": 99217.77241427326,
+                  "stopTime": {
+                    "arrivalTime": 44820,
+                    "departureTime": 44820,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2026"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 2,
+                  "distanceAlongBlock": 104682.82190901609,
+                  "stopTime": {
+                    "arrivalTime": 45120,
+                    "departureTime": 45120,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8014"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 3,
+                  "distanceAlongBlock": 115114.88549997183,
+                  "stopTime": {
+                    "arrivalTime": 45840,
+                    "departureTime": 45840,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_1902"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 4,
+                  "distanceAlongBlock": 122224.02385274669,
+                  "stopTime": {
+                    "arrivalTime": 46320,
+                    "departureTime": 46320,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8013"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 5,
+                  "distanceAlongBlock": 126601.79608916446,
+                  "stopTime": {
+                    "arrivalTime": 46920,
+                    "departureTime": 46920,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8015"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 6,
+                  "distanceAlongBlock": 127131.8448638393,
+                  "stopTime": {
+                    "arrivalTime": 47220,
+                    "departureTime": 47220,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8017"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 7,
+                  "distanceAlongBlock": 130937.3363007808,
+                  "stopTime": {
+                    "arrivalTime": 47760,
+                    "departureTime": 47760,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8018"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 8,
+                  "distanceAlongBlock": 134787.75802815825,
+                  "stopTime": {
+                    "arrivalTime": 48120,
+                    "departureTime": 48120,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8016"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 9,
+                  "distanceAlongBlock": 140323.25016497477,
+                  "stopTime": {
+                    "arrivalTime": 48420,
+                    "departureTime": 48420,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2042"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 10,
+                  "distanceAlongBlock": 141662.8856514912,
+                  "stopTime": {
+                    "arrivalTime": 48610,
+                    "departureTime": 48610,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2045"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 11,
+                  "distanceAlongBlock": 143802.0187429223,
+                  "stopTime": {
+                    "arrivalTime": 48900,
+                    "departureTime": 48900,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2000"
+                  }
+                }
+              ],
+              "distanceAlongBlock": 47934.00624764078,
+              "tripId": "25_t_88587_b_80332_tn_0"
+            },
+            {
+              "accumulatedSlackTime": 0,
+              "blockStopTimes": [
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": -1,
+                  "distanceAlongBlock": 143802.0187429223,
+                  "stopTime": {
+                    "arrivalTime": 62400,
+                    "departureTime": 62400,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2000"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 0,
+                  "distanceAlongBlock": 145854.76112187724,
+                  "stopTime": {
+                    "arrivalTime": 62657,
+                    "departureTime": 62657,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2023"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 1,
+                  "distanceAlongBlock": 147151.77866191405,
+                  "stopTime": {
+                    "arrivalTime": 62820,
+                    "departureTime": 62820,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2026"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 2,
+                  "distanceAlongBlock": 152616.82815665688,
+                  "stopTime": {
+                    "arrivalTime": 63120,
+                    "departureTime": 63120,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8014"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 3,
+                  "distanceAlongBlock": 163048.89174761262,
+                  "stopTime": {
+                    "arrivalTime": 63840,
+                    "departureTime": 63840,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_1902"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 4,
+                  "distanceAlongBlock": 170158.03010038746,
+                  "stopTime": {
+                    "arrivalTime": 64320,
+                    "departureTime": 64320,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8013"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 5,
+                  "distanceAlongBlock": 174535.80233680524,
+                  "stopTime": {
+                    "arrivalTime": 64920,
+                    "departureTime": 64920,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8015"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 6,
+                  "distanceAlongBlock": 175065.85111148006,
+                  "stopTime": {
+                    "arrivalTime": 65220,
+                    "departureTime": 65220,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8017"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 7,
+                  "distanceAlongBlock": 178871.34254842155,
+                  "stopTime": {
+                    "arrivalTime": 65760,
+                    "departureTime": 65760,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8018"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 8,
+                  "distanceAlongBlock": 182721.764275799,
+                  "stopTime": {
+                    "arrivalTime": 66120,
+                    "departureTime": 66120,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_8016"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 9,
+                  "distanceAlongBlock": 188257.25641261553,
+                  "stopTime": {
+                    "arrivalTime": 66420,
+                    "departureTime": 66420,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2042"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 10,
+                  "distanceAlongBlock": 189596.89189913197,
+                  "stopTime": {
+                    "arrivalTime": 66610,
+                    "departureTime": 66610,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2045"
+                  }
+                },
+                {
+                  "accumulatedSlackTime": 0,
+                  "blockSequence": 11,
+                  "distanceAlongBlock": 191736.02499056305,
+                  "stopTime": {
+                    "arrivalTime": 66900,
+                    "departureTime": 66900,
+                    "distanceAlongTrip": 0,
+                    "dropOffType": 0,
+                    "historicalOccupancy": "",
+                    "pickupType": 0,
+                    "stopHeadsign": "",
+                    "stopId": "25_2000"
+                  }
+                }
+              ],
+              "distanceAlongBlock": 47934.00624764076,
+              "tripId": "25_t_88588_b_80332_tn_0"
+            }
+          ]
+        }
+      ],
+      "id": "25_19"
+    },
+    "references": {
+      "agencies": [
+        {
+          "disclaimer": "",
+          "email": "",
+          "fareUrl": "",
+          "id": "25",
+          "lang": "",
+          "name": "Redding Area Bus Authority",
+          "phone": "",
+          "privateService": false,
+          "timezone": "America/Los_Angeles",
+          "url": "http://www.rabaride.com/"
+        }
+      ],
+      "routes": [
+        {
+          "agencyId": "25",
+          "color": "800000",
+          "description": "",
+          "id": "25_15",
+          "longName": "Churn Creek/Knightson/Airport",
+          "nullSafeShortName": "",
+          "shortName": "15",
+          "textColor": "FFFFFF",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "55d1b0",
+          "description": "",
+          "id": "25_151",
+          "longName": "Route 1",
+          "nullSafeShortName": "",
+          "shortName": "1",
+          "textColor": "000000",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "1bb1f6",
+          "description": "",
+          "id": "25_153",
+          "longName": "Route 3",
+          "nullSafeShortName": "",
+          "shortName": "3",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "bdadd1",
+          "description": "",
+          "id": "25_154",
+          "longName": "Route 4",
+          "nullSafeShortName": "",
+          "shortName": "4",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "1886c7",
+          "description": "",
+          "id": "25_157",
+          "longName": "Route 7",
+          "nullSafeShortName": "",
+          "shortName": "7",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "93ea5f",
+          "description": "",
+          "id": "25_159",
+          "longName": "Route 11",
+          "nullSafeShortName": "",
+          "shortName": "11",
+          "textColor": "000000",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "8c08b1",
+          "description": "",
+          "id": "25_160",
+          "longName": "Route 14",
+          "nullSafeShortName": "",
+          "shortName": "14",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "00dffb",
+          "description": "",
+          "id": "25_161",
+          "longName": "Route 299X",
+          "nullSafeShortName": "",
+          "shortName": "299X",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "fbef00",
+          "description": "",
+          "id": "25_1885",
+          "longName": "Shasta View/Shasta College",
+          "nullSafeShortName": "",
+          "shortName": "17",
+          "textColor": "0e0e0e",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "9F472E",
+          "description": "",
+          "id": "25_24",
+          "longName": "Route 99X/Amtrak Thruway Route 3",
+          "nullSafeShortName": "",
+          "shortName": "99X",
+          "textColor": "FFFFFF",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "2738ec",
+          "description": "",
+          "id": "25_3779",
+          "longName": "Route 19",
+          "nullSafeShortName": "",
+          "shortName": "19",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "F84DF7",
+          "description": "",
+          "id": "25_44X",
+          "longName": "Shingletown Flex",
+          "nullSafeShortName": "",
+          "shortName": "44X",
+          "textColor": "000000",
+          "type": 3,
+          "url": ""
+        },
+        {
+          "agencyId": "25",
+          "color": "ec191c",
+          "description": "",
+          "id": "25_6446",
+          "longName": "Route 9",
+          "nullSafeShortName": "",
+          "shortName": "9",
+          "textColor": "000000",
+          "type": 3,
+          "url": ""
+        }
+      ],
+      "situations": [],
+      "stopTimes": [],
+      "stops": [
+        {
+          "code": "",
+          "direction": "S",
+          "id": "25_1902",
+          "lat": 40.650304,
+          "locationType": 0,
+          "lon": -122.590394,
+          "name": "Oak Bottom Beach",
+          "parent": "",
+          "routeIds": [],
+          "staticRouteIds": [],
+          "wheelchairBoarding": ""
+        },
+        {
+          "code": "2000",
+          "direction": "",
+          "id": "25_2000",
+          "lat": 40.58317,
+          "locationType": 0,
+          "lon": -122.392586,
+          "name": "Downtown Passenger Terminal",
+          "parent": "",
+          "routeIds": [],
+          "staticRouteIds": [],
+          "wheelchairBoarding": ""
+        },
+        {
+          "code": "2023",
+          "direction": "SW",
+          "id": "25_2023",
+          "lat": 40.575803,
+          "locationType": 0,
+          "lon": -122.414873,
+          "name": "W Placer St at San Francisco St (across from Holiday Market)",
+          "parent": "",
+          "routeIds": [],
+          "staticRouteIds": [],
+          "wheelchairBoarding": ""
+        },
+        {
+          "code": "2026",
+          "direction": "SE",
+          "id": "25_2026",
+          "lat": 40.583391,
+          "locationType": 0,
+          "lon": -122.426537,
+          "name": "Buenaventura Blvd at Eureka Way",
+          "parent": "",
+          "routeIds": [],
+          "staticRouteIds": [],
+          "wheelchairBoarding": ""
+        },
+        {
+          "code": "2042",
+          "direction": "W",
+          "id": "25_2042",
+          "lat": 40.583321,
+          "locationType": 0,
+          "lon": -122.426966,
+          "name": "Buenaventura Blvd at Eureka Way",
+          "parent": "",
+          "routeIds": [],
+          "staticRouteIds": [],
+          "wheelchairBoarding": ""
+        },
+        {
+          "code": "2045",
+          "direction": "NE",
+          "id": "25_2045",
+          "lat": 40.574988,
+          "locationType": 0,
+          "lon": -122.41551,
+          "name": "E Placer St at San Francisco St (across from Holiday Market)",
+          "parent": "",
+          "routeIds": [],
+          "staticRouteIds": [],
+          "wheelchairBoarding": ""
+        },
+        {
+          "code": "8013",
+          "direction": "SW",
+          "id": "25_8013",
+          "lat": 40.614869,
+          "locationType": 0,
+          "lon": -122.520272,
+          "name": "Whiskeytown Visitor Center",
+          "parent": "",
+          "routeIds": [],
+          "staticRouteIds": [],
+          "wheelchairBoarding": ""
+        },
+        {
+          "code": "8014",
+          "direction": "NW",
+          "id": "25_8014",
+          "lat": 40.596904,
+          "locationType": 0,
+          "lon": -122.488764,
+          "name": "SR 299 at 2nd St",
+          "parent": "",
+          "routeIds": [],
+          "staticRouteIds": [],
+          "wheelchairBoarding": ""
+        },
+        {
+          "code": "8015",
+          "direction": "W",
+          "id": "25_8015",
+          "lat": 40.616486,
+          "locationType": 0,
+          "lon": -122.572093,
+          "name": "S. Shore Dr at Brandy Creek Beach",
+          "parent": "",
+          "routeIds": [],
+          "staticRouteIds": [],
+          "wheelchairBoarding": ""
+        },
+        {
+          "code": "8016",
+          "direction": "SE",
+          "id": "25_8016",
+          "lat": 40.597365,
+          "locationType": 0,
+          "lon": -122.489859,
+          "name": "SR 299 at Buell Alley",
+          "parent": "",
+          "routeIds": [],
+          "staticRouteIds": [],
+          "wheelchairBoarding": ""
+        },
+        {
+          "code": "8017",
+          "direction": "S",
+          "id": "25_8017",
+          "lat": 40.621176,
+          "locationType": 0,
+          "lon": -122.57097,
+          "name": "S. Shore Dr at Brandy Creek Marina",
+          "parent": "",
+          "routeIds": [],
+          "staticRouteIds": [],
+          "wheelchairBoarding": ""
+        },
+        {
+          "code": "8018",
+          "direction": "NE",
+          "id": "25_8018",
+          "lat": 40.600241,
+          "locationType": 0,
+          "lon": -122.535307,
+          "name": "S. Shore @ Paige Bar Road (Kennedy Memorial)",
+          "parent": "",
+          "routeIds": [],
+          "staticRouteIds": [],
+          "wheelchairBoarding": ""
+        }
+      ],
+      "trips": [
+        {
+          "blockId": "25_19",
+          "directionId": "0",
+          "id": "25_t_290969_b_80332_tn_0",
+          "peakOffpeak": 0,
+          "routeId": "25_3779",
+          "routeShortName": "",
+          "serviceId": "25_c_2713_b_80332_d_56",
+          "shapeId": "25_p_9209",
+          "timeZone": "",
+          "tripHeadsign": "Whiskeytown",
+          "tripShortName": ""
+        },
+        {
+          "blockId": "25_19",
+          "directionId": "0",
+          "id": "25_t_88586_b_80332_tn_0",
+          "peakOffpeak": 0,
+          "routeId": "25_3779",
+          "routeShortName": "",
+          "serviceId": "25_c_2713_b_80332_d_56",
+          "shapeId": "25_p_9209",
+          "timeZone": "",
+          "tripHeadsign": "Whiskeytown",
+          "tripShortName": ""
+        },
+        {
+          "blockId": "25_19",
+          "directionId": "0",
+          "id": "25_t_88587_b_80332_tn_0",
+          "peakOffpeak": 0,
+          "routeId": "25_3779",
+          "routeShortName": "",
+          "serviceId": "25_c_2713_b_80332_d_56",
+          "shapeId": "25_p_9209",
+          "timeZone": "",
+          "tripHeadsign": "Whiskeytown",
+          "tripShortName": ""
+        },
+        {
+          "blockId": "25_19",
+          "directionId": "0",
+          "id": "25_t_88588_b_80332_tn_0",
+          "peakOffpeak": 0,
+          "routeId": "25_3779",
+          "routeShortName": "",
+          "serviceId": "25_c_2713_b_80332_d_56",
+          "shapeId": "25_p_9209",
+          "timeZone": "",
+          "tripHeadsign": "Whiskeytown",
+          "tripShortName": ""
+        }
+      ]
+    }
+  },
+  "text": "OK",
+  "version": 2
+}

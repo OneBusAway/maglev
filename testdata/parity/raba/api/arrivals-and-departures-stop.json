@@ -1,0 +1,281 @@
+{
+  "code": 200,
+  "currentTime": 1749740400000,
+  "data": {
+    "entry": {
+      "arrivalsAndDepartures": [
+        {
+          "actualTrack": "",
+          "arrivalEnabled": true,
+          "blockTripSequence": 4,
+          "departureEnabled": true,
+          "distanceFromStop": -9845.360758992407,
+          "frequency": null,
+          "historicalOccupancy": "",
+          "lastUpdateTime": 0,
+          "numberOfStopsAway": -12,
+          "occupancyStatus": "",
+          "predicted": false,
+          "predictedArrivalInterval": null,
+          "predictedArrivalTime": 0,
+          "predictedDepartureInterval": null,
+          "predictedDepartureTime": 0,
+          "predictedOccupancy": "",
+          "routeId": "25_151",
+          "routeLongName": "Route 1",
+          "routeShortName": "1",
+          "scheduledArrivalInterval": null,
+          "scheduledArrivalTime": 1749739860000,
+          "scheduledDepartureInterval": null,
+          "scheduledDepartureTime": 1749739860000,
+          "scheduledTrack": "",
+          "serviceDate": 1749711600000,
+          "situationIds": [],
+          "status": "default",
+          "stopId": "25_1033",
+          "stopSequence": 2,
+          "totalStopsInTrip": 22,
+          "tripHeadsign": "Shasta Lake",
+          "tripId": "25_dcd9e9b6-e261-4020-87f7-b65bf6b34e87",
+          "tripStatus": {
+            "activeTripId": "25_dcd9e9b6-e261-4020-87f7-b65bf6b34e87",
+            "blockTripSequence": 4,
+            "closestStop": "25_1036",
+            "closestStopTimeOffset": -60,
+            "distanceAlongTrip": 0,
+            "lastKnownDistanceAlongTrip": 0,
+            "lastKnownOrientation": 0,
+            "lastLocationUpdateTime": 0,
+            "lastUpdateTime": 0,
+            "nextStop": "25_1046",
+            "nextStopTimeOffset": 360,
+            "occupancyCapacity": -1,
+            "occupancyCount": -1,
+            "occupancyStatus": "",
+            "orientation": 280.24342092456203,
+            "phase": "scheduled",
+            "position": {
+              "lat": 40.625120416891576,
+              "lon": -122.40500533735513
+            },
+            "predicted": false,
+            "scheduleDeviation": 0,
+            "scheduled": true,
+            "scheduledDistanceAlongTrip": 10981.6173448529,
+            "serviceDate": 1749711600000,
+            "situationIds": [],
+            "status": "default",
+            "totalDistanceAlongTrip": 17582.121369438788,
+            "vehicleFeatures": [],
+            "vehicleId": ""
+          },
+          "vehicleId": ""
+        },
+        {
+          "actualTrack": "",
+          "arrivalEnabled": true,
+          "blockTripSequence": 6,
+          "departureEnabled": true,
+          "distanceFromStop": 25831.295153016035,
+          "frequency": null,
+          "historicalOccupancy": "",
+          "lastUpdateTime": 0,
+          "numberOfStopsAway": 31,
+          "occupancyStatus": "",
+          "predicted": false,
+          "predictedArrivalInterval": null,
+          "predictedArrivalTime": 0,
+          "predictedDepartureInterval": null,
+          "predictedDepartureTime": 0,
+          "predictedOccupancy": "",
+          "routeId": "25_151",
+          "routeLongName": "Route 1",
+          "routeShortName": "1",
+          "scheduledArrivalInterval": null,
+          "scheduledArrivalTime": 1749743460000,
+          "scheduledDepartureInterval": null,
+          "scheduledDepartureTime": 1749743460000,
+          "scheduledTrack": "",
+          "serviceDate": 1749711600000,
+          "situationIds": [],
+          "status": "default",
+          "stopId": "25_1033",
+          "stopSequence": 2,
+          "totalStopsInTrip": 22,
+          "tripHeadsign": "Shasta Lake",
+          "tripId": "25_18d5d560-4d07-4871-bc06-376c979c7a26",
+          "tripStatus": {
+            "activeTripId": "25_dcd9e9b6-e261-4020-87f7-b65bf6b34e87",
+            "blockTripSequence": 6,
+            "closestStop": "25_1030",
+            "closestStopTimeOffset": 3060,
+            "distanceAlongTrip": 0,
+            "lastKnownDistanceAlongTrip": 0,
+            "lastKnownOrientation": 0,
+            "lastLocationUpdateTime": 0,
+            "lastUpdateTime": 0,
+            "nextStop": "25_1030",
+            "nextStopTimeOffset": 3060,
+            "occupancyCapacity": -1,
+            "occupancyCount": -1,
+            "occupancyStatus": "",
+            "orientation": 280.24342092456203,
+            "phase": "scheduled",
+            "position": {
+              "lat": 40.625120416891576,
+              "lon": -122.40500533735513
+            },
+            "predicted": false,
+            "scheduleDeviation": 0,
+            "scheduled": true,
+            "scheduledDistanceAlongTrip": 10981.6173448529,
+            "serviceDate": 1749711600000,
+            "situationIds": [],
+            "status": "default",
+            "totalDistanceAlongTrip": 17582.121369438788,
+            "vehicleFeatures": [],
+            "vehicleId": ""
+          },
+          "vehicleId": ""
+        }
+      ],
+      "nearbyStopIds": [
+        "25_1064"
+      ],
+      "situationIds": [],
+      "stopId": "25_1033"
+    },
+    "references": {
+      "agencies": [
+        {
+          "disclaimer": "",
+          "email": "",
+          "fareUrl": "",
+          "id": "25",
+          "lang": "en",
+          "name": "Redding Area Bus Authority",
+          "phone": "530-241-2877",
+          "privateService": false,
+          "timezone": "America/Los_Angeles",
+          "url": "http://www.rabaride.com/"
+        }
+      ],
+      "routes": [
+        {
+          "agencyId": "25",
+          "color": "55d1b0",
+          "description": "",
+          "id": "25_151",
+          "longName": "Route 1",
+          "nullSafeShortName": "1",
+          "shortName": "1",
+          "textColor": "000000",
+          "type": 3,
+          "url": "https://rabaride.com/Document%20Center/Services/Bus/Route01.pdf"
+        }
+      ],
+      "situations": [],
+      "stopTimes": [],
+      "stops": [
+        {
+          "code": "1030",
+          "direction": "SE",
+          "id": "25_1030",
+          "lat": 40.682371,
+          "locationType": 0,
+          "lon": -122.376623,
+          "name": "Shasta Dam Blvd at Givan St",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1033",
+          "direction": "E",
+          "id": "25_1033",
+          "lat": 40.680372,
+          "locationType": 0,
+          "lon": -122.363588,
+          "name": "Shasta Dam Blvd at Median Ave",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1036",
+          "direction": "SW",
+          "id": "25_1036",
+          "lat": 40.675912,
+          "locationType": 0,
+          "lon": -122.353935,
+          "name": "Cascade Blvd at Morningstar Way",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1046",
+          "direction": "SE",
+          "id": "25_1046",
+          "lat": 40.620575,
+          "locationType": 0,
+          "lon": -122.400736,
+          "name": "Lake Blvd at Tamarack Dr",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        }
+      ],
+      "trips": [
+        {
+          "blockId": "25_1",
+          "directionId": "1",
+          "id": "25_18d5d560-4d07-4871-bc06-376c979c7a26",
+          "peakOffpeak": 0,
+          "routeId": "25_151",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_t580",
+          "timeZone": "",
+          "tripHeadsign": "Shasta Lake",
+          "tripShortName": ""
+        },
+        {
+          "blockId": "25_1",
+          "directionId": "1",
+          "id": "25_dcd9e9b6-e261-4020-87f7-b65bf6b34e87",
+          "peakOffpeak": 0,
+          "routeId": "25_151",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_t580",
+          "timeZone": "",
+          "tripHeadsign": "Shasta Lake",
+          "tripShortName": ""
+        }
+      ]
+    }
+  },
+  "text": "OK",
+  "version": 2
+}
