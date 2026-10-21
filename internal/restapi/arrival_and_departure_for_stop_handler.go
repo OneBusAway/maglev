@@ -350,6 +350,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 		predicted = true
 	}
+	// Tracking belongs to the trip, even when this stop has no usable timing.
+	tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(tripID)
+	predicted = predicted || tripUpdate != nil
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
 	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
@@ -380,10 +383,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			scheduledArrivalTime, scheduledDepartureTime, schedule,
 		)
 
-		// Tracking can exist even when this stop has no usable predicted times.
-		predicted = predicted || hasPredictionTimes ||
-			api.hasRelevantArrivalUpdate(tripID, stopCode, matchedStopTime.StopSequence, schedule)
 		if hasPredictionTimes {
+			// The feed may have refreshed since the tracking lookup.
+			predicted = true
 			predictedArrivalTime = predictedArrival
 			predictedDepartureTime = predictedDeparture
 		}

@@ -202,3 +202,50 @@ func TestArrivalsRABAAllSkippedTrip(t *testing.T) {
 		})
 	}
 }
+
+// Publish a feed refresh at a DB boundary so the request observes it without
+// relying on goroutine scheduling or sleeps.
+type trackingRefreshDB struct {
+	gtfsdb.DBTX
+	refresh   func()
+	refreshed bool
+}
+
+func (db *trackingRefreshDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if !db.refreshed && strings.HasPrefix(query, "-- name: GetFrequenciesForTrip :many") {
+		db.refreshed = true
+		db.refresh()
+	}
+	return db.DBTX.QueryContext(ctx, query, args...)
+}
+
+func TestArrivalTrackingDuringRealtimeRefresh(t *testing.T) {
+	day := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	queryTime := day.Add(8*time.Hour + 2*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(queryTime))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, combinedStop, trip, scheduledArrival := setupDelayPropTestData(t, api, 3)
+	rebuildStopAgencyIndex(t, api)
+
+	// Initially there is no vehicle or trip update. The update arrives after
+	// tracking is checked but before the handler calculates prediction times.
+	delay := 5 * time.Minute
+	db := &trackingRefreshDB{DBTX: api.GtfsManager.GtfsDB.DB, refresh: func() {
+		api.GtfsManager.MockAddTripUpdate(trip, &delay, nil)
+	}}
+	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(db)
+
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=dp-agency_%s&serviceDate=%d&time=%d",
+		combinedStop, trip, day.UnixMilli(), queryTime.UnixMilli())
+	resp, body := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, body.Code)
+	require.True(t, db.refreshed, "the feed must refresh during the request")
+	arrival := body.Data.Entry
+	assert.Equal(t, "dp-agency_"+trip, arrival.TripID)
+	assert.Equal(t, combinedStop, arrival.StopID)
+	require.Equal(t, scheduledArrival+delay.Milliseconds(), arrival.PredictedArrivalTime.UnixMilli())
+	require.Equal(t, scheduledArrival+(5*time.Minute+delay).Milliseconds(), arrival.PredictedDepartureTime.UnixMilli())
+	assert.True(t, arrival.Predicted, "prediction times derived from a matched trip update must retain tracking")
+}

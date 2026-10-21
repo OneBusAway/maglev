@@ -238,6 +238,7 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 	actualDeparture := day.Add(7*time.Hour + 47*time.Minute)
 	first, middle, target, later := uint32(1), uint32(2), uint32(3), uint32(5)
 	stopID := "dp-stop"
+	priorStopID := stopID + "-prior"
 	prior := gtfs.StopTimeUpdate{StopSequence: &first, Departure: &gtfs.StopTimeEvent{Delay: &delay}}
 	tests := []struct {
 		name         string
@@ -245,7 +246,6 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 		tripDelay    *time.Duration
 		noTripUpdate bool
 		unrelated    bool
-		wantTracking bool
 		wantTimes    bool
 	}{
 		{name: "no-trip-update", noTripUpdate: true},
@@ -258,21 +258,25 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 		{name: "conflicting-prior-with-target-id", updates: []gtfs.StopTimeUpdate{{StopSequence: &first, StopID: &stopID, Departure: &gtfs.StopTimeEvent{Time: &actualDeparture}}}},
 		{name: "unknown-prior-sequence", updates: []gtfs.StopTimeUpdate{{StopSequence: &middle, Departure: &gtfs.StopTimeEvent{Time: &actualDeparture}}}},
 		{name: "unknown-prior-sequence-with-target-id", updates: []gtfs.StopTimeUpdate{{StopSequence: &middle, StopID: &stopID, Departure: &gtfs.StopTimeEvent{Time: &actualDeparture}}}},
-		{name: "skipped-target", wantTracking: true, updates: []gtfs.StopTimeUpdate{{StopSequence: &target, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED}}},
-		{name: "after-all-skipped", wantTracking: true, updates: []gtfs.StopTimeUpdate{
+		{name: "id-only-prior-no-data", updates: []gtfs.StopTimeUpdate{{StopID: &priorStopID, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA}}},
+		{name: "sequenced-prior-no-data", updates: []gtfs.StopTimeUpdate{{StopID: &priorStopID, StopSequence: &first, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA}}},
+		{name: "id-only-prior-skipped", updates: []gtfs.StopTimeUpdate{{StopID: &priorStopID, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED}}},
+		{name: "sequenced-prior-skipped", updates: []gtfs.StopTimeUpdate{{StopID: &priorStopID, StopSequence: &first, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED}}},
+		{name: "skipped-target", updates: []gtfs.StopTimeUpdate{{StopSequence: &target, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED}}},
+		{name: "after-all-skipped", updates: []gtfs.StopTimeUpdate{
 			{StopSequence: &first, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED},
 			{StopSequence: &middle, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED},
 		}},
-		{name: "no-data-target", wantTracking: true, updates: []gtfs.StopTimeUpdate{prior,
+		{name: "no-data-target", updates: []gtfs.StopTimeUpdate{prior,
 			{StopSequence: &target, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA},
 		}},
-		{name: "no-data-boundary", wantTracking: true, tripDelay: &delay, updates: []gtfs.StopTimeUpdate{prior,
+		{name: "no-data-boundary", tripDelay: &delay, updates: []gtfs.StopTimeUpdate{prior,
 			{StopSequence: &middle, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA},
 		}},
-		{name: "empty-scheduled-boundary", wantTracking: true, tripDelay: &delay, updates: []gtfs.StopTimeUpdate{prior,
+		{name: "empty-scheduled-boundary", tripDelay: &delay, updates: []gtfs.StopTimeUpdate{prior,
 			{StopSequence: &middle, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SCHEDULED},
 		}},
-		{name: "ambiguous-stop-id", wantTracking: true, updates: []gtfs.StopTimeUpdate{{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}}},
+		{name: "ambiguous-stop-id", updates: []gtfs.StopTimeUpdate{{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}}},
 		{name: "absolute-time", wantTimes: true, updates: []gtfs.StopTimeUpdate{
 			{StopSequence: &first, Departure: &gtfs.StopTimeEvent{Time: &actualDeparture}},
 		}},
@@ -295,13 +299,12 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 				t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 				stop, combinedStop, trip, scheduledArrival := setupDelayPropTestData(t, api, int64(target))
 				q := api.GtfsManager.GtfsDB.Queries
-				priorStop := stop + "-prior"
 				_, err := q.CreateStop(t.Context(), gtfsdb.CreateStopParams{
-					ID: priorStop, Name: nulls.String("Prior tracking stop"), Lat: 47, Lon: -122,
+					ID: priorStopID, Name: nulls.String("Prior tracking stop"), Lat: 47, Lon: -122,
 				})
 				require.NoError(t, err)
 				_, err = q.CreateStopTime(t.Context(), gtfsdb.CreateStopTimeParams{
-					TripID: trip, StopID: priorStop, StopSequence: int64(first),
+					TripID: trip, StopID: priorStopID, StopSequence: int64(first),
 					ArrivalTime: int64(7*time.Hour + 40*time.Minute), DepartureTime: int64(7*time.Hour + 42*time.Minute),
 				})
 				require.NoError(t, err)
@@ -369,7 +372,7 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 						assert.Equal(t, day.UnixMilli(), arrival.ServiceDate.UnixMilli())
 						assert.Equal(t, scheduledArrival, arrival.ScheduledArrivalTime.UnixMilli())
 						assert.Equal(t, scheduledArrival+(5*time.Minute).Milliseconds(), arrival.ScheduledDepartureTime.UnixMilli())
-						assert.Equal(t, withVehicle || tt.wantTracking || tt.wantTimes, arrival.Predicted)
+						assert.Equal(t, withVehicle || !tt.noTripUpdate, arrival.Predicted)
 						if tt.wantTimes {
 							assert.Equal(t, scheduledArrival+delay.Milliseconds(), arrival.PredictedArrivalTime.UnixMilli())
 							assert.Equal(t, arrival.ScheduledDepartureTime.UnixMilli()+delay.Milliseconds(), arrival.PredictedDepartureTime.UnixMilli())
