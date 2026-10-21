@@ -46,3 +46,12 @@ func (c Config) SafeBatchSize(fieldsPerRow int) int {
 	}
 	return sqliteMaxVariables / fieldsPerRow
 }
+
+// connectionCacheKiB is the SQLite page cache of each pooled connection, in
+// KiB. The pool has up to 25 connections (configureConnectionPool), so this
+// bounds SQLite's page cache at 25 times this value, about 50 MB. It equals
+// SQLite's built-in default and is set explicitly so that the bound doesn't
+// depend on how a driver's SQLite was compiled. A larger cache didn't lower
+// latency under the k6 load test, because the operating system already caches
+// the database file.
+const connectionCacheKiB = 2000

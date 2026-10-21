@@ -14,38 +14,40 @@ import (
 	"maglev.onebusaway.org/internal/nulls"
 )
 
+// TestSQLitePerformancePragmasApplied checks the settings on several pooled
+// connections of a file database at once. A PRAGMA run through the pool sets
+// only the one connection it ran on, so connection-scoped settings must come
+// from the DSN to reach every connection.
 func TestSQLitePerformancePragmasApplied(t *testing.T) {
+	// A file database, which createDB only allows outside the test
+	// environment: an in-memory one has a single connection.
 	config := Config{
-		DBPath: ":memory:",
-		Env:    appconf.Test,
+		DBPath: filepath.Join(t.TempDir(), "gtfs.db"),
+		Env:    appconf.Development,
 	}
-
 	client, err := NewClient(config)
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
 	ctx := context.Background()
+	const connectionCount = 3
+	for i := 0; i < connectionCount; i++ {
+		conn, err := client.DB.Conn(ctx)
+		require.NoError(t, err)
+		defer func() { _ = conn.Close() }()
 
-	// Verify cache_size PRAGMA
-	var cacheSize int
-	err = client.DB.QueryRowContext(ctx, "PRAGMA cache_size").Scan(&cacheSize)
-	require.NoError(t, err)
-	// Should be -64000 (64MB in KB, negative means KB)
-	assert.Equal(t, -64000, cacheSize, "Cache size should be set to 64MB")
+		var cacheSize, tempStore, busyTimeout int
+		var journalMode string
+		require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA cache_size").Scan(&cacheSize))
+		require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyTimeout))
+		require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA temp_store").Scan(&tempStore))
+		require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journalMode))
 
-	// Verify temp_store PRAGMA
-	var tempStore int
-	err = client.DB.QueryRowContext(ctx, "PRAGMA temp_store").Scan(&tempStore)
-	require.NoError(t, err)
-	// 2 = MEMORY
-	assert.Equal(t, 2, tempStore, "Temp store should be set to MEMORY (2)")
-
-	// Verify journal_mode PRAGMA
-	var journalMode string
-	err = client.DB.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journalMode)
-	require.NoError(t, err)
-	// In-memory databases don't support WAL mode, so SQLite automatically uses 'memory'
-	assert.Equal(t, "memory", journalMode, "Journal mode should be memory for :memory: databases")
+		assert.Equal(t, -connectionCacheKiB, cacheSize, "connection %d cache size", i)
+		assert.Equal(t, 0, tempStore, "connection %d keeps SQLite's default temp store", i)
+		assert.Equal(t, "wal", journalMode, "connection %d journal mode", i)
+		assert.Equal(t, 5000, busyTimeout, "connection %d busy timeout, the same for both drivers", i)
+	}
 }
 
 func TestMemoryDatabaseConnectionPool(t *testing.T) {

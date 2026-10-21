@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,14 +17,14 @@ import (
 // non-persistent, so it must ride the DSN to reach every connection in the pool; holding
 // several connections open at once (rather than reusing one via sequential Conn calls) is
 // what actually exercises that.
-func TestDSNAppendsForeignKeysWithCorrectSeparator(t *testing.T) {
-	foreignKeyParam := "_foreign_keys=on"
+func TestDSNAppendsConnectionSettingsWithCorrectSeparator(t *testing.T) {
+	params := "_foreign_keys=on&_cache_size=" + strconv.Itoa(-connectionCacheKiB)
 	if DriverName == "sqlite" {
-		foreignKeyParam = "_pragma=foreign_keys(1)"
+		params = "_pragma=foreign_keys(1)&_pragma=cache_size(" + strconv.Itoa(-connectionCacheKiB) + ")&_pragma=busy_timeout(5000)"
 	}
 
-	assert.Equal(t, "test.db?"+foreignKeyParam, DSN("test.db"))
-	assert.Equal(t, "file:test.db?cache=shared&"+foreignKeyParam, DSN("file:test.db?cache=shared"))
+	assert.Equal(t, "test.db?"+params, DSN("test.db"))
+	assert.Equal(t, "file:test.db?cache=shared&"+params, DSN("file:test.db?cache=shared"))
 }
 
 func TestForeignKeysEnabledOnEveryPooledConnection(t *testing.T) {
