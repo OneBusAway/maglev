@@ -99,6 +99,9 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	// Real-time simple ID endpoints (no ETag)
 	mux.Handle("GET /api/where/vehicles-for-agency/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.vehiclesForAgencyHandler)))
 
+	// GTFS-RT exports. The handler sends an ETag computed from the feed bytes.
+	mux.Handle("GET /api/gtfs_realtime/vehicle-positions-for-agency/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.vehiclePositionsForAgencyHandler)))
+
 	// --- Routes with combined ID validation (agency_id_code format) ---
 	mux.Handle("GET /api/where/trip/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.tripHandler))))
 	mux.Handle("GET /api/where/stop/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.stopHandler))))
