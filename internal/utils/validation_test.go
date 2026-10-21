@@ -432,3 +432,28 @@ func TestSanitizeInput(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateGtfsRealtimeTime(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"absent", "", false},
+		{"epoch milliseconds", "1792287624289", false},
+		{"legacy format", "2026-10-18_10-00-00", false},
+		{"not a time", "abc", true},
+		{"date only", "2026-10-18", true},
+		{"negative", "-5", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateGtfsRealtimeTime(tt.value)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

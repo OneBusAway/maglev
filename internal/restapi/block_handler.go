@@ -50,11 +50,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 
 	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, nulls.String(blockID))
 	if err != nil {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-			return
-		}
-		api.sendNotFound(w, r)
+		api.serverErrorResponse(w, r, err)
 		return
 	}
 

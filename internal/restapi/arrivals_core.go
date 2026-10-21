@@ -430,12 +430,10 @@ type batchedArrivalLookups struct {
 
 // multiStopArrivalsResult is the batched multi-stop arrivals pipeline before
 // trip status is attached. Arrivals carry schedule and prediction only.
-// Matched reports whether any stop_time fell inside the window, even when the
-// route-type filter later dropped every row. Stop-level alerts follow that
-// flag, as they did when they were collected inside this pipeline.
+// Stop-level alerts are not collected here. The caller adds them after
+// truncation, including when the window matched no stop_time.
 type multiStopArrivalsResult struct {
 	Arrivals []statusPendingArrival
-	Matched  bool
 }
 
 // statusPendingArrival is one arrival whose times are known and whose trip
@@ -473,7 +471,6 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 	if len(allActive) == 0 {
 		return result, nil
 	}
-	result.Matched = true
 
 	plain := make([]activeStopTime, len(allActive))
 	for i, b := range allActive {

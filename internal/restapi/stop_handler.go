@@ -27,7 +27,11 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-	if err != nil || stop.ID == "" {
+	if err != nil {
+		api.dbErrorResponse(w, r, err)
+		return
+	}
+	if stop.ID == "" {
 		api.sendNotFound(w, r)
 		return
 	}

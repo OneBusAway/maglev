@@ -1,0 +1,128 @@
+name: PR template
+
+# pull_request_target so fork PRs get a token that can comment. That token
+# can write, so this workflow only ever checks out and runs the base branch,
+# and reads the PR description from the event file, never from an expression
+# inside a script.
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+      - ready_for_review
+      - converted_to_draft
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  FOLLOWS_LABEL: follows-template
+  FOLLOWS_LABEL_COLOR: 0E8A16
+
+concurrency:
+  group: pr-template-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: PR template
+    runs-on: ubuntu-latest
+    # Every event reruns the full check, label changes included: a skipped
+    # run would replace a failing check with "skipped", which counts as
+    # passing. The follows-template label set below can't loop, because
+    # changes made with GITHUB_TOKEN don't trigger workflows.
+    if: >-
+      github.repository == 'OneBusAway/maglev' &&
+      github.event.pull_request.user.type != 'Bot' &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-template-check')
+    steps:
+      # Pinned to commit SHAs, unlike other workflows, because this job holds
+      # a write token. Dependabot updates the SHA and the version comment.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+          # The checker uses only the standard library.
+          cache: false
+
+      # Built rather than `go run` so exit code 2 (broken template) isn't
+      # flattened to 1.
+      - name: Build the checker
+        run: go build -o "$RUNNER_TEMP/prtemplatecheck" ./cmd/prtemplatecheck
+
+      - name: Check the description
+        id: check
+        run: |
+          jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH" > "$RUNNER_TEMP/body.md"
+          author=$(jq -r '.pull_request.user.login' "$GITHUB_EVENT_PATH")
+          draft_flag=""
+          if [ "$(jq -r '.pull_request.draft' "$GITHUB_EVENT_PATH")" = "true" ]; then
+            draft_flag="-draft"
+          fi
+          set +e
+          "$RUNNER_TEMP/prtemplatecheck" -template .github/pull_request_template.md \
+            -body "$RUNNER_TEMP/body.md" -author "$author" $draft_flag > "$RUNNER_TEMP/report.md"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/report.md"
+
+      # One comment per PR, found by its marker and edited in place. Only the
+      # bot's own comment matches, since the k6 smoke test posts as the same
+      # user without the marker. A GitHub API error here must not turn a
+      # passing check red, so the result comes only from the last step.
+      - name: Update the PR comment
+        if: steps.check.outputs.exit_code == '0' || steps.check.outputs.exit_code == '1'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXIT_CODE: ${{ steps.check.outputs.exit_code }}
+        run: |
+          comment_id=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- maglev-pr-template-check -->"))) | .id' \
+            | head -n 1)
+          if [ -n "$comment_id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$comment_id" -F body=@"$RUNNER_TEMP/report.md" > /dev/null
+          elif [ "$EXIT_CODE" = "1" ]; then
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@"$RUNNER_TEMP/report.md" > /dev/null
+          fi
+
+      - name: Update the follows-template label
+        if: steps.check.outputs.exit_code == '0' || steps.check.outputs.exit_code == '1'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXIT_CODE: ${{ steps.check.outputs.exit_code }}
+        run: |
+          if [ "$EXIT_CODE" = "0" ]; then
+            # Create the label green on first use; adding a missing label
+            # would otherwise create it in GitHub's default gray. Another
+            # PR's run may create it first, which is fine.
+            if ! gh api "repos/$REPO/labels/$FOLLOWS_LABEL" > /dev/null 2>&1; then
+              gh api -X POST "repos/$REPO/labels" -f "name=$FOLLOWS_LABEL" -f "color=$FOLLOWS_LABEL_COLOR" \
+                -f "description=The PR description follows the PR template" > /dev/null \
+                || gh api "repos/$REPO/labels/$FOLLOWS_LABEL" > /dev/null
+            fi
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/labels" -f "labels[]=$FOLLOWS_LABEL" > /dev/null
+          # Read the PR's labels live: the event payload can predate an
+          # earlier run's label change.
+          elif gh api "repos/$REPO/issues/$PR_NUMBER/labels" --jq '.[].name' | grep -qxF "$FOLLOWS_LABEL"; then
+            gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/$FOLLOWS_LABEL" > /dev/null
+          fi
+
+      - name: Fail if the description doesn't follow the template
+        if: steps.check.outputs.exit_code != '0'
+        run: |
+          echo "See the PR comment, or the 'Check the description' step above."
+          exit 1
