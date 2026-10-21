@@ -102,8 +102,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	results := []models.Stop{}
-	routeIDs := map[string]bool{}
-	agencyIDs := map[string]bool{}
 
 	stopIDs := make([]string, 0, len(stops))
 	stopMap := make(map[string]gtfsdb.Stop)
@@ -205,6 +203,9 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		references.Stops = parentStops
+
+		routeIDs := map[string]bool{}
+		agencyIDs := map[string]bool{}
 
 		for _, stopID := range resultRawStopIDs {
 			collectRouteReferenceIDs(stopRouteIDs[stopID], routeIDs, agencyIDs)
