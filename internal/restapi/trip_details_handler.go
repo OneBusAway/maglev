@@ -262,9 +262,11 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Extension 4e: Explicitly nil out the status if there is no actual tracking record.
-		// BuildTripStatus returns a default placeholder when tracking is absent, so we nil it to trigger JSON omitempty.
-		if status != nil && status.IsUntracked() {
+		// Without a tracking record Java still reports where the schedule puts
+		// the trip (AbstractBlockLocationServiceImpl.getBlockLocation); it has no
+		// status only when the schedule places it nowhere. So drop the untracked
+		// placeholder only outside the trip's scheduled span.
+		if status != nil && status.IsUntracked() && !tripScheduledAt(trip, serviceDate, currentTime) {
 			status = nil
 		}
 	}
@@ -476,4 +478,13 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 	}
 
 	return referencedTrips, nil
+}
+
+// tripScheduledAt reports whether the schedule has the trip running at t on serviceDate.
+func tripScheduledAt(trip gtfsdb.Trip, serviceDate, t time.Time) bool {
+	if !trip.MinArrivalTime.Valid || !trip.MaxDepartureTime.Valid {
+		return false
+	}
+	offset := t.Sub(servicedate.OffsetBase(serviceDate)).Nanoseconds()
+	return offset >= trip.MinArrivalTime.Int64 && offset <= trip.MaxDepartureTime.Int64
 }

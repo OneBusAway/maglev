@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/restapi/testdata"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -276,8 +278,50 @@ func TestTripDetailsHandlerWithIncludeStatus(t *testing.T) {
 	assert.Nil(t, model.Data.Entry.Status)
 }
 
-// TestTripDetailsHandlerStatusOmittedWhenNoTracking verifies Extension 4e:
-// The status key must be absent entirely when there is no tracking record, even if includeStatus=true.
+// runningTripAt returns a trip whose schedule has it running at t, with t's service date
+// active for it.
+func runningTripAt(t *testing.T, api *RestAPI, at time.Time) string {
+	t.Helper()
+	ctx := context.Background()
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, at.Format("20060102"))
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs)
+
+	offset := at.Sub(servicedate.OffsetBase(at)).Nanoseconds()
+	for _, serviceID := range serviceIDs {
+		var tripID string
+		err := api.GtfsManager.GtfsDB.DB.QueryRowContext(ctx,
+			"SELECT id FROM trips WHERE service_id = ? AND min_arrival_time <= ? AND max_departure_time >= ? LIMIT 1",
+			serviceID, offset, offset).Scan(&tripID)
+		if err == nil {
+			return tripID
+		}
+	}
+	t.Fatalf("no trip running at %v", at)
+	return ""
+}
+
+// Java reports where the schedule puts a running trip even with no tracking record,
+// so an untracked trip mid-run still gets a status.
+func TestTripDetailsHandlerScheduledStatusWhileRunningUntracked(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	tripID := utils.FormCombinedID(agency.ID, runningTripAt(t, api, arrivalsTestClock))
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeStatus=true")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotNil(t, model.Data.Entry.Status, "a running trip has a schedule-derived status")
+	assert.False(t, model.Data.Entry.Status.Predicted)
+	assert.Equal(t, tripID, model.Data.Entry.Status.ActiveTripID)
+	assert.NotEmpty(t, model.Data.Entry.Status.ClosestStop)
+}
+
+// TestTripDetailsHandlerStatusOmittedWhenNoTracking: with no tracking record and the
+// trip not running at the query time, the status key is absent entirely.
 func TestTripDetailsHandlerStatusOmittedWhenNoTracking(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -293,7 +337,7 @@ func TestTripDetailsHandlerStatusOmittedWhenNoTracking(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Nil(t, model.Data.Entry.Status,
-		"status must be absent when the block has no current tracking record (extension 4e)")
+		"status must be absent when the trip is untracked and not running")
 
 	// Verify at the raw JSON level that "status" key is truly absent, not just null.
 	// assert.Nil passes for both absent and null after unmarshal; the spec requires absence.
