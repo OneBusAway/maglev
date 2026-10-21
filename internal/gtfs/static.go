@@ -20,6 +20,7 @@ func rawGtfsData(ctx context.Context, source string, config Config) ([]byte, err
 	var err error
 
 	logger := slog.Default().With(slog.String("component", "gtfs_loader"))
+	logging.LogOperation(logger, "reading_gtfs_data", slog.String("source", source))
 
 	if config.isLocalFile() {
 		b, err = os.ReadFile(source)
