@@ -1081,6 +1081,8 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	}
 	slices.Sort(vehicleFeedIDs)
 
+	// Writes the released copies back to feedVehicles, so a trip stays released
+	// after the vehicle that took it drops out.
 	manager.releaseTripsTakenAcrossFeeds(vehicleFeedIDs)
 	allVehicles := make([]gtfs.Vehicle, 0, totalVehicles)
 	for _, id := range vehicleFeedIDs {
