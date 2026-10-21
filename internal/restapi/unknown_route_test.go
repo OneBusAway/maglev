@@ -2,11 +2,9 @@ package restapi
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -35,11 +33,8 @@ func TestUnknownAPIPathFallbackKeepsRegisteredRoutes(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	mux := http.NewServeMux()
-	api.SetRoutes(mux)
-	req := httptest.NewRequest(http.MethodGet, "/api/where/current-time.json?key=TEST", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+	resp, model := callAPIHandler[models.ResponseModel](t, api, "/api/where/current-time.json?key=TEST")
 
-	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
 }
