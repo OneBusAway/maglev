@@ -347,7 +347,7 @@ func TestTripDetailsHandlerStatusOmittedWhenNoTracking(t *testing.T) {
 	entry := data["entry"].(map[string]any)
 	_, hasStatus := entry["status"]
 	assert.False(t, hasStatus,
-		"status key must not be present in JSON (not even as null) per extension 4e")
+		"status key must not be present in JSON (not even as null)")
 }
 
 func TestTripDetailsHandlerWithTimeParameter(t *testing.T) {

@@ -266,7 +266,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		// the trip (AbstractBlockLocationServiceImpl.getBlockLocation); it has no
 		// status only when the schedule places it nowhere. So drop the untracked
 		// placeholder only outside the trip's scheduled span.
-		if status != nil && status.IsUntracked() && !tripScheduledAt(trip, serviceDate, currentTime) {
+		offset := currentTime.Sub(servicedate.OffsetBase(serviceDate))
+		if status != nil && status.IsUntracked() && !tripWindowOverlapsRange(trip, offset, offset) {
 			status = nil
 		}
 	}
@@ -478,13 +479,4 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 	}
 
 	return referencedTrips, nil
-}
-
-// tripScheduledAt reports whether the schedule has the trip running at t on serviceDate.
-func tripScheduledAt(trip gtfsdb.Trip, serviceDate, t time.Time) bool {
-	if !trip.MinArrivalTime.Valid || !trip.MaxDepartureTime.Valid {
-		return false
-	}
-	offset := t.Sub(servicedate.OffsetBase(serviceDate)).Nanoseconds()
-	return offset >= trip.MinArrivalTime.Int64 && offset <= trip.MaxDepartureTime.Int64
 }
