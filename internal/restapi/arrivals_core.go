@@ -452,6 +452,9 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 	}
 
 	if len(allActive) == 0 {
+		if err := api.addStopAlertsForStops(ctx, in, acc); err != nil {
+			return nil, err
+		}
 		return arrivals, nil
 	}
 
@@ -476,15 +479,21 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 		return nil, err
 	}
 
-	// Stop-level alerts, once per stop — mirrors the per-stop pipeline.
-	for _, stop := range in.Stops {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), in.Agencies.agencyIDFor(stop.ID))
+	if err := api.addStopAlertsForStops(ctx, in, acc); err != nil {
+		return nil, err
 	}
 
 	return arrivals, nil
+}
+
+func (api *RestAPI) addStopAlertsForStops(ctx context.Context, in multiStopArrivalsInput, acc *arrivalsAccumulator) error {
+	for _, stop := range in.Stops {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), in.Agencies.agencyIDFor(stop.ID))
+	}
+	return nil
 }
 
 // agencyGroup is one timezone-shared set of stops: a single query instant,
@@ -737,6 +746,35 @@ func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes
 	}
 
 	return routesLookup, tripsLookup, api.buildTripStopIndex(ctx, uniqueTripIDs), freqMap, nil
+}
+
+// bestArrivalMillis is the instant Java's ArrivalAndDepartureComparator sorts
+// on. A positive predicted arrival is hasPredictedArrivalTime(); otherwise
+// the scheduled arrival is used.
+func bestArrivalMillis(a models.ArrivalAndDeparture) int64 {
+	if a.PredictedArrivalTime.UnixMilli() > 0 {
+		return a.PredictedArrivalTime.UnixMilli()
+	}
+	return a.ScheduledArrivalTime.UnixMilli()
+}
+
+// compareBestArrival orders two arrivals by bestArrivalMillis, then by trip ID
+// and stop sequence so equal times come out the same on every request.
+// arrivals-and-departures-for-stop sorts on this alone. The location endpoint
+// sorts by stop distance first and uses this only within one stop.
+func compareBestArrival(a, b models.ArrivalAndDeparture) int {
+	if c := cmp.Compare(bestArrivalMillis(a), bestArrivalMillis(b)); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.TripID, b.TripID); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.StopSequence, b.StopSequence)
+}
+
+// sortArrivalsByBestTime orders a single stop's arrivals with compareBestArrival.
+func sortArrivalsByBestTime(arrivals []models.ArrivalAndDeparture) {
+	slices.SortStableFunc(arrivals, compareBestArrival)
 }
 
 // uniqueRouteAndTripIDs collects the distinct route and trip IDs referenced by

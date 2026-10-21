@@ -69,6 +69,19 @@ func TestFromInstant_RecoversTheDateFromMidnightStartOrAnyTimeThatDay(t *testing
 	}
 }
 
+func TestOffsetBase_UsesServiceDayStartNotLocalMidnight(t *testing.T) {
+	la := losAngeles(t)
+	spring := servicedate.New(2010, time.March, 14)
+
+	for _, instant := range []time.Time{
+		spring.Midnight(la),
+		spring.Start(la),
+		spring.Start(la).Add(8 * time.Hour),
+	} {
+		assert.True(t, spring.Start(la).Equal(servicedate.OffsetBase(instant)), "got %s from %s", servicedate.OffsetBase(instant), instant)
+	}
+}
+
 func TestDate_CalendarFields(t *testing.T) {
 	springForward := servicedate.New(2026, time.March, 8)
 

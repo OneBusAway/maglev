@@ -647,6 +647,38 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 		assert.NotNil(t, fieldErrors)
 		assert.Contains(t, fieldErrors, "time")
 	})
+
+	t.Run("Negative epoch timestamp rejects", func(t *testing.T) {
+		for _, raw := range []string{"-1", "-5", "-1000", "-9223372036854775808"} {
+			_, _, fieldErrors, valid := ParseTimeParameter(raw, loc, clock.RealClock{})
+			assert.False(t, valid, "negative epoch %s must be invalid", raw)
+			assert.NotNil(t, fieldErrors)
+			assert.Contains(t, fieldErrors, "time")
+		}
+	})
+
+	t.Run("Leading plus epoch timestamp rejects", func(t *testing.T) {
+		_, _, fieldErrors, valid := ParseTimeParameter("+1000", loc, clock.RealClock{})
+		assert.False(t, valid)
+		assert.NotNil(t, fieldErrors)
+		assert.Contains(t, fieldErrors, "time")
+	})
+
+	t.Run("Preserves sub-second millisecond precision", func(t *testing.T) {
+		dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter("1710979086123", loc, clock.RealClock{})
+		require.True(t, valid)
+		require.Nil(t, fieldErrors)
+		assert.Equal(t, "20240320", dateStr)
+		assert.Equal(t, int64(1710979086123), parsedTime.UnixMilli())
+		assert.Equal(t, 123_000_000, parsedTime.Nanosecond())
+	})
+
+	t.Run("Far future epoch timestamp is accepted matching Java", func(t *testing.T) {
+		_, parsedTime, fieldErrors, valid := ParseTimeParameter("32503680000001", loc, clock.RealClock{})
+		require.True(t, valid)
+		require.Nil(t, fieldErrors)
+		assert.Equal(t, int64(32503680000001), parsedTime.UnixMilli())
+	})
 }
 
 func TestParseTimeParameter_DateStringUsesProvidedLocation(t *testing.T) {

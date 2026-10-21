@@ -755,6 +755,91 @@ func TestVehicleMerge_LabelOnlyVehicleRetained(t *testing.T) {
 	assert.InDelta(t, 47.2, *byLabel["102"].Position.Latitude, 0.001)
 }
 
+// positionOnTrip builds a VehiclePosition for a vehicle serving the given trip
+// on route-x. A nil timestamp leaves the optional GTFS-RT timestamp unset.
+func positionOnTrip(vehicleID, tripID string, latitude float32, timestamp *time.Time) *gtfsrt.VehiclePosition {
+	position := &gtfsrt.VehiclePosition{
+		Vehicle:  &gtfsrt.VehicleDescriptor{Id: proto.String(vehicleID)},
+		Trip:     &gtfsrt.TripDescriptor{TripId: proto.String(tripID), RouteId: proto.String("route-x")},
+		Position: &gtfsrt.Position{Latitude: proto.Float32(latitude), Longitude: proto.Float32(-122.3)},
+	}
+	if timestamp != nil {
+		position.Timestamp = proto.Uint64(uint64(timestamp.Unix()))
+	}
+	return position
+}
+
+// TestVehicleMerge_RetainedVehicleReleasesTakenTrip checks that when a vehicle
+// drops out of the feed and another vehicle takes over its trip, the trip
+// resolves to the live vehicle in every index, whatever the timestamps say,
+// while the old vehicle is still retained.
+func TestVehicleMerge_RetainedVehicleReleasesTakenTrip(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	older := now.Add(-time.Minute)
+	slightlyOlder := now.Add(-10 * time.Second)
+
+	tests := []struct {
+		name              string
+		retainedTimestamp *time.Time
+		liveTimestamp     *time.Time
+	}{
+		{"live report is newer", &older, &now},
+		{"no per-vehicle timestamps", nil, nil},
+		{"retained report is newer than the live one", &now, &slightlyOlder},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := newTestManager()
+			manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now.Add(-time.Minute), []*gtfsrt.VehiclePosition{
+				positionOnTrip("V1", "trip-x", 47.1, tc.retainedTimestamp),
+			}))
+
+			// The second update covers V1 being released; the third covers it
+			// staying released while still retained.
+			for i, feedTime := range []time.Time{now.Add(-30 * time.Second), now} {
+				manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, feedTime, []*gtfsrt.VehiclePosition{
+					positionOnTrip("V2", "trip-x", 47.4+float32(i)/10, tc.liveTimestamp),
+				}))
+
+				vehicle := manager.GetVehicleForTrip(context.Background(), "trip-x")
+				require.NotNil(t, vehicle)
+				assert.Equal(t, "V2", vehicle.ID.ID)
+
+				routeVehicles := manager.mergedRealtime().vehiclesByRoute["route-x"]
+				require.Len(t, routeVehicles, 1, "only the live vehicle should be listed on the route")
+				assert.Equal(t, "V2", routeVehicles[0].ID.ID)
+
+				vehicles := manager.GetRealTimeVehicles()
+				require.Len(t, vehicles, 2, "V1 should still be retained within the stale-vehicle window")
+				for _, v := range vehicles {
+					if v.ID.ID == "V1" {
+						assert.Nil(t, v.Trip, "retained V1 should no longer claim trip-x")
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestVehicleMerge_RetainedVehicleKeepsUntakenTrip checks that a retained
+// vehicle keeps its trip while no other vehicle serves it.
+func TestVehicleMerge_RetainedVehicleKeepsUntakenTrip(t *testing.T) {
+	manager := newTestManager()
+	now := time.Now().Truncate(time.Second)
+
+	manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now.Add(-30*time.Second), []*gtfsrt.VehiclePosition{
+		positionOnTrip("V1", "trip-x", 47.1, nil),
+	}))
+	manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now, []*gtfsrt.VehiclePosition{
+		positionOnTrip("V2", "trip-y", 47.4, nil),
+	}))
+
+	vehicle := manager.GetVehicleForTrip(context.Background(), "trip-x")
+	require.NotNil(t, vehicle)
+	assert.Equal(t, "V1", vehicle.ID.ID)
+}
+
 // TestIsVehicleStale verifies the isVehicleStale function correctly compares
 // vehicle timestamps to determine staleness.
 func TestIsVehicleStale(t *testing.T) {
@@ -937,7 +1022,7 @@ func TestAlertIndex_RouteTripEntityIndexedUnderByTrip(t *testing.T) {
 }
 
 // TestGetAlertsByIDs_AgencyScoping verifies that agency-wide matching only fires
-// for entities that have agencyId with no route or trip restriction.
+// for entities that have agencyId with no route, trip or stop restriction.
 func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
 	agencyID := "agency40"
 	routeID := "route123"
@@ -964,11 +1049,11 @@ func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
 			expectMatch: false,
 		},
 		{
-			// {agencyID+stopID} has no route/trip restriction, so it is filed in byAgency
-			// AND byStop. An agency-only lookup should therefore still match.
-			name:        "agency+stop entity matches agency-only query",
+			// {agencyID+stopID} is stop-specific: it is filed in byStop only, so an
+			// agency-only lookup must not match it (as in Java's AffectsAgencyKeyFactory).
+			name:        "agency+stop entity does not match agency-only query",
 			entities:    []gtfs.AlertInformedEntity{{AgencyID: &agencyID, StopID: func() *string { s := "stop99"; return &s }()}},
-			expectMatch: true,
+			expectMatch: false,
 		},
 	}
 
@@ -1173,10 +1258,11 @@ func TestAlertIndex_EmptyIDAlertExcluded(t *testing.T) {
 	assert.Empty(t, tripAlerts)
 }
 
-// TestAlertIndex_AgencyStopEntityAlsoIndexedByStop verifies the symmetric half
-// of the agency+stop scoping rule: an entity with both agencyID and stopID is
-// filed in byStop (so stop-scoped lookups find it) in addition to byAgency.
-func TestAlertIndex_AgencyStopEntityAlsoIndexedByStop(t *testing.T) {
+// TestAlertIndex_AgencyStopEntityIndexedByStopOnly verifies the agency+stop
+// scoping rule: an entity with both agencyID and stopID is filed in byStop (so
+// stop-scoped lookups find it) but not in byAgency, so it doesn't reach every
+// trip of the agency.
+func TestAlertIndex_AgencyStopEntityIndexedByStopOnly(t *testing.T) {
 	agencyID := "agency40"
 	stopID := "stop99"
 
@@ -1197,9 +1283,8 @@ func TestAlertIndex_AgencyStopEntityAlsoIndexedByStop(t *testing.T) {
 	assert.Len(t, stopAlerts, 1, "agency+stop entity should appear in byStop")
 	assert.Equal(t, "alert1", stopAlerts[0].ID)
 
-	agencyAlerts := manager.GetAlertsByIDs("", "", agencyID)
-	assert.Len(t, agencyAlerts, 1, "agency+stop entity should also appear in byAgency")
-	assert.Equal(t, "alert1", agencyAlerts[0].ID)
+	agencyAlerts := manager.GetAlertsByIDs("unrelated-trip", "unrelated-route", agencyID)
+	assert.Empty(t, agencyAlerts, "agency+stop entity should not reach other trips of the agency")
 }
 
 // TestAlertIndex_RouteStopEntityAlsoIndexedByStop verifies the positive half
