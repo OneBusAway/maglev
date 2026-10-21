@@ -12,7 +12,7 @@ import (
 )
 
 const backfillBlockTripEntryBlockID = `-- name: BackfillBlockTripEntryBlockID :exec
-UPDATE block_trip_entry SET block_id = NULLIF(block_id, '') WHERE block_id = ''
+UPDATE block_trip_entry SET block_id = NULL WHERE block_id = ''
 `
 
 func (q *Queries) BackfillBlockTripEntryBlockID(ctx context.Context) error {
@@ -21,7 +21,7 @@ func (q *Queries) BackfillBlockTripEntryBlockID(ctx context.Context) error {
 }
 
 const backfillTripsBlockID = `-- name: BackfillTripsBlockID :exec
-UPDATE trips SET block_id = NULLIF(block_id, '') WHERE block_id = ''
+UPDATE trips SET block_id = NULL WHERE block_id = ''
 `
 
 func (q *Queries) BackfillTripsBlockID(ctx context.Context) error {

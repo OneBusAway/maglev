@@ -227,7 +227,6 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 				slog.String("hash", data.Hash[:8]))
 			return false, nil
 		}
-
 	} else if err != sql.ErrNoRows {
 		// Some other error occurred
 		return false, fmt.Errorf("error checking import metadata: %w", err)

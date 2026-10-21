@@ -1546,7 +1546,7 @@ GROUP BY
     r.agency_id;
 
 -- name: BackfillTripsBlockID :exec
-UPDATE trips SET block_id = NULLIF(block_id, '') WHERE block_id = '';
+UPDATE trips SET block_id = NULL WHERE block_id = '';
 
 -- name: BackfillBlockTripEntryBlockID :exec
-UPDATE block_trip_entry SET block_id = NULLIF(block_id, '') WHERE block_id = '';
+UPDATE block_trip_entry SET block_id = NULL WHERE block_id = '';
