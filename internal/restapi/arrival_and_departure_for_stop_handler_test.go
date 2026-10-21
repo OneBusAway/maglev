@@ -508,6 +508,16 @@ func TestParseArrivalAndDepartureParams_DefaultValues(t *testing.T) {
 	assert.Nil(t, params.StopSequence)
 }
 
+func TestParseArrivalAndDepartureParams_MillisecondPrecision(t *testing.T) {
+	req := httptest.NewRequest("GET", "/test?time=1609459200123&serviceDate=1609459200456", nil)
+	params, errs := parseArrivalAndDepartureParams(req)
+	require.Empty(t, errs)
+	require.NotNil(t, params.Time)
+	require.NotNil(t, params.ServiceDate)
+	assert.Equal(t, int64(1609459200123), params.Time.UnixMilli())
+	assert.Equal(t, int64(1609459200456), params.ServiceDate.UnixMilli())
+}
+
 func TestParseArrivalAndDepartureParams_InvalidValues(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test?minutesAfter=invalid&minutesBefore=invalid&time=invalid&serviceDate=invalid&stopSequence=invalid", nil)
 

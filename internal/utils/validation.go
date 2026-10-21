@@ -3,9 +3,14 @@ package utils
 import (
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// gtfsRealtimeLegacyTimeLayout is the yyyy-MM-dd_HH-mm-ss form that the
+// Java server's GTFS-RT exports accept for their time parameter.
+const gtfsRealtimeLegacyTimeLayout = "2006-01-02_15-04-05"
 
 // Compiled regular expressions for validation
 var (
@@ -152,4 +157,20 @@ func ValidateAndSanitizeQuery(query string) (string, error) {
 	}
 
 	return SanitizeInput(query), nil
+}
+
+// ValidateGtfsRealtimeTime checks the time parameter of the GTFS-RT
+// exports: epoch milliseconds or yyyy-MM-dd_HH-mm-ss. An absent value is
+// valid. Maglev accepts it for compatibility and otherwise ignores it.
+func ValidateGtfsRealtimeTime(value string) error {
+	if value == "" {
+		return nil
+	}
+	if millis, err := strconv.ParseInt(value, 10, 64); err == nil && millis >= 0 {
+		return nil
+	}
+	if _, err := time.Parse(gtfsRealtimeLegacyTimeLayout, value); err == nil {
+		return nil
+	}
+	return errors.New("time must be epoch milliseconds or yyyy-MM-dd_HH-mm-ss")
 }

@@ -57,29 +57,29 @@ func ETagMiddleware(getETag func(*http.Request) string) func(http.Handler) http.
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			etag := getETag(r)
 			if etag != "" {
-				inm := r.Header.Get("If-None-Match")
-				// Check for wildcard or iterate through parsed comma-separated parts
-				if inm != "" {
-					if inm == "*" {
-						w.Header().Set("ETag", etag)
-						w.WriteHeader(http.StatusNotModified)
-						return
-					}
-
-					parts := strings.Split(inm, ",")
-					for _, part := range parts {
-						if strings.TrimSpace(part) == etag {
-							// RFC 7232: 304 response MUST include the ETag header
-							w.Header().Set("ETag", etag)
-							w.WriteHeader(http.StatusNotModified)
-							return
-						}
-					}
-				}
-				// Otherwise, attach the ETag to the response and proceed normally
+				// RFC 7232: a 304 response MUST include the ETag header
 				w.Header().Set("ETag", etag)
+				if ifNoneMatchHits(r, etag) {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// ifNoneMatchHits reports whether the request's If-None-Match header is the
+// wildcard or lists etag.
+func ifNoneMatchHits(r *http.Request, etag string) bool {
+	inm := r.Header.Get("If-None-Match")
+	if inm == "*" {
+		return true
+	}
+	for _, part := range strings.Split(inm, ",") {
+		if strings.TrimSpace(part) == etag {
+			return true
+		}
+	}
+	return false
 }
