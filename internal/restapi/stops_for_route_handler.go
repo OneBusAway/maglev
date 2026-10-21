@@ -533,7 +533,7 @@ func (api *RestAPI) mergePolylinesForShapeIDs(ctx context.Context, shapeIDs []st
 // shared undirected edge set across all shapes added to it.
 type polylineMerger struct {
 	edges       map[edgeKey]struct{}
-	currentLine [][]float64
+	currentLine [][2]float64
 	polylines   []models.Polyline
 }
 
@@ -573,7 +573,7 @@ func (m *polylineMerger) addShape(points []gtfsdb.Shape) {
 			}
 		}
 		if !havePrev || prev != loc {
-			m.currentLine = append(m.currentLine, []float64{loc.lat, loc.lon})
+			m.currentLine = append(m.currentLine, [2]float64{loc.lat, loc.lon})
 		}
 		prev = loc
 		havePrev = true
