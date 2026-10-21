@@ -283,7 +283,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 				t.TripHeadsign.String,
 				t.TripShortName.String,
 				strconv.FormatInt(t.DirectionID.Int64, 10),
-				utils.FormCombinedID(agencyID, t.BlockID.String),
+				utils.FormBlockID(agencyID, t.BlockID.String, t.ID),
 				utils.FormCombinedID(agencyID, t.ShapeID.String),
 			)
 			references.Trips = append(references.Trips, *tripRef)
