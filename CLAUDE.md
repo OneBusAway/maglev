@@ -225,8 +225,8 @@ distance := utils.Haversine(lat1, lon1, lat2, lon2)
 // Parse float parameters with validation
 lat, fieldErrors := utils.ParseFloatParam(r.URL.Query(), "lat", nil)
 
-// Parse time parameter (epoch ms or YYYY-MM-DD)
-dateStr, parsedTime, fieldErrors, ok := utils.ParseTimeParameter(timeParam, location)
+// Parse time parameter (epoch ms or yyyy-MM-dd_HH-mm-ss)
+dateStr, parsedTime, fieldErrors, ok := utils.ParseTimeParameter(timeParam, location, clock)
 ```
 
 ### Vehicle Status (`internal/restapi/vehicles_helper.go`)
