@@ -155,7 +155,7 @@ A JSON schema file is provided at `config.schema.json` for IDE autocomplete and 
 | `exempt-api-keys`    | array   | (Sound Transit) | API keys exempt from rate limiting          |
 | `log-level`          | string  | "info"          | Log level (debug, info, warn, error)        |
 | `log-format`         | string  | "text"          | Log format (text, json)                     |
-| `rate-limit`         | integer | 100             | Requests per second per API key             |
+| `rate-limit`         | integer | 100             | Requests per second across the whole service (shared bucket; exempt keys bypass it) |
 | `gtfs-static-feed`   | object  | (Sound Transit) | Static GTFS feed configuration              |
 | `gtfs-rt-feeds`      | array   | (Sound Transit) | GTFS-RT feed configurations (see below)     |
 | `data-path`          | string  | "./gtfs.db"     | Path to SQLite database                     |
@@ -463,20 +463,15 @@ docker inspect --format='{{.State.Health.Status}}' maglev
 
 ```
 
-**Important:** The health checks use the `HEALTH_CHECK_KEY` environment variable (defaults to `test`). If you change your API keys in the configuration, update this environment variable to match:
-
-```yaml
-# In docker-compose.yml or docker-compose.dev.yml
-environment:
-  - HEALTH_CHECK_KEY=your-api-key
-```
+`/healthz` needs no API key, so the health check keeps working whatever you set
+`api-keys` to. It reports `starting` until the initial GTFS import has finished
+and the first real-time fetch has been attempted, then `ok`.
 
 ### Environment Variables
 
 | Variable           | Description                            | Default |
 | ------------------ | -------------------------------------- | ------- |
 | `TZ`               | Timezone for the container             | `UTC`   |
-| `HEALTH_CHECK_KEY` | API key used for health check endpoint | `test`  |
 
 ### Troubleshooting
 
