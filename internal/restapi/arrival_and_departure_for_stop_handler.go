@@ -2,8 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -185,21 +183,13 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopCode)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
 	stopAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, stopAgencyID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -221,11 +211,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -242,11 +228,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if route.AgencyID != "" && route.AgencyID != stopAgency.ID {
 		routeAgency, agencyErr := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
 		if agencyErr != nil {
-			if errors.Is(agencyErr, sql.ErrNoRows) {
-				api.sendNotFound(w, r)
-			} else {
-				api.serverErrorResponse(w, r, agencyErr)
-			}
+			api.dbErrorResponse(w, r, agencyErr)
 			return
 		}
 		tripLoc, locErr := loadAgencyLocation(routeAgency.ID, routeAgency.Timezone)
