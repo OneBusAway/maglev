@@ -44,6 +44,11 @@ func NewClient(config Config) (*Client, error) {
 		return nil, fmt.Errorf("unable to backfill empty stop codes: %w", err)
 	}
 
+	if err := client.backfillEmptyBlockIDs(context.Background()); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("unable to backfill empty block IDs: %w", err)
+	}
+
 	// The search-stop handler reads a stop's agency straight from this index with no
 	// fallback, so a missing or stale index yields an empty combined ID rather than a
 	// merely degraded one - this must succeed before the client is usable.
@@ -53,6 +58,22 @@ func NewClient(config Config) (*Client, error) {
 	}
 
 	return client, nil
+}
+
+// backfillEmptyBlockIDs normalizes empty block IDs left by older imports.
+// StoreGtfsData may skip an unchanged feed, so these rows otherwise remain
+// empty after an upgrade. Both updates run in one transaction to maintain data integrity.
+func (c *Client) backfillEmptyBlockIDs(ctx context.Context) error {
+	return c.withTransaction(ctx, nil, "backfill_empty_block_ids", func(tx *sql.Tx) error {
+		qtx := c.Queries.WithTx(tx)
+		if err := qtx.BackfillTripsBlockID(ctx); err != nil {
+			return fmt.Errorf("error backfilling trips block_id: %w", err)
+		}
+		if err := qtx.BackfillBlockTripEntryBlockID(ctx); err != nil {
+			return fmt.Errorf("error backfilling block_trip_entry block_id: %w", err)
+		}
+		return nil
+	})
 }
 
 // backfillStopAgencyIndex builds stop_agencies for a database imported before the table

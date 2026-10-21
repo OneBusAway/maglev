@@ -397,7 +397,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 			TripHeadsign:         nulls.String(t.Headsign),
 			TripShortName:        nulls.String(t.ShortName),
 			DirectionID:          gtfsDirectionIDToDB(t.DirectionId),
-			BlockID:              nulls.String(t.BlockID),
+			BlockID:              nulls.NonEmptyString(t.BlockID),
 			ShapeID:              nulls.NonEmptyString(shapeID),
 			WheelchairAccessible: toNullInt64(int64(t.WheelchairAccessible)),
 			BikesAllowed:         toNullInt64(int64(t.BikesAllowed)),
@@ -1318,7 +1318,7 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 				err = qtx.CreateBlockTripEntry(ctx, CreateBlockTripEntryParams{
 					BlockTripIndexID:  indexID,
 					TripID:            trip.tripID,
-					BlockID:           nulls.String(trip.blockID),
+					BlockID:           nulls.NonEmptyString(trip.blockID),
 					ServiceID:         trip.serviceID,
 					BlockTripSequence: int64(sequence),
 				})

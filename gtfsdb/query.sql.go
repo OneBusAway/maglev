@@ -11,6 +11,24 @@ import (
 	"strings"
 )
 
+const backfillBlockTripEntryBlockID = `-- name: BackfillBlockTripEntryBlockID :exec
+UPDATE block_trip_entry SET block_id = NULL WHERE block_id = ''
+`
+
+func (q *Queries) BackfillBlockTripEntryBlockID(ctx context.Context) error {
+	_, err := q.exec(ctx, q.backfillBlockTripEntryBlockIDStmt, backfillBlockTripEntryBlockID)
+	return err
+}
+
+const backfillTripsBlockID = `-- name: BackfillTripsBlockID :exec
+UPDATE trips SET block_id = NULL WHERE block_id = ''
+`
+
+func (q *Queries) BackfillTripsBlockID(ctx context.Context) error {
+	_, err := q.exec(ctx, q.backfillTripsBlockIDStmt, backfillTripsBlockID)
+	return err
+}
+
 const blockHasTripForAgency = `-- name: BlockHasTripForAgency :one
 SELECT CAST(EXISTS (
     SELECT 1
@@ -915,7 +933,7 @@ type GetActiveBlockIDsForAgencyParams struct {
 // block_layover table) doesn't require consecutive trips to share a stop.
 // block_id is optional in GTFS, so trips.id is substituted for trips with no
 // block_id, matching them 1:1 to their own "block" rather than dropping them.
-// The importer stores a missing block_id as ” rather than NULL, hence NULLIF.
+// The importer stores NULL for missing block_id, but NULLIF handles legacy ” rows.
 // Callers run this once for today's service (at the current time-of-day) and
 // once for yesterday's service (the same instant shifted +24h) to catch
 // after-midnight trips, mirroring the today/yesterday pattern in
