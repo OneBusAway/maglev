@@ -51,7 +51,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -84,7 +84,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// Verify stop exists
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
