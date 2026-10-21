@@ -33,14 +33,8 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	query := r.URL.Query()
 
 	serviceDate := query.Get("serviceDate")
-	vehicleID := query.Get("vehicleID")
-	if vehicleID == "" {
-		vehicleID = query.Get("vehicleId")
-	}
-	stopID := query.Get("stopID")
-	if stopID == "" {
-		stopID = query.Get("stopId")
-	}
+	vehicleID := query.Get("vehicleId")
+	stopID := query.Get("stopId")
 	code := query.Get("code")
 	userComment := utils.TruncateComment(query.Get("userComment"))
 	userVehicleNumber := query.Get("userVehicleNumber")

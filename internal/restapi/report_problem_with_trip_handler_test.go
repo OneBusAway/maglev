@@ -106,13 +106,13 @@ func TestReportProblemWithTripDatabaseFailure(t *testing.T) {
 	assert.Equal(t, models.APIVersion, model.Version)
 }
 
-func TestReportProblemWithTripOpenAPICasingAndNulls(t *testing.T) {
+func TestReportProblemWithTripNullStorage(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
 	resp, model := callAPIHandler[EmptyResponse](t, api, reportProblemWithTripURL("1_12345", url.Values{
-		"vehicleID": {"1_3521"},
-		"stopID":    {"1_75403"},
+		"vehicleId": {"1_3521"},
+		"stopId":    {"1_75403"},
 	}))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, http.StatusOK, model.Code)
@@ -123,9 +123,9 @@ func TestReportProblemWithTripOpenAPICasingAndNulls(t *testing.T) {
 
 	latest := reports[0]
 	assert.True(t, latest.VehicleID.Valid)
-	assert.Equal(t, "1_3521", latest.VehicleID.String, "should support OpenAPI parameter vehicleID")
+	assert.Equal(t, "1_3521", latest.VehicleID.String)
 	assert.True(t, latest.StopID.Valid)
-	assert.Equal(t, "1_75403", latest.StopID.String, "should support OpenAPI parameter stopID")
+	assert.Equal(t, "1_75403", latest.StopID.String)
 	assert.False(t, latest.Code.Valid, "omitted code should be stored as SQL NULL")
 	assert.False(t, latest.UserComment.Valid, "omitted userComment should be stored as SQL NULL")
 	assert.False(t, latest.UserVehicleNumber.Valid, "omitted userVehicleNumber should be stored as SQL NULL")
