@@ -2,6 +2,8 @@ package gtfsdb
 
 import (
 	"context"
+	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -43,6 +45,50 @@ func TestGetActiveRoutesWithinBounds_CenteredOnStop(t *testing.T) {
 	}
 
 	assert.ElementsMatch(t, []string{"15", "154", "159", "160", "44X"}, stop4000RouteIDs)
+}
+
+type routeQueryRecorder struct {
+	DBTX
+	query string
+	args  []any
+}
+
+func (db *routeQueryRecorder) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	db.query, db.args = query, args
+	return db.DBTX.QueryContext(ctx, query, args...)
+}
+
+func TestGetActiveRoutesWithinBounds_FilteredStopTimesLookup(t *testing.T) {
+	client := newTestClientWithRABA(t)
+	ctx := t.Context()
+	var routeID string
+	require.NoError(t, client.DB.QueryRowContext(ctx, "SELECT id FROM routes LIMIT 1").Scan(&routeID))
+
+	recorder := &routeQueryRecorder{DBTX: client.DB}
+	_, err := New(recorder).GetActiveRoutesWithinBounds(ctx, GetActiveRoutesWithinBoundsParams{
+		Lat: 40.7347, Lon: -74.1644,
+		MinLat: -90, MaxLat: 90, MinLon: -180, MaxLon: 180,
+		RouteIDs: []string{routeID}, MaxCount: 100,
+	})
+	require.NoError(t, err)
+	plan, err := client.DB.QueryContext(ctx, "EXPLAIN QUERY PLAN "+recorder.query, recorder.args...)
+	require.NoError(t, err)
+	defer func() { _ = plan.Close() }()
+
+	var stopTimeLookups []string
+	for plan.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, plan.Scan(&id, &parent, &unused, &detail))
+		if strings.Contains(detail, "stop_times") {
+			stopTimeLookups = append(stopTimeLookups, detail)
+		}
+	}
+	require.NoError(t, plan.Err())
+	require.NotEmpty(t, stopTimeLookups)
+	for _, lookup := range stopTimeLookups {
+		assert.Contains(t, lookup, "(trip_id=?)", "filtered searches must look up stop times by matching trip, not nearby stop")
+	}
 }
 
 // TestGetActiveRoutesWithinBounds_RouteFiltering pins the invariant that
