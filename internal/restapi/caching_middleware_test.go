@@ -262,12 +262,10 @@ func TestStopsForLocationAcrossServiceDate(t *testing.T) {
 	mockClock := clock.NewMockClock(t1)
 	api := createTestApiWithClock(t, mockClock)
 
-	// 1. Fetch static feed ETag using standard helper
 	agenciesResp, _ := serveApiAndRetrieveEndpoint(t, api, "/api/where/agencies-with-coverage.json?key=org.onebusaway.iphone")
 	feedETag := agenciesResp.Header.Get("ETag")
 	require.NotEmpty(t, feedETag, "Precondition failed: static feed ETag is empty")
 
-	// Helper to make request and return parsed stop data
 	makeReq := func() (*http.Response, []string) {
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "/api/where/stops-for-location.json?lat=40.611583&lon=-122.380729&key=org.onebusaway.iphone", nil)
 		require.NoError(t, err)
@@ -297,23 +295,20 @@ func TestStopsForLocationAcrossServiceDate(t *testing.T) {
 		return rr.Result(), stopData
 	}
 
-	// 2. GET stops-for-location at Date 1
 	resp1, stopData1 := makeReq()
 	defer func() { _ = resp1.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp1.StatusCode)
 	require.Empty(t, resp1.Header.Get("ETag"))
 
-	// 3. Date 2: Saturday, Jan 25, 2025 (Weekend service active)
+	// Date 2: Saturday, Jan 25, 2025 (Weekend service active)
 	t2 := time.Date(2025, 1, 25, 12, 0, 0, 0, time.UTC)
 	mockClock.Set(t2)
 
-	// 4. GET stops-for-location at Date 2
 	resp2, stopData2 := makeReq()
 	defer func() { _ = resp2.Body.Close() }()
 	require.Equal(t, http.StatusOK, resp2.StatusCode)
 	require.Empty(t, resp2.Header.Get("ETag"))
 
-	// 5. Assert responses differ across the service date boundary
 	t.Logf("Stop data on %s: %v", t1.Format("2006-01-02"), stopData1)
 	t.Logf("Stop data on %s: %v", t2.Format("2006-01-02"), stopData2)
 	require.NotEmpty(t, stopData1, "Expected stops to be returned for weekday")
