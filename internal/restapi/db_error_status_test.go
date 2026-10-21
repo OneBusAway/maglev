@@ -39,11 +39,6 @@ func apiWithClosedDB(t *testing.T) *RestAPI {
 // CONTRIBUTING.md asks handlers to distinguish "not found" from "the query
 // itself failed", so a database failure must not be reported to the client as a
 // missing entity.
-//
-// tripHandler is not covered here: its GetTrip lookup runs first and still maps
-// every error to 404, so a closed database never reaches the agency lookup this
-// change fixes. That blanket 404 is shared with trip_details_handler.go and is
-// left for a separate change.
 func TestDatabaseFailureIsNotReportedAsNotFound(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -51,11 +46,58 @@ func TestDatabaseFailureIsNotReportedAsNotFound(t *testing.T) {
 	}{
 		{name: "shapes", endpoint: shapeURL("agency_shape")},
 		{name: "schedule-for-route", endpoint: scheduleForRouteURL("agency_route", "")},
+		{name: "trip", endpoint: tripURL("agency_trip")},
+		{name: "trip-details", endpoint: "/api/where/trip-details/agency_trip.json?key=TEST"},
+		{name: "stop", endpoint: stopURL("agency_stop")},
+		{name: "schedule-for-stop", endpoint: "/api/where/schedule-for-stop/agency_stop.json?key=TEST"},
+		{name: "stops-for-route", endpoint: "/api/where/stops-for-route/agency_route.json?key=TEST"},
+		{name: "arrivals-and-departures-for-stop", endpoint: "/api/where/arrivals-and-departures-for-stop/agency_stop.json?key=TEST"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resp, model := callAPIHandler[models.ResponseModel](t, apiWithClosedDB(t), tt.endpoint)
+
+			assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+			assert.Equal(t, http.StatusInternalServerError, model.Code)
+		})
+	}
+}
+
+// Subsequent lookups that follow an initial successful check (e.g., GetAgency or
+// BlockHasTripForAgency) must also report database failures as 500 rather than
+// 404. We drop the downstream table on a RABA fixture so the initial lookup
+// succeeds and only the second lookup encounters the database failure.
+func TestSubsequentDatabaseFailureIsNotReportedAsNotFound(t *testing.T) {
+	tests := []struct {
+		name      string
+		dropTable string
+		endpoint  string
+	}{
+		{
+			name:      "stops-for-route",
+			dropTable: "routes",
+			endpoint:  "/api/where/stops-for-route/25_151.json?key=TEST",
+		},
+		{
+			name:      "schedule-for-stop",
+			dropTable: "stops",
+			endpoint:  "/api/where/schedule-for-stop/25_4062.json?key=TEST",
+		},
+		{
+			name:      "block",
+			dropTable: "stop_times",
+			endpoint:  blockURL("25_1"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithFeed(t, models.GetFixturePath(t, "raba.zip"))
+			_, err := api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(), "PRAGMA foreign_keys=OFF; DROP TABLE "+tt.dropTable)
+			require.NoError(t, err)
+
+			resp, model := callAPIHandler[models.ResponseModel](t, api, tt.endpoint)
 
 			assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 			assert.Equal(t, http.StatusInternalServerError, model.Code)
