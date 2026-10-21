@@ -833,6 +833,16 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 		service  = "svc_under"
 		alertID  = "under-alert"
 	)
+	// The package shares one GTFS database. These rows have to come back out
+	// before the next test reads stop 4062 or the agency list.
+	t.Cleanup(func() {
+		api.GtfsManager.MockResetRealTimeData()
+		_, _ = db.Exec(`DELETE FROM stop_times WHERE trip_id = ?`, tripID)
+		_, _ = db.Exec(`DELETE FROM trips WHERE id = ?`, tripID)
+		_, _ = db.Exec(`DELETE FROM routes WHERE id = ?`, routeID)
+		_, _ = db.Exec(`DELETE FROM calendar WHERE id = ?`, service)
+		_, _ = db.Exec(`DELETE FROM agencies WHERE id = ?`, agencyID)
+	})
 	_, err := db.Exec(`INSERT INTO agencies (id, name, url, timezone) VALUES (?, 'Underscore Agency', 'http://example.com', 'America/Los_Angeles')`, agencyID)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO routes (id, agency_id, short_name, type) VALUES (?, ?, 'Under', 3)`, routeID, agencyID)
