@@ -1,8 +1,11 @@
 package restapi
 
 import (
+	"context"
+	"errors"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"sort"
 	"strconv"
@@ -11,7 +14,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
@@ -67,6 +72,9 @@ func TestArrivalsAndDeparturesForLocationValidation(t *testing.T) {
 		{"invalid latitude", url.Values{"lat": {"99"}, "lon": {"-122.34952"}}, []string{"lat"}},
 		{"invalid longitude", url.Values{"lat": {"40.539367"}, "lon": {"-999"}}, []string{"lon"}},
 		{"non-numeric time", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "time": {"soon"}}, []string{"time"}},
+		{"negative time", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "time": {"-1"}}, []string{"time"}},
+		{"signed time", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "time": {"+1749837600000"}}, []string{"time"}},
+		{"date-only time", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "time": {"2025-06-13"}}, []string{"time"}},
 		{"zero maxCount", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "maxCount": {"0"}}, []string{"maxCount"}},
 		{"negative minutesBefore", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "minutesBefore": {"-5"}}, []string{"minutesBefore"}},
 		{"invalid frequencyMinutesBefore", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesBefore": {"invalid"}}, []string{"frequencyMinutesBefore"}},
@@ -89,6 +97,39 @@ func TestArrivalsAndDeparturesForLocationValidation(t *testing.T) {
 				assert.Contains(t, model.Data.FieldErrors, field)
 			}
 		})
+	}
+}
+
+// time accepts yyyy-MM-dd_HH-mm-ss in the agency timezone, like Java. The
+// arrivals must cluster around the requested hour, proving the value was read
+// as a datetime rather than ignored in favor of the clock.
+func TestArrivalsAndDeparturesForLocationAcceptsDateTimeFormat(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
+		arrivalsForLocationURL(url.Values{
+			"lat":    {"40.539367"},
+			"lon":    {"-122.34952"},
+			"radius": {"2500"},
+			"time":   {"2025-06-13_08-00-00"},
+		}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, model.Data.FieldErrors)
+
+	arrivals := model.Data.Entry.ArrivalsAndDepartures
+	require.NotEmpty(t, arrivals, "Friday 08:00 must have scheduled service on the fixture")
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	// The shared URL helper requests minutesBefore=60 and minutesAfter=240.
+	windowStart := time.Date(2025, 6, 13, 7, 0, 0, 0, loc).UnixMilli()
+	windowEnd := time.Date(2025, 6, 13, 12, 0, 0, 0, loc).UnixMilli()
+	for _, a := range arrivals {
+		scheduled := a.ScheduledArrivalTime.UnixMilli()
+		assert.GreaterOrEqual(t, scheduled, windowStart, "arrival scheduled before the requested window")
+		assert.LessOrEqual(t, scheduled, windowEnd, "arrival scheduled after the requested window")
 	}
 }
 
@@ -139,13 +180,32 @@ func TestArrivalsAndDeparturesForLocationEndToEnd(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.Trips)
 }
 
-func TestArrivalsAndDeparturesForLocationSortsArrivalsByTime(t *testing.T) {
+// stopIds come nearest first so maxCount truncation drops the farthest
+// stops; arrivals group by stop in the same order with best-arrival-time
+// order inside each stop.
+func TestArrivalsAndDeparturesForLocationOrdersNearestStopFirst(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
 
 	_, model := callArrivalsForLocation(t, api)
-	arrivals := model.Data.Entry.ArrivalsAndDepartures
-	require.Greater(t, len(arrivals), 1, "need at least two arrivals to check ordering")
+	entry := model.Data.Entry
+	require.Greater(t, len(entry.StopIDs), 1, "need at least two stops to check ordering")
+	require.Greater(t, len(entry.ArrivalsAndDepartures), 1, "need at least two arrivals to check ordering")
+
+	coords := make(map[string]models.Stop, len(model.Data.References.Stops))
+	for _, s := range model.Data.References.Stops {
+		coords[s.ID] = s
+	}
+	distance := func(id string) float64 {
+		s, ok := coords[id]
+		require.True(t, ok, "stop %s must resolve in references.stops", id)
+		return utils.Distance(40.539367, -122.34952, s.Lat, s.Lon)
+	}
+
+	for i := 1; i < len(entry.StopIDs); i++ {
+		assert.LessOrEqual(t, distance(entry.StopIDs[i-1]), distance(entry.StopIDs[i]),
+			"stopIds must be ordered nearest first")
+	}
 
 	effective := func(a models.ArrivalAndDeparture) int64 {
 		if a.PredictedArrivalTime.UnixMilli() > 0 {
@@ -153,9 +213,16 @@ func TestArrivalsAndDeparturesForLocationSortsArrivalsByTime(t *testing.T) {
 		}
 		return a.ScheduledArrivalTime.UnixMilli()
 	}
+	arrivals := entry.ArrivalsAndDepartures
 	for i := 1; i < len(arrivals); i++ {
-		assert.LessOrEqual(t, effective(arrivals[i-1]), effective(arrivals[i]),
-			"arrivals must be ordered by effective arrival time")
+		prev, curr := arrivals[i-1], arrivals[i]
+		if prev.StopID == curr.StopID {
+			assert.LessOrEqual(t, effective(prev), effective(curr),
+				"arrivals at one stop must be ordered by best arrival time")
+		} else {
+			assert.LessOrEqual(t, distance(prev.StopID), distance(curr.StopID),
+				"arrivals must be grouped nearest stop first")
+		}
 	}
 }
 
@@ -195,12 +262,19 @@ func TestArrivalsAndDeparturesForLocationMaxCount(t *testing.T) {
 	assert.LessOrEqual(t, len(entry.NearbyStopIDs), 1)
 
 	// References must cover only the retained entry results, not the stops and
-	// arrivals maxCount trimmed away.
+	// arrivals maxCount trimmed away. "Retained" spans every ID the kept
+	// arrivals name, not just the three lists: maxCount trims stopIDs and
+	// arrivals independently, so a kept arrival's own stop can be absent from
+	// stopIDs, and its trip status names stops and an active trip that no list
+	// carries.
 	retainedTrips := make(map[string]bool, len(entry.ArrivalsAndDepartures))
 	retainedRoutes := make(map[string]bool, len(entry.ArrivalsAndDepartures))
 	for _, a := range entry.ArrivalsAndDepartures {
 		retainedTrips[a.TripID] = true
 		retainedRoutes[a.RouteID] = true
+		if a.TripStatus != nil && a.TripStatus.ActiveTripID != "" {
+			retainedTrips[a.TripStatus.ActiveTripID] = true
+		}
 	}
 	referencedTrips := make(map[string]bool, len(limited.Data.References.Trips))
 	for _, tr := range limited.Data.References.Trips {
@@ -224,6 +298,11 @@ func TestArrivalsAndDeparturesForLocationMaxCount(t *testing.T) {
 	for _, n := range entry.NearbyStopIDs {
 		retainedStops[n.StopID] = true
 	}
+	for _, a := range entry.ArrivalsAndDepartures {
+		for _, id := range arrivalStopIDs(a) {
+			retainedStops[id] = true
+		}
+	}
 	referencedStops := make(map[string]bool, len(limited.Data.References.Stops))
 	for _, s := range limited.Data.References.Stops {
 		assert.True(t, retainedStops[s.ID], "references.stops %s is not in the retained entry", s.ID)
@@ -232,6 +311,80 @@ func TestArrivalsAndDeparturesForLocationMaxCount(t *testing.T) {
 	for stopID := range retainedStops {
 		assert.True(t, referencedStops[stopID], "retained stop %s must resolve in references.stops", stopID)
 	}
+}
+
+// arrivalStopIDs returns every stop ID one arrival names: its own stop plus the
+// stops its trip status points at.
+func arrivalStopIDs(a models.ArrivalAndDeparture) []string {
+	ids := []string{a.StopID}
+	if a.TripStatus != nil {
+		ids = append(ids, a.TripStatus.NextStop, a.TripStatus.ClosestStop)
+	}
+	kept := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			kept = append(kept, id)
+		}
+	}
+	return kept
+}
+
+// TestArrivalsAndDeparturesForLocationReferencesResolveArrivalIDs pins the
+// invariant recordTripStatusReferences exists for: every ID an arrival emits
+// resolves in the references block. The maxCount test covers the truncated
+// case; this one covers an untruncated response, where the trip status stops
+// and active trip are the IDs no entry list carries.
+func TestArrivalsAndDeparturesForLocationReferencesResolveArrivalIDs(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	_, model := callArrivalsForLocation(t, api, url.Values{
+		"minutesBefore": {"5"},
+		"minutesAfter":  {"35"},
+		"maxCount":      {strconv.Itoa(models.MaxCountForArrivalsForLocation)},
+	})
+
+	entry := model.Data.Entry
+	require.NotEmpty(t, entry.ArrivalsAndDepartures)
+	require.False(t, entry.LimitExceeded, "this case must not truncate any list")
+
+	referencedStops := make(map[string]bool, len(model.Data.References.Stops))
+	for _, s := range model.Data.References.Stops {
+		referencedStops[s.ID] = true
+	}
+	referencedTrips := make(map[string]bool, len(model.Data.References.Trips))
+	for _, tr := range model.Data.References.Trips {
+		referencedTrips[tr.ID] = true
+	}
+
+	sawTripStatusStop := false
+	sawReassignedTrip := false
+	for i, a := range entry.ArrivalsAndDepartures {
+		for _, id := range arrivalStopIDs(a) {
+			assert.True(t, referencedStops[id],
+				"arrival[%d] names stop %s, which must resolve in references.stops", i, id)
+		}
+		assert.True(t, referencedTrips[a.TripID],
+			"arrival[%d].tripId %s must resolve in references.trips", i, a.TripID)
+		if a.TripStatus == nil {
+			continue
+		}
+		if a.TripStatus.NextStop != "" || a.TripStatus.ClosestStop != "" {
+			sawTripStatusStop = true
+		}
+		if a.TripStatus.ActiveTripID == "" {
+			continue
+		}
+		if a.TripStatus.ActiveTripID != a.TripID {
+			sawReassignedTrip = true
+		}
+		assert.True(t, referencedTrips[a.TripStatus.ActiveTripID],
+			"arrival[%d].tripStatus.activeTripId %s must resolve in references.trips", i, a.TripStatus.ActiveTripID)
+	}
+	require.True(t, sawTripStatusStop,
+		"fixture must produce a trip status naming a stop, or this test proves nothing")
+	require.True(t, sawReassignedTrip,
+		"fixture must produce an activeTripId differing from the arrival's trip")
 }
 
 // maxCount above the endpoint ceiling clamps rather than erroring, matching the
@@ -299,6 +452,16 @@ func TestArrivalsAndDeparturesForLocationEmptyArea(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 		assert.Equal(t, http.StatusNotFound, model.Code)
+	})
+
+	t.Run("bad time in an empty area still fails validation", func(t *testing.T) {
+		q := url.Values{"time": {"garbage"}}
+		maps.Copy(q, emptyArea)
+		resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
+			arrivalsForLocationURL(q))
+
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Contains(t, model.Data.FieldErrors, "time")
 	})
 }
 
@@ -420,6 +583,32 @@ func TestParseArrivalsForLocationMaxCountClampsToCeiling(t *testing.T) {
 	assert.Empty(t, collected, "clamping above the ceiling must not error")
 }
 
+// A neighbour near the corner of the 100 m square box is inside the box on
+// both axes but over 100 m away in a straight line. Java still counts it as
+// nearby; a straight-line circle check would wrongly drop it.
+func TestNearbyCandidateIDsIncludesBoxCornerNeighbor(t *testing.T) {
+	center := gtfsdb.Stop{ID: "center", Lat: 40.0, Lon: -122.0}
+	corner := gtfsdb.Stop{ID: "corner",
+		Lat: 40.0 + 90.0/111320.0,
+		// cos(40°) ≈ 0.766 corrects the longitude scale.
+		Lon: -122.0 + 90.0/(111320.0*0.766),
+	}
+	far := gtfsdb.Stop{ID: "far",
+		Lat: 40.0 + 150.0/111320.0,
+		Lon: -122.0 + 150.0/(111320.0*0.766),
+	}
+
+	require.Greater(t, utils.Distance(center.Lat, center.Lon, corner.Lat, corner.Lon), 100.0,
+		"corner neighbour must be outside a 100 m circle for the test to mean anything")
+
+	nearIDs, err := nearbyCandidateIDs(context.Background(),
+		[]gtfsdb.Stop{corner, far, center}, []gtfsdb.Stop{center})
+	require.NoError(t, err)
+	assert.True(t, nearIDs["corner"], "box-corner neighbour must be nearby")
+	assert.False(t, nearIDs["far"], "stop outside the box must not be nearby")
+	assert.False(t, nearIDs["center"], "a stop must never be nearby to itself")
+}
+
 // minutes=153722868 would overflow time.Duration(minutes)*time.Minute into a
 // negative duration; the cap must apply before the conversion.
 func TestParseMinutesValueCapsBeforeDurationOverflow(t *testing.T) {
@@ -438,4 +627,62 @@ func TestParseMinutesValueCapsBeforeDurationOverflow(t *testing.T) {
 	assert.Equal(t, 5*time.Minute,
 		parseMinutesValue(url.Values{"minutesBefore": {"-5"}}, "minutesBefore", 5*time.Minute, maxArrivalWindow, addError))
 	assert.Contains(t, collected, "minutesBefore")
+}
+
+// A cancelled request must not be reported as a server failure: client
+// cancellation writes nothing, an expired deadline writes 504.
+func TestSendArrivalsForLocationErrorDistinguishesCancellation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	newRequest := func(ctx context.Context) (*httptest.ResponseRecorder, *http.Request) {
+		req := httptest.NewRequest(http.MethodGet, "/api/where/arrivals-and-departures-for-location.json", nil).WithContext(ctx)
+		return httptest.NewRecorder(), req
+	}
+
+	t.Run("client cancellation writes nothing", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		rec, req := newRequest(ctx)
+
+		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
+
+		assert.Empty(t, rec.Body.String(), "no body should be written when the client cancels")
+	})
+
+	t.Run("expired deadline writes gateway timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 0)
+		defer cancel()
+		rec, req := newRequest(ctx)
+
+		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
+
+		assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
+		assert.Contains(t, rec.Body.String(), "gateway timeout")
+	})
+
+	t.Run("genuine failure writes server error", func(t *testing.T) {
+		ctx := context.Background()
+		rec, req := newRequest(ctx)
+
+		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+}
+
+// Nearby stops served only by routes with no service on the query date are
+// dropped, matching Java (e.g. a seasonal shuttle outside its season).
+func TestBuildNearbyResultsDropsStopsInactiveOnDate(t *testing.T) {
+	stops := []gtfsdb.Stop{
+		{ID: "active", Lat: 40.0, Lon: -122.0},
+		{ID: "inactive", Lat: 40.0, Lon: -122.0},
+	}
+	combined := map[string]string{"active": "25_active", "inactive": "25_inactive"}
+	loc := &internalgtfs.LocationParams{Lat: 40.0, Lon: -122.0}
+
+	results := buildNearbyResults(stops, nil, map[string]bool{"active": true, "inactive": false}, combined, loc)
+
+	require.Len(t, results, 1, "stops with no active routes must be dropped")
+	assert.Equal(t, "25_active", results[0].StopID)
 }

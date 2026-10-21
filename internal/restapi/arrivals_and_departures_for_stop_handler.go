@@ -126,6 +126,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
+	// Sort after buildArrival so predicted times are already filled in.
+	sortArrivalsByBestTime(result.Arrivals)
+
 	// Nothing scheduled in the window: emit the bare envelope without paying
 	// for reference, alert or nearby-stop lookups.
 	if !result.Matched {

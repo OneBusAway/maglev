@@ -378,34 +378,60 @@ func TestStopsForRouteNullDirectionID(t *testing.T) {
 	require.Len(t, entry.StopGroupings, 1)
 	stopGroups := entry.StopGroupings[0].StopGroups
 	require.Len(t, stopGroups, 1, "expected one stop group for the single NULL direction_id")
+	assert.Equal(t, "0", stopGroups[0].ID)
 	assert.ElementsMatch(t, wantStops, stopGroups[0].StopIds,
 		"the group must contain every stop served across all trips")
 }
 
 func TestDisambiguateGroupNames(t *testing.T) {
-	group := func(id, name string) models.StopGroup {
-		return models.StopGroup{ID: id, Name: models.StopGroupName{Name: name, Names: []string{name}}}
+	group := func(id, name string) routeStopGroup {
+		return routeStopGroup{StopGroup: models.StopGroup{ID: id, Name: models.StopGroupName{Name: name, Names: []string{name}}}}
+	}
+	noDirectionGroup := func(id, name string) routeStopGroup {
+		g := group(id, name)
+		g.noDirection = true
+		return g
 	}
 
 	tests := []struct {
 		name      string
-		groups    []models.StopGroup
+		groups    []routeStopGroup
 		wantNames []string
 	}{
 		{
 			name:      "distinct names are left untouched",
-			groups:    []models.StopGroup{group("0", "Downtown"), group("1", "Airport")},
+			groups:    []routeStopGroup{group("0", "Downtown"), group("1", "Airport")},
 			wantNames: []string{"Downtown", "Airport"},
 		},
 		{
 			name:      "shared name is disambiguated with the direction id",
-			groups:    []models.StopGroup{group("0", "Shasta Lake"), group("1", "Shasta Lake")},
+			groups:    []routeStopGroup{group("0", "Shasta Lake"), group("1", "Shasta Lake")},
 			wantNames: []string{"Shasta Lake - 0", "Shasta Lake - 1"},
 		},
 		{
 			name:      "only colliding groups are suffixed, unique name is left alone",
-			groups:    []models.StopGroup{group("0", "Loop"), group("1", "Loop"), group("2", "Express")},
+			groups:    []routeStopGroup{group("0", "Loop"), group("1", "Loop"), group("2", "Express")},
 			wantNames: []string{"Loop - 0", "Loop - 1", "Express"},
+		},
+		{
+			name:      "group without a direction id is labelled, direction group keeps its name",
+			groups:    []routeStopGroup{group("1", "Northbound"), noDirectionGroup("2", "Northbound")},
+			wantNames: []string{"Northbound", "Northbound - no direction"},
+		},
+		{
+			name:      "group without a direction id keeps a unique name",
+			groups:    []routeStopGroup{group("0", "Southbound"), noDirectionGroup("1", "Northbound")},
+			wantNames: []string{"Southbound", "Northbound"},
+		},
+		{
+			name:      "direction groups sharing a name with each other and the group without a direction",
+			groups:    []routeStopGroup{group("0", "Loop"), group("1", "Loop"), noDirectionGroup("2", "Loop")},
+			wantNames: []string{"Loop - 0", "Loop - 1", "Loop - no direction"},
+		},
+		{
+			name:      "label of the group without a direction collides with a direction group's name",
+			groups:    []routeStopGroup{group("1", "A"), group("2", "A - no direction"), noDirectionGroup("3", "A")},
+			wantNames: []string{"A", "A - no direction", "A - no direction - no direction"},
 		},
 	}
 
@@ -420,17 +446,47 @@ func TestDisambiguateGroupNames(t *testing.T) {
 	}
 }
 
+func TestNoDirectionStopGroupID(t *testing.T) {
+	tests := []struct {
+		name   string
+		groups []directionGroup
+		want   string
+	}{
+		{
+			name:   "no direction groups at all",
+			groups: []directionGroup{{DirectionID: nullDir()}},
+			want:   "0",
+		},
+		{
+			name:   "follows the last of directions 0 and 1",
+			groups: []directionGroup{{DirectionID: dir(0)}, {DirectionID: dir(1)}, {DirectionID: nullDir()}},
+			want:   "2",
+		},
+		{
+			name:   "follows the highest direction id, not the count",
+			groups: []directionGroup{{DirectionID: dir(1)}, {DirectionID: nullDir()}},
+			want:   "2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, noDirectionStopGroupID(tt.groups))
+		})
+	}
+}
+
 // TestDisambiguateGroupNamesCollidesWithUniqueName covers the case where suffixing
 // a duplicated name produces a string that already exists as another group's
 // unique name ("A", "A", "A - 0"): the generated "A - 0" must be pushed further
 // so every final name stays unique. It also asserts the outcome is independent of
 // input order, which is what makes the later name-based sort stable.
 func TestDisambiguateGroupNamesCollidesWithUniqueName(t *testing.T) {
-	newGroups := func() []models.StopGroup {
-		mk := func(id, name string) models.StopGroup {
-			return models.StopGroup{ID: id, Name: models.StopGroupName{Name: name, Names: []string{name}}}
+	newGroups := func() []routeStopGroup {
+		mk := func(id, name string) routeStopGroup {
+			return routeStopGroup{StopGroup: models.StopGroup{ID: id, Name: models.StopGroupName{Name: name, Names: []string{name}}}}
 		}
-		return []models.StopGroup{mk("0", "A"), mk("1", "A"), mk("2", "A - 0")}
+		return []routeStopGroup{mk("0", "A"), mk("1", "A"), mk("2", "A - 0")}
 	}
 
 	// Final name per direction id, regardless of the order groups arrive in.
@@ -440,7 +496,7 @@ func TestDisambiguateGroupNamesCollidesWithUniqueName(t *testing.T) {
 		"2": "A - 0 - 2",
 	}
 
-	assertResolved := func(t *testing.T, groups []models.StopGroup) {
+	assertResolved := func(t *testing.T, groups []routeStopGroup) {
 		seen := make(map[string]bool)
 		for _, g := range groups {
 			assert.Equal(t, wantByID[g.ID], g.Name.Name, "group %s", g.ID)
@@ -507,9 +563,7 @@ func TestStopsForRouteIncludesCrossAgencyRouteOwner(t *testing.T) {
 }
 
 // TestStopsForRouteKeepsStopsOfTripsWithoutDirection guards against dropping
-// stops that only trips with a NULL direction_id serve. Those trips are grouped
-// under direction "0", so their stops must appear in that group. On RABA,
-// route 15 stop 1504 is only served by such trips.
+// stops that only trips with a NULL direction_id serve.
 func TestStopsForRouteKeepsStopsOfTripsWithoutDirection(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -521,14 +575,37 @@ func TestStopsForRouteKeepsStopsOfTripsWithoutDirection(t *testing.T) {
 	assert.Contains(t, entry.StopIds, "25_1504")
 
 	require.Len(t, entry.StopGroupings, 1)
-	var direction0 []string
+	stopIDsByGroup := make(map[string][]string)
+	namesByGroup := make(map[string]string)
 	for _, group := range entry.StopGroupings[0].StopGroups {
-		if group.ID == "0" {
-			direction0 = group.StopIds
-		}
+		stopIDsByGroup[group.ID] = group.StopIds
+		namesByGroup[group.ID] = group.Name.Name
 	}
-	require.NotNil(t, direction0, "expected a direction 0 stop group")
-	assert.Contains(t, direction0, "25_1504")
+	require.Len(t, stopIDsByGroup, 3)
+	require.Contains(t, stopIDsByGroup, "2", "trips without a direction_id get the id after directions 0 and 1")
+	assert.Equal(t, []string{"25_2000", "25_1801", "25_1501", "25_1505", "25_1504"}, stopIDsByGroup["2"])
+	assert.Equal(t, "Northbound - no direction", namesByGroup["2"])
+	assert.Equal(t, "Northbound", namesByGroup["1"])
+	assert.NotContains(t, stopIDsByGroup["0"], "25_1504")
+	assert.Equal(t, "Southbound", namesByGroup["0"])
+}
+
+// TestStopsForRouteNoDirectionGroupHasIDZero covers a route none of whose trips
+// carry a direction_id (RABA 44X): its single stop group keeps the numeric id
+// "0", as Java's clustering fallback assigns, so clients that parse group ids
+// as integers do not drop it.
+func TestStopsForRouteNoDirectionGroupHasIDZero(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api, "/api/where/stops-for-route/25_44X.json?key=TEST")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.Len(t, model.Data.Entry.StopGroupings, 1)
+	stopGroups := model.Data.Entry.StopGroupings[0].StopGroups
+	require.Len(t, stopGroups, 1)
+	assert.Equal(t, "0", stopGroups[0].ID)
+	assert.NotEmpty(t, stopGroups[0].StopIds)
 }
 
 // TestStopsForRouteOrdersStopsAcrossTripVariants guards the canonical stop

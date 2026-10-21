@@ -215,3 +215,72 @@ func TestParseArrivalFrequencyWindows(t *testing.T) {
 		}
 	}
 }
+
+// Each agency has the same absolute arrivals, expressed in its own timezone.
+// Querying either agency prefix must preserve both regular and frequency trips.
+func TestArrivalFrequencyWindowsSharedStopTimezones(t *testing.T) {
+	const secondAgency = "paris-agency"
+	files := frequencyFixtureFiles()
+	files["agency.txt"] += secondAgency + ",Paris Agency,http://example.com,Europe/Paris\n"
+	for _, name := range []string{"routes.txt", "trips.txt", "stop_times.txt", "frequencies.txt"} {
+		_, rows, ok := strings.Cut(files[name], "\n")
+		require.True(t, ok)
+		rows = strings.NewReplacer(
+			freqAgencyID, secondAgency,
+			freqRouteID, "paris-route",
+			freqTripID, "paris-trip",
+			freqExactTripID, "paris-exact-trip",
+			freqNormalTripD, "paris-normal-trip",
+			"freq-block-", "paris-block-",
+		).Replace(rows)
+		if name == "stop_times.txt" || name == "frequencies.txt" {
+			// Paris is UTC+2 on this service date.
+			rows = strings.NewReplacer("06:", "08:", "08:", "10:", "09:", "11:").Replace(rows)
+		}
+		files[name] += rows
+	}
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(frequencyFixtureClock), "frequency-shared-timezones.zip", files)
+	defer api.Shutdown()
+
+	frequencyTrips := []string{freqTripID, freqExactTripID, "paris-trip", "paris-exact-trip"}
+	regularTrips := []string{freqNormalTripD, "paris-normal-trip"}
+	tests := []struct {
+		name         string
+		hour, second int
+		params       url.Values
+		want         []string
+	}{
+		{"wider frequency after", 5, 0, url.Values{
+			"minutesBefore": {"0"}, "minutesAfter": {"0"},
+			"frequencyMinutesBefore": {"0"}, "frequencyMinutesAfter": {"60"},
+		}, frequencyTrips},
+		{"wider frequency before and regular match", 8, 0, url.Values{
+			"minutesBefore": {"0"}, "minutesAfter": {"0"},
+			"frequencyMinutesBefore": {"120"}, "frequencyMinutesAfter": {"0"},
+		}, append(append([]string{}, frequencyTrips...), regularTrips...)},
+		{"narrow frequency window preserves regular trips", 6, 1, url.Values{
+			"minutesBefore": {"0"}, "minutesAfter": {"120"},
+			"frequencyMinutesBefore": {"0"}, "frequencyMinutesAfter": {"0"},
+		}, regularTrips},
+	}
+	for _, agency := range []string{freqAgencyID, secondAgency} {
+		for _, tt := range tests {
+			t.Run(agency+"/"+tt.name, func(t *testing.T) {
+				queryTime := time.Date(2025, 6, 12, tt.hour, 0, tt.second, 0, time.UTC)
+				params := url.Values{"time": {fmt.Sprint(queryTime.UnixMilli())}}
+				maps.Copy(params, tt.params)
+				resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+					arrivalsAndDeparturesURL(utils.FormCombinedID(agency, freqStopAID), params))
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				assertFrequencyWindowTrips(t, model.Data.Entry.ArrivalsAndDepartures, tt.want)
+				for _, arrival := range model.Data.Entry.ArrivalsAndDepartures {
+					wantHour := 6
+					if arrival.Frequency == nil {
+						wantHour = 8
+					}
+					assert.Equal(t, time.Date(2025, 6, 12, wantHour, 0, 0, 0, time.UTC).UnixMilli(), arrival.ScheduledArrivalTime.UnixMilli())
+				}
+			})
+		}
+	}
+}
