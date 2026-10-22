@@ -453,10 +453,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 			continue
 		}
 
-		var blockID string
-		if refTrip.BlockID.Valid && refTrip.BlockID.String != "" {
-			blockID = utils.FormCombinedID(agencyID, refTrip.BlockID.String)
-		}
+		blockID := utils.FormBlockID(agencyID, refTrip.BlockID.String, refTrip.ID)
 
 		refTripModel := &models.Trip{
 			ID:             entry.combinedID,

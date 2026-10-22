@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/models"
 )
 
 func reportProblemWithTripURL(tripID string, params ...url.Values) string {
@@ -92,4 +93,40 @@ func TestReportProblemWithTripSanitization(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, respLong.StatusCode, "Should handle massive user comments gracefully")
 	assert.Equal(t, http.StatusOK, modelLong.Code)
+}
+
+func TestReportProblemWithTripDatabaseFailure(t *testing.T) {
+	api := apiWithClosedDB(t)
+
+	resp, model := callAPIHandler[models.ResponseModel](t, api, reportProblemWithTripURL("1_12345"))
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
+	assert.Equal(t, http.StatusInternalServerError, model.Code)
+	assert.Equal(t, "internal server error", model.Text)
+	assert.Equal(t, models.APIVersion, model.Version)
+}
+
+func TestReportProblemWithTripNullStorage(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[EmptyResponse](t, api, reportProblemWithTripURL("1_12345", url.Values{
+		"vehicleId": {"1_3521"},
+		"stopId":    {"1_75403"},
+	}))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+
+	reports, err := api.GtfsManager.GtfsDB.Queries.GetProblemReportsByTrip(t.Context(), "12345")
+	require.NoError(t, err)
+	require.NotEmpty(t, reports)
+
+	latest := reports[0]
+	assert.True(t, latest.VehicleID.Valid)
+	assert.Equal(t, "1_3521", latest.VehicleID.String)
+	assert.True(t, latest.StopID.Valid)
+	assert.Equal(t, "1_75403", latest.StopID.String)
+	assert.False(t, latest.Code.Valid, "omitted code should be stored as SQL NULL")
+	assert.False(t, latest.UserComment.Valid, "omitted userComment should be stored as SQL NULL")
+	assert.False(t, latest.UserVehicleNumber.Valid, "omitted userVehicleNumber should be stored as SQL NULL")
 }
