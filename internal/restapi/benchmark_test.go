@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"sort"
 	"net/url"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -19,7 +19,6 @@ import (
 	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
-
 // Benchmark arrivals endpoint (hot path).
 //
 // The RABA fixture's calendar ended 2025-12-31, so a real clock leaves every trip
