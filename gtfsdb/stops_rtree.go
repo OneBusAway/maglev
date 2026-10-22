@@ -132,14 +132,17 @@ const getActiveRoutesWithinBoundsTemplate = `
 WITH nearby_stops AS (
     SELECT
         stops.id AS stop_id,
-        -- Haversine distance in km between stop and the query's center.
-        6371 * acos(
+        -- Great-circle distance in km between stop and the query's center
+        -- (spherical law of cosines). Rounding can push the acos argument just
+        -- above 1 when the center is exactly on a stop, and acos then returns
+        -- NULL, so clamp it to [-1, 1].
+        6371 * acos(min(1.0, max(-1.0,
             cos(radians(?1)) *
             cos(radians(stops.lat)) *
             cos(radians(stops.lon) - radians(?2)) +
             sin(radians(?1)) *
             sin(radians(stops.lat))
-        ) AS distance
+        ))) AS distance
     FROM stops
     JOIN stops_rtree r ON r.id = stops.rowid
     WHERE r.max_lat >= ?3 AND r.min_lat <= ?4
