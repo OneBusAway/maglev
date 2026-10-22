@@ -247,6 +247,22 @@ func (m *Manager) MockSetAgencyVehicles(feedID, agencyID string, vehicles []gtfs
 	m.rebuildMergedRealtimeLocked()
 }
 
+// MockSetAgencyTripUpdates replaces a feed's trip updates with the given
+// ones, all attributed to agencyID and dated now, and rebuilds the snapshot
+// so they reach TripUpdatesForAgency.
+func (m *Manager) MockSetAgencyTripUpdates(feedID, agencyID string, trips []gtfs.Trip) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	agencies := make(map[string]string, len(trips))
+	for i := range trips {
+		trips[i].IsEntityInMessage = true
+		agencies[trips[i].ID.ID] = agencyID
+	}
+	m.storeFeedTrips(feedID, tripAttribution{kept: trips, agencies: agencies}, time.Now())
+	m.rebuildMergedRealtimeLocked()
+}
+
 // MockResetRealTimeData clears all mock real-time vehicles, trip updates, and alerts.
 func (m *Manager) MockResetRealTimeData() {
 	m.realTimeMutex.Lock()

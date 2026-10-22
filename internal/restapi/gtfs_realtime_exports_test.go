@@ -16,20 +16,25 @@ import (
 var gtfsRealtimeExportPaths = []string{
 	"/api/gtfs_realtime/vehicle-positions-for-agency/",
 	"/api/gtfs_realtime/alerts-for-agency/",
+	"/api/gtfs_realtime/trip-updates-for-agency/",
 }
 
 // newGtfsRealtimeExportsTestAPI returns an API whose RABA agency has 30
-// vehicles and 30 alerts, enough for either feed to be gzipped.
+// vehicles, 30 alerts and 30 trip updates, enough for each feed to be
+// gzipped.
 func newGtfsRealtimeExportsTestAPI(t *testing.T) *RestAPI {
 	t.Helper()
 	var vehicles []gtfs.Vehicle
 	var alerts []gtfs.Alert
+	var trips []gtfs.Trip
 	for i := range 30 {
 		vehicles = append(vehicles, positionedVehicle(fmt.Sprintf("V%02d", i), 47+float32(i)/100))
 		alerts = append(alerts, rabaAlert(fmt.Sprintf("A%02d", i), "Stop closed for construction on Main Street"))
+		trips = append(trips, predictedTrip(fmt.Sprintf("T%02d", i), "S1"))
 	}
 	api := newAlertsTestAPI(t, alerts...)
 	api.GtfsManager.MockSetAgencyVehicles("_test", testdata.Raba.ID, vehicles)
+	api.GtfsManager.MockSetAgencyTripUpdates("_test", testdata.Raba.ID, trips)
 	return api
 }
 
