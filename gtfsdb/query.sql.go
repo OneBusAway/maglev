@@ -1779,6 +1779,89 @@ func (q *Queries) GetBlockDetails(ctx context.Context, blockID sql.NullString) (
 	return items, nil
 }
 
+const getBlockDetailsForTrip = `-- name: GetBlockDetailsForTrip :many
+SELECT
+    t.service_id,
+    t.id as trip_id,
+    t.route_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.pickup_type,
+    st.drop_off_type,
+    s.lat,
+    s.lon
+FROM
+    trips t
+        JOIN
+    routes r ON r.id = t.route_id
+        JOIN
+    stop_times st ON t.id = st.trip_id
+        JOIN
+    stops s ON st.stop_id = s.id
+WHERE
+    t.id = ?1
+    AND r.agency_id = ?2
+    AND (t.block_id IS NULL OR length(t.block_id) = 0)
+ORDER BY
+    t.id ASC, st.stop_sequence ASC
+`
+
+type GetBlockDetailsForTripParams struct {
+	TripID   string
+	AgencyID string
+}
+
+type GetBlockDetailsForTripRow struct {
+	ServiceID     string
+	TripID        string
+	RouteID       string
+	ArrivalTime   int64
+	DepartureTime int64
+	StopID        string
+	StopSequence  int64
+	PickupType    sql.NullInt64
+	DropOffType   sql.NullInt64
+	Lat           float64
+	Lon           float64
+}
+
+func (q *Queries) GetBlockDetailsForTrip(ctx context.Context, arg GetBlockDetailsForTripParams) ([]GetBlockDetailsForTripRow, error) {
+	rows, err := q.query(ctx, q.getBlockDetailsForTripStmt, getBlockDetailsForTrip, arg.TripID, arg.AgencyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetBlockDetailsForTripRow
+	for rows.Next() {
+		var i GetBlockDetailsForTripRow
+		if err := rows.Scan(
+			&i.ServiceID,
+			&i.TripID,
+			&i.RouteID,
+			&i.ArrivalTime,
+			&i.DepartureTime,
+			&i.StopID,
+			&i.StopSequence,
+			&i.PickupType,
+			&i.DropOffType,
+			&i.Lat,
+			&i.Lon,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getBlockIDByTripID = `-- name: GetBlockIDByTripID :one
 SELECT
     block_id
