@@ -64,6 +64,13 @@ type Manager struct {
 	// be resolved to any agency. Kept out of the merged view, but the metrics
 	// endpoint reports them as that feed's unmatched records.
 	feedUnattributedTrips map[string][]gtfs.Trip
+	// Per-feed agency each trip update was attributed to at ingestion, keyed
+	// by trip ID: its route's agency, else its static trip's, else the
+	// feed's first agency-ids entry. Trips without an agency have no entry.
+	feedTripAgency map[string]map[string]string // feedID -> tripID -> agencyID
+	// Per-feed time its trip data was produced: the trip-updates feed's
+	// header timestamp, else its fetch time.
+	feedTripDataTime map[string]time.Time
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
 	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
 	// No lock is required for reads.
@@ -97,6 +104,8 @@ func (manager *Manager) clearFeedData(feedID string) {
 
 	manager.feedTrips[feedID] = nil
 	delete(manager.feedUnattributedTrips, feedID)
+	delete(manager.feedTripAgency, feedID)
+	delete(manager.feedTripDataTime, feedID)
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
 
@@ -155,6 +164,8 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedVehicleAgency:    make(map[string]map[vehicleKey]string),
 		feedVehicleDataTime:  make(map[string]time.Time),
 		feedVehicleTimestamp: make(map[string]uint64),
+		feedTripAgency:       make(map[string]map[string]string),
+		feedTripDataTime:     make(map[string]time.Time),
 		Metrics:              config.Metrics,
 	}
 
