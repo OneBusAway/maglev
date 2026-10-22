@@ -132,6 +132,9 @@ func exportTripUpdate(update internalgtfs.TripUpdate) *gtfsrt.TripUpdate {
 		Trip:           exportTripDescriptor(update.Trip.ID),
 		StopTimeUpdate: make([]*gtfsrt.TripUpdate_StopTimeUpdate, 0, len(update.Trip.StopTimeUpdates)),
 	}
+	// Trip-updates sources set the relationship on every trip. SCHEDULED is
+	// the protocol default, so writing it never misstates an absent value.
+	tripUpdate.Trip.ScheduleRelationship = update.Trip.ID.ScheduleRelationship.Enum()
 	if !update.Timestamp.IsZero() {
 		tripUpdate.Timestamp = proto.Uint64(uint64(update.Timestamp.Unix()))
 	}
