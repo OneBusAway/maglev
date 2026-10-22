@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"database/sql"
+	"errors"
 	"net/http"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -25,7 +26,7 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	// Safety check: Ensure DB is initialized
 	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil || api.GtfsManager.GtfsDB.Queries == nil {
 		reqLogger.Error("report problem with stop failed: GTFS DB not initialized")
-		http.Error(w, `{"code":500, "text":"internal server error"}`, http.StatusInternalServerError)
+		api.serverErrorResponse(w, r, errors.New("GTFS DB not initialized"))
 		return
 	}
 
@@ -51,8 +52,8 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	now := api.Clock.Now().UnixMilli()
 	params := gtfsdb.CreateProblemReportStopParams{
 		StopID:               stopID,
-		Code:                 nulls.String(code),
-		UserComment:          nulls.String(userComment),
+		Code:                 nulls.NonEmptyString(code),
+		UserComment:          nulls.NonEmptyString(userComment),
 		UserLat:              nullableReportFloat(userLat, query.Get("userLat")),
 		UserLon:              nullableReportFloat(userLon, query.Get("userLon")),
 		UserLocationAccuracy: nullableReportFloat(userLocationAccuracy, query.Get("userLocationAccuracy")),
@@ -64,7 +65,7 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	if err != nil {
 		reqLogger.Error("failed to store problem report", "error", err,
 			"stop_id", stopID)
-		http.Error(w, `{"code":500, "text":"failed to store problem report"}`, http.StatusInternalServerError)
+		api.serverErrorResponse(w, r, err)
 		return
 	}
 

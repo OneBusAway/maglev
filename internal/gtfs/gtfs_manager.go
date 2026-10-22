@@ -840,7 +840,7 @@ func (manager *Manager) FeedExpiresAt(ctx context.Context) time.Time {
 	if err != nil || !metadata.FeedExpiresAt.Valid {
 		return time.Time{}
 	}
-	return time.Unix(metadata.FeedExpiresAt.Int64, 0)
+	return time.Unix(metadata.FeedExpiresAt.Int64, 0).UTC()
 }
 
 // SetFeedExpiresAtForTest sets the feed expiry time in the database for testing purposes.

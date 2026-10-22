@@ -1446,7 +1446,7 @@ func (s *tripReferenceSets) tripReferenceList(includeTrip bool) []models.Trip {
 			TripHeadsign:  trip.TripHeadsign,
 			TripShortName: trip.TripShortName,
 			DirectionID:   trip.DirectionID,
-			BlockID:       utils.FormCombinedID(route.AgencyID, trip.BlockID),
+			BlockID:       utils.FormBlockID(route.AgencyID, trip.BlockID, trip.ID),
 			ShapeID:       utils.FormCombinedID(route.AgencyID, trip.ShapeID),
 			PeakOffPeak:   0,
 			TimeZone:      "",
