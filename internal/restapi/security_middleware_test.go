@@ -150,6 +150,7 @@ func TestSecurityHeadersNoCORSWithoutOrigin(t *testing.T) {
 	assert.Equal(t, "DENY", headers.Get("X-Frame-Options"))
 }
 
+// TestSecurityHeadersCSP verifies Content-Security-Policy header rules across web UI and API paths.
 func TestSecurityHeadersCSP(t *testing.T) {
 	const strictCSP = "default-src 'none'; frame-ancestors 'none';"
 	const relaxedCSP = "default-src 'self'; style-src 'unsafe-inline'; img-src 'self'; frame-ancestors 'none';"
@@ -192,6 +193,21 @@ func TestSecurityHeadersCSP(t *testing.T) {
 		{
 			name:        "arbitrary endpoint",
 			path:        "/test",
+			expectedCSP: strictCSP,
+		},
+		{
+			name:        "lookalike endpoint prefixing debug",
+			path:        "/debugger",
+			expectedCSP: strictCSP,
+		},
+		{
+			name:        "lookalike endpoint with extension",
+			path:        "/debug.json",
+			expectedCSP: strictCSP,
+		},
+		{
+			name:        "lookalike endpoint with debug in path",
+			path:        "/api/where/debug/x",
 			expectedCSP: strictCSP,
 		},
 	}
