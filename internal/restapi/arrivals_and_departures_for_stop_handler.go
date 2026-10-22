@@ -2,8 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"net/http"
 	"time"
 
@@ -82,11 +80,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	if err != nil {
 		// Unknown agency (e.g. wrong-case agency in the URL) is a client
 		// error — surface 404 instead of 500.
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
