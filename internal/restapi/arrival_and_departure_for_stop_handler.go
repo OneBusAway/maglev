@@ -443,7 +443,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		trip.TripHeadsign.String,
 		"", // trip short name
 		strconv.FormatInt(trip.DirectionID.Int64, 10),
-		utils.FormCombinedID(route.AgencyID, trip.BlockID.String),
+		utils.FormBlockID(route.AgencyID, trip.BlockID.String, trip.ID),
 		utils.FormCombinedID(route.AgencyID, trip.ShapeID.String),
 	)
 	references.Trips = append(references.Trips, *tripRef)
@@ -465,7 +465,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 						activeTrip.TripHeadsign.String,
 						"", // trip short name
 						strconv.FormatInt(activeTrip.DirectionID.Int64, 10),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.BlockID.String),
+						utils.FormBlockID(activeRoute.AgencyID, activeTrip.BlockID.String, activeTrip.ID),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ShapeID.String),
 					)
 					references.Trips = append(references.Trips, *activeTripRef)
