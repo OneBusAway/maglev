@@ -1302,7 +1302,7 @@ func (rb *referenceBuilder) createTripReference(trip models.Trip, currentAgency 
 		TripHeadsign:  trip.TripHeadsign,
 		TripShortName: trip.TripShortName,
 		DirectionID:   trip.DirectionID,
-		BlockID:       utils.FormCombinedID(currentAgency, trip.BlockID),
+		BlockID:       utils.FormBlockID(currentAgency, trip.BlockID, trip.ID),
 		ShapeID:       utils.FormCombinedID(currentAgency, trip.ShapeID),
 		PeakOffPeak:   0,
 		TimeZone:      "",
