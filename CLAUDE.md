@@ -175,6 +175,7 @@ All endpoints are registered in `internal/restapi/routes.go`:
 | `/api/where/arrivals-and-departures-for-stop/{id}` | `arrival_and_departure_for_stop_handler.go` | All arrivals |
 | `/api/where/report-problem-with-trip/{id}` | `report_problem_with_trip_handler.go` | Report trip issue |
 | `/api/where/report-problem-with-stop/{id}` | `report_problem_with_stop_handler.go` | Report stop issue |
+| `/api/gtfs_realtime/vehicle-positions-for-agency/{id}.pb` | `vehicle_positions_for_agency_handler.go` | GTFS-RT vehicle positions for an agency |
 
 ## Middleware Components
 
@@ -307,6 +308,8 @@ reload and read through `GetRegionBounds()`.
 - `feedVehicles` - `map[string][]gtfs.Vehicle` — vehicles per feed
 - `feedAlerts` - `map[string][]gtfs.Alert` — alerts per feed
 - `feedVehicleLastSeen` - `map[string]map[string]time.Time` — per-feed, per-vehicle last-seen timestamps for stale vehicle expiry (15 min window)
+- `feedVehicleAgency` - `map[string]map[vehicleKey]string`: the one agency each vehicle was attributed to at ingestion (its route's agency, else the feed's first `agency-ids` entry)
+- `feedVehicleDataTime` - `map[string]time.Time`: when each feed's vehicle data was produced (header timestamp, else fetch time)
 
 *Derived merged view*, published by `rebuildMergedRealtimeLocked` after each feed
 update as one immutable `mergedRealtime` snapshot held in `merged
@@ -318,6 +321,7 @@ needs **no lock**. Never mutate what it returns:
 - `vehicleLookupByTrip` - Map of trip ID → vehicle index
 - `vehicleLookupByVehicle` - Map of vehicle ID → vehicle index
 - `duplicatedVehicleByRoute` - Map of route ID → DUPLICATED-trip vehicles
+- `vehiclePositionsByAgency` - Map of agency ID → `AgencyVehiclePositions` (fresh, one per vehicle ID, sorted, plus the feed data time) for the GTFS-RT export, read with `VehiclePositionsForAgency`
 - `alerts` - `alertIndex` of alerts by trip, route, agency and stop
 
 When a single feed refreshes, only its per-feed sub-map is overwritten; other feeds' data is untouched. A fresh snapshot is then built from all sub-maps and swapped in.

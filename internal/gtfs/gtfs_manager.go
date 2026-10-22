@@ -70,6 +70,12 @@ type Manager struct {
 	feedAgencyFilter map[string]map[string]bool
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
 	feedVehicleLastSeen map[string]map[vehicleKey]time.Time // feedID -> vehicleKey -> lastSeen
+	// Per-feed agency each vehicle was attributed to at ingestion. Vehicles
+	// without an agency have no entry.
+	feedVehicleAgency map[string]map[vehicleKey]string // feedID -> vehicleKey -> agencyID
+	// Per-feed time its vehicle data was produced: the vehicle feed's header
+	// timestamp, else its fetch time.
+	feedVehicleDataTime map[string]time.Time
 
 	// Per-feed last successfully applied vehicle feed timestamp
 	feedVehicleTimestamp map[string]uint64 // feedID -> timestamp
@@ -96,6 +102,8 @@ func (manager *Manager) clearFeedData(feedID string) {
 
 	delete(manager.feedVehicleTimestamp, feedID)
 	delete(manager.feedVehicleLastSeen, feedID)
+	delete(manager.feedVehicleAgency, feedID)
+	delete(manager.feedVehicleDataTime, feedID)
 
 	delete(manager.feedLastUpdate, feedID)
 
@@ -144,6 +152,8 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedLastUpdate:       make(map[string]time.Time),
 		feedAgencyFilter:     config.feedAgencyFilters(),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
+		feedVehicleAgency:    make(map[string]map[vehicleKey]string),
+		feedVehicleDataTime:  make(map[string]time.Time),
 		feedVehicleTimestamp: make(map[string]uint64),
 		Metrics:              config.Metrics,
 	}
