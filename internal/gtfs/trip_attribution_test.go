@@ -156,6 +156,19 @@ func TestTripAttributionIngestion(t *testing.T) {
 		assert.Empty(t, manager.feedTripAgency["feed"])
 	})
 
+	t.Run("lookup failure keeps each trip's last known agency", func(t *testing.T) {
+		manager := newAttributionTestManager(t)
+		require.True(t, manager.updateFeedRealtime(ctx, serveTripFeed(t, RTFeedConfig{ID: "feed"}, createdAt,
+			gtfs.TripID{ID: "T1"}, gtfs.TripID{ID: "T8", RouteID: "R2"})))
+		require.NoError(t, manager.GtfsDB.DB.Close())
+
+		require.True(t, manager.updateFeedRealtime(ctx, serveTripFeed(t, RTFeedConfig{ID: "feed"}, createdAt, gtfs.TripID{ID: "T1"})))
+
+		assert.Equal(t, map[string]string{"T1": "agency-A"}, manager.feedTripAgency["feed"],
+			"T8 left the feed, so its agency is dropped")
+		assert.Len(t, manager.TripUpdatesForAgency("agency-A").TripUpdates, 1)
+	})
+
 	t.Run("clearing the feed drops its attribution", func(t *testing.T) {
 		manager := newAttributionTestManager(t)
 		require.True(t, manager.updateFeedRealtime(ctx, serveTripFeed(t, RTFeedConfig{ID: "feed"}, createdAt, gtfs.TripID{ID: "T1"})))
