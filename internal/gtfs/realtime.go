@@ -866,7 +866,8 @@ type tripAttribution struct {
 	// agency. The JSON API leaves them out; the export files them under the
 	// feed's first agency.
 	unattributed []gtfs.Trip
-	// agencies maps trip ID to agency. Trips without one have no entry.
+	// agencies maps trip ID to agency. Trips without one have no entry. It is
+	// nil only when the attribution lookup failed.
 	agencies map[string]string
 }
 
@@ -948,10 +949,28 @@ func (manager *Manager) storeFeedTrips(feedID string, trips tripAttribution, hea
 	if headerTime.IsZero() {
 		headerTime = time.Now()
 	}
+	agencies := trips.agencies
+	if agencies == nil {
+		// Each trip keeps its last known agency until a lookup succeeds, as
+		// vehicles do.
+		agencies = lastKnownTripAgencies(manager.feedTripAgency[feedID], trips.kept)
+	}
 	manager.feedTrips[feedID] = trips.kept
 	manager.feedUnattributedTrips[feedID] = trips.unattributed
-	manager.feedTripAgency[feedID] = trips.agencies
+	manager.feedTripAgency[feedID] = agencies
 	manager.feedTripDataTime[feedID] = headerTime
+}
+
+// lastKnownTripAgencies returns the previous agencies of the trips still in
+// the feed.
+func lastKnownTripAgencies(previous map[string]string, trips []gtfs.Trip) map[string]string {
+	agencies := make(map[string]string, len(trips))
+	for _, trip := range trips {
+		if agencyID, ok := previous[trip.ID.ID]; ok {
+			agencies[trip.ID.ID] = agencyID
+		}
+	}
+	return agencies
 }
 
 // staticTripRoute is the route a static trip runs on, with that route's agency.
