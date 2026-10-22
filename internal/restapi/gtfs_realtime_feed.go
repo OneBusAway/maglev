@@ -3,7 +3,6 @@ package restapi
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -14,7 +13,6 @@ import (
 
 const (
 	gtfsRealtimeContentType = "application/x-protobuf"
-	gtfsDateLayout          = "20060102"
 	// etagHashBytes is how much of the SHA-256 of a feed goes into its ETag.
 	etagHashBytes = 16
 )
@@ -64,7 +62,10 @@ func exportVehiclePosition(vehicle gtfs.Vehicle) *gtfsrt.VehiclePosition {
 }
 
 func exportVehicleDescriptor(id gtfs.VehicleID) *gtfsrt.VehicleDescriptor {
-	descriptor := &gtfsrt.VehicleDescriptor{Id: proto.String(id.ID)}
+	descriptor := &gtfsrt.VehicleDescriptor{}
+	if id.ID != "" {
+		descriptor.Id = proto.String(id.ID)
+	}
 	if id.Label != "" {
 		descriptor.Label = proto.String(id.Label)
 	}
@@ -93,10 +94,10 @@ func exportTripDescriptor(trip gtfs.TripID) *gtfsrt.TripDescriptor {
 		descriptor.RouteId = proto.String(trip.RouteID)
 	}
 	if trip.HasStartDate {
-		descriptor.StartDate = proto.String(trip.StartDate.Format(gtfsDateLayout))
+		descriptor.StartDate = proto.String(trip.StartDate.Format(internalgtfs.ServiceDateLayout))
 	}
 	if trip.HasStartTime {
-		descriptor.StartTime = proto.String(formatGtfsServiceTime(trip.StartTime))
+		descriptor.StartTime = proto.String(internalgtfs.FormatServiceTime(trip.StartTime))
 	}
 	// Like congestion, go-gtfs stores the relationship as a plain value, so
 	// the SCHEDULED default can't be told apart from absent.
@@ -104,6 +105,74 @@ func exportTripDescriptor(trip gtfs.TripID) *gtfsrt.TripDescriptor {
 		descriptor.ScheduleRelationship = trip.ScheduleRelationship.Enum()
 	}
 	return descriptor
+}
+
+// newTripUpdatesFeed republishes an agency's trip updates as a GTFS-RT
+// feed, one entity per trip update, keyed by its entity ID.
+// incrementality is left unset, which means FULL_DATASET.
+func newTripUpdatesFeed(updates internalgtfs.AgencyTripUpdates) *gtfsrt.FeedMessage {
+	feed := &gtfsrt.FeedMessage{
+		Header: &gtfsrt.FeedHeader{
+			GtfsRealtimeVersion: proto.String(internalgtfs.GtfsRealtimeVersion),
+			Timestamp:           proto.Uint64(uint64(updates.Timestamp.Unix())),
+		},
+		Entity: make([]*gtfsrt.FeedEntity, 0, len(updates.TripUpdates)),
+	}
+	for _, update := range updates.TripUpdates {
+		feed.Entity = append(feed.Entity, &gtfsrt.FeedEntity{
+			Id:         proto.String(update.EntityID),
+			TripUpdate: exportTripUpdate(update),
+		})
+	}
+	return feed
+}
+
+func exportTripUpdate(update internalgtfs.TripUpdate) *gtfsrt.TripUpdate {
+	tripUpdate := &gtfsrt.TripUpdate{
+		Trip:           exportTripDescriptor(update.Trip.ID),
+		StopTimeUpdate: make([]*gtfsrt.TripUpdate_StopTimeUpdate, 0, len(update.Trip.StopTimeUpdates)),
+	}
+	if !update.Timestamp.IsZero() {
+		tripUpdate.Timestamp = proto.Uint64(uint64(update.Timestamp.Unix()))
+	}
+	if vehicle := update.Trip.Vehicle; vehicle != nil && vehicle.ID != nil {
+		tripUpdate.Vehicle = exportVehicleDescriptor(*vehicle.ID)
+	}
+	if update.Trip.Delay != nil {
+		tripUpdate.Delay = proto.Int32(int32(*update.Trip.Delay / time.Second))
+	}
+	for _, stopTimeUpdate := range update.Trip.StopTimeUpdates {
+		tripUpdate.StopTimeUpdate = append(tripUpdate.StopTimeUpdate, exportStopTimeUpdate(stopTimeUpdate))
+	}
+	return tripUpdate
+}
+
+func exportStopTimeUpdate(update gtfs.StopTimeUpdate) *gtfsrt.TripUpdate_StopTimeUpdate {
+	exported := &gtfsrt.TripUpdate_StopTimeUpdate{
+		StopSequence: update.StopSequence,
+		StopId:       update.StopID,
+		Arrival:      exportStopTimeEvent(update.Arrival),
+		Departure:    exportStopTimeEvent(update.Departure),
+	}
+	// As for trips, the SCHEDULED default can't be told apart from absent.
+	if update.ScheduleRelationship != gtfsrt.TripUpdate_StopTimeUpdate_SCHEDULED {
+		exported.ScheduleRelationship = update.ScheduleRelationship.Enum()
+	}
+	return exported
+}
+
+func exportStopTimeEvent(event *gtfs.StopTimeEvent) *gtfsrt.TripUpdate_StopTimeEvent {
+	if event == nil {
+		return nil
+	}
+	exported := &gtfsrt.TripUpdate_StopTimeEvent{Uncertainty: event.Uncertainty}
+	if event.Time != nil {
+		exported.Time = proto.Int64(event.Time.Unix())
+	}
+	if event.Delay != nil {
+		exported.Delay = proto.Int32(int32(*event.Delay / time.Second))
+	}
+	return exported
 }
 
 // exportDirectionID maps a direction to its GTFS-RT value, leaving it out
@@ -116,13 +185,6 @@ func exportDirectionID(direction gtfs.DirectionID) *uint32 {
 		return proto.Uint32(0)
 	}
 	return nil
-}
-
-// formatGtfsServiceTime renders a duration since the service day's start as
-// GTFS HH:MM:SS, allowing hours past 24.
-func formatGtfsServiceTime(sinceServiceDayStart time.Duration) string {
-	seconds := int64(sinceServiceDayStart / time.Second)
-	return fmt.Sprintf("%02d:%02d:%02d", seconds/3600, seconds/60%60, seconds%60)
 }
 
 // encodeGtfsRealtimeFeed serializes a feed deterministically, so the same
