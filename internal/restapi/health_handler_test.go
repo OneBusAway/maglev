@@ -101,6 +101,25 @@ func TestHealthHandlerReturnsExpired(t *testing.T) {
 	assert.True(t, healthResp.DataExpired)
 }
 
+func TestHealthHandlerFeedExpiryUsesUTC(t *testing.T) {
+	// Do not parallelize: time.Local is process-wide.
+	originalLocal := time.Local
+	time.Local = time.FixedZone("host", -8*60*60)
+	t.Cleanup(func() { time.Local = originalLocal })
+
+	manager := newTestManagerNoData(t)
+	manager.MarkReady()
+	expiresAt := time.Date(2027, time.March, 14, 4, 59, 59, 0, time.UTC)
+	manager.SetFeedExpiresAtForTest(t.Context(), expiresAt)
+	api := NewRestAPI(&app.Application{GtfsManager: manager})
+	w := httptest.NewRecorder()
+	api.healthHandler(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var response HealthResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	assert.Equal(t, "2027-03-14T04:59:59Z", response.FeedExpiresAt)
+}
+
 func TestHealthHandlerStarting(t *testing.T) {
 	// Create a minimal manager but DON'T mark as ready to simulate startup phase
 	manager := newTestManagerNoData(t)
