@@ -253,6 +253,8 @@ func (m *Manager) MockResetRealTimeData() {
 	defer m.realTimeMutex.Unlock()
 
 	delete(m.feedTrips, "_test")
+	delete(m.feedTripAgency, "_test")
+	delete(m.feedTripDataTime, "_test")
 	delete(m.feedVehicles, "_test")
 	delete(m.feedVehicleAgency, "_test")
 	delete(m.feedVehicleLastSeen, "_test")
