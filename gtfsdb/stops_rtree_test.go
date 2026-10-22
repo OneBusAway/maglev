@@ -2,6 +2,8 @@ package gtfsdb
 
 import (
 	"context"
+	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,12 +47,56 @@ func TestGetActiveRoutesWithinBounds_CenteredOnStop(t *testing.T) {
 	assert.ElementsMatch(t, []string{"15", "154", "159", "160", "44X"}, stop4000RouteIDs)
 }
 
-// TestGetActiveRoutesWithinBounds_EmptyRouteIDsMeansNoFilter pins the invariant that
+type routeQueryRecorder struct {
+	DBTX
+	query string
+	args  []any
+}
+
+func (db *routeQueryRecorder) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	db.query, db.args = query, args
+	return db.DBTX.QueryContext(ctx, query, args...)
+}
+
+func TestGetActiveRoutesWithinBounds_FilteredStopTimesLookup(t *testing.T) {
+	client := newTestClientWithRABA(t)
+	ctx := t.Context()
+	var routeID string
+	require.NoError(t, client.DB.QueryRowContext(ctx, "SELECT id FROM routes LIMIT 1").Scan(&routeID))
+
+	recorder := &routeQueryRecorder{DBTX: client.DB}
+	_, err := New(recorder).GetActiveRoutesWithinBounds(ctx, GetActiveRoutesWithinBoundsParams{
+		Lat: 40.7347, Lon: -74.1644,
+		MinLat: -90, MaxLat: 90, MinLon: -180, MaxLon: 180,
+		RouteIDs: []string{routeID}, MaxCount: 100,
+	})
+	require.NoError(t, err)
+	plan, err := client.DB.QueryContext(ctx, "EXPLAIN QUERY PLAN "+recorder.query, recorder.args...)
+	require.NoError(t, err)
+	defer func() { _ = plan.Close() }()
+
+	var stopTimeLookups []string
+	for plan.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, plan.Scan(&id, &parent, &unused, &detail))
+		if strings.Contains(detail, "stop_times") {
+			stopTimeLookups = append(stopTimeLookups, detail)
+		}
+	}
+	require.NoError(t, plan.Err())
+	require.NotEmpty(t, stopTimeLookups)
+	for _, lookup := range stopTimeLookups {
+		assert.Contains(t, lookup, "(trip_id=?)", "filtered searches must look up stop times by matching trip, not nearby stop")
+	}
+}
+
+// TestGetActiveRoutesWithinBounds_RouteFiltering pins the invariant that
 // GetActiveRoutesWithinBoundsParams.RouteIDs being empty means "no filter" rather than
 // "match nothing". Callers that derive RouteIDs from a candidate search (e.g.
 // Manager.GetRoutesForLocation) must special-case an empty candidate list themselves
 // before calling this, or they will silently get every in-bounds route instead of none.
-func TestGetActiveRoutesWithinBounds_EmptyRouteIDsMeansNoFilter(t *testing.T) {
+func TestGetActiveRoutesWithinBounds_RouteFiltering(t *testing.T) {
 	client := newTestClientWithRABA(t)
 	ctx := context.Background()
 
@@ -72,22 +118,77 @@ func TestGetActiveRoutesWithinBounds_EmptyRouteIDsMeansNoFilter(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Greater(t, len(unfiltered), 1, "fixture box should contain more than one route")
+	unfilteredIDs := make([]string, len(unfiltered))
+	for i, route := range unfiltered {
+		unfilteredIDs[i] = route.ID
+	}
 
-	target := unfiltered[0].ID
+	tests := []struct {
+		name     string
+		routeIDs []string
+		maxCount int
+		wantIDs  []string
+	}{
+		{
+			name: "single candidate", routeIDs: unfilteredIDs[:1],
+			maxCount: 100, wantIDs: unfilteredIDs[:1],
+		},
+		{
+			name: "multiple candidates", routeIDs: unfilteredIDs[:2],
+			maxCount: 100, wantIDs: unfilteredIDs[:2],
+		},
+		{
+			name: "unknown candidate", routeIDs: []string{"unknown-route"},
+			maxCount: 100,
+		},
+		{
+			name: "mixed candidates", routeIDs: []string{"unknown-route", unfilteredIDs[0]},
+			maxCount: 100, wantIDs: unfilteredIDs[:1],
+		},
+		{
+			name: "bound limit parameter", routeIDs: unfilteredIDs[:2],
+			maxCount: 0,
+		},
+		{
+			name: "empty candidate slice", routeIDs: []string{},
+			maxCount: 100, wantIDs: unfilteredIDs,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filtered, err := client.Queries.GetActiveRoutesWithinBounds(ctx, GetActiveRoutesWithinBoundsParams{
+				Lat:      centreLat,
+				Lon:      centreLon,
+				MinLat:   centreLat - boxSpan,
+				MaxLat:   centreLat + boxSpan,
+				MinLon:   centreLon - boxSpan,
+				MaxLon:   centreLon + boxSpan,
+				RouteIDs: tt.routeIDs,
+				MaxCount: tt.maxCount,
+			})
+			require.NoError(t, err)
+			var gotIDs []string
+			for _, route := range filtered {
+				gotIDs = append(gotIDs, route.ID)
+			}
+			assert.ElementsMatch(t, tt.wantIDs, gotIDs)
+		})
+	}
 
-	filtered, err := client.Queries.GetActiveRoutesWithinBounds(ctx, GetActiveRoutesWithinBoundsParams{
-		Lat:      centreLat,
-		Lon:      centreLon,
-		MinLat:   centreLat - boxSpan,
-		MaxLat:   centreLat + boxSpan,
-		MinLon:   centreLon - boxSpan,
-		MaxLon:   centreLon + boxSpan,
-		RouteIDs: []string{target},
-		MaxCount: 100,
+	t.Run("candidate outside bounds", func(t *testing.T) {
+		filtered, err := client.Queries.GetActiveRoutesWithinBounds(ctx, GetActiveRoutesWithinBoundsParams{
+			Lat:      0,
+			Lon:      0,
+			MinLat:   -0.01,
+			MaxLat:   0.01,
+			MinLon:   -0.01,
+			MaxLon:   0.01,
+			RouteIDs: []string{unfiltered[0].ID},
+			MaxCount: 100,
+		})
+		require.NoError(t, err)
+		assert.Empty(t, filtered)
 	})
-	require.NoError(t, err)
-	require.Len(t, filtered, 1)
-	assert.Equal(t, target, filtered[0].ID)
 }
 
 func TestSpatialQueriesWithinBounds_RTreeRounding(t *testing.T) {
