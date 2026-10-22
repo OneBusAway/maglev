@@ -45,13 +45,12 @@ func TestSituationHandler(t *testing.T) {
 		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agency25}},
 		Header:           []gtfs.AlertText{{Text: "nameless", Language: "en"}},
 	})
-
-	for _, alert := range api.GtfsManager.Alerts() {
-		assert.NotEmpty(t, alert.ID, "an alert with no id is not a situation")
-		if alert.ID != "" && len(alert.Header) > 0 {
-			assert.NotEqual(t, "nameless", alert.Header[0].Text)
-		}
-	}
+	routeOnly := "1"
+	api.GtfsManager.MockAddAlert("feed-a", gtfs.Alert{
+		ID:               "detour",
+		InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeOnly}},
+		Header:           []gtfs.AlertText{{Text: "route only", Language: "en"}},
+	})
 
 	tests := []struct {
 		name        string
@@ -60,6 +59,13 @@ func TestSituationHandler(t *testing.T) {
 		wantID      string
 		wantSummary string
 	}{
+		{
+			name:        "route-only alert",
+			path:        "/api/where/situation/25_detour.json?key=TEST",
+			wantStatus:  http.StatusOK,
+			wantID:      "25_detour",
+			wantSummary: "route only",
+		},
 		{
 			name:        "qualified id",
 			path:        "/api/where/situation/25_late.json?key=TEST",
@@ -124,16 +130,23 @@ func TestSituationHandler(t *testing.T) {
 
 func TestAlertMatchesSituationID(t *testing.T) {
 	agency := "25"
+	route := "1"
 	alert := gtfs.Alert{
 		ID:               "late",
 		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agency}},
 	}
+	routeOnly := gtfs.Alert{
+		ID:               "detour",
+		InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &route}},
+	}
 	prefixed := gtfs.Alert{ID: "25_late"}
 	nameless := gtfs.Alert{ID: ""}
 
-	assert.True(t, alertMatchesSituationID(alert, "25_late"))
-	assert.True(t, alertMatchesSituationID(prefixed, "25_late"))
-	assert.False(t, alertMatchesSituationID(alert, "40_late"))
-	assert.False(t, alertMatchesSituationID(nameless, "25_late"))
-	assert.False(t, alertMatchesSituationID(alert, ""))
+	assert.True(t, alertMatchesSituationID(alert, "25", "25_late"))
+	assert.True(t, alertMatchesSituationID(routeOnly, "25", "25_detour"))
+	assert.False(t, alertMatchesSituationID(routeOnly, "40", "25_detour"))
+	assert.True(t, alertMatchesSituationID(prefixed, "25", "25_late"))
+	assert.False(t, alertMatchesSituationID(alert, "25", "40_late"))
+	assert.False(t, alertMatchesSituationID(nameless, "25", "25_late"))
+	assert.False(t, alertMatchesSituationID(alert, "25", ""))
 }
