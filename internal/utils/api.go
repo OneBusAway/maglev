@@ -114,6 +114,14 @@ func FormCombinedID(agencyID, codeID string) string {
 	return fmt.Sprintf("%s_%s", agencyID, codeID)
 }
 
+// FormBlockID forms a trip's combined block ID; a trip with no block_id is its own block, as in Java.
+func FormBlockID(agencyID, blockID, tripID string) string {
+	if blockID == "" {
+		blockID = tripID
+	}
+	return FormCombinedID(agencyID, blockID)
+}
+
 // MapWheelchairBoarding converts GTFS wheelchair boarding values to our API format
 func MapWheelchairBoarding(wheelchairBoarding gtfs.WheelchairBoarding) string {
 	switch wheelchairBoarding {
@@ -190,9 +198,9 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location, c cloc
 	validFormat := false
 
 	// Check if it's epoch timestamp
-	if epochTime, err := strconv.ParseInt(timeParam, 10, 64); err == nil {
-		// Convert epoch to time
-		parsedTime = time.Unix(epochTime/1000, 0).In(currentLocation)
+	if epochTime, ok := ParseEpochMillis(timeParam); ok {
+		// Convert epoch to time preserving milliseconds
+		parsedTime = time.UnixMilli(epochTime).In(currentLocation)
 		validFormat = true
 	} else if strings.Contains(timeParam, "-") {
 		// Try yyyy-MM-dd_HH-mm-ss first (e.g. "2024-03-15_12-00-00")

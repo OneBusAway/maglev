@@ -10,7 +10,7 @@ import "math"
 // floor(coord * 1e5) rather than rounding. Matching the floor behaviour keeps maglev's
 // `points` output byte-for-byte identical to the Java server. All points are included;
 // no simplification or consecutive-duplicate filtering is performed.
-func EncodePolyline(coords [][]float64) string {
+func EncodePolyline(coords [][2]float64) string {
 	var b []byte
 	var plat, plng int
 	for _, c := range coords {

@@ -186,7 +186,7 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 			trip.TripHeadsign.String,
 			trip.TripShortName.String,
 			strconv.FormatInt(trip.DirectionID.Int64, 10),
-			utils.FormCombinedID(agencyID, trip.BlockID.String),
+			utils.FormBlockID(agencyID, trip.BlockID.String, trip.ID),
 			utils.FormCombinedID(agencyID, trip.ShapeID.String),
 		)
 		references.Trips = append(references.Trips, *tripRef)
