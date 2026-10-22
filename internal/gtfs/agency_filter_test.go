@@ -167,7 +167,7 @@ func TestAttributeVehicles(t *testing.T) {
 			vehicle:     vehicleOnTrip("V1", "T1", "X"),
 			wantKept:    true,
 			wantAgency:  "agency-A",
-			wantRouteID: "X",
+			wantRouteID: "R1",
 		},
 		{
 			name:          "unknown feed route in a feed with agency-ids resolves through the static trip",
@@ -175,7 +175,7 @@ func TestAttributeVehicles(t *testing.T) {
 			feedAgencyIDs: []string{"agency-A"},
 			wantKept:      true,
 			wantAgency:    "agency-A",
-			wantRouteID:   "X",
+			wantRouteID:   "R1",
 		},
 		{
 			name:          "no trip gets the first configured agency",
@@ -779,17 +779,28 @@ func TestVehicleAgencyIndex(t *testing.T) {
 }
 
 func TestVehicleAgencyIndex_FilledRouteReachesVehiclesForAgency(t *testing.T) {
-	manager := newAttributionTestManager(t)
-	now := time.Now().Truncate(time.Second)
+	tests := []struct {
+		name        string
+		feedRouteID string
+	}{
+		{name: "missing route", feedRouteID: ""},
+		{name: "unknown route", feedRouteID: "X"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := newAttributionTestManager(t)
+			now := time.Now().Truncate(time.Second)
 
-	require.True(t, manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now, []*gtfsrt.VehiclePosition{
-		positionOnRoute("V2", "T1", "", now),
-	})))
+			require.True(t, manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now, []*gtfsrt.VehiclePosition{
+				positionOnRoute("V2", "T1", tt.feedRouteID, now),
+			})))
 
-	vehicles, err := manager.VehiclesForAgencyID(context.Background(), "agency-A")
-	require.NoError(t, err)
-	require.Len(t, vehicles, 1)
-	assert.Equal(t, "V2", vehicles[0].ID.ID)
+			vehicles, err := manager.VehiclesForAgencyID(context.Background(), "agency-A")
+			require.NoError(t, err)
+			require.Len(t, vehicles, 1)
+			assert.Equal(t, "V2", vehicles[0].ID.ID)
+		})
+	}
 }
 
 func TestVehicleAgencyIndex_Retention(t *testing.T) {

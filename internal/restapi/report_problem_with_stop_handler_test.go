@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/models"
 )
 
 func reportProblemWithStopURL(stopID string, params ...url.Values) string {
@@ -87,4 +88,32 @@ func TestReportProblemWithStopSanitization(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, respLong.StatusCode, "Should handle massive user comments gracefully")
 	assert.Equal(t, http.StatusOK, modelLong.Code)
+}
+
+func TestReportProblemWithStopDatabaseFailure(t *testing.T) {
+	api := apiWithClosedDB(t)
+
+	resp, model := callAPIHandler[models.ResponseModel](t, api, reportProblemWithStopURL("1_75403"))
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
+	assert.Equal(t, http.StatusInternalServerError, model.Code)
+	assert.Equal(t, "internal server error", model.Text)
+	assert.Equal(t, models.APIVersion, model.Version)
+}
+
+func TestReportProblemWithStopNullStorage(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[EmptyResponse](t, api, reportProblemWithStopURL("1_75403"))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+
+	reports, err := api.GtfsManager.GtfsDB.Queries.GetProblemReportsByStop(t.Context(), "75403")
+	require.NoError(t, err)
+	require.NotEmpty(t, reports)
+
+	latest := reports[0]
+	assert.False(t, latest.Code.Valid, "omitted code should be stored as SQL NULL, not empty string")
+	assert.False(t, latest.UserComment.Valid, "omitted userComment should be stored as SQL NULL, not empty string")
 }
