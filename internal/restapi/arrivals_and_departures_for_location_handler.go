@@ -126,7 +126,11 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// A route can serve a retained stop and still have every arrival fall
 	// outside the window. Those route alerts belong on the entry anyway.
-	if err := api.addRouteAlertsForRetainedStops(ctx, lists.stopIDs, acc.situations); err != nil {
+	// combinedStopIDs emits one ID per stop in order and truncateSlice keeps
+	// a prefix, so this slice is the retained stops. Pass bare stop.ID values
+	// rather than splitting lists.stopIDs — agency IDs can contain "_".
+	retainedStops := stops[:len(lists.stopIDs)]
+	if err := api.addRouteAlertsForRetainedStops(ctx, retainedStops, acc.situations); err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
 		return
 	}
@@ -209,13 +213,19 @@ func truncateLocationLists(lists locationLists, maxCount int) locationLists {
 }
 
 // addRouteAlertsForRetainedStops records alerts for every route that serves a
-// retained stop. Agency and route ids stay in separate columns: an agency id
-// can contain an underscore, so the combined agency_code form is not split
-// back apart. Alerts are indexed by the bare route id.
-func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combinedStopIDs []string, situations *situationCollector) error {
-	stopIDs := retainedStopCodes(combinedStopIDs)
-	if len(stopIDs) == 0 {
+// retained stop. Callers pass the stop rows themselves (e.g. stops[:len(lists.stopIDs)]),
+// not combined agency_code IDs: an agency id can contain an underscore, so
+// splitting a combined stop id at the first "_" would yield the wrong bare id.
+// Agency and route ids stay in separate columns; alerts are indexed by the bare
+// route id.
+func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, stops []gtfsdb.Stop, situations *situationCollector) error {
+	if len(stops) == 0 {
 		return nil
+	}
+
+	stopIDs := make([]string, len(stops))
+	for i, stop := range stops {
+		stopIDs[i] = stop.ID
 	}
 
 	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesForStops)
@@ -233,25 +243,6 @@ func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combined
 		situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), row.AgencyID)
 	}
 	return nil
-}
-
-// retainedStopCodes returns each bare stop id in combinedIDs once, in order.
-// A value that is not an agency_code id is skipped.
-func retainedStopCodes(combinedIDs []string) []string {
-	codes := make([]string, 0, len(combinedIDs))
-	seen := make(map[string]struct{}, len(combinedIDs))
-	for _, id := range combinedIDs {
-		_, code, err := utils.ExtractAgencyIDAndCodeID(id)
-		if err != nil || code == "" {
-			continue
-		}
-		if _, ok := seen[code]; ok {
-			continue
-		}
-		seen[code] = struct{}{}
-		codes = append(codes, code)
-	}
-	return codes
 }
 
 // routeAlertKey is one route serving a retained stop. The same route is
