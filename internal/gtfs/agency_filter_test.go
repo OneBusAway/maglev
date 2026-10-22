@@ -139,10 +139,17 @@ func vehicleOnTrip(vehicleID, tripID, routeID string) gtfs.Vehicle {
 	}
 }
 
+func addedVehicleOnTrip(vehicleID, tripID, routeID string) gtfs.Vehicle {
+	vehicle := vehicleOnTrip(vehicleID, tripID, routeID)
+	vehicle.Trip.ID.ScheduleRelationship = gtfsrt.TripDescriptor_ADDED
+	return vehicle
+}
+
 func TestAttributeVehicles(t *testing.T) {
 	tests := []struct {
 		name          string
 		vehicle       gtfs.Vehicle
+		otherVehicles []gtfs.Vehicle
 		feedAgencyIDs []string
 		wantKept      bool
 		wantAgency    string
@@ -176,6 +183,42 @@ func TestAttributeVehicles(t *testing.T) {
 			wantKept:      true,
 			wantAgency:    "agency-A",
 			wantRouteID:   "R1",
+		},
+		{
+			name:        "static trip route overrides a conflicting known feed route",
+			vehicle:     vehicleOnTrip("V1", "T1", "R2"),
+			wantKept:    true,
+			wantAgency:  "agency-A",
+			wantRouteID: "R1",
+		},
+		{
+			name:        "ADDED trip keeps a conflicting known feed route",
+			vehicle:     addedVehicleOnTrip("V1", "T1", "R2"),
+			wantKept:    true,
+			wantAgency:  "agency-C",
+			wantRouteID: "R2",
+		},
+		{
+			name:          "ADDED trip sharing a trip ID with a scheduled vehicle keeps its feed route",
+			vehicle:       addedVehicleOnTrip("V1", "T1", "R2"),
+			otherVehicles: []gtfs.Vehicle{vehicleOnTrip("V2", "T1", "R1")},
+			wantKept:      true,
+			wantAgency:    "agency-C",
+			wantRouteID:   "R2",
+		},
+		{
+			name:        "feed route matching the static trip is unchanged",
+			vehicle:     vehicleOnTrip("V1", "T1", "R1"),
+			wantKept:    true,
+			wantAgency:  "agency-A",
+			wantRouteID: "R1",
+		},
+		{
+			name:        "trip missing from static data keeps its known feed route",
+			vehicle:     vehicleOnTrip("V1", "T9", "R2"),
+			wantKept:    true,
+			wantAgency:  "agency-C",
+			wantRouteID: "R2",
 		},
 		{
 			name:          "no trip gets the first configured agency",
@@ -227,7 +270,8 @@ func TestAttributeVehicles(t *testing.T) {
 			feedCfg := RTFeedConfig{ID: "feed", AgencyIDs: tt.feedAgencyIDs}
 			manager.feedAgencyFilter = Config{RTFeeds: []RTFeedConfig{{ID: "feed", AgencyIDs: tt.feedAgencyIDs, VehiclePositionsURL: "x", Enabled: true}}}.feedAgencyFilters()
 
-			kept, agencies, err := manager.attributeVehicles(context.Background(), []gtfs.Vehicle{tt.vehicle}, feedCfg)
+			vehicles := append([]gtfs.Vehicle{tt.vehicle}, tt.otherVehicles...)
+			kept, agencies, err := manager.attributeVehicles(context.Background(), vehicles, feedCfg)
 			require.NoError(t, err)
 
 			if !tt.wantKept {
@@ -235,7 +279,7 @@ func TestAttributeVehicles(t *testing.T) {
 				assert.Empty(t, agencies)
 				return
 			}
-			require.Len(t, kept, 1)
+			require.Len(t, kept, len(vehicles))
 			key := newVehicleKey(kept[0].ID)
 			agency, attributed := agencies[key]
 			assert.Equal(t, tt.wantAgency != "", attributed)

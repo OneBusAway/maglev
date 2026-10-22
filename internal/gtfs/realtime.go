@@ -829,10 +829,11 @@ func (manager *Manager) staticTripRoutes(ctx context.Context, tripIDs []string) 
 
 // attributeVehicles gives each vehicle of a feed update one agency: the
 // agency of its trip's route, else the feed's first configured agency.
-// Vehicles that resolve to neither are kept without one. A missing route_id
-// is filled from the static trip. Vehicles without an ID are dropped, because
-// retention can't key them. In a feed with agency-ids, vehicles on another
-// agency's route are dropped too.
+// Vehicles that resolve to neither are kept without one. A vehicle on a
+// static trip reports that trip's route, whatever its route_id says; an
+// ADDED trip keeps its feed route_id. Vehicles without an ID are dropped,
+// because retention can't key them. In a feed with agency-ids, vehicles on
+// another agency's route are dropped too.
 func (manager *Manager) attributeVehicles(ctx context.Context, vehicles []gtfs.Vehicle, feedCfg RTFeedConfig) ([]gtfs.Vehicle, map[vehicleKey]string, error) {
 	routeIDs := make(map[string]struct{})
 	collectVehicleRouteIDs(routeIDs, vehicles)
@@ -840,7 +841,7 @@ func (manager *Manager) attributeVehicles(ctx context.Context, vehicles []gtfs.V
 	if err != nil {
 		return nil, nil, err
 	}
-	routesByTripID, err := manager.staticTripRoutes(ctx, unresolvedVehicleTripIDs(vehicles, routeAgencies))
+	routesByTripID, err := manager.staticTripRoutes(ctx, scheduledVehicleTripIDs(vehicles))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -914,40 +915,43 @@ func belongsToOtherAgency(agencyID string, allowed map[string]bool) bool {
 	return agencyID != "" && !allowed[agencyID]
 }
 
-// unresolvedVehicleTripIDs lists the trip IDs of vehicles whose route_id is
-// missing or unknown, for the static trip lookup.
-func unresolvedVehicleTripIDs(vehicles []gtfs.Vehicle, routeAgencies map[string]string) []string {
+// scheduledVehicleTripIDs lists the trip IDs of vehicles on trips that
+// aren't ADDED, for the static trip lookup.
+func scheduledVehicleTripIDs(vehicles []gtfs.Vehicle) []string {
 	var tripIDs []string
 	for _, vehicle := range vehicles {
-		if vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
+		if vehicle.Trip == nil || vehicle.Trip.ID.ID == "" || isAddedTrip(vehicle.Trip) {
 			continue
 		}
-		if _, ok := routeAgencies[vehicle.Trip.ID.RouteID]; !ok {
-			tripIDs = append(tripIDs, vehicle.Trip.ID.ID)
-		}
+		tripIDs = append(tripIDs, vehicle.Trip.ID.ID)
 	}
 	return tripIDs
 }
 
+// isAddedTrip reports whether the trip is ADDED, which has no static trip.
+func isAddedTrip(trip *gtfs.Trip) bool {
+	return trip.ID.ScheduleRelationship == gtfsrt.TripDescriptor_ADDED
+}
+
 // withRouteAgency returns the agency of the vehicle's trip route, or "" when
-// it has none, and the vehicle with a missing or unknown route_id replaced by
-// the static trip's route. The trip is copied first, because the parsed feed
-// may share it.
+// it has none. A vehicle on a static trip that isn't ADDED gets that trip's
+// route in place of its feed route_id, as Java resolves scheduled trips by
+// trip_id alone; otherwise the feed route_id is kept. The trip is copied
+// before it's changed, because the parsed feed may share it.
 func withRouteAgency(vehicle gtfs.Vehicle, routeAgencies map[string]string, routesByTripID map[string]staticTripRoute) (gtfs.Vehicle, string) {
 	if vehicle.Trip == nil {
 		return vehicle, ""
 	}
+	if staticRoute, ok := routesByTripID[vehicle.Trip.ID.ID]; ok && !isAddedTrip(vehicle.Trip) {
+		trip := *vehicle.Trip
+		trip.ID.RouteID = staticRoute.routeID
+		vehicle.Trip = &trip
+		return vehicle, staticRoute.agencyID
+	}
 	if agencyID, ok := routeAgencies[vehicle.Trip.ID.RouteID]; ok {
 		return vehicle, agencyID
 	}
-	staticRoute, ok := routesByTripID[vehicle.Trip.ID.ID]
-	if !ok {
-		return vehicle, ""
-	}
-	trip := *vehicle.Trip
-	trip.ID.RouteID = staticRoute.routeID
-	vehicle.Trip = &trip
-	return vehicle, staticRoute.agencyID
+	return vehicle, ""
 }
 
 // filterTripsByAgency returns the trips that belong to one of the allowed
