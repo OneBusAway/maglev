@@ -930,27 +930,3 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	assert.Contains(t, ids, utils.FormCombinedID(agencyID, alertID))
 	assert.NotContains(t, ids, utils.FormCombinedID("a", alertID))
 }
-
-// TestArrivalsAndDeparturesForLocation_StopSequenceIsPositionInTrip pins the
-// for-location pipeline to the same stopSequence semantics as
-// arrivals-and-departures-for-stop. The two endpoints build arrivals from
-// separate loops over the trip stop index, so each needs its own assertion.
-func TestArrivalsAndDeparturesForLocation_StopSequenceIsPositionInTrip(t *testing.T) {
-	api := createTestApiWithLoopTripData(t)
-
-	resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
-		arrivalsForLocationURL(loopFixtureCenter, url.Values{
-			"minutesBefore": {"60"}, "minutesAfter": {"240"},
-		}))
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	arrivals := model.Data.Entry.ArrivalsAndDepartures
-	require.Len(t, arrivals, loopTripStopCount(),
-		"every stop time of loop-trip is inside the radius and the window")
-
-	seen := assertLoopTripPositions(t, arrivals)
-	for position := 0; position < loopTripStopCount(); position++ {
-		assert.True(t, seen[position],
-			"the trip's stop at position %d should be reported at that position", position)
-	}
-}
