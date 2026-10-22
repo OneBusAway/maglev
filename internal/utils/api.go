@@ -229,6 +229,22 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location, c cloc
 	return parsedTime.Format("20060102"), parsedTime, nil, true
 }
 
+// ParseTimeParameterOrNow is ParseTimeParameter for endpoints where Java treats
+// time=0 as "not supplied" (`if (_time != 0)`), so an epoch of 0 resolves to the
+// clock's current time instead of 1970-01-01.
+func ParseTimeParameterOrNow(timeParam string, currentLocation *time.Location, c clock.Clock) (string, time.Time, map[string][]string, bool) {
+	if isZeroEpoch(timeParam) {
+		timeParam = ""
+	}
+	return ParseTimeParameter(timeParam, currentLocation, c)
+}
+
+// isZeroEpoch reports whether value is an epoch timestamp equal to 0.
+func isZeroEpoch(value string) bool {
+	epochMillis, ok := ParseEpochMillis(value)
+	return ok && epochMillis == 0
+}
+
 // maxCountOverflow selects how values above models.MaxAllowedCount are handled.
 type maxCountOverflow int
 

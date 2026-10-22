@@ -318,7 +318,7 @@ func (api *RestAPI) queryTimeForStops(ctx context.Context, timeParam string, age
 		return api.Clock.Now()
 	}
 
-	_, parsedTime, _, ok := utils.ParseTimeParameter(timeParam, location, api.Clock)
+	_, parsedTime, _, ok := utils.ParseTimeParameterOrNow(timeParam, location, api.Clock)
 	if !ok {
 		return api.Clock.Now().In(location)
 	}

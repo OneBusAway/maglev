@@ -1157,6 +1157,22 @@ func TestTripsForRouteHandler_TimeOmitted(t *testing.T) {
 	assert.NotZero(t, model.Data.List[0].ServiceDate)
 }
 
+// TestTripsForRouteHandler_TimeZeroMeansNow verifies that time=0 is treated as an
+// omitted time parameter, as Java does, instead of resolving to 1970-01-01.
+func TestTripsForRouteHandler_TimeZeroMeansNow(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(tripsForRouteTestClock), "trips-for-route.zip", basicTripsForRouteFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	baseURL := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true", combinedRouteID)
+
+	_, omitted := callAPIHandler[TripsForRouteResponse](t, api, baseURL)
+	resp, zero := callAPIHandler[TripsForRouteResponse](t, api, baseURL+"&time=0")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, tripsForRouteTestClock.UnixMilli(), zero.CurrentTime)
+	require.Len(t, zero.Data.List, 1, "time=0 must return the same active trips as an omitted time")
+	assert.Equal(t, omitted.Data.List[0].TripId, zero.Data.List[0].TripId)
+}
+
 // TestTripsForRouteHandler_InvalidTimeParameter verifies that malformed time
 // parameter values correctly trigger a 400 Bad Request validation error.
 func TestTripsForRouteHandler_InvalidTimeParameter(t *testing.T) {
