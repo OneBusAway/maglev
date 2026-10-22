@@ -681,24 +681,20 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	if !requestedTrip.BlockID.Valid {
-		reqLogger.Debug("trip has no block ID, cannot find vehicle by block",
-			slog.String("trip_id", tripID))
-		return nil
-	}
-
-	requestedBlockID := requestedTrip.BlockID.String
-
-	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
-	if err != nil {
-		logging.LogError(reqLogger, "could not get trips for block", err,
-			slog.String("block_id", requestedBlockID))
-		return nil
-	}
-
 	blockTripIDs := make(map[string]bool)
-	for _, trip := range blockTrips {
-		blockTripIDs[trip.ID] = true
+	if requestedBlockID := nulls.StringOrEmpty(requestedTrip.BlockID); requestedBlockID == "" {
+		blockTripIDs[requestedTrip.ID] = true
+	} else {
+		blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
+		if err != nil {
+			logging.LogError(reqLogger, "could not get trips for block", err,
+				slog.String("block_id", requestedBlockID))
+			return nil
+		}
+
+		for _, trip := range blockTrips {
+			blockTripIDs[trip.ID] = true
+		}
 	}
 
 	// Iterate over all vehicles to find any vehicle serving a trip in this block.
