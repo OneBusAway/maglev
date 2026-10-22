@@ -720,6 +720,106 @@ func TestParseMinutesValueCapsBeforeDurationOverflow(t *testing.T) {
 	assert.Contains(t, collected, "minutesBefore")
 }
 
+// A route that serves a searched stop still contributes its alert when the
+// window contains none of that route's arrivals, and a stop alert is recorded
+// even when the window matches no stop_time.
+func TestArrivalsAndDeparturesForLocationKeepsAlertsWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, wide := callArrivalsForLocation(t, api)
+	require.NotEmpty(t, wide.Data.Entry.ArrivalsAndDepartures)
+	require.Contains(t, wide.Data.Entry.StopIDs, arrivalsTestStopID)
+
+	agencyID, stopCode, err := utils.ExtractAgencyIDAndCodeID(arrivalsTestStopID)
+	require.NoError(t, err)
+
+	var routeCode string
+	for _, arrival := range wide.Data.Entry.ArrivalsAndDepartures {
+		if arrival.StopID != arrivalsTestStopID {
+			continue
+		}
+		_, routeCode, err = utils.ExtractAgencyIDAndCodeID(arrival.RouteID)
+		require.NoError(t, err)
+		break
+	}
+	require.NotEmpty(t, routeCode)
+
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID: "loc-route-alert",
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			AgencyID: &agencyID,
+			RouteID:  &routeCode,
+		}},
+		Header: []gtfs.AlertText{{Text: "route without an arrival", Language: "en"}},
+	})
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID: "loc-stop-alert",
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			AgencyID: &agencyID,
+			StopID:   &stopCode,
+		}},
+		Header: []gtfs.AlertText{{Text: "stop with no stop time", Language: "en"}},
+	})
+
+	// Ten years on, the same stops are still in the box and none of them have
+	// an arrival. The alerts cannot have come from an arrival row.
+	far := strconv.FormatInt(arrivalsTestClock.AddDate(10, 0, 0).UnixMilli(), 10)
+	resp, narrow := callArrivalsForLocation(t, api, url.Values{"time": {far}})
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, narrow.Data.Entry.ArrivalsAndDepartures)
+	require.Contains(t, narrow.Data.Entry.StopIDs, arrivalsTestStopID)
+
+	wantRoute := utils.FormCombinedID(agencyID, "loc-route-alert")
+	wantStop := utils.FormCombinedID(agencyID, "loc-stop-alert")
+	assert.Contains(t, narrow.Data.Entry.SituationIDs, wantRoute)
+	assert.Contains(t, narrow.Data.Entry.SituationIDs, wantStop)
+
+	var sawRoute, sawStop bool
+	for _, situation := range narrow.Data.References.Situations {
+		switch situation.ID {
+		case wantRoute:
+			sawRoute = true
+			require.NotNil(t, situation.Summary)
+			assert.Equal(t, "route without an arrival", situation.Summary.Value)
+		case wantStop:
+			sawStop = true
+			require.NotNil(t, situation.Summary)
+			assert.Equal(t, "stop with no stop time", situation.Summary.Value)
+		}
+	}
+	assert.True(t, sawRoute, "references must include the route alert")
+	assert.True(t, sawStop, "references must include the stop alert")
+}
+
+func TestRetainedStopCodes(t *testing.T) {
+	assert.Equal(t, []string{"4062", "4063"}, retainedStopCodes([]string{
+		"25_4062",
+		"not-a-combined-id",
+		"25_4062",
+		"25_",
+		"40_4063",
+		"",
+	}))
+	assert.Empty(t, retainedStopCodes(nil))
+}
+
+func TestAddRouteAlertsForRetainedStopsSkipsBadIDs(t *testing.T) {
+	api := createTestApi(t)
+	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{"not-combined"}, newSituationCollector()))
+}
+
+func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
+	api := createTestApi(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := api.addRouteAlertsForRetainedStops(ctx, []string{arrivalsTestStopID}, newSituationCollector())
+	require.Error(t, err)
+}
+
 // A cancelled request must not be reported as a server failure: client
 // cancellation writes nothing, an expired deadline writes 504.
 func TestSendArrivalsForLocationErrorDistinguishesCancellation(t *testing.T) {
@@ -776,4 +876,57 @@ func TestBuildNearbyResultsDropsStopsInactiveOnDate(t *testing.T) {
 
 	require.Len(t, results, 1, "stops with no active routes must be dropped")
 	assert.Equal(t, "25_active", results[0].StopID)
+}
+
+// An agency id that contains an underscore must stay intact. Splitting the
+// combined agency_code route id would treat the first segment as the agency
+// and look up alerts under the wrong route.
+func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
+	api := createTestApi(t)
+	db := api.GtfsManager.GtfsDB.DB
+
+	const (
+		agencyID = "a_b"
+		routeID  = "r_under"
+		tripID   = "t_under"
+		service  = "svc_under"
+		alertID  = "under-alert"
+	)
+	// The package shares one GTFS database. These rows have to come back out
+	// before the next test reads stop 4062 or the agency list.
+	t.Cleanup(func() {
+		api.GtfsManager.MockResetRealTimeData()
+		_, _ = db.Exec(`DELETE FROM stop_times WHERE trip_id = ?`, tripID)
+		_, _ = db.Exec(`DELETE FROM trips WHERE id = ?`, tripID)
+		_, _ = db.Exec(`DELETE FROM routes WHERE id = ?`, routeID)
+		_, _ = db.Exec(`DELETE FROM calendar WHERE id = ?`, service)
+		_, _ = db.Exec(`DELETE FROM agencies WHERE id = ?`, agencyID)
+	})
+	_, err := db.Exec(`INSERT INTO agencies (id, name, url, timezone) VALUES (?, 'Underscore Agency', 'http://example.com', 'America/Los_Angeles')`, agencyID)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO routes (id, agency_id, short_name, type) VALUES (?, ?, 'Under', 3)`, routeID, agencyID)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+		VALUES (?, 1, 1, 1, 1, 1, 1, 1, '20200101', '20991231')`, service)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO trips (id, route_id, service_id) VALUES (?, ?, ?)`, tripID, routeID, service)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence) VALUES (?, 0, 0, ?, 1)`, tripID, testdata.Stop4062.Code)
+	require.NoError(t, err)
+
+	bareRoute := routeID
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID: alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			RouteID: &bareRoute,
+		}},
+		Header: []gtfs.AlertText{{Text: "underscore agency", Language: "en"}},
+	})
+
+	situations := newSituationCollector()
+	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{arrivalsTestStopID}, situations))
+
+	ids := situationIDsFromRefs(situations.refs)
+	assert.Contains(t, ids, utils.FormCombinedID(agencyID, alertID))
+	assert.NotContains(t, ids, utils.FormCombinedID("a", alertID))
 }

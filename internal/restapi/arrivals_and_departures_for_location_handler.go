@@ -124,6 +124,13 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// earlier) and maxCount is at least 1, so stopIDs is never empty and a
 	// stop list with zero arrivals is a normal response, not an empty one.
 
+	// A route can serve a retained stop and still have every arrival fall
+	// outside the window. Those route alerts belong on the entry anyway.
+	if err := api.addRouteAlertsForRetainedStops(ctx, lists.stopIDs, acc.situations); err != nil {
+		api.sendArrivalsForLocationError(w, r, ctx, err)
+		return
+	}
+
 	// Record each nearby stop's agency so references namespace it exactly as
 	// nearbyStopIds does, instead of falling back to the matched stops' agency.
 	for _, n := range lists.nearby {
@@ -199,6 +206,59 @@ func truncateLocationLists(lists locationLists, maxCount int) locationLists {
 	lists.arrivals, lists.limitExceeded = truncateSlice(lists.arrivals, maxCount, lists.limitExceeded)
 	lists.nearby, lists.limitExceeded = truncateSlice(lists.nearby, maxCount, lists.limitExceeded)
 	return lists
+}
+
+// addRouteAlertsForRetainedStops records alerts for every route that serves a
+// retained stop. Agency and route ids stay in separate columns: an agency id
+// can contain an underscore, so the combined agency_code form is not split
+// back apart. Alerts are indexed by the bare route id.
+func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combinedStopIDs []string, situations *situationCollector) error {
+	stopIDs := retainedStopCodes(combinedStopIDs)
+	if len(stopIDs) == 0 {
+		return nil
+	}
+
+	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesForStops)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[routeAlertKey]struct{})
+	for _, row := range rows {
+		key := routeAlertKey{agencyID: row.AgencyID, routeID: row.ID}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), row.AgencyID)
+	}
+	return nil
+}
+
+// retainedStopCodes returns each bare stop id in combinedIDs once, in order.
+// A value that is not an agency_code id is skipped.
+func retainedStopCodes(combinedIDs []string) []string {
+	codes := make([]string, 0, len(combinedIDs))
+	seen := make(map[string]struct{}, len(combinedIDs))
+	for _, id := range combinedIDs {
+		_, code, err := utils.ExtractAgencyIDAndCodeID(id)
+		if err != nil || code == "" {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+	return codes
+}
+
+// routeAlertKey is one route serving a retained stop. The same route is
+// returned once per stop it serves, and only the first copy is recorded.
+type routeAlertKey struct {
+	agencyID string
+	routeID  string
 }
 
 // combinedStopIDs renders the searched stops as {agency}_{code} IDs.
