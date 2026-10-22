@@ -50,6 +50,7 @@ type mergedRealtime struct {
 	vehiclePositionsByAgency map[string]AgencyVehiclePositions
 	alerts                   alertIndex
 	alertFeedsByAgency       map[string]agencyAlertFeed
+	tripUpdatesByAgency      map[string]AgencyTripUpdates
 	// alertsSince is the first snapshot's build time, the header time of an
 	// agency that has had no alerts since then.
 	alertsSince time.Time
@@ -71,7 +72,8 @@ var emptyMergedRealtime = &mergedRealtime{
 		byAgency: map[string][]gtfs.Alert{},
 		byStop:   map[string][]gtfs.Alert{},
 	},
-	alertFeedsByAgency: map[string]agencyAlertFeed{},
+	alertFeedsByAgency:  map[string]agencyAlertFeed{},
+	tripUpdatesByAgency: map[string]AgencyTripUpdates{},
 }
 
 // mergedRealtime loads the current snapshot. Lock-free: callers must not hold
@@ -103,9 +105,10 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 			byStop:   maps.Clone(m.alerts.byStop),
 			all:      slices.Clone(m.alerts.all),
 		},
-		alertFeedsByAgency: maps.Clone(m.alertFeedsByAgency),
-		alertsSince:        m.alertsSince,
-		builtAt:            m.builtAt,
+		alertFeedsByAgency:  maps.Clone(m.alertFeedsByAgency),
+		tripUpdatesByAgency: maps.Clone(m.tripUpdatesByAgency),
+		alertsSince:         m.alertsSince,
+		builtAt:             m.builtAt,
 	}
 	if out.tripLookup == nil {
 		out.tripLookup = map[string]int{}
@@ -127,6 +130,9 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 	}
 	if out.alertFeedsByAgency == nil {
 		out.alertFeedsByAgency = map[string]agencyAlertFeed{}
+	}
+	if out.tripUpdatesByAgency == nil {
+		out.tripUpdatesByAgency = map[string]AgencyTripUpdates{}
 	}
 	return out
 }
@@ -1308,6 +1314,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		vehiclePositionsByAgency: manager.buildVehiclePositionsByAgency(vehicleFeedIDs, builtAt),
 		alerts:                   idx,
 		alertFeedsByAgency:       manager.buildAlertFeedsByAgency(alertFeedIDs, previous, builtAt),
+		tripUpdatesByAgency:      manager.buildTripUpdatesByAgency(feedIDs, builtAt),
 		alertsSince:              alertsSince,
 		builtAt:                  builtAt,
 	})
