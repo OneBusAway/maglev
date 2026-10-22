@@ -1174,8 +1174,8 @@ func (api *RestAPI) appendTripReferences(ctx context.Context, references *models
 			trip.TripHeadsign.String,
 			"",
 			strconv.FormatInt(trip.DirectionID.Int64, 10),
-			utils.FormCombinedID(routeAgencyID, trip.BlockID.String), // Use route agency for block ID
-			utils.FormCombinedID(routeAgencyID, trip.ShapeID.String), // Use route agency for shape ID
+			utils.FormBlockID(routeAgencyID, trip.BlockID.String, trip.ID), // Use route agency for block ID
+			utils.FormCombinedID(routeAgencyID, trip.ShapeID.String),       // Use route agency for shape ID
 		)
 		references.Trips = append(references.Trips, *tripRef)
 	}

@@ -930,8 +930,9 @@ func unresolvedVehicleTripIDs(vehicles []gtfs.Vehicle, routeAgencies map[string]
 }
 
 // withRouteAgency returns the agency of the vehicle's trip route, or "" when
-// it has none, and the vehicle with an empty route_id filled from the static
-// trip. The trip is copied first, because the parsed feed may share it.
+// it has none, and the vehicle with a missing or unknown route_id replaced by
+// the static trip's route. The trip is copied first, because the parsed feed
+// may share it.
 func withRouteAgency(vehicle gtfs.Vehicle, routeAgencies map[string]string, routesByTripID map[string]staticTripRoute) (gtfs.Vehicle, string) {
 	if vehicle.Trip == nil {
 		return vehicle, ""
@@ -943,11 +944,9 @@ func withRouteAgency(vehicle gtfs.Vehicle, routeAgencies map[string]string, rout
 	if !ok {
 		return vehicle, ""
 	}
-	if vehicle.Trip.ID.RouteID == "" {
-		trip := *vehicle.Trip
-		trip.ID.RouteID = staticRoute.routeID
-		vehicle.Trip = &trip
-	}
+	trip := *vehicle.Trip
+	trip.ID.RouteID = staticRoute.routeID
+	vehicle.Trip = &trip
 	return vehicle, staticRoute.agencyID
 }
 

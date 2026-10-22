@@ -1,8 +1,6 @@
 package restapi
 
 import (
-	"database/sql"
-	"errors"
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
@@ -26,11 +24,7 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 
 	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-			return
-		}
-		api.serverErrorResponse(w, r, err)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 	if route.ID == "" || route.AgencyID != agencyID {
@@ -55,11 +49,7 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 	if includeReferences {
 		agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				api.sendNotFound(w, r)
-				return
-			}
-			api.serverErrorResponse(w, r, err)
+			api.dbErrorResponse(w, r, err)
 			return
 		}
 		// Use the existing helper to map the database row to the model
