@@ -343,6 +343,65 @@ func TestArrivalsAndDeparturesForLocationMaxCount(t *testing.T) {
 	for stopID := range retainedStops {
 		assert.True(t, referencedStops[stopID], "retained stop %s must resolve in references.stops", stopID)
 	}
+
+	// Trip status is built after the trim. The one arrival that survives must
+	// still match the same row from the untrimmed response.
+	require.NotEmpty(t, entry.ArrivalsAndDepartures)
+	require.NotEmpty(t, full.Data.Entry.ArrivalsAndDepartures)
+	kept := entry.ArrivalsAndDepartures[0]
+	first := full.Data.Entry.ArrivalsAndDepartures[0]
+	assert.Equal(t, first.TripID, kept.TripID)
+	assert.Equal(t, first.StopID, kept.StopID)
+	assert.Equal(t, first.ScheduledArrivalTime, kept.ScheduledArrivalTime)
+	require.NotNil(t, kept.TripStatus, "trip status is built for arrivals that survive maxCount")
+	assert.Equal(t, first.TripStatus, kept.TripStatus)
+	assert.Equal(t, first.DistanceFromStop, kept.DistanceFromStop)
+	assert.Equal(t, first.NumberOfStopsAway, kept.NumberOfStopsAway)
+	assert.Equal(t, first.BlockTripSequence, kept.BlockTripSequence)
+	assert.Equal(t, first.SituationIDs, kept.SituationIDs)
+}
+
+// A trip alert on an arrival that maxCount drops must still appear in the
+// entry situationIds. The retained arrival does not serve that trip, so the
+// id can only have been collected before the trim.
+func TestArrivalsAndDeparturesForLocationKeepsTrimmedTripAlerts(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, full := callArrivalsForLocation(t, api)
+	require.NotEmpty(t, full.Data.Entry.StopIDs)
+	require.GreaterOrEqual(t, len(full.Data.Entry.ArrivalsAndDepartures), 2)
+	keptStop := full.Data.Entry.StopIDs[0]
+	keptTrip := full.Data.Entry.ArrivalsAndDepartures[0].TripID
+
+	var dropped models.ArrivalAndDeparture
+	found := false
+	for _, arrival := range full.Data.Entry.ArrivalsAndDepartures[1:] {
+		if arrival.StopID == keptStop && arrival.TripID != keptTrip {
+			dropped = arrival
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "nearest stop needs a second arrival so maxCount can drop it")
+
+	agencyID, tripID, err := utils.ExtractAgencyIDAndCodeID(dropped.TripID)
+	require.NoError(t, err)
+
+	const alertID = "trimmed-trip-alert"
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID:               alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{TripID: &gtfs.TripID{ID: tripID}}},
+		Header:           []gtfs.AlertText{{Text: "Trimmed trip alert", Language: "en"}},
+	})
+	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+
+	_, limited := callArrivalsForLocation(t, api, url.Values{"maxCount": {"1"}})
+	require.Len(t, limited.Data.Entry.ArrivalsAndDepartures, 1)
+	assert.Equal(t, full.Data.Entry.ArrivalsAndDepartures[0].TripID, limited.Data.Entry.ArrivalsAndDepartures[0].TripID)
+	assert.NotContains(t, limited.Data.Entry.ArrivalsAndDepartures[0].SituationIDs, wantSituationID)
+	assert.Contains(t, limited.Data.Entry.SituationIDs, wantSituationID)
 }
 
 // arrivalStopIDs returns every stop ID one arrival names: its own stop plus the
