@@ -265,3 +265,15 @@ func TestNewTripUpdatesFeed_LabelOnlyVehicle(t *testing.T) {
 	assert.Nil(t, update.GetVehicle().Id, "an absent vehicle ID stays absent, not empty")
 	assert.Equal(t, "Bus 1", update.GetVehicle().GetLabel())
 }
+
+func TestNewTripUpdatesFeed_ScheduledRelationshipIsExplicit(t *testing.T) {
+	update := newTripUpdatesFeed(internalgtfs.AgencyTripUpdates{TripUpdates: []internalgtfs.TripUpdate{{
+		EntityID: "T1",
+		Trip:     gtfs.Trip{ID: gtfs.TripID{ID: "T1"}},
+	}}}).GetEntity()[0].GetTripUpdate()
+
+	// go-gtfs can't tell SCHEDULED from absent, and SCHEDULED is the
+	// protocol default, so the export always writes it, as upstream feeds do.
+	require.NotNil(t, update.GetTrip().ScheduleRelationship)
+	assert.Equal(t, gtfsrt.TripDescriptor_SCHEDULED, update.GetTrip().GetScheduleRelationship())
+}
