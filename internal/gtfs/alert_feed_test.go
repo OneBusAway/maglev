@@ -221,13 +221,15 @@ func TestAlertFeedForAgency_AlertContent(t *testing.T) {
 		require.Len(t, exported.GetUrl().GetTranslation(), 1)
 		assert.Nil(t, exported.GetUrl().GetTranslation()[0].Language, "an empty language is left unset")
 	})
-	t.Run("active periods keep their set bounds, and an empty one is dropped", func(t *testing.T) {
+	t.Run("active periods keep their set bounds, and an empty one stays always active", func(t *testing.T) {
 		periods := exported.GetActivePeriod()
-		require.Len(t, periods, 2)
+		require.Len(t, periods, 3)
 		assert.Equal(t, uint64(start.Unix()), periods[0].GetStart())
 		assert.Nil(t, periods[0].End)
 		assert.Nil(t, periods[1].Start)
 		assert.Equal(t, uint64(end.Unix()), periods[1].GetEnd())
+		assert.Nil(t, periods[2].Start, "a range with neither bound means always active")
+		assert.Nil(t, periods[2].End)
 	})
 	t.Run("selectors keep only agency, route, trip_id and stop, and an empty one is dropped", func(t *testing.T) {
 		// The selectors after the agency one are sorted by route, trip, stop.

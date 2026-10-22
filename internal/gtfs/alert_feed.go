@@ -206,17 +206,15 @@ func exportTranslatedString(texts []gtfs.AlertText) *gtfsrt.TranslatedString {
 }
 
 // exportActivePeriods keeps each period's set bounds, in seconds. A period
-// with neither bound is dropped.
+// with neither bound is kept empty, as Java does: it means always active,
+// and an alert is active during the union of its periods.
 func exportActivePeriods(periods []gtfs.AlertActivePeriod) []*gtfsrt.TimeRange {
 	var ranges []*gtfsrt.TimeRange
 	for _, period := range periods {
-		timeRange := &gtfsrt.TimeRange{
+		ranges = append(ranges, &gtfsrt.TimeRange{
 			Start: exportPeriodBound(period.StartsAt),
 			End:   exportPeriodBound(period.EndsAt),
-		}
-		if timeRange.Start != nil || timeRange.End != nil {
-			ranges = append(ranges, timeRange)
-		}
+		})
 	}
 	return ranges
 }
