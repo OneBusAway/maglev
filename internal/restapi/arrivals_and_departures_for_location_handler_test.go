@@ -2,18 +2,23 @@ package restapi
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
@@ -69,6 +74,9 @@ func TestArrivalsAndDeparturesForLocationValidation(t *testing.T) {
 		{"invalid latitude", url.Values{"lat": {"99"}, "lon": {"-122.34952"}}, []string{"lat"}},
 		{"invalid longitude", url.Values{"lat": {"40.539367"}, "lon": {"-999"}}, []string{"lon"}},
 		{"non-numeric time", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "time": {"soon"}}, []string{"time"}},
+		{"negative time", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "time": {"-1"}}, []string{"time"}},
+		{"signed time", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "time": {"+1749837600000"}}, []string{"time"}},
+		{"date-only time", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "time": {"2025-06-13"}}, []string{"time"}},
 		{"zero maxCount", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "maxCount": {"0"}}, []string{"maxCount"}},
 		{"negative minutesBefore", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "minutesBefore": {"-5"}}, []string{"minutesBefore"}},
 		{"non-numeric routeType", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"bus"}}, []string{"routeType"}},
@@ -87,6 +95,39 @@ func TestArrivalsAndDeparturesForLocationValidation(t *testing.T) {
 				assert.Contains(t, model.Data.FieldErrors, field)
 			}
 		})
+	}
+}
+
+// time accepts yyyy-MM-dd_HH-mm-ss in the agency timezone, like Java. The
+// arrivals must cluster around the requested hour, proving the value was read
+// as a datetime rather than ignored in favor of the clock.
+func TestArrivalsAndDeparturesForLocationAcceptsDateTimeFormat(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
+		arrivalsForLocationURL(url.Values{
+			"lat":    {"40.539367"},
+			"lon":    {"-122.34952"},
+			"radius": {"2500"},
+			"time":   {"2025-06-13_08-00-00"},
+		}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, model.Data.FieldErrors)
+
+	arrivals := model.Data.Entry.ArrivalsAndDepartures
+	require.NotEmpty(t, arrivals, "Friday 08:00 must have scheduled service on the fixture")
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	// The shared URL helper requests minutesBefore=60 and minutesAfter=240.
+	windowStart := time.Date(2025, 6, 13, 7, 0, 0, 0, loc).UnixMilli()
+	windowEnd := time.Date(2025, 6, 13, 12, 0, 0, 0, loc).UnixMilli()
+	for _, a := range arrivals {
+		scheduled := a.ScheduledArrivalTime.UnixMilli()
+		assert.GreaterOrEqual(t, scheduled, windowStart, "arrival scheduled before the requested window")
+		assert.LessOrEqual(t, scheduled, windowEnd, "arrival scheduled after the requested window")
 	}
 }
 
@@ -135,6 +176,40 @@ func TestArrivalsAndDeparturesForLocationEndToEnd(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.Agencies)
 	require.NotEmpty(t, model.Data.References.Routes)
 	require.NotEmpty(t, model.Data.References.Trips)
+}
+
+func TestArrivalsAndDeparturesForLocationIncludesStopAlertsWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencyID, stopID, err := utils.ExtractAgencyIDAndCodeID(testdata.Stop4062.ID)
+	require.NoError(t, err)
+
+	const alertID = "location-no-arrivals-stop-alert"
+	api.GtfsManager.AddAlertForTest(gtfs.Alert{
+		ID:               alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}},
+		Header:           []gtfs.AlertText{{Text: "Stop alert without arrivals", Language: "en"}},
+	})
+
+	quietTime := time.Date(2025, 6, 13, 3, 0, 0, 0, arrivalsTestClock.Location())
+	resp, model := callArrivalsForLocation(t, api, url.Values{
+		"time":          {strconv.FormatInt(quietTime.UnixMilli(), 10)},
+		"minutesBefore": {"0"},
+		"minutesAfter":  {"0"},
+	})
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the quiet-time query must have no arrivals")
+
+	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+	assert.Contains(t, model.Data.Entry.SituationIDs, wantSituationID)
+	referenced := slices.ContainsFunc(model.Data.References.Situations, func(situation models.Situation) bool {
+		return situation.ID == wantSituationID
+	})
+	assert.True(t, referenced, "the stop alert must resolve in references.situations")
 }
 
 // stopIds come nearest first so maxCount truncation drops the farthest
@@ -410,6 +485,16 @@ func TestArrivalsAndDeparturesForLocationEmptyArea(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 		assert.Equal(t, http.StatusNotFound, model.Code)
 	})
+
+	t.Run("bad time in an empty area still fails validation", func(t *testing.T) {
+		q := url.Values{"time": {"garbage"}}
+		maps.Copy(q, emptyArea)
+		resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
+			arrivalsForLocationURL(q))
+
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Contains(t, model.Data.FieldErrors, "time")
+	})
 }
 
 // Only lat and lon are given, so the search falls back to the shared 600m
@@ -574,4 +659,62 @@ func TestParseMinutesValueCapsBeforeDurationOverflow(t *testing.T) {
 	assert.Equal(t, 5*time.Minute,
 		parseMinutesValue(url.Values{"minutesBefore": {"-5"}}, "minutesBefore", 5*time.Minute, maxArrivalWindow, addError))
 	assert.Contains(t, collected, "minutesBefore")
+}
+
+// A cancelled request must not be reported as a server failure: client
+// cancellation writes nothing, an expired deadline writes 504.
+func TestSendArrivalsForLocationErrorDistinguishesCancellation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	newRequest := func(ctx context.Context) (*httptest.ResponseRecorder, *http.Request) {
+		req := httptest.NewRequest(http.MethodGet, "/api/where/arrivals-and-departures-for-location.json", nil).WithContext(ctx)
+		return httptest.NewRecorder(), req
+	}
+
+	t.Run("client cancellation writes nothing", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		rec, req := newRequest(ctx)
+
+		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
+
+		assert.Empty(t, rec.Body.String(), "no body should be written when the client cancels")
+	})
+
+	t.Run("expired deadline writes gateway timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 0)
+		defer cancel()
+		rec, req := newRequest(ctx)
+
+		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
+
+		assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
+		assert.Contains(t, rec.Body.String(), "gateway timeout")
+	})
+
+	t.Run("genuine failure writes server error", func(t *testing.T) {
+		ctx := context.Background()
+		rec, req := newRequest(ctx)
+
+		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+}
+
+// Nearby stops served only by routes with no service on the query date are
+// dropped, matching Java (e.g. a seasonal shuttle outside its season).
+func TestBuildNearbyResultsDropsStopsInactiveOnDate(t *testing.T) {
+	stops := []gtfsdb.Stop{
+		{ID: "active", Lat: 40.0, Lon: -122.0},
+		{ID: "inactive", Lat: 40.0, Lon: -122.0},
+	}
+	combined := map[string]string{"active": "25_active", "inactive": "25_inactive"}
+	loc := &internalgtfs.LocationParams{Lat: 40.0, Lon: -122.0}
+
+	results := buildNearbyResults(stops, nil, map[string]bool{"active": true, "inactive": false}, combined, loc)
+
+	require.Len(t, results, 1, "stops with no active routes must be dropped")
+	assert.Equal(t, "25_active", results[0].StopID)
 }

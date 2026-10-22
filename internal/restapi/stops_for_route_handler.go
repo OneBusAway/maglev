@@ -39,7 +39,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -71,7 +71,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	_, err = api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -533,7 +533,7 @@ func (api *RestAPI) mergePolylinesForShapeIDs(ctx context.Context, shapeIDs []st
 // shared undirected edge set across all shapes added to it.
 type polylineMerger struct {
 	edges       map[edgeKey]struct{}
-	currentLine [][]float64
+	currentLine [][2]float64
 	polylines   []models.Polyline
 }
 
@@ -573,7 +573,7 @@ func (m *polylineMerger) addShape(points []gtfsdb.Shape) {
 			}
 		}
 		if !havePrev || prev != loc {
-			m.currentLine = append(m.currentLine, []float64{loc.lat, loc.lon})
+			m.currentLine = append(m.currentLine, [2]float64{loc.lat, loc.lon})
 		}
 		prev = loc
 		havePrev = true

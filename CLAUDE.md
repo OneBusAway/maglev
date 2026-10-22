@@ -175,6 +175,7 @@ All endpoints are registered in `internal/restapi/routes.go`:
 | `/api/where/arrivals-and-departures-for-stop/{id}` | `arrival_and_departure_for_stop_handler.go` | All arrivals |
 | `/api/where/report-problem-with-trip/{id}` | `report_problem_with_trip_handler.go` | Report trip issue |
 | `/api/where/report-problem-with-stop/{id}` | `report_problem_with_stop_handler.go` | Report stop issue |
+| `/api/gtfs_realtime/vehicle-positions-for-agency/{id}.pb` | `vehicle_positions_for_agency_handler.go` | GTFS-RT vehicle positions for an agency |
 
 ## Middleware Components
 
@@ -183,7 +184,7 @@ Located in `internal/restapi/`:
 | Middleware | File | Description |
 |------------|------|-------------|
 | **Compression** | `compression_middleware.go` | Gzip compression using `klauspost/compress/gzhttp`. Default: 1KB min size, level 6 |
-| **Rate Limiting** | `rate_limit_middleware.go` | Per-API-key rate limiting with `golang.org/x/time/rate`. Auto-cleanup of idle limiters |
+| **Rate Limiting** | `rate_limit_middleware.go` | One shared `golang.org/x/time/rate` limiter for the whole service. Keys listed in `exempt-api-keys` bypass it |
 | **Request Logging** | `request_logging_middleware.go` | HTTP request/response logging |
 | **Security** | `security_middleware.go` | Security headers and protections |
 
@@ -289,14 +290,16 @@ After modifying SQL queries or schema, run `make models` to regenerate the Go co
 
 ## In-Memory Data Structures
 
-The GTFS Manager (`internal/gtfs/gtfs_manager.go`) maintains:
+What the GTFS Manager (`internal/gtfs/gtfs_manager.go`) does and does not keep
+in memory:
 
-**Static Data** (from `manager.gtfsData`):
-- `Agencies` - Transit agency information
-- `Routes` - All routes
-- `Stops` - All stops
-- `Trips` - Scheduled trips
-- Accessed via: `GetAgencies()`, `GetTrips()`, `GetStops()`, `GetStaticData()`
+**Static Data** is not held in memory. It lives in SQLite and is read on demand:
+`GetAgencies(ctx)`, `GetTrips(ctx, limit)` and `GetStops(ctx)` are thin wrappers
+over the `ListAgencies`, `ListTripsWithLimit` and `ListStops` queries.
+
+The only static state the manager keeps in memory is `regionBounds`
+(`map[agencyID]*RegionBounds`, guarded by `staticMutex`), recomputed after each
+reload and read through `GetRegionBounds()`.
 
 **Real-Time Data** (protected by `realTimeMutex`):
 
@@ -305,6 +308,8 @@ The GTFS Manager (`internal/gtfs/gtfs_manager.go`) maintains:
 - `feedVehicles` - `map[string][]gtfs.Vehicle` — vehicles per feed
 - `feedAlerts` - `map[string][]gtfs.Alert` — alerts per feed
 - `feedVehicleLastSeen` - `map[string]map[string]time.Time` — per-feed, per-vehicle last-seen timestamps for stale vehicle expiry (15 min window)
+- `feedVehicleAgency` - `map[string]map[vehicleKey]string`: the one agency each vehicle was attributed to at ingestion (its route's agency, else the feed's first `agency-ids` entry)
+- `feedVehicleDataTime` - `map[string]time.Time`: when each feed's vehicle data was produced (header timestamp, else fetch time)
 
 *Derived merged view*, published by `rebuildMergedRealtimeLocked` after each feed
 update as one immutable `mergedRealtime` snapshot held in `merged
@@ -316,6 +321,7 @@ needs **no lock**. Never mutate what it returns:
 - `vehicleLookupByTrip` - Map of trip ID → vehicle index
 - `vehicleLookupByVehicle` - Map of vehicle ID → vehicle index
 - `duplicatedVehicleByRoute` - Map of route ID → DUPLICATED-trip vehicles
+- `vehiclePositionsByAgency` - Map of agency ID → `AgencyVehiclePositions` (fresh, one per vehicle ID, sorted, plus the feed data time) for the GTFS-RT export, read with `VehiclePositionsForAgency`
 - `alerts` - `alertIndex` of alerts by trip, route, agency and stop
 
 When a single feed refreshes, only its per-feed sub-map is overwritten; other feeds' data is untouched. A fresh snapshot is then built from all sub-maps and swapped in.
@@ -329,15 +335,20 @@ When a single feed refreshes, only its per-feed sub-map is overwritten; other fe
 
 ### GTFS Manager vs Database Access
 
-**In-Memory Data** (from `manager.gtfsData`):
-- `FindAgency(id)` - Direct O(1) agency lookup
-- `FindRoute(id)` - Direct O(1) route lookup
-- `RoutesForAgencyID(id)` - Routes for an agency
-- `VehiclesForAgencyID(id)` - Real-time vehicle data
-- `GetVehicleForTrip(tripID)` - Vehicle for a trip (checks block)
+**In-Memory Data** — served from the `mergedRealtime` snapshot, which readers
+load without taking a lock:
 - `GetVehicleByID(vehicleID)` - Vehicle by ID
 - `GetTripUpdateByID(tripID)` - Real-time trip update
-- Access via: `api.GtfsManager.FindAgency()`, etc.
+- `GetVehicleForTrip(ctx, tripID)` - Vehicle for a trip; when no vehicle reports
+  that trip it falls back to the trip's block, which does query the DB
+- `VehiclesForAgencyID(ctx, agencyID)` - Resolves the agency's routes from the
+  DB, then reads those routes' vehicles from the snapshot
+
+**Manager methods that query the database** — these look like in-memory
+lookups but each wraps a sqlc query:
+- `FindAgency(ctx, id)` - `GetAgency`; returns `(nil, nil)` when the row is absent
+- `RoutesForAgencyID(ctx, agencyID)` - `GetRoutesForAgency`
+- Access via: `api.GtfsManager.FindAgency(ctx, id)`, etc.
 
 **Database Queries** (via sqlc):
 - `GetRoute(ctx, id)` - Single route by ID

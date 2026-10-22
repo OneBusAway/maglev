@@ -25,7 +25,7 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, id)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
