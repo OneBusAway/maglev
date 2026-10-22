@@ -510,14 +510,15 @@ func (api *RestAPI) finishArrivalTripStatus(ctx context.Context, arrivals []mode
 	return nil
 }
 
-// addStopLevelArrivalAlerts records one alert set per searched stop. It runs
-// after trip status so trip alerts still precede stop alerts in the collector.
-func (api *RestAPI) addStopLevelArrivalAlerts(ctx context.Context, stops []gtfsdb.Stop, agencies *stopAgencyIndex, acc *arrivalsAccumulator) error {
+// addStopLevelArrivalAlerts records one alert set per searched stop. The
+// collector is the caller's: the location endpoint keeps stop alerts on the
+// entry, apart from the alerts the arrivals themselves carry.
+func (api *RestAPI) addStopLevelArrivalAlerts(ctx context.Context, stops []gtfsdb.Stop, agencies *stopAgencyIndex, situations *situationCollector) error {
 	for _, stop := range stops {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), agencies.agencyIDFor(stop.ID))
+		situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), agencies.agencyIDFor(stop.ID))
 	}
 	return nil
 }
