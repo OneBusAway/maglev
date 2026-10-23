@@ -681,20 +681,23 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	blockTripIDs := make(map[string]bool)
-	if requestedBlockID := nulls.StringOrEmpty(requestedTrip.BlockID); requestedBlockID == "" {
-		blockTripIDs[requestedTrip.ID] = true
-	} else {
-		blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
-		if err != nil {
-			logging.LogError(reqLogger, "could not get trips for block", err,
-				slog.String("block_id", requestedBlockID))
-			return nil
-		}
+	// Java treats a blockless trip as its own block, and the direct lookup
+	// above already checked that trip.
+	requestedBlockID := nulls.StringOrEmpty(requestedTrip.BlockID)
+	if requestedBlockID == "" {
+		return nil
+	}
 
-		for _, trip := range blockTrips {
-			blockTripIDs[trip.ID] = true
-		}
+	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
+	if err != nil {
+		logging.LogError(reqLogger, "could not get trips for block", err,
+			slog.String("block_id", requestedBlockID))
+		return nil
+	}
+
+	blockTripIDs := make(map[string]bool, len(blockTrips))
+	for _, trip := range blockTrips {
+		blockTripIDs[trip.ID] = true
 	}
 
 	// Iterate over all vehicles to find any vehicle serving a trip in this block.
