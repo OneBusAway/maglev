@@ -663,7 +663,7 @@ func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode
 	require.NoError(t, err)
 	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{
 		ID: tripID, RouteID: routeID, ServiceID: serviceID,
-		BlockID: nulls.String("dp-block"),
+		BlockID: nulls.String(delayPropBlockID(t)),
 	})
 	require.NoError(t, err)
 
@@ -680,6 +680,13 @@ func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode
 	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	scheduledArrivalMs = serviceMidnight.Add(arrivalOffset).UnixMilli()
 	return
+}
+
+// delayPropBlockID is the block setupDelayPropTestData puts its trip in. The
+// test database is shared, so each test gets its own block: otherwise one
+// test's trips change the block, and the slack, another test sees.
+func delayPropBlockID(t *testing.T) string {
+	return "dp-block-" + t.Name()
 }
 
 // addDownstreamSTU adds a second stop at sequence 5 to the trip and injects a
@@ -1158,7 +1165,7 @@ func addEarlierBlockTrip(t *testing.T, api *RestAPI) string {
 	earlierTripID := "dp-trip-earlier-" + t.Name()
 	_, err := q.CreateTrip(ctx, gtfsdb.CreateTripParams{
 		ID: earlierTripID, RouteID: "dp-route", ServiceID: "dp-svc",
-		BlockID: nulls.String("dp-block"),
+		BlockID: nulls.String(delayPropBlockID(t)),
 	})
 	require.NoError(t, err)
 	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
