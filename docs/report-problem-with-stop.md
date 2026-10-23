@@ -48,11 +48,11 @@ A client issues an HTTP request to `GET /api/where/report-problem-with-stop/{id}
 ## Main Success Scenario
 
 1. The client supplies the stop ID as the path segment `{id}` along with an API key and optional query parameters (`code`, `userComment`, `userLat`, `userLon`, `userLocationAccuracy`).
-2. The server extracts the agency ID and stop code by splitting `{id}` on the first underscore character ([`ReportProblemWithStopAction.java#L48–L58`](https://github.com/OneBusAway/onebusaway-application-modules/blob/095bf1ac3aeb7009b9f78e7f1cb4c65bd38b988a/onebusaway-api-webapp/src/main/java/org/onebusaway/api/actions/api/where/ReportProblemWithStopAction.java#L48-L58)).
+2. The server extracts the agency ID and stop code by splitting `{id}` on the first underscore character ([`report_problem_with_stop_handler.go#L19`](../internal/restapi/report_problem_with_stop_handler.go#L19), [`id_helpers.go#L18–L40`](../internal/restapi/id_helpers.go#L18-L40)).
 3. The server parses and validates optional floating-point parameters (`userLat`, `userLon`, `userLocationAccuracy`).
 4. If `userComment` is present, the server truncates the text to a maximum length of 500 characters.
-5. The server records the report into the database with the raw stop code, problem code, comment, location coordinates, accuracy, and server timestamp ([`ReportProblemWithStopAction.java#L104–L106`](https://github.com/OneBusAway/onebusaway-application-modules/blob/095bf1ac3aeb7009b9f78e7f1cb4c65bd38b988a/onebusaway-api-webapp/src/main/java/org/onebusaway/api/actions/api/where/ReportProblemWithStopAction.java#L104-L106)).
-6. The server returns HTTP 200 with an empty OK response envelope (`data: {}`) ([`ReportProblemWithStopAction.java#L108`](https://github.com/OneBusAway/onebusaway-application-modules/blob/095bf1ac3aeb7009b9f78e7f1cb4c65bd38b988a/onebusaway-api-webapp/src/main/java/org/onebusaway/api/actions/api/where/ReportProblemWithStopAction.java#L108)).
+5. The server records the report into the database with the raw stop code, problem code, comment, location coordinates, accuracy, and server timestamp ([`ReportProblemWithStopAction.java#L105–L107`](https://github.com/OneBusAway/onebusaway-application-modules/blob/095bf1ac3aeb7009b9f78e7f1cb4c65bd38b988a/onebusaway-api-webapp/src/main/java/org/onebusaway/api/actions/api/where/ReportProblemWithStopAction.java#L105-L107), [`report_problem_with_stop_handler.go#L53–L70`](../internal/restapi/report_problem_with_stop_handler.go#L53-L70)).
+6. The server returns HTTP 200 with an empty OK response envelope (`data: {}`) ([`ReportProblemWithStopAction.java#L109`](https://github.com/OneBusAway/onebusaway-application-modules/blob/095bf1ac3aeb7009b9f78e7f1cb4c65bd38b988a/onebusaway-api-webapp/src/main/java/org/onebusaway/api/actions/api/where/ReportProblemWithStopAction.java#L109), [`report_problem_with_stop_handler.go#L72`](../internal/restapi/report_problem_with_stop_handler.go#L72)).
 
 ## Extensions
 
@@ -119,14 +119,7 @@ Problem reporting endpoints are in scope for Maglev 1.0 to preserve backward com
     },
     "code": {
       "type": "string",
-      "enum": [
-        "stop_name_wrong",
-        "stop_number_wrong",
-        "stop_location_wrong",
-        "route_or_trip_missing",
-        "other"
-      ],
-      "description": "A string code identifying the nature of the problem"
+      "description": "A string code identifying the nature of the problem (conventionally stop_name_wrong, stop_number_wrong, stop_location_wrong, route_or_trip_missing, other)"
     },
     "userComment": {
       "type": "string",

@@ -48,11 +48,11 @@ A client issues an HTTP request to `GET /api/where/report-problem-with-trip/{id}
 ## Main Success Scenario
 
 1. The client supplies the trip ID as path segment `{id}` along with an API key and optional query parameters (`serviceDate`, `vehicleId`, `stopId`, `code`, `userComment`, `userOnVehicle`, `userVehicleNumber`, `userLat`, `userLon`, `userLocationAccuracy`).
-2. The server extracts the agency ID and trip ID by splitting `{id}` on the first underscore character ([`ReportProblemWithTripAction.java#L48–L56`](https://github.com/OneBusAway/onebusaway-application-modules/blob/095bf1ac3aeb7009b9f78e7f1cb4c65bd38b988a/onebusaway-api-webapp/src/main/java/org/onebusaway/api/actions/api/where/ReportProblemWithTripAction.java#L48-L56)).
+2. The server extracts the agency ID and trip ID by splitting `{id}` on the first underscore character ([`report_problem_with_trip_handler.go#L19`](../internal/restapi/report_problem_with_trip_handler.go#L19), [`id_helpers.go#L18–L40`](../internal/restapi/id_helpers.go#L18-L40)).
 3. The server parses and validates floating-point parameters (`userLat`, `userLon`, `userLocationAccuracy`) and boolean parameter `userOnVehicle`.
 4. If `userComment` is present, the server truncates the text to a maximum of 500 characters.
-5. The server records the report into the database with `trip_id`, `service_date`, `vehicle_id`, `stop_id`, `code`, `user_comment`, `user_on_vehicle`, `user_vehicle_number`, coordinates, accuracy, and server timestamps ([`ReportProblemWithTripAction.java#L132–L134`](https://github.com/OneBusAway/onebusaway-application-modules/blob/095bf1ac3aeb7009b9f78e7f1cb4c65bd38b988a/onebusaway-api-webapp/src/main/java/org/onebusaway/api/actions/api/where/ReportProblemWithTripAction.java#L132-L134)).
-6. The server returns HTTP 200 with an empty OK response envelope (`data: {}`) ([`ReportProblemWithTripAction.java#L136`](https://github.com/OneBusAway/onebusaway-application-modules/blob/095bf1ac3aeb7009b9f78e7f1cb4c65bd38b988a/onebusaway-api-webapp/src/main/java/org/onebusaway/api/actions/api/where/ReportProblemWithTripAction.java#L136)).
+5. The server records the report into the database with `trip_id`, `service_date`, `vehicle_id`, `stop_id`, `code`, `user_comment`, `user_on_vehicle`, `user_vehicle_number`, coordinates, accuracy, and server timestamps ([`ReportProblemWithTripAction.java#L138–L140`](https://github.com/OneBusAway/onebusaway-application-modules/blob/095bf1ac3aeb7009b9f78e7f1cb4c65bd38b988a/onebusaway-api-webapp/src/main/java/org/onebusaway/api/actions/api/where/ReportProblemWithTripAction.java#L138-L140), [`report_problem_with_trip_handler.go#L65–L89`](../internal/restapi/report_problem_with_trip_handler.go#L65-L89)).
+6. The server returns HTTP 200 with an empty OK response envelope (`data: {}`) ([`ReportProblemWithTripAction.java#L142`](https://github.com/OneBusAway/onebusaway-application-modules/blob/095bf1ac3aeb7009b9f78e7f1cb4c65bd38b988a/onebusaway-api-webapp/src/main/java/org/onebusaway/api/actions/api/where/ReportProblemWithTripAction.java#L142), [`report_problem_with_trip_handler.go#L91`](../internal/restapi/report_problem_with_trip_handler.go#L91)).
 
 ## Extensions
 
@@ -130,8 +130,9 @@ Problem reporting endpoints are in scope for Maglev 1.0 to preserve backward com
       "description": "API authentication key"
     },
     "serviceDate": {
-      "type": "string",
-      "description": "The service date of the trip (commonly supplied as Unix milliseconds or YYYYMMDD string format; stored as an opaque string without server-side date validation)"
+      "type": "integer",
+      "format": "int64",
+      "description": "The service date of the trip in Unix milliseconds per canonical OpenAPI contract (accepted and stored by Maglev as an opaque string without numerical or date validation)"
     },
     "vehicleId": {
       "type": "string",
