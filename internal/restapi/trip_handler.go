@@ -52,8 +52,8 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var blockID, shapeID string
-	blockID = utils.FormBlockID(agencyID, trip.BlockID.String, trip.ID)
+	blockID := utils.FormBlockID(agencyID, trip.BlockID.String, trip.ID)
+	var shapeID string
 	if trip.ShapeID.Valid {
 		shapeID = utils.FormCombinedID(agencyID, trip.ShapeID.String)
 	}
