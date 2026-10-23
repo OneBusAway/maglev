@@ -1165,17 +1165,15 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 
 // buildStopList emits the stop references and registers the routes serving them.
 func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID map[string][]string) {
-	stopList, routeIDsByStop := rb.api.stopReferences(rb.ctx, stops, stopIDsByBareID)
+	stopList, routesByStop := rb.api.stopReferences(rb.ctx, stops, stopIDsByBareID)
 	rb.stopList = stopList
 
 	// Register the raw route ID (e.g. "100479") rather than the combined one, so
 	// that collectAgenciesAndRoutes can fetch full route details via
 	// GetRoutesByIDs, which queries WHERE routes.id IN (?) using raw IDs.
-	for _, combinedRouteIDs := range routeIDsByStop {
-		for _, combinedID := range combinedRouteIDs {
-			if rawID, err := utils.ExtractCodeID(combinedID); err == nil {
-				rb.presentRoutes[rawID] = models.Route{}
-			}
+	for _, routes := range routesByStop {
+		for _, r := range routes {
+			rb.presentRoutes[r.routeID] = models.Route{}
 		}
 	}
 }
