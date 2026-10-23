@@ -894,10 +894,17 @@ func (manager *Manager) recordVehicleDataTime(feedID string, headerTime time.Tim
 	if manager.feedVehicleDataTime == nil {
 		manager.feedVehicleDataTime = make(map[string]time.Time)
 	}
-	if headerTime.IsZero() {
+	if isMissingHeaderTime(headerTime) {
 		headerTime = time.Now()
 	}
 	manager.feedVehicleDataTime[feedID] = headerTime
+}
+
+// isMissingHeaderTime reports whether a feed header carried no usable
+// timestamp. go-gtfs maps an explicit timestamp of 0 to the Unix epoch rather
+// than the zero time.Time, so both count as missing.
+func isMissingHeaderTime(headerTime time.Time) bool {
+	return headerTime.IsZero() || headerTime.Unix() == 0
 }
 
 // copyVehicleAgency carries a vehicle's agency, if it has one, from src to dst.
