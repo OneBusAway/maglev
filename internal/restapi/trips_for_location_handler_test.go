@@ -634,6 +634,17 @@ func TestTripsForLocationHandler_TimeParameter(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 		assert.Equal(t, http.StatusBadRequest, model.Code)
 	})
+
+	t.Run("Zero Time Means Now", func(t *testing.T) {
+		_, omittedModel := callAPIHandler[TripsForLocationResponse](t, api, tripsForLocationURL(1.0, 1.0, "includeStatus=true"))
+		resp, zeroModel := callAPIHandler[TripsForLocationResponse](t, api, tripsForLocationURL(1.0, 1.0, "includeStatus=true&time=0"))
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Len(t, zeroModel.Data.List, len(omittedModel.Data.List), "time=0 must return the same entries as an omitted time")
+		for i, entry := range zeroModel.Data.List {
+			assert.Equal(t, omittedModel.Data.List[i].ServiceDate, entry.ServiceDate, "entry %d ServiceDate must match the omitted-time request", i)
+		}
+	})
 }
 
 func TestTripsForLocationHandler_RadiusAndPrecedence(t *testing.T) {
