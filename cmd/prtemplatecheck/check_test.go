@@ -165,6 +165,34 @@ func TestCheckBody(t *testing.T) {
 			},
 		},
 		{
+			name: "response_comparison_kept_empty_suggests_deletion",
+			body: func(t *testing.T) string {
+				body := replaceOnce(t, filled, "## Response comparison (delete if no Java-served response changed)\n\nWritten by the author.", "## Response comparison (delete if no Java-served response changed)")
+				for _, label := range []string{
+					"Request URL(s)",
+					"Java server, feeds and date checked",
+					"Maglev before",
+					"Maglev after",
+					"Java",
+					"If Maglev intentionally differs from Java",
+				} {
+					body = setField(t, body, label, "")
+				}
+				return body
+			},
+			wantRules:    []string{ruleSection},
+			wantMentions: []string{"Response comparison", "is empty", "Delete it if no Java-served response changed, or fill it in."},
+		},
+		{
+			name: "response_comparison_heading_only_suggests_deletion",
+			body: func(t *testing.T) string {
+				without := removeSection(t, filled, "Response comparison")
+				return replaceOnce(t, without, "## Notes for reviewers", "## Response comparison\n\n## Notes for reviewers")
+			},
+			wantRules:    []string{ruleSection},
+			wantMentions: []string{"Response comparison", "is empty", "Delete it if no Java-served response changed, or fill it in."},
+		},
+		{
 			name: "response_fields_empty",
 			body: func(t *testing.T) string {
 				body := setField(t, filled, "Maglev after", "")
@@ -282,4 +310,69 @@ func TestParseTemplateRejectsBrokenTemplates(t *testing.T) {
 			assert.Error(t, err)
 		})
 	}
+}
+
+func TestCheckBody_OptionalSectionWithoutDeleteHint(t *testing.T) {
+	customTemplate := "<!-- maglev-pr-template:v1 -->\n\nFixes #\n\n## Custom (optional)\n\n- **Field:**\n\n## Checklist\n\n- [ ] Done\n"
+	rules, err := parseTemplate(customTemplate)
+	require.NoError(t, err)
+
+	// Present but empty: emits ruleSection with fallback message
+	bodyEmpty := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Custom (optional)\n\n- **Field:**\n\n## Checklist\n\n- [x] Done\n"
+	problems := checkBody(rules, bodyEmpty, false)
+	require.Len(t, problems, 1)
+	assert.Equal(t, ruleSection, problems[0].Rule)
+	assert.Equal(t, "Section **Custom** is empty.", problems[0].Message)
+
+	// Deleted: passes
+	bodyDeleted := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Checklist\n\n- [x] Done\n"
+	assert.Empty(t, checkBody(rules, bodyDeleted, false))
+}
+
+func TestCheckBody_FieldlessOptionalSectionWithDeleteHint(t *testing.T) {
+	customTemplate := "<!-- maglev-pr-template:v1 -->\n\nFixes #\n\n## Benchmarks (delete if no benchmarks were run)\n\n## Checklist\n\n- [ ] Done\n"
+	rules, err := parseTemplate(customTemplate)
+	require.NoError(t, err)
+
+	// Present but empty: suggests deletion with hint
+	bodyEmpty := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Benchmarks (delete if no benchmarks were run)\n\n## Checklist\n\n- [x] Done\n"
+	problems := checkBody(rules, bodyEmpty, false)
+	require.Len(t, problems, 1)
+	assert.Equal(t, ruleSection, problems[0].Rule)
+	assert.Equal(t, "Section **Benchmarks** is empty. Delete it if no benchmarks were run, or fill it in.", problems[0].Message)
+
+	// Present with content: passes
+	bodyContent := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Benchmarks (delete if no benchmarks were run)\n\nBenchmark results here.\n\n## Checklist\n\n- [x] Done\n"
+	assert.Empty(t, checkBody(rules, bodyContent, false))
+
+	// Deleted: passes
+	bodyDeleted := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Checklist\n\n- [x] Done\n"
+	assert.Empty(t, checkBody(rules, bodyDeleted, false))
+}
+
+func TestCheckBody_OptionalSectionWithCheckedCheckbox(t *testing.T) {
+	customTemplate := "<!-- maglev-pr-template:v1 -->\n\nFixes #\n\n## Custom (optional)\n\n- [ ] Verified\n- **If note:**\n\n## Checklist\n\n- [ ] Done\n"
+	rules, err := parseTemplate(customTemplate)
+	require.NoError(t, err)
+
+	// Checked checkbox counts as content even if conditional field is blank
+	bodyChecked := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Custom (optional)\n\n- [x] Verified\n- **If note:**\n\n## Checklist\n\n- [x] Done\n"
+	assert.Empty(t, checkBody(rules, bodyChecked, false))
+}
+
+func TestCheckBody_FieldlessOptionalSectionWithUncheckedCheckbox(t *testing.T) {
+	customTemplate := "<!-- maglev-pr-template:v1 -->\n\nFixes #\n\n## Benchmarks (delete if no benchmarks were run)\n\n- [ ] Run benchmark\n\n## Checklist\n\n- [ ] Done\n"
+	rules, err := parseTemplate(customTemplate)
+	require.NoError(t, err)
+
+	// Unchecked checkbox does not count as content
+	bodyUnchecked := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Benchmarks (delete if no benchmarks were run)\n\n- [ ] Run benchmark\n\n## Checklist\n\n- [x] Done\n"
+	problems := checkBody(rules, bodyUnchecked, false)
+	require.Len(t, problems, 1)
+	assert.Equal(t, ruleSection, problems[0].Rule)
+	assert.Equal(t, "Section **Benchmarks** is empty. Delete it if no benchmarks were run, or fill it in.", problems[0].Message)
+
+	// Checked checkbox counts as content
+	bodyChecked := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Benchmarks (delete if no benchmarks were run)\n\n- [x] Run benchmark\n\n## Checklist\n\n- [x] Done\n"
+	assert.Empty(t, checkBody(rules, bodyChecked, false))
 }
