@@ -598,6 +598,26 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	api.sendResponse(w, r, response)
 }
 
+// departureDeviationAfterDwell is the lateness half of Java's
+// calculateDepartureDeviation (ArrivalAndDepartureServiceImpl). Slack is this
+// stop's own dwell, floored at zero. A late bus spends that slack before the
+// departure moves; an early bus keeps its early departure. Java's
+// propagateScheduleDeviationForwardWithSlack also zeros an early departure
+// when slack remains, but that helper applies to the next stop after a known
+// prediction, not to the stop being predicted.
+func departureDeviationAfterDwell(deviation, slack time.Duration) time.Duration {
+	if slack < 0 {
+		slack = 0
+	}
+	if slack > 0 && deviation > 0 {
+		if deviation <= slack {
+			return 0
+		}
+		return deviation - slack
+	}
+	return deviation
+}
+
 // getPredictedTimes computes predicted arrival/departure times from GTFS-RT TripUpdate data.
 // It implements a 3-tier fallback strategy matching the plural handler's behavior:
 //  1. Exact stop match — uses per-stop arrival/departure time or delay directly
@@ -666,6 +686,7 @@ func (api *RestAPI) getPredictedTimes(
 	if target == nil {
 		target = stopIDFallback
 	}
+	departureFromFeed := false
 	if target != nil {
 		foundTarget = true
 		if target.Arrival != nil {
@@ -681,9 +702,11 @@ func (api *RestAPI) getPredictedTimes(
 			if target.Departure.Time != nil {
 				offset := target.Departure.Time.Sub(scheduledDepartureTime)
 				departureOffset = &offset
+				departureFromFeed = true
 			} else if target.Departure.Delay != nil {
 				offset := *target.Departure.Delay
 				departureOffset = &offset
+				departureFromFeed = true
 			}
 		}
 	}
@@ -708,13 +731,15 @@ func (api *RestAPI) getPredictedTimes(
 		}
 	}
 
-	// Mirror Java's propagateScheduleDeviationForwardAcrossStop
-	// (ArrivalAndDepartureServiceImpl.java:925-930). When slack between arrival
-	// and departure is zero (the typical case at most stops), the
-	// propagation reduces to "copy the present side." Falling back to
-	// propagatedDelay here would mix the target stop with an unrelated
-	// earlier stop's deviation, producing a negative dwell on stops where
-	// arr != dep. Only fall back to propagatedDelay if BOTH sides are nil.
+	// Fill a missing side from the side the feed did send, or from the
+	// propagated delay when neither side did. Mixing in an earlier stop's
+	// delay when one side of this stop is already known produces a negative
+	// dwell, so propagatedDelay is only used when both sides are nil.
+	//
+	// When the feed did not send a departure, Java's calculateDepartureDeviation
+	// then lets this stop's dwell absorb lateness. A 5-minute layover eats the
+	// first 5 minutes of delay, so the predicted departure is not as late as
+	// the arrival. A departure the feed actually sent is left alone.
 	if arrivalOffset == nil && departureOffset != nil {
 		arrivalOffset = departureOffset
 	} else if arrivalOffset == nil {
@@ -724,6 +749,10 @@ func (api *RestAPI) getPredictedTimes(
 		departureOffset = arrivalOffset
 	} else if departureOffset == nil {
 		departureOffset = &propagatedDelay
+	}
+	if !departureFromFeed {
+		adjusted := departureDeviationAfterDwell(*arrivalOffset, scheduledDepartureTime.Sub(scheduledArrivalTime))
+		departureOffset = &adjusted
 	}
 
 	// Java's ±1h blockNotActive filter (GtfsRealtimeSource.java:711-752)
