@@ -32,7 +32,7 @@ Rider (via a client application)
 ## Minimal Guarantees
 
 - The response envelope always includes `code`, `currentTime`, `text`, and `version`.
-- Database storage failures return HTTP 500 with a standard JSON error envelope (`"internal server error"`, `version: 2`).
+- Non-context database storage failures return HTTP 500 with a standard JSON error envelope (`"internal server error"`, `version: 2`); context deadline expirations return HTTP 504, and client-canceled requests return client-canceled responses.
 - Malformed coordinates, accuracy, or boolean values return HTTP 400 with a field validation error envelope.
 
 ## Success Guarantees
@@ -61,6 +61,7 @@ A client issues an HTTP request to `GET /api/where/report-problem-with-trip/{id}
 
 **1b. `id` contains no underscore (malformed combined ID):**
 - The server returns HTTP 400 with `code: 400` and `text: "invalid combined id format, expected agencyId_code"`.
+- The response also contains `data.fieldErrors.id` with the same message.
 
 **2a. Malformed floating-point query parameters (`userLat`, `userLon`, `userLocationAccuracy`):**
 - The server rejects non-numeric strings, NaN, or infinite values with HTTP 400 and a JSON validation error response containing `data.fieldErrors`.
@@ -69,7 +70,7 @@ A client issues an HTTP request to `GET /api/where/report-problem-with-trip/{id}
 - Non-empty values other than case-insensitive `true` or `false` (e.g. `1`, `0`, `yes`, `bad`) are rejected with HTTP 400 and `fieldErrors["userOnVehicle"]`. An empty value (`?userOnVehicle=`) evaluates to `false` without an error.
 
 **3a. Database failure or database uninitialized:**
-- The server logs the error and returns HTTP 500 with a standard JSON error envelope (`"internal server error"`, `version: 2`).
+- For non-context database errors, the server logs the error and returns HTTP 500 with a standard JSON error envelope (`"internal server error"`, `version: 2`). If a context timeout occurs (`context.DeadlineExceeded`), the server returns HTTP 504; client cancellations use `clientCanceledResponse`.
 
 **4a. Missing or invalid API key:**
 - The server returns HTTP 401 with `code: 401` and `text: "permission denied"`.
@@ -92,7 +93,7 @@ The OpenAPI specification (`testdata/openapi.yml`) specifies `vehicleID` and `st
 
 **Standardized 500 error envelope with version 2 (PR #1641, defect DC-10).**
 
-When database persistence fails or the database is uninitialized, Maglev returns a standard OneBusAway JSON error envelope with HTTP status 500, `Content-Type: application/json`, `"version": 2`, `"code": 500`, and `"text": "internal server error"`. This addresses defect DC-10 and avoids leaking internal database exception strings or returning plain text errors.
+When a non-context database persistence error occurs or the database is uninitialized, Maglev returns a standard OneBusAway JSON error envelope with HTTP status 500, `Content-Type: application/json`, `"version": 2`, `"code": 500`, and `"text": "internal server error"`. (Context deadline expirations return HTTP 504, and canceled requests return client-canceled responses.) This addresses defect DC-10 and avoids leaking internal database exception strings or returning plain text errors.
 
 **Parameter casing for vehicleId and stopId (#1715).**
 
@@ -129,9 +130,8 @@ Problem reporting endpoints are in scope for Maglev 1.0 to preserve backward com
       "description": "API authentication key"
     },
     "serviceDate": {
-      "type": "integer",
-      "format": "int64",
-      "description": "The service date of the trip in Unix milliseconds or YYYYMMDD format"
+      "type": "string",
+      "description": "The service date of the trip (commonly supplied as Unix milliseconds or YYYYMMDD string format; stored as an opaque string without server-side date validation)"
     },
     "vehicleId": {
       "type": "string",
@@ -169,12 +169,12 @@ Problem reporting endpoints are in scope for Maglev 1.0 to preserve backward com
     "userLat": {
       "type": "number",
       "format": "float",
-      "description": "The reporting user's current latitude (-90 to 90)"
+      "description": "The reporting user's current latitude as a finite float; geographic range is not validated"
     },
     "userLon": {
       "type": "number",
       "format": "float",
-      "description": "The reporting user's current longitude (-180 to 180)"
+      "description": "The reporting user's current longitude as a finite float; geographic range is not validated"
     },
     "userLocationAccuracy": {
       "type": "number",
@@ -205,16 +205,16 @@ Problem reporting endpoints are in scope for Maglev 1.0 to preserve backward com
     "currentTime": { "type": "integer", "description": "Unix milliseconds" },
     "data":        { "type": "object" }
   },
-  "required": ["version", "code", "text", "currentTime", "data"]
+  "required": ["version", "code", "text", "currentTime"]
 }
 ```
 
-**`version`** — Always `2`.
+**`version`** — `2` for Maglev responses and legacy success/validation responses; legacy Java unhandled server error envelopes use `version: 1` (see Defect DC-10).
 
-**`code`** — HTTP status code (`200` on success, `400` for validation error, `401` for unauthorized key, `500` for server error).
+**`code`** — HTTP status code (`200` on success, `400` for validation error, `401` for unauthorized key, `500` for server error, `504` for deadline exceeded).
 
 **`text`** — Human-readable status description (`"OK"` on success, `"internal server error"`, `"permission denied"`, etc.).
 
 **`currentTime`** — Server wall-clock time in Unix milliseconds when the response was constructed.
 
-**`data`** — On success, an empty JSON object (`{}`). On validation errors, an object containing `fieldErrors`.
+**`data`** — On success, an empty JSON object (`{}`). On validation errors, an object containing `fieldErrors`. Omitted on Maglev HTTP 500 server error responses.
