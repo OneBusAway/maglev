@@ -118,7 +118,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// Nothing scheduled in the window: emit the bare envelope without paying
 	// for reference, alert or nearby-stop lookups.
 	if !result.Matched {
-		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, []string{}, []string{}, stopID, api.Clock)
+		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nil, nil, stopID, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
