@@ -1515,43 +1515,6 @@ func (q *Queries) GetAgencyForStop(ctx context.Context, stopID string) (Agency, 
 	return i, err
 }
 
-const getAllShapes = `-- name: GetAllShapes :many
-SELECT
-    id, shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
-FROM
-    shapes
-`
-
-func (q *Queries) GetAllShapes(ctx context.Context) ([]Shape, error) {
-	rows, err := q.query(ctx, q.getAllShapesStmt, getAllShapes)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Shape
-	for rows.Next() {
-		var i Shape
-		if err := rows.Scan(
-			&i.ID,
-			&i.ShapeID,
-			&i.Lat,
-			&i.Lon,
-			&i.ShapePtSequence,
-			&i.ShapeDistTraveled,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getAllStopIDs = `-- name: GetAllStopIDs :many
 SELECT
     id
