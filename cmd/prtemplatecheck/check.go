@@ -197,7 +197,7 @@ func sectionProblems(ts templateSection, doc document) []problem {
 	}
 
 	if !ts.required {
-		hasContent := s.hasProse || s.hasCheckedCheckbox() || s.hasAnyFieldValue(ts.fields)
+		hasContent := s.hasProse || s.hasCheckedCheckbox() || s.hasAnyFieldValue()
 		if !hasContent && (ts.deleteHint != "" || len(ts.fields) > 0) {
 			return []problem{{Rule: ruleSection, Message: ts.emptyMessage()}}
 		}
@@ -330,9 +330,9 @@ func (s *section) fieldHasValue(label string) bool {
 	return false
 }
 
-func (s *section) hasAnyFieldValue(fields []templateField) bool {
-	for _, f := range fields {
-		if s.fieldHasValue(f.label) {
+func (s *section) hasAnyFieldValue() bool {
+	for _, f := range s.fields {
+		if f.hasValue {
 			return true
 		}
 	}

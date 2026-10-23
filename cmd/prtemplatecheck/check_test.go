@@ -376,3 +376,16 @@ func TestCheckBody_FieldlessOptionalSectionWithUncheckedCheckbox(t *testing.T) {
 	bodyChecked := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Benchmarks (delete if no benchmarks were run)\n\n- [x] Run benchmark\n\n## Checklist\n\n- [x] Done\n"
 	assert.Empty(t, checkBody(rules, bodyChecked, false))
 }
+
+func TestCheckBody_OptionalSectionWithRenamedField(t *testing.T) {
+	customTemplate := "<!-- maglev-pr-template:v1 -->\n\nFixes #\n\n## Custom (delete if not needed)\n\n- **Expected:**\n\n## Checklist\n\n- [ ] Done\n"
+	rules, err := parseTemplate(customTemplate)
+	require.NoError(t, err)
+
+	// Renamed/custom field with a value counts as content rather than reporting the section empty
+	bodyRenamed := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Custom (delete if not needed)\n\n- **Renamed:** value\n\n## Checklist\n\n- [x] Done\n"
+	problems := checkBody(rules, bodyRenamed, false)
+	require.Len(t, problems, 1)
+	assert.Equal(t, ruleField, problems[0].Rule)
+	assert.Equal(t, "**Custom**: \"Expected:\" is empty.", problems[0].Message)
+}
