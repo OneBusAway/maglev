@@ -149,6 +149,33 @@ func (api *RestAPI) blockDeviationSamples(ctx context.Context, tripIDs []string,
 	return samples
 }
 
+// deviationSampleCache memoizes blockDeviationSamples for one request. The
+// plural handlers resolve many arrivals on the same block, and each sample
+// build queries the block's schedule. A nil cache computes every time.
+type deviationSampleCache map[deviationSampleKey][]deviationSample
+
+// deviationSampleKey identifies a block shift on one service date by its
+// first trip, since blockTripIDs are already narrowed to the shift.
+type deviationSampleKey struct {
+	firstTripID     string
+	serviceMidnight int64
+}
+
+// samplesFor returns the cached samples for the block, calling compute and
+// caching its result on the first lookup.
+func (c deviationSampleCache) samplesFor(blockTripIDs []string, serviceMidnight time.Time, compute func() []deviationSample) []deviationSample {
+	if c == nil || len(blockTripIDs) == 0 {
+		return compute()
+	}
+	key := deviationSampleKey{firstTripID: blockTripIDs[0], serviceMidnight: serviceMidnight.Unix()}
+	if samples, ok := c[key]; ok {
+		return samples
+	}
+	samples := compute()
+	c[key] = samples
+	return samples
+}
+
 // stuDeviation is the deviation Java records for a timepoint prediction:
 // predicted minus scheduled departure when the update predicts a departure,
 // otherwise predicted minus scheduled arrival.

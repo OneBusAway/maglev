@@ -643,6 +643,9 @@ type scheduleDeviationFallback struct {
 	extras       *tripStatusExtras
 	tripID       string
 	stopSequence int64
+	// sampleCache shares deviation samples between arrivals on the same
+	// block. It may be nil.
+	sampleCache deviationSampleCache
 	// stopArrivalSeconds is the stop's GTFS arrival_time, in seconds since
 	// the service date: the key Java looks the stop up by among the block's
 	// deviation samples.
@@ -696,7 +699,9 @@ func (api *RestAPI) predictedTimesFromScheduleDeviation(ctx context.Context, in 
 // stop. It reports false when the stop is upstream of every deviation
 // sample.
 func (api *RestAPI) deviationForStop(ctx context.Context, in scheduleDeviationFallback) (int, bool) {
-	samples := api.blockDeviationSamples(ctx, in.extras.blockTripIDs, in.serviceMidnight, in.currentTime)
+	samples := in.sampleCache.samplesFor(in.extras.blockTripIDs, in.serviceMidnight, func() []deviationSample {
+		return api.blockDeviationSamples(ctx, in.extras.blockTripIDs, in.serviceMidnight, in.currentTime)
+	})
 	if len(samples) == 0 {
 		return in.status.ScheduleDeviation, true
 	}

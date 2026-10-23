@@ -50,15 +50,20 @@ type arrivalsAccumulator struct {
 	// it is single-caller by design and must pass a per-stop agency ID to
 	// situations.add directly instead.
 	alertAgencyID string
+
+	// deviationSamples lets arrivals on the same block share the deviation
+	// samples the schedule-deviation fallback builds.
+	deviationSamples deviationSampleCache
 }
 
 func newArrivalsAccumulator(primaryAgencyID string) *arrivalsAccumulator {
 	return &arrivalsAccumulator{
-		trips:         make(map[string]*gtfsdb.Trip),
-		routes:        make(map[string]*gtfsdb.Route),
-		stopIDs:       make(map[string]bool),
-		situations:    newSituationCollector(),
-		alertAgencyID: primaryAgencyID,
+		trips:            make(map[string]*gtfsdb.Trip),
+		routes:           make(map[string]*gtfsdb.Route),
+		stopIDs:          make(map[string]bool),
+		situations:       newSituationCollector(),
+		alertAgencyID:    primaryAgencyID,
+		deviationSamples: deviationSampleCache{},
 	}
 }
 
@@ -959,7 +964,7 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 		blockTripSequence = tripStatus.BlockTripSequence
 	}
 
-	api.applyTripStatusPrediction(ctx, arrival, tripStatus, statusExtras, in)
+	api.applyTripStatusPrediction(ctx, arrival, tripStatus, statusExtras, in, acc.deviationSamples)
 
 	arrival.TripStatus = tripStatus
 	arrival.DistanceFromStop = distanceFromStop
@@ -971,7 +976,7 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 // applyTripStatusPrediction fills an unpredicted arrival's predicted times
 // from its trip status's schedule deviation when getPredictedTimes found no
 // per-stop prediction.
-func (api *RestAPI) applyTripStatusPrediction(ctx context.Context, arrival *models.ArrivalAndDeparture, tripStatus *models.TripStatus, statusExtras *tripStatusExtras, in arrivalInput) {
+func (api *RestAPI) applyTripStatusPrediction(ctx context.Context, arrival *models.ArrivalAndDeparture, tripStatus *models.TripStatus, statusExtras *tripStatusExtras, in arrivalInput, sampleCache deviationSampleCache) {
 	if arrival.Predicted {
 		return
 	}
@@ -980,6 +985,7 @@ func (api *RestAPI) applyTripStatusPrediction(ctx context.Context, arrival *mode
 		status:             tripStatus,
 		extras:             statusExtras,
 		tripID:             in.stopTime.TripID,
+		sampleCache:        sampleCache,
 		stopSequence:       int64(in.stopTime.StopSequence),
 		stopArrivalSeconds: utils.NanosToSeconds(in.stopTime.ArrivalTime),
 		serviceMidnight:    in.serviceDate.Midnight(in.location),

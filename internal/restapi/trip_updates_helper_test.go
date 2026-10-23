@@ -670,3 +670,62 @@ func TestBlockDeviationSamples(t *testing.T) {
 		{scheduledArrival: utils.NanosToSeconds(stopTimes[1].ArrivalTime), deviation: 90},
 	}, samples, "a departure prediction wins over an arrival one, and skipped stops contribute no sample")
 }
+
+func TestDeviationSampleCache(t *testing.T) {
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	nextServiceMidnight := serviceMidnight.AddDate(0, 0, 1)
+	countingCompute := func(calls *int) func() []deviationSample {
+		return func() []deviationSample {
+			*calls++
+			return []deviationSample{{scheduledArrival: 100, deviation: 60}}
+		}
+	}
+
+	tests := []struct {
+		name      string
+		cache     deviationSampleCache
+		lookups   [][]string
+		midnights []time.Time
+		wantCalls int
+	}{
+		{
+			name:      "same block and service date computes once",
+			cache:     deviationSampleCache{},
+			lookups:   [][]string{{"A", "B"}, {"A", "B"}},
+			midnights: []time.Time{serviceMidnight, serviceMidnight},
+			wantCalls: 1,
+		},
+		{
+			name:      "different blocks compute separately",
+			cache:     deviationSampleCache{},
+			lookups:   [][]string{{"A", "B"}, {"C"}},
+			midnights: []time.Time{serviceMidnight, serviceMidnight},
+			wantCalls: 2,
+		},
+		{
+			name:      "different service dates compute separately",
+			cache:     deviationSampleCache{},
+			lookups:   [][]string{{"A", "B"}, {"A", "B"}},
+			midnights: []time.Time{serviceMidnight, nextServiceMidnight},
+			wantCalls: 2,
+		},
+		{
+			name:      "nil cache always computes",
+			cache:     nil,
+			lookups:   [][]string{{"A", "B"}, {"A", "B"}},
+			midnights: []time.Time{serviceMidnight, serviceMidnight},
+			wantCalls: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			for i, blockTripIDs := range tt.lookups {
+				samples := tt.cache.samplesFor(blockTripIDs, tt.midnights[i], countingCompute(&calls))
+				assert.Equal(t, []deviationSample{{scheduledArrival: 100, deviation: 60}}, samples)
+			}
+			assert.Equal(t, tt.wantCalls, calls)
+		})
+	}
+}
