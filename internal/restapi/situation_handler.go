@@ -28,13 +28,31 @@ func (api *RestAPI) situationHandler(w http.ResponseWriter, r *http.Request) {
 	api.sendResponse(w, r, models.NewEntryResponse(situations[0], *models.NewEmptyReferences(), api.Clock))
 }
 
-// findSituationAlert returns the first alert whose raw id or situation id is requested.
-// agencyID is the fallback other endpoints use when the alert names no agency.
+// findSituationAlert returns the alert whose published situation id is
+// requested, otherwise the first alert whose raw id is. Published ids are
+// checked first so an earlier alert whose raw id equals another alert's
+// published id does not hide it. agencyID is the fallback other endpoints
+// use when the alert names no agency.
 func findSituationAlert(alerts []gtfs.Alert, agencyID, requested string) (gtfs.Alert, bool) {
+	if requested == "" {
+		return gtfs.Alert{}, false
+	}
+	var rawMatch gtfs.Alert
+	foundRaw := false
 	for _, alert := range alerts {
-		if alertMatchesSituationID(alert, agencyID, requested) {
+		if alert.ID == "" {
+			continue
+		}
+		if situationID(alert.ID, agencyIDForAlert(alert, agencyID)) == requested {
 			return alert, true
 		}
+		if !foundRaw && alert.ID == requested {
+			rawMatch = alert
+			foundRaw = true
+		}
+	}
+	if foundRaw {
+		return rawMatch, true
 	}
 	return gtfs.Alert{}, false
 }
