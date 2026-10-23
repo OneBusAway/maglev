@@ -331,7 +331,7 @@ func TestArrivalsAndDeparturesWithFrequency(t *testing.T) {
 	combinedStopID := utils.FormCombinedID(freqAgencyID, freqStopAID)
 	// The fixture serves stop A with freq-trip (06:00) and freq-exact-trip
 	// (06:00) from their 06:00-09:00 windows, and freq-normal-trip at 08:00.
-	// Querying at 06:05 (default window 06:00-06:40) surfaces only the two
+	// Querying at 06:02 (default frequency window 06:00-06:32) surfaces only the two
 	// frequency-based arrivals; querying at 08:05 surfaces only the normal one.
 	windowRequests := []struct {
 		name        string
@@ -341,7 +341,7 @@ func TestArrivalsAndDeparturesWithFrequency(t *testing.T) {
 	}{
 		{
 			name:        "frequency-based arrivals carry their window",
-			timeMs:      time.Date(2025, 6, 12, 6, 5, 0, 0, time.UTC).UnixMilli(),
+			timeMs:      time.Date(2025, 6, 12, 6, 2, 0, 0, time.UTC).UnixMilli(),
 			wantTripIDs: []string{freqTripID, freqExactTripID},
 			wantFreq:    true,
 		},
@@ -496,6 +496,7 @@ func TestParseArrivalsAndDeparturesParams_InvalidValues(t *testing.T) {
 func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
+	api.rateLimiter = NewRateLimitMiddleware(100, time.Second, nil)
 
 	tests := []struct {
 		name   string
@@ -503,6 +504,10 @@ func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
 	}{
 		{"invalid time", url.Values{"time": {"invalid"}}},
 		{"invalid minutesAfter", url.Values{"minutesAfter": {"invalid"}}},
+		{"invalid frequencyMinutesBefore", url.Values{"frequencyMinutesBefore": {"invalid"}}},
+		{"invalid frequencyMinutesAfter", url.Values{"frequencyMinutesAfter": {"invalid"}}},
+		{"negative frequencyMinutesBefore", url.Values{"frequencyMinutesBefore": {"-1"}}},
+		{"negative frequencyMinutesAfter", url.Values{"frequencyMinutesAfter": {"-1"}}},
 	}
 
 	for _, tt := range tests {
