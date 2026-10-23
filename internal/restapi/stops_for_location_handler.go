@@ -102,8 +102,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	results := []models.Stop{}
-	routeIDs := map[string]bool{}
-	agencyIDs := map[string]bool{}
 
 	stopIDs := make([]string, 0, len(stops))
 	stopMap := make(map[string]gtfsdb.Stop)
@@ -114,20 +112,8 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 	if len(stopIDs) == 0 {
 		// Return empty response if no stops found
-		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
-		if agencies == nil {
-			agencies = []models.AgencyReference{}
-		}
-
-		routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
-		if routes == nil {
-			routes = []models.Route{}
-		}
-
 		// This response has no situationIds, so situation references remain empty.
 		references := models.NewEmptyReferences()
-		references.Agencies = agencies
-		references.Routes = routes
 		response := models.NewListResponseWithRange(results, *references, outOfRange, api.Clock, false)
 		api.sendResponse(w, r, response)
 		return
@@ -222,6 +208,9 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		}
 		references.Stops = parentStops
 
+		routeIDs := map[string]bool{}
+		agencyIDs := map[string]bool{}
+
 		for _, stopID := range resultRawStopIDs {
 			collectRouteReferenceIDs(stopRouteIDs[stopID], routeIDs, agencyIDs)
 		}
@@ -230,7 +219,11 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		}
 
 		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
-		routes := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
+		routes, err := utils.FilterRoutes(api.GtfsManager.GtfsDB.Queries, ctx, routeIDs)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 
 		if agencies == nil {
 			agencies = []models.AgencyReference{}

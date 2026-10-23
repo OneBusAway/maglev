@@ -292,6 +292,27 @@ func TestFormCombinedID(t *testing.T) {
 	}
 }
 
+func TestFormBlockID(t *testing.T) {
+	tests := []struct {
+		name     string
+		agencyID string
+		blockID  string
+		tripID   string
+		expected string
+	}{
+		{"Trip with a block", "agency", "block_1", "trip_1", "agency_block_1"},
+		{"Blockless trip uses its trip ID", "agency", "", "trip_1", "agency_trip_1"},
+		{"Empty agency ID", "", "block_1", "trip_1", ""},
+		{"Blockless trip with empty trip ID", "agency", "", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, FormBlockID(tt.agencyID, tt.blockID, tt.tripID))
+		})
+	}
+}
+
 func TestMapWheelchairBoarding(t *testing.T) {
 	tests := []struct {
 		name     string

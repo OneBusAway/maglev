@@ -324,13 +324,14 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 
 	// Build JSON config structure
 	jsonConfig := map[string]any{
-		"port":             cfg.Port,
-		"env":              envStr,
-		"api-keys":         fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ApiKeys)),
-		"exempt-api-keys":  fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ExemptApiKeys)),
-		"rate-limit":       cfg.RateLimit,
-		"gtfs-static-feed": staticFeed,
-		"data-path":        gtfsCfg.GTFSDataPath,
+		"port":               cfg.Port,
+		"env":                envStr,
+		"api-keys":           fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ApiKeys)),
+		"exempt-api-keys":    fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ExemptApiKeys)),
+		"protected-api-keys": fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ProtectedApiKeys)),
+		"rate-limit":         cfg.RateLimit,
+		"gtfs-static-feed":   staticFeed,
+		"data-path":          gtfsCfg.GTFSDataPath,
 	}
 
 	var feeds []map[string]any
