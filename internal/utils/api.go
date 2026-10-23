@@ -114,6 +114,14 @@ func FormCombinedID(agencyID, codeID string) string {
 	return fmt.Sprintf("%s_%s", agencyID, codeID)
 }
 
+// FormBlockID forms a trip's combined block ID; a trip with no block_id is its own block, as in Java.
+func FormBlockID(agencyID, blockID, tripID string) string {
+	if blockID == "" {
+		blockID = tripID
+	}
+	return FormCombinedID(agencyID, blockID)
+}
+
 // MapWheelchairBoarding converts GTFS wheelchair boarding values to our API format
 func MapWheelchairBoarding(wheelchairBoarding gtfs.WheelchairBoarding) string {
 	switch wheelchairBoarding {

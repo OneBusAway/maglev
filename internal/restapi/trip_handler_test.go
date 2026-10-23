@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
@@ -164,4 +165,20 @@ func TestTripHandler_NotFoundAndMalformed(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTripHandler_BlocklessTripUsesTripIDAsBlockID(t *testing.T) {
+	files := basicTripsForRouteFiles()
+	files["trips.txt"] = "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+		tripsForRouteRouteID + ",tfr-svc," + tripsForRouteTripID + "," + tripsForRouteHeadsign + ",0,\n"
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "blockless.zip", files)
+
+	combinedTripID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteTripID)
+
+	_, trip := callAPIHandler[TripEntryResponse](t, api, tripURL(combinedTripID))
+	assert.Equal(t, combinedTripID, trip.Data.Entry.BlockID)
+
+	_, details := callAPIHandler[TripDetailsResponse](t, api, "/api/where/trip-details/"+combinedTripID+".json?key=TEST")
+	require.Len(t, details.Data.References.Trips, 1)
+	assert.Equal(t, combinedTripID, details.Data.References.Trips[0].BlockID)
 }
