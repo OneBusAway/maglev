@@ -1155,6 +1155,30 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 	}
 }
 
+// TestPluralArrivals_LayoverAbsorbsEarlierTripDelay verifies that a delay on
+// an earlier block trip is absorbed by the layover before the queried trip,
+// matching Java's calculateArrivalDeviation measuring slack across the
+// block rather than within the queried trip.
+func TestPluralArrivals_LayoverAbsorbsEarlierTripDelay(t *testing.T) {
+	// The earlier trip's 07:00 stop is still ahead of the late bus, and the
+	// queried stop is an hour later.
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 7, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addEarlierBlockTripSTU(t, api, 174*time.Second)
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(combinedStopID, url.Values{"minutesAfter": {"90"}}))
+
+	a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	assert.True(t, a.Predicted)
+	assert.Equal(t, a.ScheduledArrivalTime.UnixMilli(), a.PredictedArrivalTime.UnixMilli())
+	assert.Equal(t, a.ScheduledDepartureTime.UnixMilli(), a.PredictedDepartureTime.UnixMilli())
+}
+
 // addEarlierBlockTrip adds a trip that runs earlier in the same block as the
 // trip created by setupDelayPropTestData, and returns its ID.
 func addEarlierBlockTrip(t *testing.T, api *RestAPI) string {

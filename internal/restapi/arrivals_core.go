@@ -979,6 +979,7 @@ func (api *RestAPI) applyTripStatusPrediction(ctx context.Context, arrival *mode
 	predictedArrival, predictedDeparture, ok := api.predictedTimesFromScheduleDeviation(ctx, scheduleDeviationFallback{
 		status:             tripStatus,
 		extras:             statusExtras,
+		tripID:             in.stopTime.TripID,
 		stopSequence:       int64(in.stopTime.StopSequence),
 		stopArrivalSeconds: utils.NanosToSeconds(in.stopTime.ArrivalTime),
 		serviceMidnight:    in.serviceDate.Midnight(in.location),

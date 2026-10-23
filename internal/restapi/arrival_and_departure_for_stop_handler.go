@@ -367,6 +367,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			predictedArrivalTime, predictedDepartureTime, predicted = api.predictedTimesFromScheduleDeviation(ctx, scheduleDeviationFallback{
 				status:             status,
 				extras:             statusExtras,
+				tripID:             tripID,
 				stopSequence:       matchedStopTime.StopSequence,
 				stopArrivalSeconds: utils.NanosToSeconds(matchedStopTime.ArrivalTime),
 				serviceMidnight:    serviceMidnight,
