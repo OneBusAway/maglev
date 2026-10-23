@@ -157,6 +157,7 @@ func setupTestClientWithRoutes(t *testing.T) (*gtfsdb.Client, func()) {
 	return client, cleanup
 }
 
+// TestFilterRoutes tests filtering GTFS routes by a map of present route IDs.
 func TestFilterRoutes(t *testing.T) {
 	client, cleanup := setupTestClientWithRoutes(t)
 	defer cleanup()
@@ -209,7 +210,8 @@ func TestFilterRoutes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FilterRoutes(client.Queries, ctx, tt.present)
+			result, err := FilterRoutes(client.Queries, ctx, tt.present)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, len(result))
 
 			// Verify that returned routes are correct
@@ -221,6 +223,7 @@ func TestFilterRoutes(t *testing.T) {
 	}
 }
 
+// TestFilterRoutes_VerifyFields tests that all route fields are populated correctly during filtering.
 func TestFilterRoutes_VerifyFields(t *testing.T) {
 	client, cleanup := setupTestClientWithRoutes(t)
 	defer cleanup()
@@ -228,7 +231,8 @@ func TestFilterRoutes_VerifyFields(t *testing.T) {
 	ctx := context.Background()
 	present := map[string]bool{"agency1_route1": true}
 
-	result := FilterRoutes(client.Queries, ctx, present)
+	result, err := FilterRoutes(client.Queries, ctx, present)
+	require.NoError(t, err)
 
 	require.Len(t, result, 1)
 	route := result[0]
@@ -244,6 +248,7 @@ func TestFilterRoutes_VerifyFields(t *testing.T) {
 	assert.Equal(t, "FFFFFF", route.TextColor)
 }
 
+// TestFilterRoutes_DatabaseError verifies that FilterRoutes returns an error when the database query fails.
 func TestFilterRoutes_DatabaseError(t *testing.T) {
 	// Create client but close it immediately to trigger error
 	config := gtfsdb.Config{
@@ -260,7 +265,8 @@ func TestFilterRoutes_DatabaseError(t *testing.T) {
 	ctx := context.Background()
 	present := map[string]bool{"route1": true}
 
-	result := FilterRoutes(client.Queries, ctx, present)
+	result, err := FilterRoutes(client.Queries, ctx, present)
 
+	require.Error(t, err)
 	assert.Nil(t, result, "Should return nil on database error")
 }
