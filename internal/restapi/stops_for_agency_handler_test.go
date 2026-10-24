@@ -165,4 +165,11 @@ func TestStopsForAgency_UsesSharedStopRecords(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, want)
 	assert.ElementsMatch(t, want, model.Data.List)
+
+	// Pin one stop, so the test does not only compare the handler with the
+	// builder it calls: routes in route-name order, direction from the
+	// calculator.
+	stops := stopsByID(model.Data.List)
+	assert.Equal(t, []string{"25_157", "25_159", "25_160"}, stops["25_1001"].RouteIDs)
+	assert.Equal(t, "NE", stops["25_1001"].Direction)
 }

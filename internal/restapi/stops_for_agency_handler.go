@@ -40,21 +40,12 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	stopsList, routes, err := stopModelsByIDs(api, ctx, stopIDs)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-
 	// Parent stations go to references.stops. Route references cover them too,
 	// so a route that serves only the station still resolves.
-	parentRefs, parentRoutes, err := api.missingParentStops(ctx, stopsList)
+	stopsList, parentRefs, routes, err := stopsAndParentStations(api, ctx, stopIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
-	}
-	for _, row := range parentRoutes {
-		routes[utils.FormCombinedID(row.AgencyID, row.ID)] = row
 	}
 	routeRefs := routeReferencesForStops(utils.MapValues(routes))
 

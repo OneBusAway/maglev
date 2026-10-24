@@ -186,7 +186,9 @@ func routeReferencesForStops(routesRows []gtfsdb.GetRoutesForStopsRow) []models.
 		routesMap[combinedRouteID] = routeReferenceFromStopRow(row)
 	}
 
-	return utils.MapValues(routesMap)
+	routes := utils.MapValues(routesMap)
+	slices.SortFunc(routes, func(a, b models.Route) int { return strings.Compare(a.ID, b.ID) })
+	return routes
 }
 
 // routeReferenceForTrip returns the Route reference for the route a trip runs on.
@@ -521,19 +523,28 @@ func ShouldIncludeReferences(r *http.Request, fieldErrors map[string][]string) (
 // BuildStopReferencesAndRouteIDsForStops builds full stop references and collects unique routes for the given stop IDs.
 // Parent stations named by those records are included, with their own route lists.
 func BuildStopReferencesAndRouteIDsForStops(api *RestAPI, ctx context.Context, stopIDs []string) ([]models.Stop, map[string]gtfsdb.GetRoutesForStopsRow, error) {
-	stops, routes, err := stopModelsByIDs(api, ctx, stopIDs)
+	stops, parents, routes, err := stopsAndParentStations(api, ctx, stopIDs)
 	if err != nil {
 		return nil, nil, err
 	}
-	added, parentRoutes, err := api.missingParentStops(ctx, stops)
+	return append(stops, parents...), routes, nil
+}
+
+// stopsAndParentStations builds records for stopIDs and, separately, for the
+// parent stations they name, with the routes serving either keyed by combined ID.
+func stopsAndParentStations(api *RestAPI, ctx context.Context, stopIDs []string) (stops, parents []models.Stop, routes map[string]gtfsdb.GetRoutesForStopsRow, err error) {
+	stops, routes, err = stopModelsByIDs(api, ctx, stopIDs)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	stops = append(stops, added...)
+	parents, parentRoutes, err := api.missingParentStops(ctx, stops)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	for _, row := range parentRoutes {
 		routes[utils.FormCombinedID(row.AgencyID, row.ID)] = row
 	}
-	return stops, routes, nil
+	return stops, parents, routes, nil
 }
 
 // stopModelsByIDs builds stop records for the requested IDs, each under its own agency,
