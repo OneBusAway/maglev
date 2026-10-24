@@ -76,6 +76,50 @@ func TestGetVehicleStatusAndPhase_NoTripInfo(t *testing.T) {
 	assert.Equal(t, "in_progress", phase)
 }
 
+func TestGetVehicleActiveTripID(t *testing.T) {
+	tests := []struct {
+		name     string
+		vehicle  *gtfs.Vehicle
+		expected string
+	}{
+		{
+			name:     "nil vehicle",
+			vehicle:  nil,
+			expected: "",
+		},
+		{
+			name:     "vehicle with nil trip",
+			vehicle:  &gtfs.Vehicle{Trip: nil},
+			expected: "",
+		},
+		{
+			name: "vehicle with empty trip id",
+			vehicle: &gtfs.Vehicle{
+				Trip: &gtfs.Trip{
+					ID: gtfs.TripID{ID: ""},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "vehicle with valid trip id",
+			vehicle: &gtfs.Vehicle{
+				Trip: &gtfs.Trip{
+					ID: gtfs.TripID{ID: "1_75403"},
+				},
+			},
+			expected: "1_75403",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetVehicleActiveTripID(tt.vehicle)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
 func TestStaleDetector_NilVehicle(t *testing.T) {
 	d := NewStaleDetector()
 	assert.True(t, d.Check(nil, time.Now()), "nil vehicle should be considered stale")
