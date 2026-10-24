@@ -220,11 +220,16 @@ func createTestApiWithFeed(t testing.TB, feedPath string) *RestAPI {
 // createTestApiWithFeedAndClock is createTestApiWithFeed with a custom clock.
 func createTestApiWithFeedAndClock(t testing.TB, feedPath string, c clock.Clock) *RestAPI {
 	t.Helper()
-
-	gtfsConfig := gtfs.Config{
+	return createTestApiWithGtfsConfig(t, gtfs.Config{
 		GtfsURL:      feedPath,
 		GTFSDataPath: ":memory:",
-	}
+	}, c)
+}
+
+// createTestApiWithGtfsConfig builds an API over its own manager for
+// gtfsConfig.
+func createTestApiWithGtfsConfig(t testing.TB, gtfsConfig gtfs.Config, c clock.Clock) *RestAPI {
+	t.Helper()
 
 	gtfsManager, err := gtfs.InitGTFSManager(context.Background(), gtfsConfig)
 	require.NoError(t, err)

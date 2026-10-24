@@ -2158,6 +2158,23 @@ func (q *Queries) GetCalendarDateExceptionsForServiceID(ctx context.Context, ser
 	return items, nil
 }
 
+const getConsolidatedStopCanonicalID = `-- name: GetConsolidatedStopCanonicalID :one
+SELECT
+    canonical_id
+FROM
+    stop_consolidations
+WHERE
+    absorbed_id = ?
+    AND canonical_id IS NOT NULL
+`
+
+func (q *Queries) GetConsolidatedStopCanonicalID(ctx context.Context, absorbedID string) (sql.NullString, error) {
+	row := q.queryRow(ctx, q.getConsolidatedStopCanonicalIDStmt, getConsolidatedStopCanonicalID, absorbedID)
+	var canonical_id sql.NullString
+	err := row.Scan(&canonical_id)
+	return canonical_id, err
+}
+
 const getFeedEndDate = `-- name: GetFeedEndDate :one
 SELECT COALESCE(CAST(MAX(max_date) AS TEXT), '') AS feed_end_date
 FROM (

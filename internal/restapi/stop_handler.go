@@ -1,11 +1,13 @@
 package restapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
 	"sort"
 
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -26,11 +28,12 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
+	stop, err := api.getStopOrCanonicalStop(ctx, stopID)
 	if err != nil || stop.ID == "" {
 		api.sendNotFound(w, r)
 		return
 	}
+	stopID = stop.ID
 
 	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, stopID)
 	if err != nil {
@@ -176,4 +179,23 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := models.NewEntryResponse(stopData, *references, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// getStopOrCanonicalStop returns the stop, or, when stop consolidation
+// absorbed it into a stored stop, that canonical stop, as Java's stop
+// endpoint does.
+func (api *RestAPI) getStopOrCanonicalStop(ctx context.Context, stopID string) (gtfsdb.Stop, error) {
+	queries := api.GtfsManager.GtfsDB.Queries
+	stop, err := queries.GetStop(ctx, stopID)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return stop, err
+	}
+	canonicalID, lookupErr := queries.GetConsolidatedStopCanonicalID(ctx, stopID)
+	if errors.Is(lookupErr, sql.ErrNoRows) {
+		return stop, err
+	}
+	if lookupErr != nil {
+		return stop, lookupErr
+	}
+	return queries.GetStop(ctx, canonicalID.String)
 }
