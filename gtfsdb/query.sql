@@ -1567,3 +1567,12 @@ DELETE FROM stop_consolidations;
 DELETE FROM trips
 WHERE
     id = ?;
+
+-- name: GetConsolidatedStopCanonicalID :one
+SELECT
+    canonical_id
+FROM
+    stop_consolidations
+WHERE
+    absorbed_id = ?
+    AND canonical_id IS NOT NULL;
