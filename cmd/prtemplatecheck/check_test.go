@@ -212,6 +212,18 @@ func TestCheckBody(t *testing.T) {
 			},
 		},
 		{
+			name: "field_value_unindented_tilde_fence_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n~~~\ncurl localhost:4000\n~~~")
+			},
+		},
+		{
+			name: "field_value_details_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n<details>\nmanual check\n</details>")
+			},
+		},
+		{
 			name: "checkbox_in_comment",
 			body: func(t *testing.T) string {
 				return replaceOnce(t, filled, "- [x] This PR addresses one issue.",
