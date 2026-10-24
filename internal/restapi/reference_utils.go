@@ -545,7 +545,7 @@ func stopModelsByIDs(api *RestAPI, ctx context.Context, stopIDs []string) ([]mod
 
 	uniqueStopIDs := dedupeStrings(stopIDs)
 
-	stopsDB, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, uniqueStopIDs)
+	stopsDB, err := utils.QueryInBatches(ctx, uniqueStopIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -559,7 +559,7 @@ func stopModelsByIDs(api *RestAPI, ctx context.Context, stopIDs []string) ([]mod
 		return nil, nil, err
 	}
 
-	allRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, uniqueStopIDs)
+	allRoutes, err := utils.QueryInBatches(ctx, uniqueStopIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesForStops)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 )
@@ -171,4 +172,28 @@ func TestLocationStopIDs_UseTheStopsOwnAgency(t *testing.T) {
 		"/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=37.7749&lon=-122.4194&radius=2000")
 	entry := arrivals.Data.(map[string]any)["entry"].(map[string]any)
 	assert.ElementsMatch(t, []any{"own_stop-1", "own_stop-2"}, entry["stopIds"])
+}
+
+// Block references describe stops and routes the same way every other
+// endpoint does: each route under its own agency, each stop with its routes.
+func TestBlockReferences_MatchTheSharedBuilders(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "agency-prefix.zip", agencyPrefixFiles())
+
+	_, model := callAPIHandler[scheduleStopResponse](t, api, "/api/where/block/other_other-block.json?key=TEST")
+	references := model.Data.References
+
+	var routeIDs, agencyIDs []string
+	for _, route := range references.Routes {
+		routeIDs = append(routeIDs, route.ID)
+	}
+	for _, agency := range references.Agencies {
+		agencyIDs = append(agencyIDs, agency.ID)
+	}
+	assert.ElementsMatch(t, []string{"own_own-route", "other_other-route"}, routeIDs)
+	assert.ElementsMatch(t, []string{"own", "other"}, agencyIDs)
+
+	require.NotEmpty(t, references.Stops)
+	for _, stop := range references.Stops {
+		assert.ElementsMatch(t, []string{"own_own-route", "other_other-route"}, stop.RouteIDs, stop.ID)
+	}
 }
