@@ -10,7 +10,6 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -123,7 +122,11 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 		}
 	}
 
-	stopsList, err := buildStopsList(ctx, api, sequences.agencies, stops)
+	stopIDs := make([]string, len(stops))
+	for i, stop := range stops {
+		stopIDs[i] = stop.ID
+	}
+	stopsList, _, err := stopModelsByIDs(api, ctx, stopIDs)
 	if err != nil {
 		return models.RouteEntry{}, nil, err
 	}
@@ -185,61 +188,6 @@ func (api *RestAPI) loadRouteStopSequences(ctx context.Context, trips []gtfsdb.T
 		return routeStopSequences{}, nil, err
 	}
 	return sequences, stops, nil
-}
-
-func buildStopsList(ctx context.Context, api *RestAPI, stopAgencies stopAgencyIDs, stops []gtfsdb.Stop) ([]models.Stop, error) {
-	stopIDs := make([]string, 0, len(stops))
-	for _, stop := range stops {
-		stopIDs = append(stopIDs, stop.ID)
-	}
-
-	routeRows, err := api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops(ctx, stopIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	// Organize Routes in Memory
-	routesMap := make(map[string][]string)
-	for _, row := range routeRows {
-		routeID, ok := row.RouteID.(string)
-		stopID := row.StopID
-
-		if ok {
-			routesMap[stopID] = append(routesMap[stopID], routeID)
-		}
-	}
-
-	stopsList := make([]models.Stop, 0, len(stops))
-
-	for _, stop := range stops {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		direction := api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction)
-
-		routeIdsString := routesMap[stop.ID]
-		if routeIdsString == nil {
-			routeIdsString = []string{}
-		} else {
-			routeIdsString = append([]string(nil), routeIdsString...)
-		}
-
-		stopsList = append(stopsList, models.Stop{
-			Code:               nulls.StringOrNonEmpty(stop.Code, stop.ID),
-			Direction:          direction,
-			ID:                 stopAgencies.combinedStopID(stop.ID),
-			Lat:                stop.Lat,
-			LocationType:       int(stop.LocationType.Int64),
-			Lon:                stop.Lon,
-			Name:               stop.Name.String,
-			Parent:             parentStationID(stopAgencies[stop.ID], stop),
-			RouteIDs:           routeIdsString,
-			StaticRouteIDs:     routeIdsString,
-			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-		})
-	}
-	return stopsList, nil
 }
 
 func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, result models.RouteEntry, stopsList []models.Stop, currentAgency gtfsdb.Agency, includeReferences bool) {

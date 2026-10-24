@@ -72,7 +72,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 
 	blockEntry := transformBlockToEntry(block, utils.FormCombinedID(agencyID, blockID), agencyID, stopAgencies)
 
-	references, err := api.getReferences(ctx, agencyID, stopAgencies, block)
+	references, err := api.getReferences(ctx, agencyID, block)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -183,7 +183,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 	}
 }
 
-func (api *RestAPI) getReferences(ctx context.Context, agencyID string, stopAgencies stopAgencyIDs, block []gtfsdb.GetBlockDetailsRow) (models.ReferencesModel, error) {
+func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []gtfsdb.GetBlockDetailsRow) (models.ReferencesModel, error) {
 	routeIDs := make(map[string]struct{})
 	stopIDs := make(map[string]struct{})
 	tripIDs := make(map[string]struct{})
@@ -203,50 +203,11 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, stopAgen
 		return models.ReferencesModel{}, err
 	}
 
-	routesArr, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsArr)
-
+	stops, routeRows, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, stopIDsArr)
 	if err != nil {
 		return models.ReferencesModel{}, err
 	}
-	routeSet := make(map[string]struct{})
-	routes := make([]models.Route, 0)
-	for _, route := range routesArr {
-		routeID := utils.FormCombinedID(agencyID, route.ID)
-		if _, exists := routeSet[routeID]; exists {
-			continue
-		}
-		routeSet[routeID] = struct{}{}
-		routes = append(routes, models.Route{
-			ID:          routeID,
-			AgencyID:    agencyID,
-			ShortName:   route.ShortName.String,
-			LongName:    route.LongName.String,
-			Description: route.Desc.String,
-			Type:        models.RouteType(route.Type),
-			Color:       route.Color.String,
-			TextColor:   route.TextColor.String,
-		})
-	}
-
-	// batch fetch
-	batchedStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsArr)
-	if err != nil {
-		return models.ReferencesModel{}, err
-	}
-
-	stops := make([]models.Stop, 0)
-	for _, stop := range batchedStops {
-		stops = append(stops, models.Stop{
-			ID:             stopAgencies.combinedStopID(stop.ID),
-			Name:           stop.Name.String,
-			Code:           stop.Code.String,
-			Lat:            stop.Lat,
-			Lon:            stop.Lon,
-			Direction:      api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
-			RouteIDs:       []string{},
-			StaticRouteIDs: []string{},
-		})
-	}
+	routes := routeReferencesForStops(utils.MapValues(routeRows))
 
 	// batch fetch
 	tripIDsArr := make([]string, 0, len(tripIDs))
@@ -273,8 +234,11 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, stopAgen
 	}
 
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{{ID: agency.ID, Name: agency.Name, URL: agency.Url, Timezone: agency.Timezone}}
+	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(&agency)}
 	references.Routes = routes
+	for _, route := range routes {
+		api.appendRouteAgencyReference(ctx, references, route.AgencyID, agencyID)
+	}
 	references.Stops = stops
 	references.Trips = trips
 	return *references, nil
