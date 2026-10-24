@@ -278,6 +278,7 @@ func TestStopsForLocationSortsByCombinedStopID(t *testing.T) {
 			ID: tc.stopID, Name: nulls.String("Sort Stop"), Lat: lat + float64(i)*0.001, Lon: lon,
 		})
 		require.NoError(t, err)
+		assignStopAgencies(t, api, map[string]string{tc.stopID: tc.agencyID})
 
 		_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
 			ID: svcID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
@@ -345,6 +346,7 @@ func TestStopsForLocationReturnsParentStation(t *testing.T) {
 		LocationType: nulls.Int64(stationTypeValue),
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{stationID: agencyID})
 
 	for _, service := range []struct{ id, start, end string }{
 		{serviceID, "20240101", "20241231"},
@@ -382,6 +384,7 @@ func TestStopsForLocationReturnsParentStation(t *testing.T) {
 			ParentStation: nulls.String(stationID),
 		})
 		require.NoError(t, err)
+		assignStopAgencies(t, api, map[string]string{platformID: agencyID})
 		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
 			TripID: tripID, StopID: platformID, StopSequence: int64(i + 1), ArrivalTime: noon, DepartureTime: noon,
 		})
@@ -570,6 +573,7 @@ func TestStopsForLocationQueryTruncatesToMaxCount(t *testing.T) {
 			Lat: lat + float64(1-i)*0.001, Lon: lon,
 		})
 		require.NoError(t, err)
+		assignStopAgencies(t, api, map[string]string{stopID: agencyID})
 
 		_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
 			ID: svcID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,

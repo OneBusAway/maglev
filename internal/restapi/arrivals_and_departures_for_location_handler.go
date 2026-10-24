@@ -480,32 +480,18 @@ func nearbyCandidateIDs(ctx context.Context, candidates, stops []gtfsdb.Stop) (m
 	return nearIDs, nil
 }
 
-// combinedIDsForNearbyStops resolves every candidate to its combined agency
-// ID in one batch query, falling back per stop to the matched-stop agency
-// index. It also records each candidate's agency and timezone in the shared
-// index so the active-date filter can group stops by their own agency
-// timezone instead of the matched stops' fallback.
+// combinedIDsForNearbyStops resolves every candidate to its combined ID,
+// falling back per stop to the index's fallback agency. It records each
+// candidate's agency and timezone in the shared index so the active-date filter
+// can group stops by their own agency timezone instead of the matched stops'
+// fallback.
 func (api *RestAPI) combinedIDsForNearbyStops(ctx context.Context, bareIDs []string, agencies *stopAgencyIndex) (map[string]string, error) {
-	combinedByBare := make(map[string]string, len(bareIDs))
-	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, bareIDs)
-	if err != nil {
+	if err := api.addStopAgencies(ctx, agencies, bareIDs); err != nil {
 		return nil, err
 	}
-	for _, row := range agencyRows {
-		if _, exists := combinedByBare[row.StopID]; !exists {
-			combinedByBare[row.StopID] = utils.FormCombinedID(row.ID, row.StopID)
-		}
-		if _, exists := agencies.byStopID[row.StopID]; !exists {
-			agencies.byStopID[row.StopID] = row.ID
-		}
-		if _, exists := agencies.locations[row.ID]; !exists {
-			agencies.locations[row.ID] = agencyLocationOrUTC(ctx, row.ID, row.Timezone)
-		}
-	}
+	combinedByBare := make(map[string]string, len(bareIDs))
 	for _, bareID := range bareIDs {
-		if _, exists := combinedByBare[bareID]; !exists {
-			combinedByBare[bareID] = utils.FormCombinedID(agencies.agencyIDFor(bareID), bareID)
-		}
+		combinedByBare[bareID] = utils.FormCombinedID(agencies.agencyIDFor(bareID), bareID)
 	}
 	return combinedByBare, nil
 }
@@ -763,46 +749,57 @@ func (s *stopAgencyIndex) locationFor(stopID string) *time.Location {
 	return s.fallbackLocation
 }
 
-// agenciesForStops resolves each stop's owning agency and timezone in one
-// batch. The most common agency becomes the fallback, so stops that resolve to
-// nothing still get a sensible namespace and service day.
+// agenciesForStops resolves each stop's agency and timezone in one batch. The
+// most common agency becomes the fallback, so stops that resolve to nothing
+// still get a sensible namespace and service day.
 func (api *RestAPI) agenciesForStops(ctx context.Context, stops []gtfsdb.Stop) (*stopAgencyIndex, error) {
 	stopIDs := make([]string, 0, len(stops))
 	for _, stop := range stops {
 		stopIDs = append(stopIDs, stop.ID)
 	}
 
-	rows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, stopIDs)
-	if err != nil {
-		return nil, err
-	}
-
 	index := &stopAgencyIndex{
-		byStopID:         make(map[string]string, len(rows)),
+		byStopID:         make(map[string]string, len(stopIDs)),
 		locations:        make(map[string]*time.Location),
 		fallbackLocation: time.UTC,
 	}
-
-	counts := make(map[string]int)
-	for _, row := range rows {
-		// The query orders by stop then agency, so the first agency for a stop
-		// served by several is stable across requests.
-		if _, exists := index.byStopID[row.StopID]; !exists {
-			index.byStopID[row.StopID] = row.ID
-		}
-		counts[row.ID]++
-
-		if _, exists := index.locations[row.ID]; !exists {
-			index.locations[row.ID] = agencyLocationOrUTC(ctx, row.ID, row.Timezone)
-		}
+	if err := api.addStopAgencies(ctx, index, stopIDs); err != nil {
+		return nil, err
 	}
 
+	counts := make(map[string]int)
+	for _, agencyID := range index.byStopID {
+		counts[agencyID]++
+	}
 	index.fallbackAgencyID = mostCommonAgency(counts)
 	if loc, ok := index.locations[index.fallbackAgencyID]; ok && loc != nil {
 		index.fallbackLocation = loc
 	}
 
 	return index, nil
+}
+
+// addStopAgencies records the agency in each stop's ID, and that agency's
+// timezone, for stops the index doesn't hold yet.
+func (api *RestAPI) addStopAgencies(ctx context.Context, index *stopAgencyIndex, stopIDs []string) error {
+	stopAgencies, err := api.loadStopAgencyIDs(ctx, stopIDs)
+	if err != nil {
+		return err
+	}
+	for stopID, agencyID := range stopAgencies {
+		if _, exists := index.byStopID[stopID]; !exists {
+			index.byStopID[stopID] = agencyID
+		}
+		if _, exists := index.locations[agencyID]; exists {
+			continue
+		}
+		agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+		if err != nil {
+			return err
+		}
+		index.locations[agencyID] = agencyLocationOrUTC(ctx, agencyID, agency.Timezone)
+	}
+	return nil
 }
 
 // agencyLocationOrUTC resolves an agency's timezone, degrading to UTC rather

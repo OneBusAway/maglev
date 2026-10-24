@@ -673,6 +673,8 @@ WHERE
     AND trips.service_id IN (sqlc.slice('service_ids'));
 
 -- name: GetAgenciesForStops :many
+-- The agencies whose routes serve each stop, for references.agencies. A stop's own
+-- agency, the one in its ID, comes from GetStopAgencyIDs.
 SELECT DISTINCT
     a.id,
     a.name,
