@@ -105,7 +105,7 @@ func TestStopReferences_UseTheStopsOwnAgency(t *testing.T) {
 // Trip status, trip stop times and block stop times name each stop by its own
 // agency, not the agency of the trip that visits it.
 func TestTripStopIDs_UseTheStopsOwnAgency(t *testing.T) {
-	now := time.Date(2025, 1, 1, 10, 15, 0, 0, time.UTC)
+	now := time.Date(2025, 1, 1, 10, 10, 0, 0, time.UTC)
 	midTrip := clock.NewMockClock(now)
 	api := createTestApiWithGTFSFixture(t, midTrip, "agency-prefix.zip", agencyPrefixFiles())
 	serviceDate := strconv.FormatInt(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), 10)

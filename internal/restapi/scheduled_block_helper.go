@@ -35,6 +35,9 @@ type scheduledBlockSnapshot struct {
 	StopIndex     map[scheduledStopKey]int
 	NextStopIndex int // -1 when currentTime is past the block's last stop
 
+	// CurrentSeconds is the snapshot's time, in seconds since service-date midnight.
+	CurrentSeconds int64
+
 	// Block-level interpolated distance at currentTime.
 	DistanceAlongBlock float64
 
@@ -237,10 +240,62 @@ func buildSnapshotFromStops(
 		Stops:              stops,
 		StopIndex:          stopIndex,
 		NextStopIndex:      findNextStopIndex(stops, currentSeconds, monotonic),
+		CurrentSeconds:     currentSeconds,
 		DistanceAlongBlock: interpolateBlockDistance(stops, currentSeconds, monotonic),
 		InRange:            currentSeconds >= firstStopSec && currentSeconds <= lastStopSec,
 		ShiftTripIDs:       shiftTripIDs,
 	}
+}
+
+// scheduledStops is a block's closest and next stop at one moment, with each
+// stop's offset from that moment in seconds.
+type scheduledStops struct {
+	closestStopID string
+	closestOffset int
+	nextStopID    string
+	nextOffset    int
+}
+
+// closestAndNextStops picks the block's closest and next stops the way Java's
+// ScheduledBlockLocationServiceImpl does. The next stop is the first one not
+// yet reached. The closest is whichever of it and the stop before is nearer in
+// time, with ties going to the next stop. ok is false when the snapshot is nil
+// or its time falls outside the block.
+func (s *scheduledBlockSnapshot) closestAndNextStops() (stops scheduledStops, ok bool) {
+	if s == nil || !s.InRange || s.NextStopIndex < 0 {
+		return scheduledStops{}, false
+	}
+	next := s.Stops[s.NextStopIndex]
+	toOffset := int(next.EffectiveStopSeconds - s.CurrentSeconds)
+	stops = scheduledStops{closestStopID: next.StopID, closestOffset: toOffset, nextStopID: next.StopID, nextOffset: toOffset}
+	if s.NextStopIndex == 0 {
+		return stops, true
+	}
+	previous := s.Stops[s.NextStopIndex-1]
+	fromOffset := int(previous.EffectiveStopSeconds - s.CurrentSeconds)
+	if absInt(fromOffset) < absInt(toOffset) {
+		stops.closestStopID, stops.closestOffset = previous.StopID, fromOffset
+	}
+	return stops, true
+}
+
+// stopIDs returns the raw IDs of the block's stops, or nil for a nil snapshot.
+func (s *scheduledBlockSnapshot) stopIDs() []string {
+	if s == nil {
+		return nil
+	}
+	ids := make([]string, len(s.Stops))
+	for i, stop := range s.Stops {
+		ids[i] = stop.StopID
+	}
+	return ids
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // assignActiveTrip fills snap.ActiveTrip* fields by picking the latest trip

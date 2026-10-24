@@ -26,8 +26,6 @@ var javaParityFeedID = regexp.MustCompile(`^(40|1)_(A|B|B2|C|U|STA|R1|R40|ALL)$`
 // knownJavaDifferences lists requests whose IDs still differ from Java, with
 // the reason. Remove an entry once Maglev matches.
 var knownJavaDifferences = map[string]string{
-	"arrivals-and-departures-for-stop/40_A?time=1792861260000":            "a later trip in the block gets its own first stop as nextStop; Java gives the active trip's next stop",
-	"arrivals-and-departures-for-stop/40_B?time=1792861260000":            "a later trip in the block gets its own first stop as nextStop; Java gives the active trip's next stop",
 	"trip-details/1_R1-0-08?serviceDate=1792825200000&time=1792861260000": "no schedule-based trip status without a vehicle",
 	"trips-for-route/1_R1?time=1792861260000&includeSchedule=true":        "no schedule-based trip status without a vehicle; Java also returns another route's trip",
 	"schedule-for-route/1_R1?date=2026-10-24":                             "stop references list every route at the stop; Java lists only the requested route and leaves stop time serviceIds empty",
