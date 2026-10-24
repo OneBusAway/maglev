@@ -197,3 +197,29 @@ func TestBlockReferences_MatchTheSharedBuilders(t *testing.T) {
 		assert.ElementsMatch(t, []string{"own_own-route", "other_other-route"}, stop.RouteIDs, stop.ID)
 	}
 }
+
+// A stop's schedule names each route and trip by the route's agency, as Java
+// does. Service IDs stay under the feed's first agency.
+func TestScheduleForStop_RouteAndTripIDsUseTheRoutesAgency(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "agency-prefix.zip", agencyPrefixFiles())
+
+	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-stop/own_stop-1.json?key=TEST&date=2025-01-01")
+	data := model.Data.(map[string]any)
+
+	type scheduleIDs struct{ routeID, tripID, serviceID string }
+	var got []scheduleIDs
+	for _, routeSchedule := range data["entry"].(map[string]any)["stopRouteSchedules"].([]any) {
+		route := routeSchedule.(map[string]any)
+		direction := route["stopRouteDirectionSchedules"].([]any)[0].(map[string]any)
+		stopTime := direction["scheduleStopTimes"].([]any)[0].(map[string]any)
+		got = append(got, scheduleIDs{route["routeId"].(string), stopTime["tripId"].(string), stopTime["serviceId"].(string)})
+	}
+	assert.Equal(t, []scheduleIDs{
+		{"other_other-route", "other_other-trip", "own_svc"},
+		{"own_own-route", "own_own-trip", "own_svc"},
+	}, got)
+
+	stops := data["references"].(map[string]any)["stops"].([]any)
+	require.Len(t, stops, 1)
+	assert.ElementsMatch(t, []any{"other_other-route", "own_own-route"}, stops[0].(map[string]any)["routeIds"])
+}

@@ -85,13 +85,6 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	targetDate := serviceDay.String()
 	weekday := strings.ToLower(serviceDay.Weekday().String())
 
-	// Verify stop exists
-	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-	if err != nil {
-		api.dbErrorResponse(w, r, err)
-		return
-	}
-
 	routesForStop, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, stopID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -183,7 +176,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// per-direction headsign vote counts, per spec steps 6-7.
 	routeDirectionScheduleMap, routeDirectionFrequencyMap, routeDirectionHeadsignCounts, err := groupScheduleRowsByRouteAndDirection(
 		ctx, scheduleRows, scheduleRowContext{
-			agencyID:                   agencyID,
+			serviceAgencyID:            agencyID,
 			startOfDay:                 serviceStart,
 			serviceStart:               serviceStart,
 			activeServiceBlockTripsMap: activeServiceBlockTripsMap,
@@ -200,7 +193,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// by route short name, falling back to long name, then agency/route ID.
 	var routeSchedules []models.StopRouteSchedule
 	for _, rt := range routesForStop {
-		combinedRouteID := utils.FormCombinedID(agencyID, rt.ID)
+		combinedRouteID := utils.FormCombinedID(rt.AgencyID, rt.ID)
 		directionMap, hasStopTimes := routeDirectionScheduleMap[combinedRouteID]
 		frequencyMap, hasFrequencies := routeDirectionFrequencyMap[combinedRouteID]
 		if !hasStopTimes && !hasFrequencies {
@@ -254,7 +247,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 	references := models.NewEmptyReferences()
 	if includeReferences {
-		references, err = api.buildScheduleForStopReferences(ctx, agencyID, stop, routesForStop, routeIDs)
+		references, err = api.buildScheduleForStopReferences(ctx, agencyID, stopID, routesForStop)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
@@ -273,9 +266,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 func (api *RestAPI) buildScheduleForStopReferences(
 	ctx context.Context,
 	agencyID string,
-	stop gtfsdb.Stop,
+	stopID string,
 	routesForStop []gtfsdb.GetRoutesForStopRow,
-	routeIDs []string,
 ) (*models.ReferencesModel, error) {
 	routeRefs, agencyIDs := buildRouteRefs(routesForStop)
 
@@ -284,12 +276,15 @@ func (api *RestAPI) buildScheduleForStopReferences(
 		return nil, err
 	}
 
-	queried := buildQueriedStopRef(agencyID, stop, routeIDs)
+	queried, _, err := stopModelsByIDs(api, ctx, []string{stopID})
+	if err != nil {
+		return nil, err
+	}
 	references := models.NewEmptyReferences()
 	references.Routes = utils.MapValues(routeRefs)
 	references.Agencies = utils.MapValues(agencyRefs)
-	references.Stops = append(references.Stops, queried)
-	if err := api.mergeParentStopsIntoReferences(ctx, references, []models.Stop{queried}, agencyID); err != nil {
+	references.Stops = append(references.Stops, queried...)
+	if err := api.mergeParentStopsIntoReferences(ctx, references, queried, agencyID); err != nil {
 		return nil, err
 	}
 
@@ -345,33 +340,14 @@ func (api *RestAPI) fetchAgencyRefs(ctx context.Context, agencyIDs []string) (ma
 	return agencyRefs, nil
 }
 
-// buildQueriedStopRef builds the full stop reference for the queried stop.
-func buildQueriedStopRef(agencyID string, stop gtfsdb.Stop, routeIDs []string) models.Stop {
-	routeIDsWithAgency := make([]string, 0, len(routeIDs))
-	for _, ri := range routeIDs {
-		routeIDsWithAgency = append(routeIDsWithAgency, utils.FormCombinedID(agencyID, ri))
-	}
-
-	return models.NewStop(
-		nulls.StringOrNonEmpty(stop.Code, stop.ID),
-		nulls.StringOrEmpty(stop.Direction),
-		utils.FormCombinedID(agencyID, stop.ID),
-		nulls.StringOrEmpty(stop.Name),
-		parentStationID(agencyID, stop),
-		utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
-		stop.Lat,
-		stop.Lon,
-		int(stop.LocationType.Int64),
-		routeIDsWithAgency,
-		routeIDsWithAgency,
-	)
-}
-
 // scheduleRowContext holds the values that stay constant across every row while building
 // a stop's schedule, so callers don't have to thread each one individually through the
 // row-building helpers below.
 type scheduleRowContext struct {
-	agencyID string
+	// serviceAgencyID prefixes service IDs. Java names them after the feed's
+	// first agency, which is also the stop's agency; routes and trips take
+	// their route's agency instead.
+	serviceAgencyID string
 	// startOfDay is the service-day start (noon minus twelve hours), the base GTFS offsets are added to.
 	startOfDay time.Time
 	// serviceStart is noon less twelve hours on the service date, the base for stop time offsets.
@@ -429,7 +405,7 @@ func groupScheduleRowsByRouteAndDirection(
 
 		directionID := directionIDForRow(row)
 		dir := routeDirection{
-			combinedRouteID: utils.FormCombinedID(rowCtx.agencyID, row.RouteID),
+			combinedRouteID: utils.FormCombinedID(row.AgencyID, row.RouteID),
 			directionID:     directionID,
 		}
 
@@ -490,9 +466,9 @@ func newScheduleStopTime(row gtfsdb.GetScheduleForStopOnDateRow, rowCtx schedule
 	stopTime := models.NewScheduleStopTime(
 		arrivalMs,
 		departureMs,
-		utils.FormCombinedID(rowCtx.agencyID, row.ServiceID),
+		utils.FormCombinedID(rowCtx.serviceAgencyID, row.ServiceID),
 		row.StopHeadsign.String,
-		utils.FormCombinedID(rowCtx.agencyID, row.TripID),
+		utils.FormCombinedID(row.AgencyID, row.TripID),
 	)
 
 	// Blocks start with an arrival.
@@ -609,8 +585,8 @@ func buildScheduleFrequency(row gtfsdb.GetScheduleForStopOnDateRow, freq gtfsdb.
 	return models.NewScheduleFrequencyFromDB(
 		freq,
 		rowCtx.startOfDay,
-		utils.FormCombinedID(rowCtx.agencyID, row.ServiceID),
-		utils.FormCombinedID(rowCtx.agencyID, row.TripID),
+		utils.FormCombinedID(rowCtx.serviceAgencyID, row.ServiceID),
+		utils.FormCombinedID(row.AgencyID, row.TripID),
 		"",
 		!isFirstInBlock,
 		!isLastInBlock,
