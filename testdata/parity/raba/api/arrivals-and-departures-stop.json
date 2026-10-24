@@ -40,7 +40,7 @@
           "tripStatus": {
             "activeTripId": "25_dcd9e9b6-e261-4020-87f7-b65bf6b34e87",
             "blockTripSequence": 4,
-            "closestStop": "25_1036",
+            "closestStop": "25_1045",
             "closestStopTimeOffset": -60,
             "distanceAlongTrip": 0,
             "lastKnownDistanceAlongTrip": 0,
@@ -107,15 +107,15 @@
           "tripStatus": {
             "activeTripId": "25_dcd9e9b6-e261-4020-87f7-b65bf6b34e87",
             "blockTripSequence": 6,
-            "closestStop": "25_1030",
-            "closestStopTimeOffset": 3060,
+            "closestStop": "25_1045",
+            "closestStopTimeOffset": -60,
             "distanceAlongTrip": 0,
             "lastKnownDistanceAlongTrip": 0,
             "lastKnownOrientation": 0,
             "lastLocationUpdateTime": 0,
             "lastUpdateTime": 0,
-            "nextStop": "25_1030",
-            "nextStopTimeOffset": 3060,
+            "nextStop": "25_1046",
+            "nextStopTimeOffset": 360,
             "occupancyCapacity": -1,
             "occupancyCount": -1,
             "occupancyStatus": "",
@@ -178,23 +178,6 @@
       "stopTimes": [],
       "stops": [
         {
-          "code": "1030",
-          "direction": "SE",
-          "id": "25_1030",
-          "lat": 40.682371,
-          "locationType": 0,
-          "lon": -122.376623,
-          "name": "Shasta Dam Blvd at Givan St",
-          "parent": "",
-          "routeIds": [
-            "25_151"
-          ],
-          "staticRouteIds": [
-            "25_151"
-          ],
-          "wheelchairBoarding": "UNKNOWN"
-        },
-        {
           "code": "1033",
           "direction": "E",
           "id": "25_1033",
@@ -212,13 +195,13 @@
           "wheelchairBoarding": "UNKNOWN"
         },
         {
-          "code": "1036",
-          "direction": "SW",
-          "id": "25_1036",
-          "lat": 40.675912,
+          "code": "1045",
+          "direction": "E",
+          "id": "25_1045",
+          "lat": 40.625938,
           "locationType": 0,
-          "lon": -122.353935,
-          "name": "Cascade Blvd at Morningstar Way",
+          "lon": -122.405265,
+          "name": "Lake Blvd at Keswick Dam Rd",
           "parent": "",
           "routeIds": [
             "25_151"
