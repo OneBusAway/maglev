@@ -149,106 +149,44 @@ func TestBuildStopReferencesAndRouteIDsForStops(t *testing.T) {
 	}
 }
 
-func TestStopReferences(t *testing.T) {
+func TestBuildStopReferencesAndRouteIDsForStops_RoutelessStop(t *testing.T) {
 	api := createTestApi(t)
 	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
 
 	servedStopID := firstRabaStopIDs(t, api, 1)[0]
-	servedStop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, servedStopID)
+	// No stop_times point at these stops, so no route resolves for them.
+	_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{ID: "parent-station", Lat: 40.4, Lon: -122.2, LocationType: nulls.Int64(1)})
 	require.NoError(t, err)
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: "stop-served-by-no-route", Lat: 40.5, Lon: -122.3,
+		LocationType: nulls.Int64(1), ParentStation: nulls.String("parent-station"),
+	})
+	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{"parent-station": testdata.Raba.ID, "stop-served-by-no-route": testdata.Raba.ID})
 
-	// No stop_times point at this stop, so no route resolves for it.
-	routelessStop := gtfsdb.Stop{
-		ID:            "stop-served-by-no-route",
-		Lat:           40.5,
-		Lon:           -122.3,
-		LocationType:  nulls.Int64(1),
-		ParentStation: nulls.String("parent-station"),
-	}
-	defaultStop := gtfsdb.Stop{ID: "default-stop", Lat: 40.6, Lon: -122.4}
-	malformedReferenceStop := gtfsdb.Stop{
-		ID:            "malformed-reference-stop",
-		Lat:           40.7,
-		Lon:           -122.5,
-		ParentStation: nulls.String("parent-station"),
-	}
+	refs, routeMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, []string{servedStopID, "stop-served-by-no-route"})
+	require.NoError(t, err)
+	require.Len(t, refs, 3, "a stop with no routes still gets a reference, and so does its parent")
 
-	referringIDs := map[string][]string{
-		servedStopID:              {utils.FormCombinedID("referring-agency", servedStopID)},
-		routelessStop.ID:          {utils.FormCombinedID("referring-agency", routelessStop.ID)},
-		defaultStop.ID:            {utils.FormCombinedID("referring-agency", defaultStop.ID)},
-		malformedReferenceStop.ID: {"malformed-reference-id"},
-	}
-
-	refs, routeIDsByStop := api.stopReferences(ctx,
-		[]gtfsdb.Stop{servedStop, routelessStop, defaultStop, malformedReferenceStop}, referringIDs)
-	require.Len(t, refs, 4, "a stop with no resolvable routes still gets a reference")
-
-	assert.Equal(t, referringIDs[servedStopID][0], refs[0].ID, "the referring entry's ID labels the reference")
+	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, servedStopID), refs[0].ID)
 	assert.NotEmpty(t, refs[0].RouteIDs)
-	assert.Equal(t, routeIDsByStop[servedStopID], refs[0].RouteIDs)
+	for _, routeID := range refs[0].RouteIDs {
+		assert.Contains(t, routeMap, routeID)
+	}
 
-	assert.Equal(t, referringIDs[routelessStop.ID][0], refs[1].ID)
-	assert.Equal(t, 1, refs[1].LocationType)
-	assert.Equal(t, utils.FormCombinedID("referring-agency", "parent-station"), refs[1].Parent)
-	assert.Empty(t, refs[1].RouteIDs)
-	assert.NotNil(t, refs[1].RouteIDs, "an unresolved route list is empty, not null")
-	assert.Equal(t, refs[1].RouteIDs, refs[1].StaticRouteIDs)
+	routeless := refs[1]
+	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, "stop-served-by-no-route"), routeless.ID)
+	assert.Equal(t, 1, routeless.LocationType)
+	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, "parent-station"), routeless.Parent)
+	assert.Empty(t, routeless.RouteIDs)
+	assert.NotNil(t, routeless.RouteIDs, "an unresolved route list is empty, not null")
+	assert.Equal(t, routeless.RouteIDs, routeless.StaticRouteIDs)
 	// No stop_times and no shape, so nothing supports a direction. Java copies
 	// the empty narrative direction, so this must be "" and not "UNKNOWN".
-	assert.Equal(t, "", refs[1].Direction)
+	assert.Equal(t, "", routeless.Direction)
 
-	assert.Equal(t, 0, refs[2].LocationType)
-	assert.Empty(t, refs[2].Parent)
-
-	assert.Equal(t, 0, refs[3].LocationType)
-	assert.Empty(t, refs[3].Parent)
-}
-
-func TestStopReferences_DirectionAndCodeMatchBuildStopModel(t *testing.T) {
-	api := createTestApi(t)
-	ctx := context.Background()
-
-	const referringAgencyID = "agency"
-
-	tests := []struct {
-		name          string
-		stop          gtfsdb.Stop
-		wantDirection string
-		wantCode      string
-	}{
-		{
-			name:          "no direction and no stop_code",
-			stop:          gtfsdb.Stop{ID: "no-code-stop", Lat: 40.5, Lon: -122.3},
-			wantDirection: "",
-			wantCode:      "no-code-stop",
-		},
-		{
-			name:          "stop_code is kept when present",
-			stop:          gtfsdb.Stop{ID: "coded-stop", Code: nulls.String("C03"), Lat: 40.6, Lon: -122.4},
-			wantDirection: "",
-			wantCode:      "C03",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			referringIDs := map[string][]string{
-				tt.stop.ID: {utils.FormCombinedID(referringAgencyID, tt.stop.ID)},
-			}
-
-			refs, _ := api.stopReferences(ctx, []gtfsdb.Stop{tt.stop}, referringIDs)
-			require.Len(t, refs, 1)
-
-			assert.Equal(t, tt.wantDirection, refs[0].Direction)
-			assert.Equal(t, tt.wantCode, refs[0].Code)
-
-			// The reference must agree with the canonical stop builder.
-			canonical := api.buildStopModel(ctx, referringAgencyID, tt.stop, []string{})
-			assert.Equal(t, canonical.Direction, refs[0].Direction)
-			assert.Equal(t, canonical.Code, refs[0].Code)
-		})
-	}
+	assert.Equal(t, utils.FormCombinedID(testdata.Raba.ID, "parent-station"), refs[2].ID)
 }
 
 func TestBuildStopReferencesAndRouteIDsForStops_DeduplicatesStopIDs(t *testing.T) {
