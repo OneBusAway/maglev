@@ -39,6 +39,9 @@ type feedRows struct {
 	// tripEnds holds the ends of every stored trip once stopTimes has been
 	// read to the end.
 	tripEnds []tripEnds
+	// removedTrips holds the trips stop consolidation left too short to
+	// keep, once stopTimes has been read to the end.
+	removedTrips []string
 	// err holds the first error reading from the stream.
 	err error
 }
@@ -64,7 +67,8 @@ func (r *feedRows) stopTimes() iter.Seq[CreateStopTimeParams] {
 				return nil
 			}
 			stopTimes = r.replacements.consolidate(stopTimes)
-			if len(stopTimes) == 0 {
+			if len(stopTimes) < minStopTimesPerTrip {
+				r.removedTrips = append(r.removedTrips, trip.ID)
 				return nil
 			}
 			r.tripEnds = append(r.tripEnds, newTripEnds(trip, stopTimes[0], stopTimes[len(stopTimes)-1]))
