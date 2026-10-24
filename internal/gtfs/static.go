@@ -156,7 +156,16 @@ func (manager *Manager) storeConfiguredFeed(ctx context.Context, logger *slog.Lo
 	}
 	defer feed.close()
 
-	skipped, err := manager.GtfsDB.SkipIfImported(ctx, feed.identity(manager.config))
+	consolidationFile, err := loadStopConsolidation(ctx, manager.config)
+	if err != nil {
+		logging.LogError(logger, "Error loading stop consolidation file", err,
+			slog.String("source", manager.config.StopConsolidationURL))
+		return false, err
+	}
+
+	identity := feed.identity(manager.config)
+	identity.Hash = consolidationFile.withHash(identity.Hash)
+	skipped, err := manager.GtfsDB.SkipIfImported(ctx, identity)
 	if err != nil {
 		logging.LogError(logger, "Error checking whether GTFS data is already imported", err,
 			slog.String("source", manager.config.GtfsURL))
@@ -177,6 +186,8 @@ func (manager *Manager) storeConfiguredFeed(ctx context.Context, logger *slog.Lo
 		return false, err
 	}
 
+	newData.Hash = consolidationFile.withHash(newData.Hash)
+	consolidationFile.apply(newData, logger)
 	changed, err := manager.GtfsDB.StoreGtfsData(ctx, newData)
 	if err != nil {
 		logging.LogError(logger, "Error importing GTFS data", err)

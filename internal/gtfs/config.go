@@ -29,8 +29,11 @@ type Config struct {
 	GTFSDataPath          string
 	Env                   appconf.Environment
 	EnableGTFSTidy        bool
-	StartupRetries        []time.Duration
-	Metrics               *metrics.Metrics
+	// StopConsolidationURL is the URL or path of a Java OneBusAway stop
+	// consolidation file, or empty for none.
+	StopConsolidationURL string
+	StartupRetries       []time.Duration
+	Metrics              *metrics.Metrics
 }
 
 // enabledFeeds returns only the enabled feeds that have at least one URL configured.
@@ -64,5 +67,9 @@ func (config Config) feedAgencyFilters() map[string]map[string]bool {
 }
 
 func (config Config) isLocalFile() bool {
-	return !strings.HasPrefix(config.GtfsURL, "http://") && !strings.HasPrefix(config.GtfsURL, "https://")
+	return !isHTTPURL(config.GtfsURL)
+}
+
+func isHTTPURL(location string) bool {
+	return strings.HasPrefix(location, "http://") || strings.HasPrefix(location, "https://")
 }
