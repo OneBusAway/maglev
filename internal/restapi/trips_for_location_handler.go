@@ -843,14 +843,11 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		}
 	}
 
-	stopCoords := make(map[string]struct{ lat, lon float64 })
+	var stops tripStops
 	if len(allStopIDs) > 0 {
-		stopsRaw, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, allStopIDs)
-		if err == nil {
-			for _, s := range stopsRaw {
-				stopCoords[s.ID] = struct{ lat, lon float64 }{lat: s.Lat, lon: s.Lon}
-			}
-		} else {
+		var err error
+		stops, err = api.loadTripStops(ctx, allStopIDs)
+		if err != nil {
 			reqLogger.Warn("failed to bulk fetch stops", "error", err, "stop_count", len(allStopIDs))
 		}
 	}
@@ -912,7 +909,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				currentLocation: agencyLocation,
 				stopTimes:       stopTimesMap[tripID],
 				shapePoints:     shapePoints,
-				stopCoords:      stopCoords,
+				stops:           stops,
 				blockTrips:      blockTrips,
 			}, frequency)
 		}
@@ -1055,29 +1052,17 @@ func (api *RestAPI) buildScheduleForTrip(
 func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.StopTime, shapePoints []gtfs.ShapePoint, agencyID string) []models.StopTime {
 
 	reqLogger := logging.ForComponent(ctx, "http_server")
-	// Batch-fetch all stop coordinates at once
-	stopIDs := make([]string, len(stopTimes))
-	for i, st := range stopTimes {
-		stopIDs[i] = st.StopID
-	}
-
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
-
-	// Create a map for quick stop coordinate lookup
-	stopCoords := make(map[string]struct{ lat, lon float64 })
+	stopIDs := stopIDsForStopTimes(stopTimes)
+	stops, err := api.loadTripStops(ctx, stopIDs)
 	if err != nil {
 		// Log the error but continue - distances will be 0 for all stops
-		reqLogger.Warn("Failed to batch-fetch stop coordinates for distance calculation",
+		reqLogger.Warn("Failed to batch-fetch stops for the stop-time list",
 			"error", err,
 			"agency_id", agencyID,
 			"stop_count", len(stopIDs))
-	} else {
-		for _, stop := range stops {
-			stopCoords[stop.ID] = struct{ lat, lon float64 }{lat: stop.Lat, lon: stop.Lon}
-		}
 	}
 
-	return api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
+	return api.calculateBatchStopDistances(stopTimes, shapePoints, stops)
 
 }
 
@@ -1340,7 +1325,7 @@ type scheduleData struct {
 	currentLocation *time.Location
 	stopTimes       []gtfsdb.StopTime
 	shapePoints     []gtfs.ShapePoint
-	stopCoords      map[string]struct{ lat, lon float64 }
+	stops           tripStops
 	blockTrips      []gtfsdb.GetTripsByBlockIDsRow
 }
 
@@ -1352,7 +1337,7 @@ func (api *RestAPI) buildScheduleFromMemory(data scheduleData, frequency *models
 	nextTripID, previousTripID := api.calculateNextPrevFromMemory(data.trip, data.blockTrips, data.agencyID)
 
 	// Calculate Distances using in-memory coords
-	stopTimesList := api.calculateBatchStopDistances(data.stopTimes, data.shapePoints, data.stopCoords, data.agencyID)
+	stopTimesList := api.calculateBatchStopDistances(data.stopTimes, data.shapePoints, data.stops)
 
 	return &models.TripsSchedule{
 		Frequency:      frequency,

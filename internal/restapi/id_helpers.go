@@ -42,6 +42,11 @@ func (api *RestAPI) extractAndValidateAgencyCodeID(w http.ResponseWriter, r *htt
 // agencies' routes serve it.
 type stopAgencyIDs map[string]string
 
+// combinedStopID returns the stop's public ID, or "" for a stop with no agency.
+func (s stopAgencyIDs) combinedStopID(stopID string) string {
+	return utils.FormCombinedID(s[stopID], stopID)
+}
+
 // loadStopAgencyIDs reads the agency in each stop's public ID. It is the one way to
 // learn a stop's agency; the routes serving a stop don't decide it.
 func (api *RestAPI) loadStopAgencyIDs(ctx context.Context, stopIDs []string) (stopAgencyIDs, error) {
