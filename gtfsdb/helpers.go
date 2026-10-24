@@ -33,6 +33,10 @@ type GtfsData struct {
 	Hash   string
 	Source string
 
+	// StopReplacements removes the stops a stop consolidation file absorbs,
+	// keyed by stop ID. It is nil when no file is configured.
+	StopReplacements StopReplacements
+
 	// stream reads the stop times and shape points, which Static lacks.
 	stream *gtfs.StaticStream
 }
@@ -332,12 +336,12 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		//
 		// Future: If pathways or station accessibility features are needed, consider
 		// making lat/lon nullable in the schema and updating handlers accordingly.
-		if s.Latitude == nil || s.Longitude == nil {
+		if s.Latitude == nil || s.Longitude == nil || data.StopReplacements.isAbsorbed(s.Id) {
 			continue
 		}
 		parentStation := ""
 		if s.Parent != nil {
-			parentStation = s.Parent.Id
+			parentStation = data.StopReplacements.storedStopID(s.Parent.Id)
 		}
 		params := CreateStopParams{
 			ID: s.Id,
@@ -363,6 +367,9 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 	if err := c.bulkInsertStops(ctx, allStopParams, tx); err != nil {
 		return false, fmt.Errorf("unable to create stops: %w", err)
+	}
+	if err := storeStopConsolidations(ctx, qtx, data.Static.Stops, data.StopReplacements); err != nil {
+		return false, err
 	}
 
 	logging.LogOperation(logger, "agencies_and_routes_inserted",
@@ -661,6 +668,9 @@ func (c *Client) clearAllGTFSDataWithQueries(ctx context.Context, q *Queries) er
 	}
 	if err := q.ClearCalendar(ctx); err != nil {
 		return fmt.Errorf("error clearing calendar: %w", err)
+	}
+	if err := q.ClearStopConsolidations(ctx); err != nil {
+		return fmt.Errorf("error clearing stop_consolidations: %w", err)
 	}
 	if err := q.ClearStops(ctx); err != nil {
 		return fmt.Errorf("error clearing stops: %w", err)

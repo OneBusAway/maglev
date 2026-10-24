@@ -591,3 +591,19 @@ CREATE INDEX IF NOT EXISTS idx_trips_time_window ON trips (max_departure_time, m
 
 -- migrate
 CREATE INDEX IF NOT EXISTS idx_stop_times_stop_revenue ON stop_times (stop_id, pickup_type, drop_off_type);
+
+-- migrate
+-- Stops removed by stop consolidation, one row per absorbed stop, rebuilt on every import.
+-- canonical_id is the stored stop that took over the absorbed stop's stop times, or NULL
+-- when they were dropped because the file's canonical stop is not stored. rule_canonical
+-- is the canonical stop as the consolidation file names it.
+CREATE TABLE
+    IF NOT EXISTS stop_consolidations (
+        absorbed_id TEXT PRIMARY KEY,
+        canonical_id TEXT,
+        rule_canonical TEXT NOT NULL,
+        absorbed_name TEXT,
+        absorbed_lat REAL,
+        absorbed_lon REAL,
+        FOREIGN KEY (canonical_id) REFERENCES stops (id)
+    ) STRICT;

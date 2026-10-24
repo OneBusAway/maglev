@@ -1538,3 +1538,27 @@ FROM
     JOIN stops s ON s.id = st.stop_id
 GROUP BY
     r.agency_id;
+
+-- name: CreateStopConsolidation :exec
+INSERT INTO
+    stop_consolidations (
+        absorbed_id,
+        canonical_id,
+        rule_canonical,
+        absorbed_name,
+        absorbed_lat,
+        absorbed_lon
+    )
+VALUES
+    (?, ?, ?, ?, ?, ?);
+
+-- name: ListStopConsolidations :many
+SELECT
+    *
+FROM
+    stop_consolidations
+ORDER BY
+    absorbed_id;
+
+-- name: ClearStopConsolidations :exec
+DELETE FROM stop_consolidations;
