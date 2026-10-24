@@ -50,7 +50,7 @@ func (s stopAgencyIDs) combinedStopID(stopID string) string {
 // loadStopAgencyIDs reads the agency in each stop's public ID. It is the one way to
 // learn a stop's agency; the routes serving a stop don't decide it.
 func (api *RestAPI) loadStopAgencyIDs(ctx context.Context, stopIDs []string) (stopAgencyIDs, error) {
-	rows, err := api.GtfsManager.GtfsDB.Queries.GetStopAgencyIDs(ctx, stopIDs)
+	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetStopAgencyIDs)
 	if err != nil {
 		return nil, err
 	}
