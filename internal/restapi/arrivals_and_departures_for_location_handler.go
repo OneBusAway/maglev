@@ -615,7 +615,7 @@ func (api *RestAPI) collectActiveRoutesForGroup(ctx context.Context, loc *time.L
 		return err
 	}
 	for _, row := range rows {
-		recordActiveRoute(active, row.StopID, row.RouteID)
+		recordActiveRoute(active, row.StopID, row.AgencyID, row.RouteID)
 	}
 	return nil
 }
@@ -627,16 +627,9 @@ func (api *RestAPI) activeServiceIDsForLocation(ctx context.Context, loc *time.L
 	return api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
 }
 
-// recordActiveRoute keeps one agency-prefixed route ID for a stop,
-// ignoring rows that do not carry a well-formed combined ID.
-func recordActiveRoute(active map[string]map[string]bool, stopID string, routeID interface{}) {
-	combinedID, ok := routeID.(string)
-	if !ok {
-		return
-	}
-	if _, _, err := utils.ExtractAgencyIDAndCodeID(combinedID); err != nil {
-		return
-	}
+// recordActiveRoute keeps one agency-prefixed route ID for a stop.
+func recordActiveRoute(active map[string]map[string]bool, stopID, agencyID, routeID string) {
+	combinedID := utils.FormCombinedID(agencyID, routeID)
 	routes, ok := active[stopID]
 	if !ok {
 		routes = make(map[string]bool)

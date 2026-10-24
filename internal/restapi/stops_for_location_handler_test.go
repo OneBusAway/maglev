@@ -873,3 +873,37 @@ func TestStopsForLocationStopCodeFallback(t *testing.T) {
 
 	assert.Equal(t, stopID, stop.Code, "stop_code should fall back to the raw stop entity id when stop_code is not defined in the feed")
 }
+
+func TestStopsForLocation_AgencyWithUnderscore(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 12, 0, 0, 0, time.UTC))
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"AGENCY_ONE,Agency One,http://example.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"ROUTE_100,AGENCY_ONE,100,Route 100,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20241231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1,Stop 1,47.6062,-122.3321\n",
+		"trips.txt": "route_id,service_id,trip_id\n" +
+			"ROUTE_100,svc1,t1\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,12:00:00,12:00:00,s1,1\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, mockClock, "agency-underscore-location.zip", files)
+
+	endpoint := "/api/where/stops-for-location.json?key=TEST&lat=47.6062&lon=-122.3321&radius=1000"
+	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1)
+
+	assert.Equal(t, []string{"AGENCY_ONE_ROUTE_100"}, model.Data.List[0].RouteIDs)
+
+	require.Len(t, model.Data.References.Agencies, 1)
+	assert.Equal(t, "AGENCY_ONE", model.Data.References.Agencies[0].ID)
+
+	require.Len(t, model.Data.References.Routes, 1)
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", model.Data.References.Routes[0].ID)
+	assert.Equal(t, "AGENCY_ONE", model.Data.References.Routes[0].AgencyID)
+}

@@ -170,7 +170,11 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 		resultRawStopIDs = append(resultRawStopIDs, stopID)
 
-		results = append(results, api.buildSearchStopModel(ctx, agency.ID, stop, rids))
+		combinedRouteIDs := make([]string, 0, len(rids))
+		for _, r := range rids {
+			combinedRouteIDs = append(combinedRouteIDs, utils.FormCombinedID(r.agencyID, r.routeID))
+		}
+		results = append(results, api.buildSearchStopModel(ctx, agency.ID, stop, combinedRouteIDs))
 	}
 
 	if ctx.Err() != nil {
@@ -255,7 +259,7 @@ func (api *RestAPI) parentStationReferences(
 	stopIDs []string,
 	stopMap map[string]gtfsdb.Stop,
 	stopAgency map[string]*gtfsdb.GetAgenciesForStopsRow,
-) ([]models.Stop, map[string][]string, error) {
+) ([]models.Stop, map[string][]stopRoute, error) {
 	parentIDsByBareID := make(map[string][]string)
 	for _, stopID := range stopIDs {
 		stop := stopMap[stopID]
@@ -276,20 +280,16 @@ func (api *RestAPI) parentStationReferences(
 		return nil, nil, err
 	}
 
-	parentStops, routeIDsByStop := api.stopReferences(ctx, parents, parentIDsByBareID)
-	return parentStops, routeIDsByStop, nil
+	parentStops, routesByStop := api.stopReferences(ctx, parents, parentIDsByBareID)
+	return parentStops, routesByStop, nil
 }
 
-// collectRouteReferenceIDs marks each combined route ID, and the agency that
+// collectRouteReferenceIDs marks each route ID, and the agency that
 // owns it, for inclusion in the references block.
-func collectRouteReferenceIDs(combinedRouteIDs []string, routeIDs, agencyIDs map[string]bool) {
-	for _, routeID := range combinedRouteIDs {
-		agencyID, _, err := utils.ExtractAgencyIDAndCodeID(routeID)
-		if err != nil {
-			continue
-		}
-		agencyIDs[agencyID] = true
-		routeIDs[routeID] = true
+func collectRouteReferenceIDs(routes []stopRoute, routeIDs, agencyIDs map[string]bool) {
+	for _, r := range routes {
+		agencyIDs[r.agencyID] = true
+		routeIDs[utils.FormCombinedID(r.agencyID, r.routeID)] = true
 	}
 }
 
@@ -326,19 +326,10 @@ func (api *RestAPI) routeIDsByStop(
 	stopIDs []string,
 	stopCodeQuery string,
 	activeServiceIDs []string,
-) (map[string][]string, error) {
-	reqLogger := logging.ForComponent(ctx, "http_server")
-	byStop := make(map[string][]string)
-	collect := func(stopID string, routeID interface{}) {
-		routeIDStr, ok := routeID.(string)
-		if !ok {
-			reqLogger.Warn("unexpected RouteID type", "stopID", stopID, "routeID", routeID)
-			return
-		}
-		if _, _, err := utils.ExtractAgencyIDAndCodeID(routeIDStr); err != nil {
-			return
-		}
-		byStop[stopID] = append(byStop[stopID], routeIDStr)
+) (map[string][]stopRoute, error) {
+	byStop := make(map[string][]stopRoute)
+	collect := func(stopID, agencyID, routeID string) {
+		byStop[stopID] = append(byStop[stopID], stopRoute{agencyID: agencyID, routeID: routeID})
 	}
 
 	if stopCodeQuery != "" {
@@ -347,7 +338,7 @@ func (api *RestAPI) routeIDsByStop(
 			return nil, err
 		}
 		for _, row := range rows {
-			collect(row.StopID, row.RouteID)
+			collect(row.StopID, row.AgencyID, row.RouteID)
 		}
 		return byStop, nil
 	}
@@ -364,7 +355,7 @@ func (api *RestAPI) routeIDsByStop(
 		return nil, err
 	}
 	for _, row := range rows {
-		collect(row.StopID, row.RouteID)
+		collect(row.StopID, row.AgencyID, row.RouteID)
 	}
 	return byStop, nil
 }
