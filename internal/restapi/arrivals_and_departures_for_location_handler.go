@@ -131,16 +131,6 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
-	// Record each nearby stop's agency so references namespace it exactly as
-	// nearbyStopIds does, instead of falling back to the matched stops' agency.
-	for _, n := range lists.nearby {
-		if agencyID, bareID, err := utils.ExtractAgencyIDAndCodeID(n.StopID); err == nil {
-			if _, exists := agencies.byStopID[bareID]; !exists {
-				agencies.byStopID[bareID] = agencyID
-			}
-		}
-	}
-
 	// References cover only the retained entry results, not the stops and
 	// arrivals maxCount trimmed away.
 	refAcc := retainedAccumulator(lists.arrivals, lists.stopIDs, lists.nearby, acc)
