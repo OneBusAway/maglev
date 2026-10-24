@@ -517,7 +517,8 @@ func (api *RestAPI) addStopLevelArrivalAlerts(ctx context.Context, stops []gtfsd
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID), agencies.agencyIDFor(stop.ID))
+		agencyID := agencies.agencyIDFor(stop.ID)
+		acc.situations.add(api.GtfsManager.GetAlertsForStop(stop.ID, agencyID), agencyID)
 	}
 	return nil
 }
