@@ -210,6 +210,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getCalendarDateExceptionsForServiceIDStmt, err = db.PrepareContext(ctx, getCalendarDateExceptionsForServiceID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetCalendarDateExceptionsForServiceID: %w", err)
 	}
+	if q.getConsolidatedStopCanonicalIDStmt, err = db.PrepareContext(ctx, getConsolidatedStopCanonicalID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetConsolidatedStopCanonicalID: %w", err)
+	}
 	if q.getFeedEndDateStmt, err = db.PrepareContext(ctx, getFeedEndDate); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFeedEndDate: %w", err)
 	}
@@ -735,6 +738,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getCalendarDateExceptionsForServiceIDStmt: %w", cerr)
 		}
 	}
+	if q.getConsolidatedStopCanonicalIDStmt != nil {
+		if cerr := q.getConsolidatedStopCanonicalIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getConsolidatedStopCanonicalIDStmt: %w", cerr)
+		}
+	}
 	if q.getFeedEndDateStmt != nil {
 		if cerr := q.getFeedEndDateStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFeedEndDateStmt: %w", cerr)
@@ -1186,6 +1194,7 @@ type Queries struct {
 	getBlocksForBlockTripIndexIDsStmt         *sql.Stmt
 	getCalendarByServiceIDStmt                *sql.Stmt
 	getCalendarDateExceptionsForServiceIDStmt *sql.Stmt
+	getConsolidatedStopCanonicalIDStmt        *sql.Stmt
 	getFeedEndDateStmt                        *sql.Stmt
 	getFirstStopOfNextTripInBlockStmt         *sql.Stmt
 	getFrequenciesForTripStmt                 *sql.Stmt
@@ -1324,6 +1333,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getBlocksForBlockTripIndexIDsStmt:         q.getBlocksForBlockTripIndexIDsStmt,
 		getCalendarByServiceIDStmt:                q.getCalendarByServiceIDStmt,
 		getCalendarDateExceptionsForServiceIDStmt: q.getCalendarDateExceptionsForServiceIDStmt,
+		getConsolidatedStopCanonicalIDStmt:        q.getConsolidatedStopCanonicalIDStmt,
 		getFeedEndDateStmt:                        q.getFeedEndDateStmt,
 		getFirstStopOfNextTripInBlockStmt:         q.getFirstStopOfNextTripInBlockStmt,
 		getFrequenciesForTripStmt:                 q.getFrequenciesForTripStmt,
