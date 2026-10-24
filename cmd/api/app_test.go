@@ -668,3 +668,33 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 	assert.NotEqual(t, "", rtFeed["trip-updates-url"])
 	assert.Equal(t, gtfsCfg.GTFSDataPath, parsed["data-path"])
 }
+
+func TestStopConsolidationURLReachesGTFSConfigAndDump(t *testing.T) {
+	gtfsCfg := gtfsConfigFromData(appconf.GtfsConfigData{
+		GtfsURL:              "https://example.com/gtfs.zip",
+		StopConsolidationURL: "https://example.com/StopConsolidation.txt",
+	})
+	assert.Equal(t, "https://example.com/StopConsolidation.txt", gtfsCfg.StopConsolidationURL)
+
+	parsed := dumpConfigToMap(t, appconf.Config{}, gtfsCfg)
+
+	staticFeed, ok := parsed["gtfs-static-feed"].(map[string]any)
+	require.True(t, ok, "gtfs-static-feed should be a map")
+	assert.Equal(t, "https://example.com/StopConsolidation.txt", staticFeed["stop-consolidation-url"])
+}
+
+func dumpConfigToMap(t *testing.T, cfg appconf.Config, gtfsCfg gtfs.Config) map[string]any {
+	t.Helper()
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+
+	dumpConfigJSON(cfg, gtfsCfg)
+	_ = w.Close()
+
+	var parsed map[string]any
+	require.NoError(t, json.NewDecoder(r).Decode(&parsed))
+	return parsed
+}

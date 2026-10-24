@@ -15,6 +15,9 @@ type GtfsStaticFeed struct {
 	AuthHeaderName  string `json:"auth-header-name"`
 	AuthHeaderValue string `json:"auth-header-value"`
 	EnableGTFSTidy  bool   `json:"enable-gtfs-tidy"`
+	// StopConsolidationURL is a Java OneBusAway stop consolidation file:
+	// an http(s) URL or a local path.
+	StopConsolidationURL string `json:"stop-consolidation-url"`
 }
 
 // GtfsRtFeed represents a single GTFS-RT feed configuration
@@ -205,26 +208,27 @@ func (j *JSONConfig) Validate() error {
 		return fmt.Errorf("both auth-header-name and auth-header-value must be provided together for gtfs-static-feed")
 	}
 
-	// Validate GtfsStaticFeed.URL to prevent file:// URLs and other security issues
-	if j.GtfsStaticFeed.URL != "" {
-		// Block file:// URLs (case-insensitive)
-		if strings.HasPrefix(strings.ToLower(j.GtfsStaticFeed.URL), "file://") {
-			return fmt.Errorf("file:// URLs are not allowed for gtfs-static-feed.url for security reasons")
-		}
-
-		// For HTTP(S) URLs, no path checks needed
-		if strings.HasPrefix(j.GtfsStaticFeed.URL, "http://") ||
-			strings.HasPrefix(j.GtfsStaticFeed.URL, "https://") {
-			return nil
-		}
-
-		// For file paths, validate for path traversal
-		if err := validatePath(j.GtfsStaticFeed.URL, "gtfs-static-feed.url"); err != nil {
-			return err
-		}
+	if err := validateFeedLocation(j.GtfsStaticFeed.URL, "gtfs-static-feed.url"); err != nil {
+		return err
 	}
+	return validateFeedLocation(j.GtfsStaticFeed.StopConsolidationURL, "gtfs-static-feed.stop-consolidation-url")
+}
 
-	return nil
+// validateFeedLocation checks a URL or local path Maglev reads a feed file
+// from, blocking file:// URLs and path traversal.
+func validateFeedLocation(location, fieldName string) error {
+	if location == "" {
+		return nil
+	}
+	// Block file:// URLs (case-insensitive)
+	if strings.HasPrefix(strings.ToLower(location), "file://") {
+		return fmt.Errorf("file:// URLs are not allowed for %s for security reasons", fieldName)
+	}
+	// For HTTP(S) URLs, no path checks needed
+	if strings.HasPrefix(location, "http://") || strings.HasPrefix(location, "https://") {
+		return nil
+	}
+	return validatePath(location, fieldName)
 }
 
 // validatePath checks a file path for security issues
@@ -294,6 +298,7 @@ type GtfsConfigData struct {
 	GTFSDataPath          string
 	Env                   Environment
 	EnableGTFSTidy        bool
+	StopConsolidationURL  string
 }
 
 // ToGtfsConfigData converts JSONConfig to GtfsConfigData
@@ -305,6 +310,7 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 		GTFSDataPath:          j.DataPath,
 		Env:                   EnvFlagToEnvironment(j.Env),
 		EnableGTFSTidy:        j.GtfsStaticFeed.EnableGTFSTidy,
+		StopConsolidationURL:  j.GtfsStaticFeed.StopConsolidationURL,
 	}
 
 	seen := make(map[string]struct{})
