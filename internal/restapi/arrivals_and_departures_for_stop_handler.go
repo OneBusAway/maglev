@@ -127,10 +127,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	references, err = api.buildArrivalsReferences(ctx, arrivalsReferencesInput{
-		fallbackAgencyID: stopAgencyID,
-		primaryAgency:    &agency,
-	}, acc)
+	references, err = api.buildArrivalsReferences(ctx, &agency, acc)
 	if err != nil {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())

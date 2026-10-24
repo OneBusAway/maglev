@@ -145,7 +145,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// arrivals maxCount trimmed away.
 	refAcc := retainedAccumulator(lists.arrivals, lists.stopIDs, lists.nearby, acc)
 
-	references, err := api.locationReferences(ctx, params.IncludeReferences, agencies, refAcc)
+	references, err := api.locationReferences(ctx, params.IncludeReferences, refAcc)
 	if err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
 		return
@@ -352,17 +352,13 @@ func retainRoute(refAcc, acc *arrivalsAccumulator, combinedRouteID string) {
 func (api *RestAPI) locationReferences(
 	ctx context.Context,
 	includeReferences bool,
-	agencies *stopAgencyIndex,
 	acc *arrivalsAccumulator,
 ) (*models.ReferencesModel, error) {
 	if !includeReferences {
 		return models.NewEmptyReferences(), nil
 	}
 
-	references, err := api.buildArrivalsReferences(ctx, arrivalsReferencesInput{
-		fallbackAgencyID: agencies.fallbackAgencyID,
-		stopAgencies:     agencies.byStopID,
-	}, acc)
+	references, err := api.buildArrivalsReferences(ctx, nil, acc)
 	if err != nil {
 		return nil, err
 	}
