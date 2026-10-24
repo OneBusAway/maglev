@@ -421,6 +421,12 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		return false
 	}
 
+	if consolidatedStops := manager.consolidatedStops.Load(); consolidatedStops != nil {
+		for _, data := range []*gtfs.Realtime{tripData, vehicleData, alertData} {
+			consolidatedStops.translate(data)
+		}
+	}
+
 	// Apply agency-based filtering if configured for this feed.
 	// This runs before acquiring realTimeMutex to keep the critical section short.
 	agencyFilter := manager.feedAgencyFilter[feedID]
