@@ -34,8 +34,11 @@ type Config struct {
 	GTFSDataPath          string
 	Env                   appconf.Environment
 	EnableGTFSTidy        bool
-	StartupRetries        []time.Duration
-	Metrics               *metrics.Metrics
+	// StopConsolidationURL is the URL or path of a Java OneBusAway stop
+	// consolidation file, or empty for none.
+	StopConsolidationURL string
+	StartupRetries       []time.Duration
+	Metrics              *metrics.Metrics
 }
 
 // enabledFeeds returns only the enabled feeds that have at least one URL configured.
