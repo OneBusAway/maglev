@@ -3628,22 +3628,49 @@ func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
 	return i, err
 }
 
-const getStopAgencyID = `-- name: GetStopAgencyID :one
+const getStopAgencyIDs = `-- name: GetStopAgencyIDs :many
 SELECT
+    stop_id,
     agency_id
 FROM
     stop_agencies
 WHERE
-    stop_id = ?
+    stop_id IN (/*SLICE:stop_ids*/?)
 `
 
-// The agency in the stop's public ID. Read a stop's agency here, never from the
+// The agency in each stop's public ID. Read a stop's agency here, never from the
 // routes serving it; see stop_agencies in schema.sql.
-func (q *Queries) GetStopAgencyID(ctx context.Context, stopID string) (string, error) {
-	row := q.queryRow(ctx, q.getStopAgencyIDStmt, getStopAgencyID, stopID)
-	var agency_id string
-	err := row.Scan(&agency_id)
-	return agency_id, err
+func (q *Queries) GetStopAgencyIDs(ctx context.Context, stopIds []string) ([]StopAgency, error) {
+	query := getStopAgencyIDs
+	var queryParams []interface{}
+	if len(stopIds) > 0 {
+		for _, v := range stopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(stopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StopAgency
+	for rows.Next() {
+		var i StopAgency
+		if err := rows.Scan(&i.StopID, &i.AgencyID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getStopBoundsPerAgency = `-- name: GetStopBoundsPerAgency :many

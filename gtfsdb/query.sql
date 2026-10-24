@@ -275,15 +275,16 @@ FROM
 WHERE
     agency_id = ?;
 
--- name: GetStopAgencyID :one
--- The agency in the stop's public ID. Read a stop's agency here, never from the
+-- name: GetStopAgencyIDs :many
+-- The agency in each stop's public ID. Read a stop's agency here, never from the
 -- routes serving it; see stop_agencies in schema.sql.
 SELECT
+    stop_id,
     agency_id
 FROM
     stop_agencies
 WHERE
-    stop_id = ?;
+    stop_id IN (sqlc.slice('stop_ids'));
 
 -- name: GetTrip :one
 SELECT

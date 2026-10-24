@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"net/http"
 
 	"maglev.onebusaway.org/internal/utils"
@@ -36,17 +37,35 @@ func (api *RestAPI) extractAndValidateAgencyCodeID(w http.ResponseWriter, r *htt
 	return agencyID, codeID, true
 }
 
-// requireStopAgency sends not found unless agencyID is the agency in the stop's ID,
-// and reports whether the request may go on. Java OneBusAway gives each stop one ID,
-// under its feed's first agency, so the stop doesn't exist under any other prefix,
-// even an agency whose routes serve it.
-func (api *RestAPI) requireStopAgency(w http.ResponseWriter, r *http.Request, agencyID, stopID string) bool {
-	stopAgencyID, err := api.GtfsManager.GtfsDB.Queries.GetStopAgencyID(r.Context(), stopID)
+// stopAgencyIDs maps raw stop IDs to the agency in each stop's public ID. Java
+// OneBusAway gives each stop one ID, under its feed's first agency, whichever
+// agencies' routes serve it.
+type stopAgencyIDs map[string]string
+
+// loadStopAgencyIDs reads the agency in each stop's public ID. It is the one way to
+// learn a stop's agency; the routes serving a stop don't decide it.
+func (api *RestAPI) loadStopAgencyIDs(ctx context.Context, stopIDs []string) (stopAgencyIDs, error) {
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetStopAgencyIDs(ctx, stopIDs)
 	if err != nil {
-		api.dbErrorResponse(w, r, err)
+		return nil, err
+	}
+	agencyIDs := make(stopAgencyIDs, len(rows))
+	for _, row := range rows {
+		agencyIDs[row.StopID] = row.AgencyID
+	}
+	return agencyIDs, nil
+}
+
+// requireStopAgency sends not found unless agencyID is the agency in the stop's ID,
+// and reports whether the request may go on. The stop doesn't exist under any other
+// prefix, even an agency whose routes serve it.
+func (api *RestAPI) requireStopAgency(w http.ResponseWriter, r *http.Request, agencyID, stopID string) bool {
+	agencyIDs, err := api.loadStopAgencyIDs(r.Context(), []string{stopID})
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
 		return false
 	}
-	if stopAgencyID != agencyID {
+	if agencyIDs[stopID] != agencyID {
 		api.sendNotFound(w, r)
 		return false
 	}
