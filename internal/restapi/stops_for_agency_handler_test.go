@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"maps"
 	"net/http"
 	"net/url"
@@ -144,4 +145,24 @@ func TestStopsForAgencyInvalidAgency(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assert.Equal(t, http.StatusNotFound, model.Code)
 	assert.Equal(t, "resource not found", model.Text)
+}
+
+// stops-for-agency builds its stop records with the shared stop builder, so a
+// stop's direction and routes read the same as on every other endpoint.
+func TestStopsForAgency_UsesSharedStopRecords(t *testing.T) {
+	api := createTestApi(t)
+	ctx := context.Background()
+
+	_, model := callAPIHandler[struct {
+		Data struct {
+			List []models.Stop `json:"list"`
+		} `json:"data"`
+	}](t, api, "/api/where/stops-for-agency/"+testdata.Raba.ID+".json?key=TEST")
+
+	stopIDs, err := api.GtfsManager.GtfsDB.Queries.GetStopIDsForAgency(ctx, testdata.Raba.ID)
+	require.NoError(t, err)
+	want, _, err := stopModelsByIDs(api, ctx, stopIDs)
+	require.NoError(t, err)
+	require.NotEmpty(t, want)
+	assert.ElementsMatch(t, want, model.Data.List)
 }
