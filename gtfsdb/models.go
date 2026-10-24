@@ -164,6 +164,15 @@ type StopAgency struct {
 	AgencyID string
 }
 
+type StopConsolidation struct {
+	AbsorbedID    string
+	CanonicalID   sql.NullString
+	RuleCanonical string
+	AbsorbedName  sql.NullString
+	AbsorbedLat   sql.NullFloat64
+	AbsorbedLon   sql.NullFloat64
+}
+
 type StopTime struct {
 	TripID            string
 	ArrivalTime       int64
