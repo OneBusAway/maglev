@@ -192,6 +192,20 @@ func TestAttributeVehicles(t *testing.T) {
 			wantRouteID: "R1",
 		},
 		{
+			name:          "static trip route keeps a conflicting feed route's vehicle in its agency's feed",
+			vehicle:       vehicleOnTrip("V1", "T1", "R2"),
+			feedAgencyIDs: []string{"agency-A"},
+			wantKept:      true,
+			wantAgency:    "agency-A",
+			wantRouteID:   "R1",
+		},
+		{
+			name:          "static trip route drops a conflicting feed route's vehicle from another agency's feed",
+			vehicle:       vehicleOnTrip("V1", "T1", "R2"),
+			feedAgencyIDs: []string{"agency-C"},
+			wantKept:      false,
+		},
+		{
 			name:        "ADDED trip keeps a conflicting known feed route",
 			vehicle:     addedVehicleOnTrip("V1", "T1", "R2"),
 			wantKept:    true,
