@@ -156,6 +156,15 @@ func (q *Queries) ClearStopAgencies(ctx context.Context) error {
 	return err
 }
 
+const clearStopConsolidations = `-- name: ClearStopConsolidations :exec
+DELETE FROM stop_consolidations
+`
+
+func (q *Queries) ClearStopConsolidations(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearStopConsolidationsStmt, clearStopConsolidations)
+	return err
+}
+
 const clearStopTimes = `-- name: ClearStopTimes :exec
 DELETE FROM stop_times
 `
@@ -755,6 +764,41 @@ func (q *Queries) CreateStop(ctx context.Context, arg CreateStopParams) (Stop, e
 		&i.ParentStation,
 	)
 	return i, err
+}
+
+const createStopConsolidation = `-- name: CreateStopConsolidation :exec
+INSERT INTO
+    stop_consolidations (
+        absorbed_id,
+        canonical_id,
+        rule_canonical,
+        absorbed_name,
+        absorbed_lat,
+        absorbed_lon
+    )
+VALUES
+    (?, ?, ?, ?, ?, ?)
+`
+
+type CreateStopConsolidationParams struct {
+	AbsorbedID    string
+	CanonicalID   sql.NullString
+	RuleCanonical string
+	AbsorbedName  sql.NullString
+	AbsorbedLat   sql.NullFloat64
+	AbsorbedLon   sql.NullFloat64
+}
+
+func (q *Queries) CreateStopConsolidation(ctx context.Context, arg CreateStopConsolidationParams) error {
+	_, err := q.exec(ctx, q.createStopConsolidationStmt, createStopConsolidation,
+		arg.AbsorbedID,
+		arg.CanonicalID,
+		arg.RuleCanonical,
+		arg.AbsorbedName,
+		arg.AbsorbedLat,
+		arg.AbsorbedLon,
+	)
+	return err
 }
 
 const createStopTime = `-- name: CreateStopTime :one
@@ -5306,6 +5350,45 @@ func (q *Queries) ListRoutes(ctx context.Context) ([]Route, error) {
 			&i.TextColor,
 			&i.ContinuousPickup,
 			&i.ContinuousDropOff,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStopConsolidations = `-- name: ListStopConsolidations :many
+SELECT
+    absorbed_id, canonical_id, rule_canonical, absorbed_name, absorbed_lat, absorbed_lon
+FROM
+    stop_consolidations
+ORDER BY
+    absorbed_id
+`
+
+func (q *Queries) ListStopConsolidations(ctx context.Context) ([]StopConsolidation, error) {
+	rows, err := q.query(ctx, q.listStopConsolidationsStmt, listStopConsolidations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StopConsolidation
+	for rows.Next() {
+		var i StopConsolidation
+		if err := rows.Scan(
+			&i.AbsorbedID,
+			&i.CanonicalID,
+			&i.RuleCanonical,
+			&i.AbsorbedName,
+			&i.AbsorbedLat,
+			&i.AbsorbedLon,
 		); err != nil {
 			return nil, err
 		}

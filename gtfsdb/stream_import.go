@@ -32,8 +32,9 @@ func ParseGtfsStream(r io.ReaderAt, size int64, hash, source string) (*GtfsData,
 // feedRows reads a feed's stop times and shape points from its stream for
 // StoreGtfsData, one trip or shape at a time.
 type feedRows struct {
-	stream      *gtfs.StaticStream
-	storedTrips map[string]bool
+	stream       *gtfs.StaticStream
+	storedTrips  map[string]bool
+	replacements StopReplacements
 
 	// tripEnds holds the ends of every stored trip once stopTimes has been
 	// read to the end.
@@ -47,19 +48,23 @@ func (data *GtfsData) rows() *feedRows {
 	for _, trip := range data.Static.Trips {
 		storedTrips[trip.ID] = true
 	}
-	return &feedRows{stream: data.stream, storedTrips: storedTrips}
+	return &feedRows{stream: data.stream, storedTrips: storedTrips, replacements: data.StopReplacements}
 }
 
 // errStopped ends a stream early when the rows' consumer stops reading.
 var errStopped = errors.New("stopped reading")
 
 // stopTimes yields the stop times of the stored trips, one trip at a time,
-// and records each trip's ends.
+// with stop consolidation applied, and records each trip's ends.
 func (r *feedRows) stopTimes() iter.Seq[CreateStopTimeParams] {
 	return func(yield func(CreateStopTimeParams) bool) {
 		err := r.stream.EachTripStopTimes(func(tripIndex int, stopTimes []gtfs.ScheduledStopTime) error {
 			trip := r.stream.Trip(tripIndex)
 			if !r.storedTrips[trip.ID] {
+				return nil
+			}
+			stopTimes = r.replacements.consolidate(stopTimes)
+			if len(stopTimes) == 0 {
 				return nil
 			}
 			r.tripEnds = append(r.tripEnds, newTripEnds(trip, stopTimes[0], stopTimes[len(stopTimes)-1]))
