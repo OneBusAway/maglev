@@ -176,7 +176,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// per-direction headsign vote counts, per spec steps 6-7.
 	routeDirectionScheduleMap, routeDirectionFrequencyMap, routeDirectionHeadsignCounts, err := groupScheduleRowsByRouteAndDirection(
 		ctx, scheduleRows, scheduleRowContext{
-			serviceAgencyID:            agencyID,
+			services:                   api.feedAgency(),
 			startOfDay:                 serviceStart,
 			serviceStart:               serviceStart,
 			activeServiceBlockTripsMap: activeServiceBlockTripsMap,
@@ -344,10 +344,8 @@ func (api *RestAPI) fetchAgencyRefs(ctx context.Context, agencyIDs []string) (ma
 // a stop's schedule, so callers don't have to thread each one individually through the
 // row-building helpers below.
 type scheduleRowContext struct {
-	// serviceAgencyID prefixes service IDs. Java names them after the feed's
-	// first agency, which is also the stop's agency; routes and trips take
-	// their route's agency instead.
-	serviceAgencyID string
+	// services names service IDs; routes and trips take their route's agency.
+	services feedAgency
 	// startOfDay is the service-day start (noon minus twelve hours), the base GTFS offsets are added to.
 	startOfDay time.Time
 	// serviceStart is noon less twelve hours on the service date, the base for stop time offsets.
@@ -466,7 +464,7 @@ func newScheduleStopTime(row gtfsdb.GetScheduleForStopOnDateRow, rowCtx schedule
 	stopTime := models.NewScheduleStopTime(
 		arrivalMs,
 		departureMs,
-		utils.FormCombinedID(rowCtx.serviceAgencyID, row.ServiceID),
+		rowCtx.services.combinedServiceID(row.ServiceID),
 		row.StopHeadsign.String,
 		utils.FormCombinedID(row.AgencyID, row.TripID),
 	)
@@ -585,7 +583,7 @@ func buildScheduleFrequency(row gtfsdb.GetScheduleForStopOnDateRow, freq gtfsdb.
 	return models.NewScheduleFrequencyFromDB(
 		freq,
 		rowCtx.startOfDay,
-		utils.FormCombinedID(rowCtx.serviceAgencyID, row.ServiceID),
+		rowCtx.services.combinedServiceID(row.ServiceID),
 		utils.FormCombinedID(row.AgencyID, row.TripID),
 		"",
 		!isFirstInBlock,

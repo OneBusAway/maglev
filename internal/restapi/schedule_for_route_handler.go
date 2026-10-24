@@ -128,7 +128,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	for _, trip := range trips {
 		if !routeSvcIDs[trip.ServiceID] {
 			routeSvcIDs[trip.ServiceID] = true
-			combinedServiceIDs = append(combinedServiceIDs, utils.FormCombinedID(agencyID, trip.ServiceID))
+			combinedServiceIDs = append(combinedServiceIDs, api.feedAgency().combinedServiceID(trip.ServiceID))
 		}
 	}
 
@@ -236,7 +236,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 					ArrivalTime:      models.NewModelDuration(arrivalDur),
 					DepartureEnabled: departureDur > 0,
 					DepartureTime:    models.NewModelDuration(departureDur),
-					ServiceID:        utils.FormCombinedID(agencyID, trip.ServiceID),
+					ServiceID:        api.feedAgency().combinedServiceID(trip.ServiceID),
 					StopHeadsign:     st.StopHeadsign.String,
 					StopID:           stopAgencies.combinedStopID(st.StopID),
 					TripID:           combinedTripID,
@@ -284,7 +284,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 			tripRef := models.NewTripReference(
 				combinedTripID,
 				utils.FormCombinedID(agencyID, t.RouteID),
-				utils.FormCombinedID(agencyID, t.ServiceID),
+				api.feedAgency().combinedServiceID(t.ServiceID),
 				t.TripHeadsign.String,
 				t.TripShortName.String,
 				strconv.FormatInt(t.DirectionID.Int64, 10),

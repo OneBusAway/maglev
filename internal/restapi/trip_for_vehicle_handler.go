@@ -182,7 +182,7 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 		tripRef := models.NewTripReference(
 			utils.FormCombinedID(agencyID, trip.ID),
 			combinedRouteID,
-			utils.FormCombinedID(agencyID, trip.ServiceID),
+			api.feedAgency().combinedServiceID(trip.ServiceID),
 			trip.TripHeadsign.String,
 			trip.TripShortName.String,
 			strconv.FormatInt(trip.DirectionID.Int64, 10),

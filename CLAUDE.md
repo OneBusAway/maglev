@@ -298,8 +298,10 @@ in memory:
 over the `ListAgencies`, `ListTripsWithLimit` and `ListStops` queries.
 
 The only static state the manager keeps in memory is `regionBounds`
-(`map[agencyID]*RegionBounds`, guarded by `staticMutex`), recomputed after each
-reload and read through `GetRegionBounds()`.
+(`map[agencyID]*RegionBounds`) and `feedAgencyID` (the first row of agency.txt,
+which Java names stops and service IDs after), both guarded by `staticMutex`,
+recomputed after each reload and read through `GetRegionBounds()` and
+`FeedAgencyID()`.
 
 **Real-Time Data** (protected by `realTimeMutex`):
 

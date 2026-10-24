@@ -56,6 +56,7 @@ type Manager struct {
 
 	staticMutex  sync.RWMutex
 	regionBounds map[string]*RegionBounds
+	feedAgencyID string
 
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
@@ -304,6 +305,14 @@ func (manager *Manager) GetTrips(ctx context.Context, limit int64) ([]gtfsdb.Tri
 
 func (manager *Manager) GetStops(ctx context.Context) ([]gtfsdb.Stop, error) {
 	return manager.GtfsDB.Queries.ListStops(ctx)
+}
+
+// FeedAgencyID returns the feed's default agency, the first row of agency.txt.
+// Java names stops and service IDs after it, whichever agency runs a trip.
+func (manager *Manager) FeedAgencyID() string {
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+	return manager.feedAgencyID
 }
 
 // IMPORTANT: Caller must hold manager.RLock() before calling this method.
