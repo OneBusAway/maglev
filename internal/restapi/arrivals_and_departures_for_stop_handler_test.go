@@ -450,7 +450,10 @@ func TestArrivalsAndDeparturesForStopHandlerNoActiveServices(t *testing.T) {
 	assert.NotNil(t, model.Data.Entry.NearbyStopIDs)
 	assert.NotNil(t, model.Data.Entry.SituationIDs)
 	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
-	assert.Empty(t, model.Data.References.Routes)
+	// Like Java, the stop, its neighbours and their routes are referenced even
+	// with no arrivals.
+	assert.Contains(t, stopsByID(model.Data.References.Stops), arrivalsTestStopID)
+	assert.NotEmpty(t, model.Data.References.Routes)
 	assert.Empty(t, model.Data.References.Trips)
 }
 
@@ -1142,7 +1145,7 @@ func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 }
 
 // findRABAStopWithNeighbour returns a RABA stop that has at least one other
-// stop within getNearbyStopIDs's 100m radius. Skips the test if none exist
+// stop within nearbyStopIDs's 100m radius. Skips the test if none exist
 // in the test fixture (RABA stops can be sparser than that).
 func findRABAStopWithNeighbour(t *testing.T, api *RestAPI, ctx context.Context) gtfsdb.Stop {
 	t.Helper()
@@ -1153,8 +1156,7 @@ func findRABAStopWithNeighbour(t *testing.T, api *RestAPI, ctx context.Context) 
 	require.NoError(t, err)
 	require.NotEmpty(t, candidates, "precondition: RABA should have stops near Redding")
 	for _, c := range candidates {
-		nearby := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
-		if len(nearby) > 0 {
+		if len(api.nearbyStopIDs(ctx, c)) > 0 {
 			return c
 		}
 	}
@@ -1162,37 +1164,14 @@ func findRABAStopWithNeighbour(t *testing.T, api *RestAPI, ctx context.Context) 
 	return gtfsdb.Stop{}
 }
 
-func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
-	// Use MockClock within RABA service window (calendar ends 2025-12-31).
+func TestNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
-
-	require.NotEmpty(t, result, "expected ≥1 nearby stop within 100m")
-	for _, combinedID := range result {
-		agencyID, _, err := utils.ExtractAgencyIDAndCodeID(combinedID)
-		require.NoError(t, err, "combined ID should be parseable: %s", combinedID)
-		assert.NotEqual(t, "WrongFallbackAgency", agencyID)
-	}
-}
-
-func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
-	mockClock := clock.NewMockClock(time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
-	defer api.Shutdown()
-	ctx := context.Background()
-
-	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
-
-	for _, combinedID := range result {
-		_, codeID, _ := utils.ExtractAgencyIDAndCodeID(combinedID)
-		assert.NotEqual(t, currentStop.ID, codeID, "current stop should be excluded from nearby results")
-	}
+	assert.NotContains(t, api.nearbyStopIDs(ctx, currentStop), currentStop.ID)
 }
 
 func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
@@ -1610,4 +1589,57 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 	require.Equal(t, http.StatusOK, model.Code)
 	require.Len(t, model.Data.Entry.ArrivalsAndDepartures, 1)
 	assert.Equal(t, utils.FormCombinedID(agencyPrimary, tripPrimary), model.Data.Entry.ArrivalsAndDepartures[0].TripID)
+}
+
+func nearbyStopsFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"own,Owner Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_type\n" +
+			"own-route,own,OW,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		// station and unserved sit within 100 m of served; far is about 1 km away.
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon,location_type\n" +
+			"served,Served,37.7749,-122.4194,0\n" +
+			"station,Station,37.7752,-122.4194,1\n" +
+			"unserved,Unserved,37.7754,-122.4194,0\n" +
+			"far,Far,37.7849,-122.4194,0\n",
+		"trips.txt": "route_id,service_id,trip_id\n" +
+			"own-route,svc,own-trip\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"own-trip,09:00:00,09:00:00,served,1\n" +
+			"own-trip,09:30:00,09:30:00,far,2\n",
+	}
+}
+
+// Java lists every stop within 100 m as nearby, served or not and stations
+// included, and puts each one in references, whether or not the window has
+// arrivals (StopWithArrivalsAndDeparturesBeanServiceImpl, BeanFactoryV2).
+func TestArrivalsAndDeparturesForStop_NearbyStopsMatchJava(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "nearby-stops.zip", nearbyStopsFiles())
+
+	for _, tt := range []struct {
+		name string
+		time time.Time
+	}{
+		{"with arrivals", time.Date(2025, 1, 1, 8, 55, 0, 0, time.UTC)},
+		{"without arrivals", time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			path := fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/own_served.json?key=TEST&time=%d", tt.time.UnixMilli())
+			_, model := serveApiAndRetrieveEndpoint(t, api, path)
+			require.Equal(t, http.StatusOK, model.Code)
+			data := model.Data.(map[string]any)
+
+			nearby, _ := data["entry"].(map[string]any)["nearbyStopIds"].([]any)
+			assert.ElementsMatch(t, []any{"own_station", "own_unserved"}, nearby)
+
+			var referenced []string
+			for _, stop := range data["references"].(map[string]any)["stops"].([]any) {
+				referenced = append(referenced, stop.(map[string]any)["id"].(string))
+			}
+			assert.Subset(t, referenced, []string{"own_served", "own_station", "own_unserved"})
+		})
+	}
 }

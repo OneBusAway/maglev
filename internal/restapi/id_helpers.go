@@ -47,6 +47,18 @@ func (s stopAgencyIDs) combinedStopID(stopID string) string {
 	return utils.FormCombinedID(s[stopID], stopID)
 }
 
+// combinedStopIDs returns the public IDs of stopIDs, in order, leaving out
+// stops with no agency.
+func (s stopAgencyIDs) combinedStopIDs(stopIDs []string) []string {
+	combined := make([]string, 0, len(stopIDs))
+	for _, stopID := range stopIDs {
+		if id := s.combinedStopID(stopID); id != "" {
+			combined = append(combined, id)
+		}
+	}
+	return combined
+}
+
 // loadStopAgencyIDs reads the agency in each stop's public ID. It is the one way to
 // learn a stop's agency; the routes serving a stop don't decide it.
 func (api *RestAPI) loadStopAgencyIDs(ctx context.Context, stopIDs []string) (stopAgencyIDs, error) {
