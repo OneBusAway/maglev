@@ -348,7 +348,7 @@ func (api *RestAPI) BuildTripStatus(
 			status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
 		}
 
-		if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
+		if vehicleHasPosition(vehicle) {
 			if status.LastKnownLocation != nil {
 				actualPosition := *status.LastKnownLocation
 
@@ -368,11 +368,7 @@ func (api *RestAPI) BuildTripStatus(
 		} else if snap != nil && snap.ActiveTripID != "" && snap.InRange {
 			// No live vehicle: place the bus at the interpolated position
 			// on the block's currently-active trip.
-			if pos, orient := positionAndOrientationAtDistance(
-				snap.ActiveTripShape,
-				snap.ActiveTripCumulativeDistances,
-				snap.ActiveTripScheduledDistance,
-			); pos != nil {
+			if pos, orient := snap.scheduledPosition(); pos != nil {
 				status.Position = *pos
 				if orient >= 0 {
 					status.Orientation = orient
@@ -387,10 +383,25 @@ func (api *RestAPI) BuildTripStatus(
 				ctx, status, stopTimes, shapePoints, cumulativeDistances, currentTime, serviceDate,
 			)
 		}
+	} else if !vehicleHasPosition(vehicle) {
+		// A trip with no shape still gets the block's scheduled position,
+		// between stops when no block trip has a shape either.
+		if pos, orient := snap.scheduledPosition(); pos != nil {
+			status.Position = *pos
+			if orient >= 0 {
+				status.Orientation = orient
+			}
+		}
 	}
 
 	extras.snapshot = snap
 	return status, extras, nil
+}
+
+// vehicleHasPosition reports whether the vehicle sent a latitude and longitude.
+func vehicleHasPosition(vehicle *gtfs.Vehicle) bool {
+	return vehicle != nil && vehicle.Position != nil &&
+		vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil
 }
 
 // frequencyForEntry returns the frequency row whose window contains

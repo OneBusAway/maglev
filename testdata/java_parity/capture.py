@@ -46,7 +46,8 @@ requests = [
     f"trip/{trip}",
     f"trip-details/{trip}?serviceDate={service_date}&time={ten_oh_one}",
     f"trips-for-route/1_R1?time={ten_oh_one}&includeSchedule=true",
-    f"trips-for-location?lat={lat}&lon={lon}&latSpan=0.01&lonSpan=0.01&time={ten_oh_one}",
+    # trips-for-location is left out: Java 2.7.1 ignores its time parameter and
+    # answers for the wall clock, so its result can't be pinned.
     f"block/{block}", "block/40_R40-0-BLK04",
     f"schedule-for-route/1_R1?date={date}", f"schedule-for-route/40_R40?date={date}",
 ]
