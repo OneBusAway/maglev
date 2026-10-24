@@ -223,3 +223,25 @@ func TestScheduleForStop_RouteAndTripIDsUseTheRoutesAgency(t *testing.T) {
 	require.Len(t, stops, 1)
 	assert.ElementsMatch(t, []any{"other_other-route", "own_own-route"}, stops[0].(map[string]any)["routeIds"])
 }
+
+// Frequency-based trips go through their own path in schedule-for-stop; they
+// too take the route's agency for trip IDs and the feed's for service IDs.
+func TestScheduleForStop_FrequencyTripIDsUseTheRoutesAgency(t *testing.T) {
+	files := agencyPrefixFiles()
+	files["frequencies.txt"] = "trip_id,start_time,end_time,headway_secs,exact_times\n" +
+		"other-trip,10:00:00,12:00:00,1800,0\n"
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "agency-prefix-frequencies.zip", files)
+
+	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-stop/own_stop-1.json?key=TEST&date=2025-01-01")
+	var frequencies []map[string]any
+	for _, routeSchedule := range model.Data.(map[string]any)["entry"].(map[string]any)["stopRouteSchedules"].([]any) {
+		for _, direction := range routeSchedule.(map[string]any)["stopRouteDirectionSchedules"].([]any) {
+			for _, frequency := range direction.(map[string]any)["scheduleFrequencies"].([]any) {
+				frequencies = append(frequencies, frequency.(map[string]any))
+			}
+		}
+	}
+	require.Len(t, frequencies, 1)
+	assert.Equal(t, "other_other-trip", frequencies[0]["tripId"])
+	assert.Equal(t, "own_svc", frequencies[0]["serviceId"])
+}
