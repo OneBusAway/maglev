@@ -765,27 +765,25 @@ func (manager *Manager) buildRouteAgencyMap(ctx context.Context, routeIDSet map[
 	return routeAgencyMap, nil
 }
 
-// tripAgencyIDs resolves each trip's agency, keyed by trip ID, through its
-// route. GTFS-RT route_id is optional, so a trip whose route ID is missing or
-// unknown falls back to the route of the static trip with the same trip ID.
-// Trips unknown by both IDs are left out.
+// tripAgencyIDs resolves each trip's agency, keyed by trip ID. A trip that
+// isn't ADDED and has a static trip with the same trip ID gets that trip's
+// route agency, whatever its feed route_id says, matching attributeVehicles
+// so a trip update and its vehicle are filtered alike. ADDED trips and trips
+// missing from static data fall back to their feed route_id. Trips that
+// resolve to neither are left out.
 func (manager *Manager) tripAgencyIDs(ctx context.Context, trips []gtfs.Trip, routeAgencyMap map[string]string) (map[string]string, error) {
-	agencyByTripID := make(map[string]string, len(trips))
-	var unresolvedTripIDs []string
-	for _, trip := range trips {
-		if agencyID, ok := routeAgencyMap[trip.ID.RouteID]; ok {
-			agencyByTripID[trip.ID.ID] = agencyID
-		} else {
-			unresolvedTripIDs = append(unresolvedTripIDs, trip.ID.ID)
-		}
-	}
-
-	routesByTripID, err := manager.staticTripRoutes(ctx, unresolvedTripIDs)
+	routesByTripID, err := manager.staticTripRoutes(ctx, scheduledTripIDs(trips))
 	if err != nil {
 		return nil, err
 	}
-	for tripID, route := range routesByTripID {
-		agencyByTripID[tripID] = route.agencyID
+
+	agencyByTripID := make(map[string]string, len(trips))
+	for _, trip := range trips {
+		if staticRoute, ok := routesByTripID[trip.ID.ID]; ok && !isAddedTrip(&trip) {
+			agencyByTripID[trip.ID.ID] = staticRoute.agencyID
+		} else if agencyID, ok := routeAgencyMap[trip.ID.RouteID]; ok {
+			agencyByTripID[trip.ID.ID] = agencyID
+		}
 	}
 	return agencyByTripID, nil
 }
@@ -924,6 +922,19 @@ func scheduledVehicleTripIDs(vehicles []gtfs.Vehicle) []string {
 			continue
 		}
 		tripIDs = append(tripIDs, vehicle.Trip.ID.ID)
+	}
+	return tripIDs
+}
+
+// scheduledTripIDs lists the IDs of trips that aren't ADDED, for the static
+// trip lookup.
+func scheduledTripIDs(trips []gtfs.Trip) []string {
+	var tripIDs []string
+	for _, trip := range trips {
+		if trip.ID.ID == "" || isAddedTrip(&trip) {
+			continue
+		}
+		tripIDs = append(tripIDs, trip.ID.ID)
 	}
 	return tripIDs
 }

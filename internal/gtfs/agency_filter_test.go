@@ -120,6 +120,74 @@ func TestFilterTripsByAgency(t *testing.T) {
 	assert.Equal(t, "T4", unattributed[0].ID.ID)
 }
 
+func tripOnRoute(tripID, routeID string) gtfs.Trip {
+	return gtfs.Trip{ID: gtfs.TripID{ID: tripID, RouteID: routeID}}
+}
+
+func addedTripOnRoute(tripID, routeID string) gtfs.Trip {
+	trip := tripOnRoute(tripID, routeID)
+	trip.ID.ScheduleRelationship = gtfsrt.TripDescriptor_ADDED
+	return trip
+}
+
+func TestTripAgencyIDs(t *testing.T) {
+	tests := []struct {
+		name       string
+		trip       gtfs.Trip
+		wantAgency string
+	}{
+		{
+			name:       "static trip route overrides a conflicting known feed route",
+			trip:       tripOnRoute("T1", "R2"),
+			wantAgency: "agency-A",
+		},
+		{
+			name:       "ADDED trip keeps a conflicting known feed route",
+			trip:       addedTripOnRoute("T1", "R2"),
+			wantAgency: "agency-C",
+		},
+		{
+			name:       "trip missing from static data keeps its known feed route",
+			trip:       tripOnRoute("T9", "R2"),
+			wantAgency: "agency-C",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := newAttributionTestManager(t)
+			got := tripAgencyMapFor(t, manager, []gtfs.Trip{tt.trip})
+			assert.Equal(t, tt.wantAgency, got[tt.trip.ID.ID])
+		})
+	}
+}
+
+func TestAgencyFilterAgreesForVehicleAndTripOnConflictingRoute(t *testing.T) {
+	tests := []struct {
+		name          string
+		feedAgencyIDs []string
+		wantKept      bool
+	}{
+		{name: "static trip's agency", feedAgencyIDs: []string{"agency-A"}, wantKept: true},
+		{name: "feed route's agency", feedAgencyIDs: []string{"agency-C"}, wantKept: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := newAttributionTestManager(t)
+			feedCfg := RTFeedConfig{ID: "feed", AgencyIDs: tt.feedAgencyIDs, VehiclePositionsURL: "x", Enabled: true}
+			manager.feedAgencyFilter = Config{RTFeeds: []RTFeedConfig{feedCfg}}.feedAgencyFilters()
+
+			keptVehicles, _, err := manager.attributeVehicles(context.Background(),
+				[]gtfs.Vehicle{vehicleOnTrip("V1", "T1", "R2")}, feedCfg)
+			require.NoError(t, err)
+			trips := []gtfs.Trip{tripOnRoute("T1", "R2")}
+			keptTrips, _ := filterTripsByAgency(trips, manager.feedAgencyFilter["feed"], tripAgencyMapFor(t, manager, trips))
+
+			assert.Equal(t, tt.wantKept, len(keptVehicles) == 1, "vehicle kept")
+			assert.Equal(t, tt.wantKept, len(keptTrips) == 1, "trip update kept")
+		})
+	}
+}
+
 // newAttributionTestManager has routes R1 (agency-A) and R2 (agency-C), and
 // static trip T1 on R1, for the vehicle attribution tests.
 func newAttributionTestManager(t *testing.T) *Manager {
