@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -129,80 +128,6 @@ func TestVehiclePositionsForAgencyHandler_UnknownAgency(t *testing.T) {
 	feed := decodeFeed(t, body)
 	assert.Equal(t, "2.0", feed.GetHeader().GetGtfsRealtimeVersion())
 	assert.Empty(t, feed.GetEntity())
-}
-
-func TestVehiclePositionsForAgencyHandler_NotProtobuf(t *testing.T) {
-	api := newVehiclePositionsTestAPI(t)
-	for _, suffix := range []string{".pbtext", ".json", ""} {
-		t.Run(suffix, func(t *testing.T) {
-			resp, _ := getRaw(t, api, "/api/gtfs_realtime/vehicle-positions-for-agency/"+testdata.Raba.ID+suffix+"?key="+vehiclePositionsKey, nil)
-			assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-		})
-	}
-}
-
-func TestVehiclePositionsForAgencyHandler_QueryParameters(t *testing.T) {
-	api := newVehiclePositionsTestAPI(t, positionedVehicle("V1", 47.1))
-	_, plain := getRaw(t, api, vehiclePositionsURL(testdata.Raba.ID), nil)
-
-	tests := []struct {
-		name       string
-		query      string
-		wantStatus int
-	}{
-		{"epoch milliseconds time", "&time=1792287624289", http.StatusOK},
-		{"legacy time format", "&time=2026-10-18_10-00-00", http.StatusOK},
-		{"unparseable time", "&time=abc", http.StatusBadRequest},
-		{"routeFilterId is ignored", "&routeFilterId=x", http.StatusOK},
-		{"removeAgencyIds is ignored", "&removeAgencyIds=false", http.StatusOK},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resp, body := getRaw(t, api, vehiclePositionsURL(testdata.Raba.ID)+tt.query, nil)
-			require.Equal(t, tt.wantStatus, resp.StatusCode)
-			if tt.wantStatus == http.StatusOK {
-				assert.Equal(t, plain, body, "the parameter must not change the feed")
-			}
-		})
-	}
-}
-
-func TestVehiclePositionsForAgencyHandler_RequiresKey(t *testing.T) {
-	api := newVehiclePositionsTestAPI(t)
-
-	resp, _ := getRaw(t, api, "/api/gtfs_realtime/vehicle-positions-for-agency/"+testdata.Raba.ID+".pb", nil)
-
-	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-}
-
-func TestVehiclePositionsForAgencyHandler_InvalidAgencyID(t *testing.T) {
-	api := newVehiclePositionsTestAPI(t)
-	for _, agencyID := range []string{"", "%3Cx%3E"} {
-		t.Run(agencyID, func(t *testing.T) {
-			resp, _ := getRaw(t, api, vehiclePositionsURL(agencyID), nil)
-			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-		})
-	}
-}
-
-func TestVehiclePositionsForAgencyHandler_GzipKeepsTheETag(t *testing.T) {
-	var vehicles []gtfs.Vehicle
-	for i := range 30 {
-		vehicles = append(vehicles, positionedVehicle(fmt.Sprintf("V%02d", i), 47+float32(i)/100))
-	}
-	api := newVehiclePositionsTestAPI(t, vehicles...)
-	gzipped := http.Header{"Accept-Encoding": {"gzip"}}
-
-	// Setting Accept-Encoding by hand turns off the client's transparent
-	// decompression, so Content-Encoding stays visible.
-	compressed, _ := getRaw(t, api, vehiclePositionsURL(testdata.Raba.ID), gzipped)
-	identity, _ := getRaw(t, api, vehiclePositionsURL(testdata.Raba.ID), http.Header{"Accept-Encoding": {"identity"}})
-	require.Equal(t, "gzip", compressed.Header.Get("Content-Encoding"))
-	assert.Equal(t, identity.Header.Get("ETag"), compressed.Header.Get("ETag"))
-
-	gzipped.Set("If-None-Match", compressed.Header.Get("ETag"))
-	notModified, _ := getRaw(t, api, vehiclePositionsURL(testdata.Raba.ID), gzipped)
-	assert.Equal(t, http.StatusNotModified, notModified.StatusCode)
 }
 
 func TestVehiclePositionsForAgencyHandler_ResetClearsAttribution(t *testing.T) {

@@ -176,6 +176,7 @@ All endpoints are registered in `internal/restapi/routes.go`:
 | `/api/where/report-problem-with-trip/{id}` | `report_problem_with_trip_handler.go` | Report trip issue |
 | `/api/where/report-problem-with-stop/{id}` | `report_problem_with_stop_handler.go` | Report stop issue |
 | `/api/gtfs_realtime/vehicle-positions-for-agency/{id}.pb` | `vehicle_positions_for_agency_handler.go` | GTFS-RT vehicle positions for an agency |
+| `/api/gtfs_realtime/alerts-for-agency/{id}.pb` | `alerts_for_agency_handler.go` | GTFS-RT service alerts for an agency |
 
 ## Middleware Components
 
@@ -323,6 +324,7 @@ needs **no lock**. Never mutate what it returns:
 - `duplicatedVehicleByRoute` - Map of route ID → DUPLICATED-trip vehicles
 - `vehiclePositionsByAgency` - Map of agency ID → `AgencyVehiclePositions` (fresh, one per vehicle ID, sorted, plus the feed data time) for the GTFS-RT export, read with `VehiclePositionsForAgency`
 - `alerts` - `alertIndex` of alerts by trip, route, agency and stop
+- `alertFeedsByAgency` - Map of agency ID → serialized GTFS-RT alerts feed and the build time its alerts last changed, for the GTFS-RT export, read with `AlertFeedForAgency`; `alertsSince` dates the header-only feed of an agency with no alerts
 
 When a single feed refreshes, only its per-feed sub-map is overwritten; other feeds' data is untouched. A fresh snapshot is then built from all sub-maps and swapped in.
 
