@@ -443,9 +443,16 @@ func TestCompressionConfig(t *testing.T) {
 // agency. Giving stops different agencies stands in for stops from different feeds.
 func assignStopAgencies(t *testing.T, api *RestAPI, agencyByStop map[string]string) {
 	t.Helper()
+	db := api.GtfsManager.GtfsDB.DB
 	for stopID, agencyID := range agencyByStop {
-		_, err := api.GtfsManager.GtfsDB.DB.ExecContext(context.Background(),
-			"INSERT INTO stop_agencies (stop_id, agency_id) VALUES (?, ?)", stopID, agencyID)
+		_, err := db.ExecContext(context.Background(),
+			"INSERT OR REPLACE INTO stop_agencies (stop_id, agency_id) VALUES (?, ?)", stopID, agencyID)
 		require.NoError(t, err)
+		// Runs before the test's own cleanups, so a test that deletes its stops
+		// can; the error is ignored because the API may already be shut down.
+		t.Cleanup(func() {
+			_, _ = db.ExecContext(context.Background(),
+				"DELETE FROM stop_agencies WHERE stop_id = ? AND agency_id = ?", stopID, agencyID)
+		})
 	}
 }
