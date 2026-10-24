@@ -108,7 +108,7 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 		return models.RouteEntry{}, nil, err
 	}
 
-	if err := processTripGroups(ctx, api, agencyID, effectiveTrips, &stopGroupings, sequences, includePolylines); err != nil {
+	if err := processTripGroups(ctx, api, effectiveTrips, &stopGroupings, sequences, includePolylines); err != nil {
 		return models.RouteEntry{}, nil, err
 	}
 
@@ -123,7 +123,7 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 		}
 	}
 
-	stopsList, err := buildStopsList(ctx, api, agencyID, stops)
+	stopsList, err := buildStopsList(ctx, api, sequences.agencies, stops)
 	if err != nil {
 		return models.RouteEntry{}, nil, err
 	}
@@ -132,7 +132,7 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 		Polylines:     entryPolylines,
 		RouteID:       utils.FormCombinedID(agencyID, routeID),
 		StopGroupings: stopGroupings,
-		StopIds:       formatStopIDs(agencyID, stops),
+		StopIds:       formatStopIDs(sequences.agencies, stops),
 	}
 
 	return result, stopsList, nil
@@ -143,6 +143,7 @@ func (api *RestAPI) processRouteStops(ctx context.Context, agencyID string, rout
 type routeStopSequences struct {
 	byTrip      map[string][]string
 	coordinates map[string]models.Location
+	agencies    stopAgencyIDs
 }
 
 // loadRouteStopSequences reads the stop times of the given trips and the stops
@@ -179,10 +180,14 @@ func (api *RestAPI) loadRouteStopSequences(ctx context.Context, trips []gtfsdb.T
 	for _, stop := range stops {
 		sequences.coordinates[stop.ID] = models.Location{Lat: stop.Lat, Lon: stop.Lon}
 	}
+	sequences.agencies, err = api.loadStopAgencyIDs(ctx, stopIDs)
+	if err != nil {
+		return routeStopSequences{}, nil, err
+	}
 	return sequences, stops, nil
 }
 
-func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, stops []gtfsdb.Stop) ([]models.Stop, error) {
+func buildStopsList(ctx context.Context, api *RestAPI, stopAgencies stopAgencyIDs, stops []gtfsdb.Stop) ([]models.Stop, error) {
 	stopIDs := make([]string, 0, len(stops))
 	for _, stop := range stops {
 		stopIDs = append(stopIDs, stop.ID)
@@ -223,12 +228,12 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, stops []
 		stopsList = append(stopsList, models.Stop{
 			Code:               nulls.StringOrNonEmpty(stop.Code, stop.ID),
 			Direction:          direction,
-			ID:                 utils.FormCombinedID(agencyID, stop.ID),
+			ID:                 stopAgencies.combinedStopID(stop.ID),
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),
 			Lon:                stop.Lon,
 			Name:               stop.Name.String,
-			Parent:             parentStationID(agencyID, stop),
+			Parent:             parentStationID(stopAgencies[stop.ID], stop),
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stop.WheelchairBoarding)),
@@ -277,7 +282,6 @@ func (api *RestAPI) buildAndSendResponse(w http.ResponseWriter, r *http.Request,
 func processTripGroups(
 	ctx context.Context,
 	api *RestAPI,
-	agencyID string,
 	trips []gtfsdb.Trip,
 	stopGroupings *[]models.StopGrouping,
 	sequences routeStopSequences,
@@ -291,7 +295,7 @@ func processTripGroups(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		stopGroup, err := buildStopGroup(ctx, api, agencyID, group, sequences, includePolylines)
+		stopGroup, err := buildStopGroup(ctx, api, group, sequences, includePolylines)
 		if err != nil {
 			return err
 		}
@@ -322,7 +326,7 @@ func processTripGroups(
 
 // buildStopGroup assembles a single direction's StopGroup: its ordered stop IDs,
 // most-common headsign name, and merged polylines.
-func buildStopGroup(ctx context.Context, api *RestAPI, agencyID string, group directionGroup, sequences routeStopSequences, includePolylines bool) (models.StopGroup, error) {
+func buildStopGroup(ctx context.Context, api *RestAPI, group directionGroup, sequences routeStopSequences, includePolylines bool) (models.StopGroup, error) {
 	headsignCounts := countHeadsigns(group.Trips)
 	orderedStopIDs := orderedStopIDsForGroup(group, sequences)
 
@@ -341,7 +345,7 @@ func buildStopGroup(ctx context.Context, api *RestAPI, agencyID string, group di
 
 	formattedStopIDs := make([]string, len(orderedStopIDs))
 	for idx, id := range orderedStopIDs {
-		formattedStopIDs[idx] = utils.FormCombinedID(agencyID, id)
+		formattedStopIDs[idx] = sequences.agencies.combinedStopID(id)
 	}
 
 	groupHeadsign := mostCommonHeadsign(headsignCounts)
@@ -581,10 +585,10 @@ func (m *polylineMerger) addShape(points []gtfsdb.Shape) {
 	m.flush()
 }
 
-func formatStopIDs(agencyID string, stops []gtfsdb.Stop) []string {
+func formatStopIDs(stopAgencies stopAgencyIDs, stops []gtfsdb.Stop) []string {
 	stopIDs := make([]string, 0, len(stops))
 	for _, stop := range stops {
-		stopIDs = append(stopIDs, utils.FormCombinedID(agencyID, stop.ID))
+		stopIDs = append(stopIDs, stopAgencies.combinedStopID(stop.ID))
 	}
 	slices.Sort(stopIDs)
 

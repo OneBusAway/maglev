@@ -135,3 +135,21 @@ func stopIDsOf(stopTimes any) []string {
 	}
 	return stopIDs
 }
+
+// Route stop lists name each stop by its own agency, not the route's.
+func TestRouteStopIDs_UseTheStopsOwnAgency(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "agency-prefix.zip", agencyPrefixFiles())
+
+	_, stopsForRoute := serveApiAndRetrieveEndpoint(t, api, "/api/where/stops-for-route/other_other-route.json?key=TEST")
+	entry := stopsForRoute.Data.(map[string]any)["entry"].(map[string]any)
+	assert.ElementsMatch(t, []any{"own_stop-1", "own_stop-2"}, entry["stopIds"])
+	grouping := entry["stopGroupings"].([]any)[0].(map[string]any)
+	group := grouping["stopGroups"].([]any)[0].(map[string]any)
+	assert.ElementsMatch(t, []any{"own_stop-1", "own_stop-2"}, group["stopIds"])
+
+	_, schedule := serveApiAndRetrieveEndpoint(t, api, "/api/where/schedule-for-route/other_other-route.json?key=TEST&date=2025-01-01")
+	tripGrouping := schedule.Data.(map[string]any)["entry"].(map[string]any)["stopTripGroupings"].([]any)[0].(map[string]any)
+	assert.ElementsMatch(t, []any{"own_stop-1", "own_stop-2"}, tripGrouping["stopIds"])
+	tripWithStopTimes := tripGrouping["tripsWithStopTimes"].([]any)[0].(map[string]any)
+	assert.Equal(t, []string{"own_stop-1", "own_stop-2"}, stopIDsOf(tripWithStopTimes["stopTimes"]))
+}
