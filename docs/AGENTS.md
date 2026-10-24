@@ -15,6 +15,8 @@ Current file ↔ page mapping:
 |---|---|
 | `docs/horizontal-scalability-spec.md` | [PostgreSQL-Support](https://github.com/OneBusAway/maglev/wiki/PostgreSQL-Support) |
 | `docs/multi-agency-static-feeds-spec.md` | [Multi-Agency-Static-Feeds-Stop-Consolidation](https://github.com/OneBusAway/maglev/wiki/Multi-Agency-Static-Feeds-Stop-Consolidation) |
+| `docs/report-problem-with-stop.md` | [report-problem-with-stop](https://github.com/OneBusAway/maglev/wiki/report-problem-with-stop) |
+| `docs/report-problem-with-trip.md` | [report-problem-with-trip](https://github.com/OneBusAway/maglev/wiki/report-problem-with-trip) |
 
 Keep this table current: when a new spec in this folder gains a wiki page
 (or a page is renamed), add or update its row.
