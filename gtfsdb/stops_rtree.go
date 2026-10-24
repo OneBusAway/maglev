@@ -82,6 +82,8 @@ func (q *Queries) GetActiveStopsWithinBounds(ctx context.Context, arg GetActiveS
 	return items, nil
 }
 
+// getStopIDsWithinBounds matches every stop in the bounds, served or not and
+// stations included, as Java's nearby stop search does.
 const getStopIDsWithinBounds = `
 SELECT s.id
 FROM stops s
@@ -90,7 +92,6 @@ WHERE sr.max_lat >= ?1 AND sr.min_lat <= ?2
   AND sr.max_lon >= ?3 AND sr.min_lon <= ?4
   AND s.lat BETWEEN ?1 AND ?2
   AND s.lon BETWEEN ?3 AND ?4
-  AND EXISTS (SELECT 1 FROM stop_times st WHERE st.stop_id = s.id)
 `
 
 type GetStopIDsWithinBoundsParams struct {
