@@ -408,7 +408,12 @@ func TestSearchStopsByNameOrdersByCombinedID(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, buildStopAgencyIndex(ctx, client.Queries))
+	// One feed names all its stops after its first agency, so give each stop its
+	// agency by hand, as stops from two feeds would have.
+	_, err = client.DB.ExecContext(ctx, `
+		INSERT INTO stop_agencies (stop_id, agency_id) VALUES ('aaa', '999'), ('zzz', '111')
+	`)
+	require.NoError(t, err)
 
 	results, err := client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{
 		SearchQuery: "Ordertest",

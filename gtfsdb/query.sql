@@ -180,15 +180,26 @@ WHERE min_arrival_time IS NULL OR max_departure_time IS NULL;
 DELETE FROM stop_agencies WHERE TRUE;
 
 -- name: BuildStopAgencies :exec
+-- Java OneBusAway names every stop after its feed's default agency, the first row of
+-- agency.txt (GtfsReader.getDefaultAgencyId), whichever agencies' routes serve it.
+-- Agencies are inserted in feed order, so the lowest rowid is the first row.
 INSERT INTO
     stop_agencies (stop_id, agency_id)
-SELECT DISTINCT
-    stop_times.stop_id,
-    routes.agency_id
+SELECT
+    stops.id,
+    first_agency.id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id;
+    stops
+    CROSS JOIN (
+        SELECT
+            id
+        FROM
+            agencies
+        ORDER BY
+            rowid
+        LIMIT
+            1
+    ) AS first_agency;
 
 -- name: CreateCalendarDate :one
 INSERT

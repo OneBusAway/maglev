@@ -168,11 +168,10 @@ CREATE TABLE
     ) STRICT;
 
 -- migrate
--- Precomputed agency membership for each stop: one row per (stop, agency) pair, for every
--- agency whose routes serve the stop. GTFS gives stops no agency of their own, so resolving
--- one means aggregating stop_times through trips and routes. At feed scale that costs seconds
--- per query, which is too slow to do while serving a request. Rebuilt from scratch on every
--- import. A caller wanting a single agency per stop takes MIN(agency_id) GROUP BY stop_id.
+-- The agency in each stop's public ID. GTFS gives stops no agency of their own, so Java
+-- OneBusAway names every stop after its feed's first agency, whichever agencies' routes
+-- serve it; this table holds one row per stop under that agency. Rebuilt from scratch on
+-- every import.
 -- IF NOT EXISTS cannot reshape a table created under an earlier, single-column-PK version
 -- of this schema; Client.hasLegacyStopAgenciesTable detects that case at startup and
 -- Client.recreateStopAgenciesTable rebuilds it.

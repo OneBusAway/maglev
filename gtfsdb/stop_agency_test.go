@@ -13,113 +13,36 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 )
 
-func TestBuildStopAgencyIndex_PopulatesTable(t *testing.T) {
+// Java OneBusAway names every stop after its feed's default agency, the first
+// row of agency.txt, whichever agencies' routes serve it.
+func TestBuildStopAgencyIndex_NamesEveryStopAfterTheFirstAgency(t *testing.T) {
 	client := newTestClientWithRABA(t)
 	ctx := context.Background()
-
-	var indexed int
-	err := client.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM stop_agencies").Scan(&indexed)
-	require.NoError(t, err)
-	assert.Greater(t, indexed, 0, "RABA feed should produce at least one indexed stop")
-
-	// Every stop a route serves must be indexed, and no other stop may be.
-	var missing int
-	err = client.DB.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM (
-			SELECT DISTINCT stop_times.stop_id FROM stop_times
-			EXCEPT
-			SELECT stop_id FROM stop_agencies
-		)
-	`).Scan(&missing)
-	require.NoError(t, err)
-	assert.Zero(t, missing, "every stop with a stop time should have an indexed agency")
-
-	var stray int
-	err = client.DB.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM stop_agencies
-		WHERE stop_id NOT IN (SELECT stop_id FROM stop_times)
-	`).Scan(&stray)
-	require.NoError(t, err)
-	assert.Zero(t, stray, "a stop no route serves should not be indexed")
-
-	// The index must hold exactly the (stop, agency) pairs the join produces - no more, no less.
-	sourcePairs := `
-		SELECT DISTINCT stop_times.stop_id, routes.agency_id
-		FROM stop_times
-		JOIN trips ON stop_times.trip_id = trips.id
-		JOIN routes ON trips.route_id = routes.id
-	`
-
-	var missingPairs int
-	err = client.DB.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM (
-			`+sourcePairs+`
-			EXCEPT
-			SELECT stop_id, agency_id FROM stop_agencies
-		)
-	`).Scan(&missingPairs)
-	require.NoError(t, err)
-	assert.Zero(t, missingPairs, "every (stop, agency) pair from the join should be indexed")
-
-	var strayPairs int
-	err = client.DB.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM (
-			SELECT stop_id, agency_id FROM stop_agencies
-			EXCEPT
-			`+sourcePairs+`
-		)
-	`).Scan(&strayPairs)
-	require.NoError(t, err)
-	assert.Zero(t, strayPairs, "no indexed pair should be missing from the join")
-}
-
-func TestBuildStopAgencyIndex_KeepsEveryAgencyServingAStop(t *testing.T) {
-	client := newTestClientWithRABA(t)
-	ctx := context.Background()
-
-	var stopID string
-	require.NoError(t, client.DB.QueryRowContext(ctx, "SELECT stop_id FROM stop_agencies LIMIT 1").Scan(&stopID))
-
-	// Give the stop a second agency: a new agency, a route it owns, a trip on that route,
-	// and a stop_time at the same stop.
-	const secondAgencyID = "second-agency"
+	addSecondAgencyAtAStop(t, client)
 	_, err := client.DB.ExecContext(ctx, `
-		INSERT INTO agencies (id, name, url, timezone) VALUES (?, 'Second Agency', 'http://example.com', 'UTC')
-	`, secondAgencyID)
-	require.NoError(t, err)
-
-	_, err = client.DB.ExecContext(ctx, `
-		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('second-route', ?, 'S', 3)
-	`, secondAgencyID)
-	require.NoError(t, err)
-
-	_, err = client.DB.ExecContext(ctx, `
-		INSERT INTO trips (id, route_id, service_id) VALUES ('second-trip', 'second-route', (SELECT service_id FROM trips LIMIT 1))
+		INSERT INTO stops (id, name, lat, lon) VALUES ('unserved', 'Unserved', 40.5, -122.3)
 	`)
-	require.NoError(t, err)
-
-	_, err = client.DB.ExecContext(ctx, `
-		INSERT INTO stop_times (trip_id, stop_id, arrival_time, departure_time, stop_sequence)
-		VALUES ('second-trip', ?, 0, 0, 0)
-	`, stopID)
 	require.NoError(t, err)
 
 	require.NoError(t, buildStopAgencyIndex(ctx, client.Queries))
 
-	rows, err := client.DB.QueryContext(ctx, "SELECT agency_id FROM stop_agencies WHERE stop_id = ?", stopID)
+	assert.Equal(t, []string{"25"}, distinctStopAgencies(t, client))
+	assert.Zero(t, stopsNotIndexedOnce(t, client), "every stop, served or not, should have exactly one row")
+}
+
+func TestBuildStopAgencyIndex_RebuildsFromScratch(t *testing.T) {
+	client := newTestClientWithRABA(t)
+	ctx := context.Background()
+	stopID := addSecondAgencyAtAStop(t, client)
+
+	// A stale row from a previous feed version must not survive a rebuild.
+	_, err := client.DB.ExecContext(ctx,
+		"INSERT INTO stop_agencies (stop_id, agency_id) VALUES (?, ?)", stopID, secondAgencyID)
 	require.NoError(t, err)
-	defer rows.Close()
 
-	var agencyIDs []string
-	for rows.Next() {
-		var agencyID string
-		require.NoError(t, rows.Scan(&agencyID))
-		agencyIDs = append(agencyIDs, agencyID)
-	}
-	require.NoError(t, rows.Err())
+	require.NoError(t, buildStopAgencyIndex(ctx, client.Queries))
 
-	assert.GreaterOrEqual(t, len(agencyIDs), 2, "a stop served by two agencies should have two rows, not one collapsed row")
-	assert.Contains(t, agencyIDs, secondAgencyID)
+	assert.Equal(t, []string{"25"}, distinctStopAgencies(t, client))
 }
 
 func TestBackfillStopAgencyIndex_FillsEmptyIndex(t *testing.T) {
@@ -188,20 +111,9 @@ func TestBackfillStopAgencyIndex_RollsBackOnFailure(t *testing.T) {
 	client := newTestClientWithRABA(t)
 	ctx := context.Background()
 
-	var before []struct{ stopID, agencyID string }
-	rows, err := client.DB.QueryContext(ctx, "SELECT stop_id, agency_id FROM stop_agencies ORDER BY stop_id, agency_id")
-	require.NoError(t, err)
-	for rows.Next() {
-		var r struct{ stopID, agencyID string }
-		require.NoError(t, rows.Scan(&r.stopID, &r.agencyID))
-		before = append(before, r)
-	}
-	require.NoError(t, rows.Err())
-	require.NotEmpty(t, before)
-
 	// Stand in for a database created under the pre-composite-key schema, so the backfill
 	// takes the transactional recreate-and-rebuild path rather than skipping outright.
-	_, err = client.DB.ExecContext(ctx, `
+	_, err := client.DB.ExecContext(ctx, `
 		DROP TABLE stop_agencies;
 		CREATE TABLE stop_agencies (
 			stop_id TEXT PRIMARY KEY,
@@ -209,24 +121,21 @@ func TestBackfillStopAgencyIndex_RollsBackOnFailure(t *testing.T) {
 		);
 	`)
 	require.NoError(t, err)
-	_, err = client.DB.ExecContext(ctx, `
+	legacy, err := client.DB.ExecContext(ctx, `
 		INSERT INTO stop_agencies (stop_id, agency_id)
 		SELECT DISTINCT stop_id, (SELECT id FROM agencies LIMIT 1) FROM stop_times
 	`)
 	require.NoError(t, err)
+	legacyRows, err := legacy.RowsAffected()
+	require.NoError(t, err)
 
-	// Point one route at an agency that does not exist, with FK checks off just long
-	// enough to create the dangling reference. BuildStopAgencies then tries to insert a
-	// stop_agencies row for that agency, which fails its own FK check mid-rebuild.
-	_, err = client.DB.ExecContext(ctx, "PRAGMA foreign_keys = OFF")
-	require.NoError(t, err)
-	_, err = client.DB.ExecContext(ctx, "UPDATE routes SET agency_id = 'no-such-agency' WHERE id = (SELECT id FROM routes LIMIT 1)")
-	require.NoError(t, err)
-	_, err = client.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON")
+	// Take the name of the index the rebuild creates, so it fails after dropping
+	// and recreating the table.
+	_, err = client.DB.ExecContext(ctx, "CREATE INDEX idx_stop_agencies_agency ON agencies (name)")
 	require.NoError(t, err)
 
 	err = client.backfillStopAgencyIndex(ctx)
-	require.Error(t, err, "a foreign key violation mid-rebuild should surface, not be swallowed")
+	require.Error(t, err, "a failure mid-rebuild should surface, not be swallowed")
 
 	var pkColumns int
 	err = client.DB.QueryRowContext(ctx,
@@ -238,7 +147,7 @@ func TestBackfillStopAgencyIndex_RollsBackOnFailure(t *testing.T) {
 
 	var count int
 	require.NoError(t, client.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM stop_agencies").Scan(&count))
-	assert.Equal(t, len(before), count,
+	assert.Equal(t, legacyRows, int64(count),
 		"a rolled-back transaction should leave the legacy table's row count untouched")
 }
 
@@ -250,68 +159,86 @@ func TestBackfillStopAgencyIndex_SkipsEmptyFeed(t *testing.T) {
 	require.NoError(t, client.backfillStopAgencyIndex(context.Background()))
 }
 
-func TestBuildStopAgencyIndex_RebuildsFromScratch(t *testing.T) {
+// A database imported when stop_agencies held one row per agency serving a stop
+// keeps that index until its feed changes, unless startup rebuilds it.
+func TestBackfillStopAgencyIndex_RebuildsRouteBasedIndex(t *testing.T) {
 	client := newTestClientWithRABA(t)
 	ctx := context.Background()
-
-	// A stale row from a previous feed version must not survive a rebuild.
-	_, err := client.DB.ExecContext(ctx, `
-		INSERT INTO stop_agencies (stop_id, agency_id)
-		SELECT id, (SELECT id FROM agencies LIMIT 1) FROM stops
-		WHERE id NOT IN (SELECT stop_id FROM stop_agencies) LIMIT 1
-	`)
+	stopID := addSecondAgencyAtAStop(t, client)
+	_, err := client.DB.ExecContext(ctx,
+		"INSERT INTO stop_agencies (stop_id, agency_id) VALUES (?, ?)", stopID, secondAgencyID)
+	require.NoError(t, err)
+	_, err = client.DB.ExecContext(ctx, "DELETE FROM stop_agencies WHERE stop_id = (SELECT MAX(id) FROM stops)")
 	require.NoError(t, err)
 
-	require.NoError(t, buildStopAgencyIndex(ctx, client.Queries))
+	require.NoError(t, client.backfillStopAgencyIndex(ctx))
 
-	var stray int
-	err = client.DB.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM stop_agencies
-		WHERE stop_id NOT IN (SELECT stop_id FROM stop_times)
-	`).Scan(&stray)
-	require.NoError(t, err)
-	assert.Zero(t, stray, "rebuild should drop rows for stops no route serves")
+	assert.Equal(t, []string{"25"}, distinctStopAgencies(t, client))
+	assert.Zero(t, stopsNotIndexedOnce(t, client))
 }
 
-func TestBackfillStopAgencyIndex_SettlesWhenNoStopTimeJoinsARoute(t *testing.T) {
+func TestBackfillStopAgencyIndex_SettlesAfterRebuild(t *testing.T) {
 	client := newTestClientWithRABA(t)
 	ctx := context.Background()
-
 	_, err := client.DB.ExecContext(ctx, "DELETE FROM stop_agencies")
 	require.NoError(t, err)
+	require.NoError(t, client.backfillStopAgencyIndex(ctx))
 
-	// Replace every stop_times row with one whose trip_id resolves to nothing, so the
-	// index has stop_times but none of them join through to a route. FK checks are off
-	// just long enough to write the dangling reference.
-	_, err = client.DB.ExecContext(ctx, "PRAGMA foreign_keys = OFF")
-	require.NoError(t, err)
-	_, err = client.DB.ExecContext(ctx, "DELETE FROM stop_times")
-	require.NoError(t, err)
-	_, err = client.DB.ExecContext(ctx, `
-		INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence)
-		SELECT 'no-such-trip', 0, 0, id, 0 FROM stops LIMIT 1
-	`)
-	require.NoError(t, err)
-	_, err = client.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON")
-	require.NoError(t, err)
-
-	require.NoError(t, client.backfillStopAgencyIndex(ctx),
-		"a stop_times row that can't join to a route should settle, not error")
-
-	var indexed int
-	require.NoError(t, client.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM stop_agencies").Scan(&indexed))
-	assert.Zero(t, indexed, "nothing joins to a route, so the index should stay empty")
-
-	// A second call must settle without rebuilding: capture the default logger, since
-	// backfillStopAgencyIndex logs "rebuilding stop agency index" only when it actually
-	// runs the rebuild transaction. Before the fix, indexed staying at 0 forever meant
-	// every call rebuilt regardless of whether anything was joinable.
+	// backfillStopAgencyIndex logs "rebuilding stop agency index" only when it
+	// runs the rebuild, so a settled index must log nothing.
 	previousLogger := slog.Default()
 	var logBuf bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
 	err = client.backfillStopAgencyIndex(ctx)
 	slog.SetDefault(previousLogger)
 	require.NoError(t, err)
-	assert.NotContains(t, logBuf.String(), "rebuilding stop agency index",
-		"a settled index with nothing joinable should not trigger another rebuild")
+	assert.NotContains(t, logBuf.String(), "rebuilding stop agency index")
+}
+
+const secondAgencyID = "second-agency"
+
+// addSecondAgencyAtAStop gives one RABA stop a stop time on a route of an
+// agency listed after RABA's, and returns the stop's ID.
+func addSecondAgencyAtAStop(t *testing.T, client *Client) string {
+	t.Helper()
+	ctx := context.Background()
+	var stopID string
+	require.NoError(t, client.DB.QueryRowContext(ctx, "SELECT stop_id FROM stop_times LIMIT 1").Scan(&stopID))
+	_, err := client.DB.ExecContext(ctx, `
+		INSERT INTO agencies (id, name, url, timezone) VALUES (?, 'Second Agency', 'http://example.com', 'UTC');
+		INSERT INTO routes (id, agency_id, short_name, type) VALUES ('second-route', ?, 'S', 3);
+		INSERT INTO trips (id, route_id, service_id) VALUES ('second-trip', 'second-route', (SELECT service_id FROM trips LIMIT 1));
+	`, secondAgencyID, secondAgencyID)
+	require.NoError(t, err)
+	_, err = client.DB.ExecContext(ctx, `
+		INSERT INTO stop_times (trip_id, stop_id, arrival_time, departure_time, stop_sequence)
+		VALUES ('second-trip', ?, 0, 0, 0)
+	`, stopID)
+	require.NoError(t, err)
+	return stopID
+}
+
+func distinctStopAgencies(t *testing.T, client *Client) []string {
+	t.Helper()
+	rows, err := client.DB.Query("SELECT DISTINCT agency_id FROM stop_agencies ORDER BY agency_id")
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var agencyIDs []string
+	for rows.Next() {
+		var agencyID string
+		require.NoError(t, rows.Scan(&agencyID))
+		agencyIDs = append(agencyIDs, agencyID)
+	}
+	require.NoError(t, rows.Err())
+	return agencyIDs
+}
+
+func stopsNotIndexedOnce(t *testing.T, client *Client) int {
+	t.Helper()
+	var count int
+	require.NoError(t, client.DB.QueryRow(`
+		SELECT COUNT(*) FROM stops
+		WHERE (SELECT COUNT(*) FROM stop_agencies WHERE stop_id = stops.id) != 1
+	`).Scan(&count))
+	return count
 }

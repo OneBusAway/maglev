@@ -55,14 +55,14 @@ func NewClient(config Config) (*Client, error) {
 	return client, nil
 }
 
-// backfillStopAgencyIndex builds stop_agencies for a database imported before the table
-// existed, or before it held one row per agency serving a stop. An import is skipped when
-// the feed hash is unchanged, so such a database would otherwise keep stale data for as
-// long as its feed stays the same.
+// backfillStopAgencyIndex rebuilds stop_agencies for a database imported before the
+// table existed, or before it held each stop once under its feed's first agency. An
+// import is skipped when the feed hash is unchanged, so such a database would otherwise
+// keep stale data for as long as its feed stays the same.
 //
-// The legacy check and the indexed/joinable checks are read-only and run outside any
-// transaction; the rebuild and the rebuild alone runs inside one, so a failure partway
-// through never leaves stop_agencies dropped or half-populated.
+// The legacy and stale checks are read-only and run outside any transaction; the
+// rebuild and the rebuild alone runs inside one, so a failure partway through never
+// leaves stop_agencies dropped or half-populated.
 func (c *Client) backfillStopAgencyIndex(ctx context.Context) error {
 	legacy, err := c.hasLegacyStopAgenciesTable(ctx)
 	if err != nil {
@@ -70,25 +70,11 @@ func (c *Client) backfillStopAgencyIndex(ctx context.Context) error {
 	}
 
 	if !legacy {
-		var indexed, joinable int
-		// joinable checks stop times that resolve to a route, not merely that stop_times
-		// has rows: a stop_times row with a dangling trip_id or route_id would otherwise
-		// make BuildStopAgencies insert nothing every time, leaving indexed permanently 0
-		// and triggering a full rebuild on every NewClient forever.
-		err := c.DB.QueryRowContext(ctx, `
-			SELECT
-				(SELECT EXISTS (SELECT 1 FROM stop_agencies)),
-				(SELECT EXISTS (
-					SELECT 1
-					FROM stop_times
-					JOIN trips ON stop_times.trip_id = trips.id
-					JOIN routes ON trips.route_id = routes.id
-				))
-		`).Scan(&indexed, &joinable)
+		stale, err := c.hasStaleStopAgencies(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to check stop agency index: %w", err)
 		}
-		if indexed > 0 || joinable == 0 {
+		if !stale {
 			return nil
 		}
 	}
@@ -112,6 +98,27 @@ func (c *Client) backfillEmptyStopCodes(ctx context.Context) error {
 		return fmt.Errorf("failed to backfill empty stop codes: %w", err)
 	}
 	return nil
+}
+
+// hasStaleStopAgencies reports whether some stop is missing from stop_agencies, or a
+// row names an agency other than the feed's first. A feed without agencies has nothing
+// to index, so it is never stale; otherwise every startup would rebuild it.
+func (c *Client) hasStaleStopAgencies(ctx context.Context) (bool, error) {
+	var stale bool
+	err := c.DB.QueryRowContext(ctx, `
+		WITH first_agency AS (SELECT id FROM agencies ORDER BY rowid LIMIT 1)
+		SELECT EXISTS (SELECT 1 FROM first_agency) AND (
+			EXISTS (
+				SELECT 1 FROM stops
+				WHERE id NOT IN (SELECT stop_id FROM stop_agencies)
+			)
+			OR EXISTS (
+				SELECT 1 FROM stop_agencies
+				WHERE agency_id != (SELECT id FROM first_agency)
+			)
+		)
+	`).Scan(&stale)
+	return stale, err
 }
 
 // hasLegacyStopAgenciesTable reports whether stop_agencies still has the single-column
