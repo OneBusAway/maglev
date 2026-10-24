@@ -174,6 +174,11 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		for _, stopID := range orderedStopIDs {
 			globalStopIDSet[stopID] = struct{}{}
 		}
+		stopAgencies, err := api.loadStopAgencyIDs(ctx, orderedStopIDs)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 
 		// Collect headsigns; fall back to the last stop's name when a trip has no
 		// recorded headsign, matching the Java reference behavior.
@@ -233,7 +238,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 					DepartureTime:    models.NewModelDuration(departureDur),
 					ServiceID:        utils.FormCombinedID(agencyID, trip.ServiceID),
 					StopHeadsign:     st.StopHeadsign.String,
-					StopID:           utils.FormCombinedID(agencyID, st.StopID),
+					StopID:           stopAgencies.combinedStopID(st.StopID),
 					TripID:           combinedTripID,
 				})
 			}
@@ -246,7 +251,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 
 		formattedStopIDs := make([]string, len(orderedStopIDs))
 		for i, sid := range orderedStopIDs {
-			formattedStopIDs[i] = utils.FormCombinedID(agencyID, sid)
+			formattedStopIDs[i] = stopAgencies.combinedStopID(sid)
 		}
 
 		stopTripGroupings = append(stopTripGroupings, models.StopTripGrouping{
