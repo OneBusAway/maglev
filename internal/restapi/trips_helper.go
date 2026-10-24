@@ -224,10 +224,10 @@ func (api *RestAPI) BuildTripStatus(
 					stopTimesPtrs, currentTime, serviceDate, scheduleDeviation,
 				)
 			}
-		} else if blockStops, ok := snap.closestAndNextStops(); ok && !hasRealtimeTripUpdate {
-			// With nothing but the schedule, Java reads both stops off the block's
-			// scheduled location, so a later trip in the block reports where the
-			// active trip is.
+		} else if blockStops, ok := snap.closestAndNextStops(); ok {
+			// Without a vehicle position, Java reads both stops off the block's
+			// scheduled location, shifted by any trip-update deviation, so a later
+			// trip in the block reports where the active trip is.
 			closestStopID, closestOffset = blockStops.closestStopID, blockStops.closestOffset
 			nextStopID, nextOffset = blockStops.nextStopID, blockStops.nextOffset
 		} else {
