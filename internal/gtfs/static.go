@@ -225,20 +225,11 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
 	newFeedAgencyID, err := manager.GtfsDB.Queries.GetFeedAgencyID(ctx)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		logging.LogError(logger, "Error reading the feed's default agency", err)
+		// An empty agency would blank every service ID until the next reload.
+		logging.LogError(logger, "Error reading the feed's default agency, keeping the previous one", err)
+		newFeedAgencyID = manager.FeedAgencyID()
 	}
-
-	manager.staticMutex.Lock()
-	defer manager.staticMutex.Unlock()
-
-	manager.regionBounds = newRegionBounds
-	manager.feedAgencyID = newFeedAgencyID
-
-	// Replace direction and trip-distance caches together for the new feed.
-	// In-flight calculations retain the retired cache generation.
-	if changed && manager.DirectionCalculator != nil {
-		manager.DirectionCalculator.ClearCache()
-	}
+	manager.publishStaticState(newRegionBounds, newFeedAgencyID, changed)
 
 	if eTag := manager.GetSystemETag(ctx); eTag != "" {
 		logging.LogOperation(logger, "system_etag_updated_successfully", slog.String("etag", eTag))
@@ -253,6 +244,22 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	manager.logFeedExpiry(ctx, logger)
 
 	return changed, nil
+}
+
+// publishStaticState swaps in the in-memory state derived from a reload. Only
+// the swap holds staticMutex, so readers wait on nothing slower than it.
+func (manager *Manager) publishStaticState(regionBounds map[string]*RegionBounds, feedAgencyID string, changed bool) {
+	manager.staticMutex.Lock()
+	defer manager.staticMutex.Unlock()
+
+	manager.regionBounds = regionBounds
+	manager.feedAgencyID = feedAgencyID
+
+	// Replace direction and trip-distance caches together for the new feed.
+	// In-flight calculations retain the retired cache generation.
+	if changed && manager.DirectionCalculator != nil {
+		manager.DirectionCalculator.ClearCache()
+	}
 }
 
 // logFeedExpiry reads the feed_expires_at value persisted by StoreGtfsData

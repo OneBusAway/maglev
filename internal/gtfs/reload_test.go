@@ -197,6 +197,7 @@ func TestReload_ReplacesDataAndRebuildsState(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, initialAgencies)
 	assert.Equal(t, "25", initialAgencies[0].ID)
+	assert.Equal(t, "25", manager.FeedAgencyID())
 	initialLayoverCount := countBlockLayovers(t, manager)
 
 	manager.SetGtfsURL(gtfsNew)
@@ -208,6 +209,7 @@ func TestReload_ReplacesDataAndRebuildsState(t *testing.T) {
 	require.NoError(t, listErr)
 	require.NotEmpty(t, updatedAgencies)
 	assert.Equal(t, "40", updatedAgencies[0].ID)
+	assert.Equal(t, "40", manager.FeedAgencyID(), "the feed's default agency follows the reload")
 
 	// block_layover rows are rebuilt from the new feed.
 	updatedLayoverCount := countBlockLayovers(t, manager)
