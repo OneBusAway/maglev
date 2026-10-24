@@ -70,7 +70,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	blockEntry := transformBlockToEntry(block, utils.FormCombinedID(agencyID, blockID), agencyID, stopAgencies)
+	blockEntry := transformBlockToEntry(block, utils.FormCombinedID(agencyID, blockID), agencyID, stopAgencies, api.feedAgency())
 
 	references, err := api.getReferences(ctx, agencyID, block)
 	if err != nil {
@@ -82,7 +82,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 	api.sendResponse(w, r, response)
 }
 
-func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID string, stopAgencies stopAgencyIDs) models.BlockEntry {
+func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID string, stopAgencies stopAgencyIDs, services feedAgency) models.BlockEntry {
 	serviceGroups := make(map[string][]gtfsdb.GetBlockDetailsRow)
 
 	for _, row := range block {
@@ -103,7 +103,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 		serviceStops := serviceGroups[serviceID]
 
 		config := &models.BlockConfiguration{
-			ActiveServiceIds:   []string{utils.FormCombinedID(agencyID, serviceID)},
+			ActiveServiceIds:   []string{services.combinedServiceID(serviceID)},
 			InactiveServiceIds: []string{},
 			Trips:              make([]models.TripBlock, 0),
 		}
@@ -225,7 +225,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		trips = append(trips, models.Trip{
 			ID:           utils.FormCombinedID(agencyID, trip.ID),
 			RouteID:      utils.FormCombinedID(agencyID, trip.RouteID),
-			ServiceID:    utils.FormCombinedID(agencyID, trip.ServiceID),
+			ServiceID:    api.feedAgency().combinedServiceID(trip.ServiceID),
 			DirectionID:  strconv.FormatInt(trip.DirectionID.Int64, 10),
 			BlockID:      utils.FormCombinedID(agencyID, trip.BlockID.String),
 			ShapeID:      utils.FormCombinedID(agencyID, trip.ShapeID.String),

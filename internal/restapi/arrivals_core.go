@@ -1150,9 +1150,9 @@ func (api *RestAPI) appendTripReferences(ctx context.Context, references *models
 		routeAgencyID := route.AgencyID
 
 		tripRef := models.NewTripReference(
-			utils.FormCombinedID(routeAgencyID, trip.ID),        // Use route agency for trip ID
-			utils.FormCombinedID(routeAgencyID, trip.RouteID),   // Use route agency for route ID
-			utils.FormCombinedID(routeAgencyID, trip.ServiceID), // Use route agency for service ID
+			utils.FormCombinedID(routeAgencyID, trip.ID),      // Use route agency for trip ID
+			utils.FormCombinedID(routeAgencyID, trip.RouteID), // Use route agency for route ID
+			api.feedAgency().combinedServiceID(trip.ServiceID),
 			trip.TripHeadsign.String,
 			"",
 			strconv.FormatInt(trip.DirectionID.Int64, 10),

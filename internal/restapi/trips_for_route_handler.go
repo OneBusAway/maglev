@@ -1249,7 +1249,7 @@ func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenc
 
 	references.Agencies = utils.MapValues(sets.agencies)
 	references.Routes = sets.routeList()
-	references.Trips = sets.tripReferenceList(params.IncludeTrip)
+	references.Trips = sets.tripReferenceList(params.IncludeTrip, api.feedAgency())
 	references.Situations = api.situationReferences(ctx, params.Situations)
 	return *references
 }
@@ -1411,7 +1411,7 @@ func (api *RestAPI) addAgencyReference(ctx context.Context, sets *tripReferenceS
 
 // tripReferenceList emits the collected trips in combined-ID form. A trip whose
 // route was never resolved is skipped, since its agency is unknown.
-func (s *tripReferenceSets) tripReferenceList(includeTrip bool) []models.Trip {
+func (s *tripReferenceSets) tripReferenceList(includeTrip bool, services feedAgency) []models.Trip {
 	var tripsRefList []models.Trip
 	if !includeTrip {
 		return tripsRefList
@@ -1430,7 +1430,7 @@ func (s *tripReferenceSets) tripReferenceList(includeTrip bool) []models.Trip {
 		tripsRefList = append(tripsRefList, models.Trip{
 			ID:            utils.FormCombinedID(route.AgencyID, trip.ID),
 			RouteID:       utils.FormCombinedID(route.AgencyID, trip.RouteID),
-			ServiceID:     utils.FormCombinedID(route.AgencyID, trip.ServiceID),
+			ServiceID:     services.combinedServiceID(trip.ServiceID),
 			TripHeadsign:  trip.TripHeadsign,
 			TripShortName: trip.TripShortName,
 			DirectionID:   trip.DirectionID,

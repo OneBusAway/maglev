@@ -59,6 +59,20 @@ func (s stopAgencyIDs) combinedStopIDs(stopIDs []string) []string {
 	return combined
 }
 
+// feedAgency is the feed's default agency. Java names service IDs after it,
+// whichever agency runs the trip.
+type feedAgency string
+
+// feedAgency returns the agency service IDs are named after.
+func (api *RestAPI) feedAgency() feedAgency {
+	return feedAgency(api.GtfsManager.FeedAgencyID())
+}
+
+// combinedServiceID returns the service's public ID.
+func (a feedAgency) combinedServiceID(serviceID string) string {
+	return utils.FormCombinedID(string(a), serviceID)
+}
+
 // loadStopAgencyIDs reads the agency in each stop's public ID. It is the one way to
 // learn a stop's agency; the routes serving a stop don't decide it.
 func (api *RestAPI) loadStopAgencyIDs(ctx context.Context, stopIDs []string) (stopAgencyIDs, error) {
