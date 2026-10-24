@@ -1643,3 +1643,29 @@ func TestArrivalsAndDeparturesForStop_NearbyStopsMatchJava(t *testing.T) {
 		})
 	}
 }
+
+// A stop's own alerts are reported even when its window has no arrivals, as
+// Java does.
+func TestArrivalsAndDeparturesForStop_StopAlertsWithoutArrivals(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "nearby-stops.zip", nearbyStopsFiles())
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	stopID := "served"
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID:               "stop-closed",
+		InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}},
+		Header:           []gtfs.AlertText{{Text: "Stop closed", Language: "en"}},
+	})
+
+	noArrivals := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/own_served.json?key=TEST&time=%d", noArrivals.UnixMilli()))
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures)
+
+	assert.Contains(t, model.Data.Entry.SituationIDs, "own_stop-closed")
+	var referenced []string
+	for _, situation := range model.Data.References.Situations {
+		referenced = append(referenced, situation.ID)
+	}
+	assert.Contains(t, referenced, "own_stop-closed")
+}
