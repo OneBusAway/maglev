@@ -1328,11 +1328,12 @@ func inferOrientationFromShape(lat, lon float64, shape []gtfs.ShapePoint) float6
 }
 
 // segmentOrientation returns the OBA orientation (degrees; 0=East, 90=North) of
-// the from→to segment.
+// the from→to segment. Like Java's SphericalGeometryLibrary.getOrientation it
+// measures the angle on raw latitude and longitude degrees, without
+// correcting longitude for latitude.
 func segmentOrientation(from, to gtfs.ShapePoint) float64 {
 	dLat := to.Latitude - from.Latitude
-	cosLat := math.Cos(from.Latitude * math.Pi / 180)
-	dLon := (to.Longitude - from.Longitude) * cosLat
+	dLon := to.Longitude - from.Longitude
 	deg := math.Atan2(dLat, dLon) * 180 / math.Pi
 	if deg < 0 {
 		deg += 360

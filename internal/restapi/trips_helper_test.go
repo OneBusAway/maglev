@@ -2313,3 +2313,25 @@ func TestBuildTripSchedule_ShapeLookupFailureLogsAndContinues(t *testing.T) {
 	assert.Contains(t, logBuf.String(), tripRow.ID)
 	assert.Contains(t, logBuf.String(), "forced shape lookup failure")
 }
+
+// segmentOrientation measures the angle counter-clockwise from east on raw
+// latitude and longitude degrees, as Java's SphericalGeometryLibrary.
+// getOrientation does, with no correction for latitude.
+func TestSegmentOrientation_MatchesJava(t *testing.T) {
+	from := gtfs.ShapePoint{Latitude: 47.6, Longitude: -122.33}
+	tests := []struct {
+		name string
+		to   gtfs.ShapePoint
+		want float64
+	}{
+		{"north-east diagonal", gtfs.ShapePoint{Latitude: 47.61, Longitude: -122.32}, 45},
+		{"north", gtfs.ShapePoint{Latitude: 47.61, Longitude: -122.33}, 90},
+		{"west", gtfs.ShapePoint{Latitude: 47.6, Longitude: -122.34}, 180},
+		{"south-east diagonal", gtfs.ShapePoint{Latitude: 47.59, Longitude: -122.32}, 315},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.InDelta(t, tt.want, segmentOrientation(from, tt.to), 1e-6)
+		})
+	}
+}
