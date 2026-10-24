@@ -929,6 +929,17 @@ func (q *Queries) CreateTrip(ctx context.Context, arg CreateTripParams) (Trip, e
 	return i, err
 }
 
+const deleteTrip = `-- name: DeleteTrip :exec
+DELETE FROM trips
+WHERE
+    id = ?
+`
+
+func (q *Queries) DeleteTrip(ctx context.Context, id string) error {
+	_, err := q.exec(ctx, q.deleteTripStmt, deleteTrip, id)
+	return err
+}
+
 const getActiveBlockIDsForAgency = `-- name: GetActiveBlockIDsForAgency :many
 SELECT COALESCE(NULLIF(trips.block_id, ''), trips.id) AS block_id
 FROM
