@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"strings"
 )
 
 // WithSecurityHeaders wraps the given handler with security headers middleware
@@ -30,7 +31,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		// Content Security Policy - restrictive but allows API responses and web UI
 		csp := "default-src 'none'; frame-ancestors 'none';"
 		// Allow inline styles and images from same origin for web UI pages
-		if r.URL.Path == "/" || r.URL.Path == "/debug/" {
+		if r.URL.Path == "/" || r.URL.Path == "/debug" || strings.HasPrefix(r.URL.Path, "/debug/") {
 			csp = "default-src 'self'; style-src 'unsafe-inline'; img-src 'self'; frame-ancestors 'none';"
 		}
 		w.Header().Set("Content-Security-Policy", csp)
