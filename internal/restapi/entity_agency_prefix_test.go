@@ -74,3 +74,25 @@ func TestEntityHandlers_AgencyPrefixMustOwnEntity(t *testing.T) {
 		}
 	}
 }
+
+// A stop keeps its own agency in references, even when a trip or route of
+// another agency is what refers to it.
+func TestStopReferences_UseTheStopsOwnAgency(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "agency-prefix.zip", agencyPrefixFiles())
+
+	for _, endpoint := range []string{
+		"/api/where/trip-details/other_other-trip.json?key=TEST",
+		"/api/where/schedule-for-route/other_other-route.json?key=TEST&date=2025-01-01",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			resp, model := callAPIHandler[scheduleStopResponse](t, api, endpoint)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var stopIDs []string
+			for _, stop := range model.Data.References.Stops {
+				stopIDs = append(stopIDs, stop.ID)
+			}
+			assert.ElementsMatch(t, []string{"own_stop-1", "own_stop-2"}, stopIDs)
+		})
+	}
+}

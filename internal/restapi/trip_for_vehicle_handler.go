@@ -141,7 +141,7 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 		return nil, err
 	}
 
-	stops, uniqueRouteMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, stopIDs)
+	stops, uniqueRouteMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, stopIDs)
 	if err != nil {
 		return nil, err
 	}

@@ -296,7 +296,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(uniqueStopIDs) > 0 {
-		modelStops, _, err := stopModelsByIDs(api, ctx, agencyID, uniqueStopIDs)
+		modelStops, _, err := stopModelsByIDs(api, ctx, uniqueStopIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return

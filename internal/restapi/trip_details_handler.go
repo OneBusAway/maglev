@@ -355,7 +355,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if len(stopIDs) > 0 {
-			stops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, stopIDs)
+			stops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, stopIDs)
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return

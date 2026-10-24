@@ -668,12 +668,15 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
+	// A station and its children come from one feed, so they share an agency,
+	// whichever agencies' routes serve them.
 	assignStopAgencies(t, api, map[string]string{
 		"child_stop_1":            "999",
 		"parent_stat_1":           "999",
+		"child_stop_shared":       "999",
+		"child_stop_multi_agency": "999",
 		"child_stop_2":            "888",
-		"child_stop_shared":       "888",
-		"child_stop_multi_agency": "888",
+		"parent_stat_2":           "888",
 	})
 
 	// Alerts must not add unreferenced situations or disturb parent/route/agency references.
@@ -710,18 +713,19 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	assert.Equal(t, "888_child_stop_2", child2.ID)
 	assert.Equal(t, "888_parent_stat_2", child2.Parent)
 
-	// The same parent station reached through a second agency keeps that agency's prefix.
+	// A child served only by another agency's route keeps its own agency, and so
+	// does its parent.
 	childShared, ok := stopsByName["Child Stop Shared"]
 	require.True(t, ok)
-	assert.Equal(t, "888_child_stop_shared", childShared.ID)
-	assert.Equal(t, "888_parent_stat_1", childShared.Parent)
+	assert.Equal(t, "999_child_stop_shared", childShared.ID)
+	assert.Equal(t, "999_parent_stat_1", childShared.Parent)
 
 	// A stop served by two agencies keeps the one agency in its ID, rather than
 	// whichever route GetRoutesForStops happens to return first.
 	childMultiAgency, ok := stopsByName["Child Stop Multi Agency"]
 	require.True(t, ok)
-	assert.Equal(t, "888_child_stop_multi_agency", childMultiAgency.ID)
-	assert.Equal(t, "888_parent_stat_1", childMultiAgency.Parent)
+	assert.Equal(t, "999_child_stop_multi_agency", childMultiAgency.ID)
+	assert.Equal(t, "999_parent_stat_1", childMultiAgency.Parent)
 	assert.Equal(t, []string{"888_route_parent_test_2", "999_route_parent_test"}, childMultiAgency.RouteIDs,
 		"routeIds must be in a stable, deterministic order")
 
@@ -729,8 +733,8 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	for _, parentRef := range stopsResp.Data.References.Stops {
 		referenceIDs = append(referenceIDs, parentRef.ID)
 	}
-	require.Equal(t, []string{"888_parent_stat_1", "888_parent_stat_2", "999_parent_stat_1"}, referenceIDs,
-		"references.stops must hold one entry per (parent station, agency) pair, sorted by ID")
+	require.Equal(t, []string{"888_parent_stat_2", "999_parent_stat_1"}, referenceIDs,
+		"references.stops must hold one entry per parent station, sorted by ID")
 
 	parentRefsByID := make(map[string]models.Stop, len(stopsResp.Data.References.Stops))
 	for _, parentRef := range stopsResp.Data.References.Stops {
@@ -747,7 +751,6 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	}
 
 	assert.Equal(t, "Parent Station One", parentRefsByID["999_parent_stat_1"].Name)
-	assert.Equal(t, "Parent Station One", parentRefsByID["888_parent_stat_1"].Name)
 	assert.Equal(t, "Parent Station Two", parentRefsByID["888_parent_stat_2"].Name)
 
 	// Parent references carry route arrays like every other stop-emitting endpoint.
@@ -768,15 +771,14 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	assert.Equal(t, "999", routesByID["999_route_parent_only"].AgencyID,
 		"a route's agencyId must match its own ID prefix, not the child stop's agency that reached it")
 
-	// route_parent_only belongs to agency 999. parent_stat_1 is also reached through
-	// agency 888 (via child_stop_shared/child_stop_multi_agency), so a route must not be
-	// re-prefixed with the agency of whichever child stop happened to reach the parent.
+	// route_parent_only belongs to agency 999. parent_stat_1's children are also served
+	// by agency 888's routes, so a route must not be re-prefixed with the agency of
+	// whichever route reached the parent.
 	_, hasMisprefixedRoute := routesByID["888_route_parent_only"]
 	assert.False(t, hasMisprefixedRoute,
 		"routes must not be re-prefixed with a child stop's agency")
 
-	// A parent reached through agency 888 still points at the route's real 999-prefixed ID.
-	assert.Contains(t, parentRefsByID["888_parent_stat_1"].RouteIDs, "999_route_parent_only")
+	assert.Contains(t, parentRefsByID["999_parent_stat_1"].RouteIDs, "999_route_parent_only")
 
 	// Every routeId referenced by any parent stop must resolve in references.routes.
 	for _, parentRef := range stopsResp.Data.References.Stops {
