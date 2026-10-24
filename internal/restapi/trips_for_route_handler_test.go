@@ -1170,6 +1170,7 @@ func TestTripsForRouteHandler_InvalidTimeParameter(t *testing.T) {
 		{name: "Garbage String", time: "garbage"},
 		{name: "Overflowing Epoch", time: "99999999999999999999"},
 		{name: "Invalid Calendar Date", time: "2024-13-45"},
+		{name: "Date Only YYYY-MM-DD", time: "2026-10-20"},
 	}
 
 	for _, tt := range tests {
