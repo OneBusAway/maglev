@@ -17,3 +17,9 @@ Some benchmarks use a larger GTFS feed to measure behavior under load. That data
   go test -tags=perftest -bench=. ./internal/restapi/ -benchmem
   ```
   Without the tag, those benchmarks are not built and the rest of the tests are unchanged.
+
+## Java parity
+
+`java_parity/` holds a synthetic two-agency feed and the IDs Java OneBusAway returns
+for it. `TestJavaParity_SyntheticTwoAgencyFeed` checks Maglev against them. See
+`java_parity/README.md`.
