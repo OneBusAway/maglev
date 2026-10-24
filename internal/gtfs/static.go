@@ -116,6 +116,11 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	}
 
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
+	consolidatedStops, err := loadConsolidatedStopIDs(ctx, manager.GtfsDB)
+	if err != nil {
+		return false, err
+	}
+	manager.consolidatedStops.Store(&consolidatedStops)
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()

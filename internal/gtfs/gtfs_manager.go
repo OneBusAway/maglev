@@ -45,7 +45,10 @@ type Manager struct {
 	// merged holds the published view of all realtime feeds. Writers rebuild it
 	// under realTimeMutex, which still guards the per-feed maps below; readers
 	// load it without any lock. See mergedRealtime in realtime.go.
-	merged            atomic.Pointer[mergedRealtime]
+	merged atomic.Pointer[mergedRealtime]
+	// consolidatedStops translates absorbed stop IDs in realtime feeds. It
+	// is replaced after each static reload.
+	consolidatedStops atomic.Pointer[consolidatedStopIDs]
 	staticUpdateMutex sync.Mutex // Protects against concurrent ReloadStatic calls
 	config            Config
 	shutdownChan      chan struct{}
