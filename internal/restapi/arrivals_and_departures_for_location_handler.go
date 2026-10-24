@@ -55,7 +55,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// here would silently drop arrivals that belong in the response.
 	stops, err := api.GtfsManager.GetStopsInBounds(ctx, params.Location, 0, true)
 	if err != nil {
-		api.sendArrivalsForLocationError(w, r, ctx, err)
+		api.sendArrivalsError(w, r, ctx, err)
 		return
 	}
 	if len(stops) == 0 {
@@ -88,7 +88,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		RouteTypes: params.RouteTypes,
 	}, acc)
 	if err != nil {
-		api.sendArrivalsForLocationError(w, r, ctx, err)
+		api.sendArrivalsError(w, r, ctx, err)
 		return
 	}
 
@@ -105,7 +105,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	nearby, err := api.nearbyStopsForLocation(ctx, stops, agencies, params)
 	if err != nil {
-		api.sendArrivalsForLocationError(w, r, ctx, err)
+		api.sendArrivalsError(w, r, ctx, err)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	}, params.MaxCount)
 
 	if err := api.finishRetainedLocationArrivals(ctx, lists, pending, stops, agencies, acc); err != nil {
-		api.sendArrivalsForLocationError(w, r, ctx, err)
+		api.sendArrivalsError(w, r, ctx, err)
 		return
 	}
 
@@ -127,7 +127,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// A route can serve a retained stop and still have every arrival fall
 	// outside the window. Those route alerts belong on the entry anyway.
 	if err := api.addRouteAlertsForRetainedStops(ctx, lists.stopIDs, acc.situations); err != nil {
-		api.sendArrivalsForLocationError(w, r, ctx, err)
+		api.sendArrivalsError(w, r, ctx, err)
 		return
 	}
 
@@ -137,7 +137,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	references, err := api.locationReferences(ctx, params.IncludeReferences, refAcc)
 	if err != nil {
-		api.sendArrivalsForLocationError(w, r, ctx, err)
+		api.sendArrivalsError(w, r, ctx, err)
 		return
 	}
 
@@ -170,9 +170,9 @@ func (api *RestAPI) finishRetainedLocationArrivals(
 	return api.addStopLevelArrivalAlerts(ctx, stops, agencies, acc)
 }
 
-// sendArrivalsForLocationError distinguishes the client hanging up from a
+// sendArrivalsError distinguishes the client hanging up from a
 // genuine server-side failure, so a cancelled request is not reported as a 500.
-func (api *RestAPI) sendArrivalsForLocationError(w http.ResponseWriter, r *http.Request, ctx context.Context, err error) {
+func (api *RestAPI) sendArrivalsError(w http.ResponseWriter, r *http.Request, ctx context.Context, err error) {
 	if ctx.Err() != nil {
 		api.clientCanceledResponse(w, r, ctx.Err())
 		return

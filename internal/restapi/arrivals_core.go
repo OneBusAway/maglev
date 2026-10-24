@@ -94,7 +94,6 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 	if len(allActiveStopTimes) == 0 {
 		return result, nil
 	}
-	acc.stopIDs[in.StopCode] = true
 
 	routesLookup, tripsLookup, tripStopCountMap, freqMap, err := api.batchArrivalEntities(ctx, allActiveStopTimes)
 	if err != nil {

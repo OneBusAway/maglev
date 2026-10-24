@@ -836,7 +836,7 @@ func TestSendArrivalsForLocationErrorDistinguishesCancellation(t *testing.T) {
 		cancel()
 		rec, req := newRequest(ctx)
 
-		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
+		api.sendArrivalsError(rec, req, ctx, errors.New("boom"))
 
 		assert.Empty(t, rec.Body.String(), "no body should be written when the client cancels")
 	})
@@ -846,7 +846,7 @@ func TestSendArrivalsForLocationErrorDistinguishesCancellation(t *testing.T) {
 		defer cancel()
 		rec, req := newRequest(ctx)
 
-		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
+		api.sendArrivalsError(rec, req, ctx, errors.New("boom"))
 
 		assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
 		assert.Contains(t, rec.Body.String(), "gateway timeout")
@@ -856,7 +856,7 @@ func TestSendArrivalsForLocationErrorDistinguishesCancellation(t *testing.T) {
 		ctx := context.Background()
 		rec, req := newRequest(ctx)
 
-		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
+		api.sendArrivalsError(rec, req, ctx, errors.New("boom"))
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	})

@@ -107,11 +107,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		After:     params.After,
 	}, acc)
 	if err != nil {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.sendArrivalsError(w, r, ctx, err)
 		return
 	}
 
@@ -128,16 +124,12 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	references, err := api.buildArrivalsReferences(ctx, &agency, acc)
 	if err != nil {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.sendArrivalsError(w, r, ctx, err)
 		return
 	}
 	nearbyAgencies, err := api.loadStopAgencyIDs(ctx, nearbyIDs)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		api.sendArrivalsError(w, r, ctx, err)
 		return
 	}
 
