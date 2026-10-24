@@ -730,3 +730,56 @@ func TestToGtfsConfigData_DuplicateIDs(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "duplicate feed ID")
 }
+
+func TestToGtfsConfigData_StopConsolidationURL(t *testing.T) {
+	jsonConfig := &JSONConfig{
+		GtfsStaticFeed: GtfsStaticFeed{
+			URL:                  "https://example.com/gtfs.zip",
+			StopConsolidationURL: "https://example.com/StopConsolidation.txt",
+		},
+	}
+
+	gtfsConfig, err := jsonConfig.ToGtfsConfigData()
+
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/StopConsolidation.txt", gtfsConfig.StopConsolidationURL)
+}
+
+func TestValidate_StopConsolidationURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr string
+	}{
+		{name: "https URL", url: "https://example.com/StopConsolidation.txt"},
+		{name: "local path", url: "/data/StopConsolidation.txt"},
+		{name: "file URL", url: "FILE:///etc/passwd", wantErr: "file:// URLs are not allowed for gtfs-static-feed.stop-consolidation-url"},
+		{name: "path traversal", url: "../../secret.txt", wantErr: "gtfs-static-feed.stop-consolidation-url"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &JSONConfig{
+				Port:             4000,
+				Env:              "development",
+				ApiKeys:          []string{"test"},
+				ProtectedApiKeys: []string{"test"},
+				RateLimit:        100,
+				GtfsStaticFeed: GtfsStaticFeed{
+					URL:                  "https://example.com/gtfs.zip",
+					StopConsolidationURL: tt.url,
+				},
+				LogLevel:  "info",
+				LogFormat: "text",
+			}
+
+			err := config.Validate()
+
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
