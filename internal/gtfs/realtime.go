@@ -479,11 +479,11 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	if vehicleData != nil && vehicleErr == nil {
 		applyVehicleUpdate := true
 
-		// Guard against zero CreatedAt from feeds without FeedHeader timestamp.
-		// When CreatedAt is zero time.Time{}, UnixNano() returns a negative value that
-		// wraps to ~11.6×10¹⁸ when cast to uint64, which would permanently block updates.
-		if vehicleData.CreatedAt.IsZero() {
-			// Feed has no FeedHeader timestamp — cannot compare freshness, always apply
+		// Guard against a missing FeedHeader timestamp. A zero CreatedAt would
+		// wrap to ~11.6×10¹⁸ when cast to uint64 and block updates; an epoch
+		// CreatedAt would compare as 0 and skip every update as stale.
+		if isMissingHeaderTime(vehicleData.CreatedAt) {
+			// Feed has no usable timestamp — cannot compare freshness, always apply
 			applyVehicleUpdate = true
 		} else {
 			feedTimestamp := uint64(vehicleData.CreatedAt.UnixNano())
@@ -894,10 +894,17 @@ func (manager *Manager) recordVehicleDataTime(feedID string, headerTime time.Tim
 	if manager.feedVehicleDataTime == nil {
 		manager.feedVehicleDataTime = make(map[string]time.Time)
 	}
-	if headerTime.IsZero() {
+	if isMissingHeaderTime(headerTime) {
 		headerTime = time.Now()
 	}
 	manager.feedVehicleDataTime[feedID] = headerTime
+}
+
+// isMissingHeaderTime reports whether a feed header carried no usable
+// timestamp. go-gtfs maps an explicit timestamp of 0 to the Unix epoch rather
+// than the zero time.Time, so both count as missing.
+func isMissingHeaderTime(headerTime time.Time) bool {
+	return headerTime.IsZero() || headerTime.Unix() == 0
 }
 
 // copyVehicleAgency carries a vehicle's agency, if it has one, from src to dst.
