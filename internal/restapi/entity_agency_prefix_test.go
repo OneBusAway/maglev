@@ -310,3 +310,28 @@ func serviceIDsIn(node any) []string {
 	}
 	return found
 }
+
+// A trip with no shape is placed on the straight line between the stops it
+// is scheduled between, by time, as Java's ScheduledBlockLocationServiceImpl
+// does, so trips-for-location finds it without a vehicle.
+func TestTripsForLocation_PlacesShapelessScheduledTrips(t *testing.T) {
+	now := time.Date(2025, 1, 1, 10, 10, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now), "agency-prefix.zip", agencyPrefixFiles())
+
+	_, model := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/trips-for-location.json?key=TEST&lat=37.78&lon=-122.414&latSpan=0.05&lonSpan=0.05&includeStatus=true")
+	require.Equal(t, http.StatusOK, model.Code)
+
+	var found map[string]any
+	for _, entry := range model.Data.(map[string]any)["list"].([]any) {
+		if entry.(map[string]any)["tripId"] == "other_other-trip" {
+			found = entry.(map[string]any)
+		}
+	}
+	require.NotNil(t, found, "the shapeless trip running at 10:10 is listed")
+
+	// A third of the way from stop-1 (37.7749,-122.4194) to stop-2 (37.7849,-122.4094).
+	position := found["status"].(map[string]any)["position"].(map[string]any)
+	assert.InDelta(t, 37.7749+0.01/3, position["lat"], 1e-6)
+	assert.InDelta(t, -122.4194+0.01/3, position["lon"], 1e-6)
+}
