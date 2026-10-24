@@ -479,11 +479,11 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	if vehicleData != nil && vehicleErr == nil {
 		applyVehicleUpdate := true
 
-		// Guard against zero CreatedAt from feeds without FeedHeader timestamp.
-		// When CreatedAt is zero time.Time{}, UnixNano() returns a negative value that
-		// wraps to ~11.6×10¹⁸ when cast to uint64, which would permanently block updates.
-		if vehicleData.CreatedAt.IsZero() {
-			// Feed has no FeedHeader timestamp — cannot compare freshness, always apply
+		// Guard against a missing FeedHeader timestamp. A zero CreatedAt would
+		// wrap to ~11.6×10¹⁸ when cast to uint64 and block updates; an epoch
+		// CreatedAt would compare as 0 and skip every update as stale.
+		if isMissingHeaderTime(vehicleData.CreatedAt) {
+			// Feed has no usable timestamp — cannot compare freshness, always apply
 			applyVehicleUpdate = true
 		} else {
 			feedTimestamp := uint64(vehicleData.CreatedAt.UnixNano())
