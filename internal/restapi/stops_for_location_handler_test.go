@@ -819,6 +819,7 @@ func TestStopsForLocationUsesAgencyDateForCurrentTime(t *testing.T) {
 	}{
 		{name: "absent", timeParam: ""},
 		{name: "malformed", timeParam: "garbage"},
+		{name: "negative epoch", timeParam: "-5"},
 	}
 
 	for _, tt := range tests {
@@ -827,6 +828,32 @@ func TestStopsForLocationUsesAgencyDateForCurrentTime(t *testing.T) {
 			require.NotEmpty(t, expected)
 			assert.Equal(t, expected, stopIDsAt(lateEveningLocal, tt.timeParam),
 				"the same local service date must select the same stops on both sides of UTC midnight")
+		})
+	}
+}
+
+// TestStopsForLocationNegativeEpochFallsBackToCurrentTime verifies that passing a negative
+// epoch timestamp (e.g. time=-5) is treated as an unparseable time and falls back to the
+// current time ("now") rather than 1969/1970, matching Java reference server behavior.
+func TestStopsForLocationNegativeEpochFallsBackToCurrentTime(t *testing.T) {
+	// A mock clock on a service date when RABA has active service (2025-06-13 14:00:00 local).
+	serviceClock := clock.NewMockClock(time.Date(2025, 6, 13, 21, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, serviceClock)
+
+	baseURL := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=2500"
+
+	respDefault, modelDefault := callAPIHandler[StopsResponse](t, api, baseURL)
+	require.Equal(t, http.StatusOK, respDefault.StatusCode)
+	require.NotEmpty(t, modelDefault.Data.List, "stops must be returned for active service date")
+
+	for _, rawTime := range []string{"-5", "-1", "-0"} {
+		t.Run("time="+rawTime, func(t *testing.T) {
+			respNeg, modelNeg := callAPIHandler[StopsResponse](t, api, baseURL+"&time="+rawTime)
+			require.Equal(t, http.StatusOK, respNeg.StatusCode)
+			assert.Equal(t, modelDefault.Data.List, modelNeg.Data.List,
+				"negative epoch time=%s must fall back to current time and return identical stops", rawTime)
+			assert.Equal(t, modelDefault.Data.References, modelNeg.Data.References,
+				"negative epoch time=%s references must match current time fallback", rawTime)
 		})
 	}
 }
