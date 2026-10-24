@@ -1269,9 +1269,9 @@ func validateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger, stopTimeC
 			continue
 		}
 
-		// Ensure the trip has stop times
-		if stopTimeCount(i) == 0 {
-			logger.Warn("trip has no stop times, skipping trip", slog.String("trip_id", trip.ID))
+		// Java's TripEntriesFactory drops a trip with fewer than two stop times
+		if stopTimeCount(i) < minStopTimesPerTrip {
+			logger.Warn("trip has fewer than two stop times, skipping trip", slog.String("trip_id", trip.ID))
 			continue
 		}
 
@@ -1308,7 +1308,7 @@ func validateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger, stopTimeC
 
 	// Ensure we didn't filter out every single trip in the feed
 	if len(data.Trips) == 0 {
-		return fmt.Errorf("validation failed: all trips were filtered out due to invalid foreign key relationships")
+		return fmt.Errorf("validation failed: every trip was filtered out (bad route, service or stop references, or fewer than two stop times)")
 	}
 
 	return nil
