@@ -681,13 +681,12 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	if !requestedTrip.BlockID.Valid {
-		reqLogger.Debug("trip has no block ID, cannot find vehicle by block",
-			slog.String("trip_id", tripID))
+	// Java treats a blockless trip as its own block, and the direct lookup
+	// above already checked that trip.
+	requestedBlockID := nulls.StringOrEmpty(requestedTrip.BlockID)
+	if requestedBlockID == "" {
 		return nil
 	}
-
-	requestedBlockID := requestedTrip.BlockID.String
 
 	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
@@ -696,7 +695,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	blockTripIDs := make(map[string]bool)
+	blockTripIDs := make(map[string]bool, len(blockTrips))
 	for _, trip := range blockTrips {
 		blockTripIDs[trip.ID] = true
 	}
