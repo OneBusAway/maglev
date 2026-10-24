@@ -43,6 +43,9 @@ type javaParityResult struct {
 // TestJavaParity_SyntheticTwoAgencyFeed replays each request in
 // testdata/java_parity/java_ids.json against the synthetic feed and compares
 // the stop, route and service IDs in the response with Java OneBusAway's.
+// It compares each response's set of key=ID pairs, so it catches a wrong or
+// missing ID but not one moved between entries of the same list. A known
+// difference fails the test once it matches, so its entry gets removed.
 // testdata/java_parity/README.md explains how to recapture them.
 func TestJavaParity_SyntheticTwoAgencyFeed(t *testing.T) {
 	losAngeles, err := time.LoadLocation("America/Los_Angeles")
@@ -57,10 +60,14 @@ func TestJavaParity_SyntheticTwoAgencyFeed(t *testing.T) {
 
 	for request, want := range javaResults {
 		t.Run(request, func(t *testing.T) {
+			got := maglevParityResult(t, api, request)
 			if reason, known := knownJavaDifferences[request]; known {
+				if assert.ObjectsAreEqual(want, got) {
+					t.Fatalf("now matches Java; remove it from knownJavaDifferences (was: %s)", reason)
+				}
 				t.Skip(reason)
 			}
-			assert.Equal(t, want, maglevParityResult(t, api, request))
+			assert.Equal(t, want, got)
 		})
 	}
 }
