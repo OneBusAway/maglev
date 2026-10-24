@@ -154,18 +154,11 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			})
 		}
 
-		referencedStops, stopIDsByBareID, stopsErr := api.stopsReferencedBySchedulesAndStatuses(ctx, tripSchedulesAndStatuses)
-		if stopsErr != nil {
-			api.serverErrorResponse(w, r, stopsErr)
-			return
-		}
-
 		references = api.BuildReference(w, r, ctx, ReferenceParams{
-			IncludeTrip:     parsedReq.IncludeTrip,
-			Stops:           referencedStops,
-			StopIDsByBareID: stopIDsByBareID,
-			Trips:           result,
-			Situations:      situations,
+			IncludeTrip: parsedReq.IncludeTrip,
+			StopIDs:     stopIDsReferencedBySchedulesAndStatuses(tripSchedulesAndStatuses),
+			Trips:       result,
+			Situations:  situations,
 		})
 	}
 
@@ -1068,12 +1061,9 @@ func buildStopTimesList(api *RestAPI, ctx context.Context, stopTimes []gtfsdb.St
 
 type ReferenceParams struct {
 	IncludeTrip bool
-	Stops       []gtfsdb.Stop
-	// StopIDsByBareID maps each stop's bare ID to the combined IDs the entries
-	// referred to it by, so a reference is published under the ID pointing at it.
-	StopIDsByBareID map[string][]string
-	Trips           []models.TripsForLocationListEntry
-	Situations      []situationRef
+	StopIDs     []string
+	Trips       []models.TripsForLocationListEntry
+	Situations  []situationRef
 }
 
 func (api *RestAPI) BuildReference(w http.ResponseWriter, r *http.Request, ctx context.Context, params ReferenceParams) models.ReferencesModel {
@@ -1106,7 +1096,9 @@ type referenceBuilder struct {
 func (rb *referenceBuilder) build(params ReferenceParams) error {
 	rb.situations = params.Situations
 	rb.collectTripIDs(params.Trips)
-	rb.buildStopList(params.Stops, params.StopIDsByBareID)
+	if err := rb.buildStopList(params.StopIDs); err != nil {
+		return err
+	}
 
 	rb.enrichTripsData()
 
@@ -1149,20 +1141,20 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 }
 
 // buildStopList emits the stop references and registers the routes serving them.
-func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID map[string][]string) {
-	stopList, routeIDsByStop := rb.api.stopReferences(rb.ctx, stops, stopIDsByBareID)
-	rb.stopList = stopList
+func (rb *referenceBuilder) buildStopList(stopIDs []string) error {
+	stops, _, err := BuildStopReferencesAndRouteIDsForStops(rb.api, rb.ctx, stopIDs)
+	if err != nil {
+		return err
+	}
+	rb.stopList = stops
 
 	// Register the raw route ID (e.g. "100479") rather than the combined one, so
 	// that collectAgenciesAndRoutes can fetch full route details via
 	// GetRoutesByIDs, which queries WHERE routes.id IN (?) using raw IDs.
-	for _, combinedRouteIDs := range routeIDsByStop {
-		for _, combinedID := range combinedRouteIDs {
-			if rawID, err := utils.ExtractCodeID(combinedID); err == nil {
-				rb.presentRoutes[rawID] = models.Route{}
-			}
-		}
+	for _, rawID := range rawRouteIDsOfStops(stops) {
+		rb.presentRoutes[rawID] = models.Route{}
 	}
+	return nil
 }
 
 func (rb *referenceBuilder) enrichTripsData() {

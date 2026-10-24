@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -186,7 +185,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// When includeReferences=false the references block is present but empty.
 	if includeReferences {
 		// References describe the returned stops, so they are collected after capping.
-		parentStops, parentRouteIDs, err := api.parentStationReferences(ctx, resultRawStopIDs, stopMap, stopAgencies)
+		parentStops, err := api.parentStationReferences(ctx, resultRawStopIDs, stopMap)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
@@ -199,8 +198,8 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		for _, stopID := range resultRawStopIDs {
 			collectRouteReferenceIDs(stopRouteIDs[stopID], routeIDs, agencyIDs)
 		}
-		for _, stationRouteIDs := range parentRouteIDs {
-			collectRouteReferenceIDs(stationRouteIDs, routeIDs, agencyIDs)
+		for _, station := range parentStops {
+			collectRouteReferenceIDs(station.RouteIDs, routeIDs, agencyIDs)
 		}
 
 		agencies := utils.FilterAgencies(allAgencies, agencyIDs)
@@ -236,37 +235,16 @@ func parentStationID(agencyID string, stop gtfsdb.Stop) string {
 }
 
 // parentStationReferences builds stop references for the parent stations of
-// the given stops, labelled with the same combined IDs the stops' parent
-// fields carry. It also returns the combined route IDs serving each station,
-// keyed by bare station ID, so their routes can be referenced too.
-func (api *RestAPI) parentStationReferences(
-	ctx context.Context,
-	stopIDs []string,
-	stopMap map[string]gtfsdb.Stop,
-	stopAgencies stopAgencyIDs,
-) ([]models.Stop, map[string][]string, error) {
-	parentIDsByBareID := make(map[string][]string)
+// the given stops, and of those stations' own parents.
+func (api *RestAPI) parentStationReferences(ctx context.Context, stopIDs []string, stopMap map[string]gtfsdb.Stop) ([]models.Stop, error) {
+	var parentIDs []string
 	for _, stopID := range stopIDs {
-		stop := stopMap[stopID]
-		parentID := parentStationID(stopAgencies[stopID], stop)
-		bareParentID := nulls.StringOrEmpty(stop.ParentStation)
-		if parentID == "" || slices.Contains(parentIDsByBareID[bareParentID], parentID) {
-			continue
+		if parentID := nulls.StringOrEmpty(stopMap[stopID].ParentStation); parentID != "" {
+			parentIDs = append(parentIDs, parentID)
 		}
-		parentIDsByBareID[bareParentID] = append(parentIDsByBareID[bareParentID], parentID)
 	}
-	if len(parentIDsByBareID) == 0 {
-		return []models.Stop{}, nil, nil
-	}
-
-	bareParentIDs := slices.Sorted(maps.Keys(parentIDsByBareID))
-	parents, err := utils.QueryInBatches(ctx, bareParentIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	parentStops, routeIDsByStop := api.stopReferences(ctx, parents, parentIDsByBareID)
-	return parentStops, routeIDsByStop, nil
+	parents, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, parentIDs)
+	return parents, err
 }
 
 // collectRouteReferenceIDs marks each combined route ID, and the agency that

@@ -442,19 +442,11 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				status:   trip.Status,
 			})
 		}
-		// stop ids map maps stopIDs to a slice of unique combined agency IDs.
-		stopsReferenced, stopIDsMap, stopsErr := api.stopsReferencedBySchedulesAndStatuses(ctx, tripSchedulesAndStatuses)
-		if stopsErr != nil {
-			api.serverErrorResponse(w, r, stopsErr)
-			return
-		}
-
 		references = api.buildTripReferences(ctx, tripReferenceParams{
 			IncludeTrip:     includeTrip,
 			Trips:           result,
-			Stops:           stopsReferenced,
+			StopIDs:         stopIDsReferencedBySchedulesAndStatuses(tripSchedulesAndStatuses),
 			PreFetchedTrips: fetchedTrips,
-			StopIDMap:       stopIDsMap,
 			Situations:      situations.refs,
 		})
 	} else {
@@ -766,14 +758,14 @@ func tripsByBlockIDsRowToTrip(row gtfsdb.GetTripsByBlockIDsRow) gtfsdb.Trip {
 	}
 }
 
-func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDsMap map[string][]string) {
+func collectStopIDsFromSchedule(schedule *models.TripsSchedule, stopIDs map[string]struct{}) {
 	if schedule == nil {
 		return
 	}
 	for _, stopTime := range schedule.StopTimes {
-		_, bareID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
+		_, rawID, err := utils.ExtractAgencyIDAndCodeID(stopTime.StopID)
 		if err == nil {
-			appendUniqueStopID(stopIDsMap, bareID, stopTime.StopID)
+			stopIDs[rawID] = struct{}{}
 		}
 	}
 }
@@ -1228,9 +1220,8 @@ func locationOrDefault(locations map[string]*time.Location, agencyID string, fal
 type tripReferenceParams struct {
 	IncludeTrip     bool
 	Trips           []models.TripsForRouteListEntry
-	Stops           []gtfsdb.Stop
+	StopIDs         []string
 	PreFetchedTrips []gtfsdb.Trip
-	StopIDMap       map[string][]string
 	Situations      []situationRef
 }
 
@@ -1242,18 +1233,15 @@ func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenc
 	api.fillMissingTrips(ctx, sets)
 
 	references := models.NewEmptyReferences()
-	var routeIDsByStopID map[string][]string
-	references.Stops, routeIDsByStopID = api.stopReferences(ctx, params.Stops, params.StopIDMap)
-
-	for _, combinedRouteIDs := range routeIDsByStopID {
-		for _, combinedID := range combinedRouteIDs {
-			rawID, err := utils.ExtractCodeID(combinedID)
-			if err != nil {
-				continue
-			}
-			if _, exists := sets.routes[rawID]; !exists {
-				sets.routes[rawID] = models.Route{}
-			}
+	stops, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, params.StopIDs)
+	if err != nil {
+		logging.ForComponent(ctx, "http_server").Error("failed to build stop references", "error", err)
+	} else {
+		references.Stops = stops
+	}
+	for _, rawID := range rawRouteIDsOfStops(references.Stops) {
+		if _, exists := sets.routes[rawID]; !exists {
+			sets.routes[rawID] = models.Route{}
 		}
 	}
 

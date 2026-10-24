@@ -1627,7 +1627,7 @@ func TestTripsForRouteHandler_OutOfRangeNotEmitted(t *testing.T) {
 }
 
 func TestCollectStopIDsFromSchedule_NilSchedule(t *testing.T) {
-	stopIDsMap := map[string][]string{}
+	stopIDsMap := map[string]struct{}{}
 
 	collectStopIDsFromSchedule(nil, stopIDsMap)
 
@@ -1642,15 +1642,11 @@ func TestCollectStopIDsFromSchedule_PopulatesMap(t *testing.T) {
 			{StopID: "25_1003"},
 		},
 	}
-	stopIDsMap := map[string][]string{}
+	stopIDsMap := map[string]struct{}{}
 
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 
-	assert.Equal(t, map[string][]string{
-		"1001": {"25_1001"},
-		"1002": {"25_1002"},
-		"1003": {"25_1003"},
-	}, stopIDsMap)
+	assert.Equal(t, map[string]struct{}{"1001": {}, "1002": {}, "1003": {}}, stopIDsMap)
 }
 
 func TestCollectStopIDsFromSchedule_SkipsMalformedIDs(t *testing.T) {
@@ -1660,17 +1656,17 @@ func TestCollectStopIDsFromSchedule_SkipsMalformedIDs(t *testing.T) {
 			{StopID: "no-underscore"},
 		},
 	}
-	stopIDsMap := map[string][]string{}
+	stopIDsMap := map[string]struct{}{}
 
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 
-	assert.Equal(t, map[string][]string{"good": {"25_good"}}, stopIDsMap,
+	assert.Equal(t, map[string]struct{}{"good": {}}, stopIDsMap,
 		"malformed stop IDs must be silently skipped")
 }
 
 func TestCollectStopIDsFromSchedule_EmptyStopTimes(t *testing.T) {
 	schedule := &models.TripsSchedule{StopTimes: []models.StopTime{}}
-	stopIDsMap := map[string][]string{}
+	stopIDsMap := map[string]struct{}{}
 
 	collectStopIDsFromSchedule(schedule, stopIDsMap)
 
