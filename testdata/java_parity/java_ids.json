@@ -384,10 +384,6 @@
    "stopId=40_C"
   ]
  },
- "trips-for-location?lat=47.6002&lon=-122.33&latSpan=0.01&lonSpan=0.01&time=1792861260000": {
-  "found": true,
-  "ids": []
- },
  "block/1_R1-0-BLK04": {
   "found": true,
   "ids": [
