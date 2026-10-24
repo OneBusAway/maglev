@@ -192,9 +192,12 @@ func TestValidateAndFilterGTFSData_ForeignKeys_Filtering(t *testing.T) {
 			name: "one valid and one missing stop in stop times - filters invalid",
 			mutate: func(d *gtfs.Static) {
 				d.Trips = append(d.Trips, d.Trips[0])
-				// Give the broken trip its own fresh StopTimes slice so it doesn't mutate the valid trip
+				// Give the broken trip its own fresh StopTimes slice so it doesn't mutate the valid trip.
+				// Two stop times, so the trip reaches the stop check and isn't dropped as too short.
+				valid := d.Trips[1].StopTimes[0]
 				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{
-					{Stop: nil, StopSequence: 1},
+					valid,
+					{Stop: nil, StopSequence: 2},
 				}
 			},
 			expectedTrips: 1,
@@ -204,9 +207,11 @@ func TestValidateAndFilterGTFSData_ForeignKeys_Filtering(t *testing.T) {
 			name: "stop time with empty stop ID - filters invalid",
 			mutate: func(d *gtfs.Static) {
 				d.Trips = append(d.Trips, d.Trips[0])
-				// Give the broken trip its own fresh StopTimes slice
+				// Give the broken trip its own fresh StopTimes slice, two long so it isn't too short
+				valid := d.Trips[1].StopTimes[0]
 				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{
-					{Stop: &gtfs.Stop{Id: ""}, StopSequence: 1},
+					valid,
+					{Stop: &gtfs.Stop{Id: ""}, StopSequence: 2},
 				}
 			},
 			expectedTrips: 1,
@@ -232,7 +237,7 @@ func TestValidateAndFilterGTFSData_ForeignKeys_Filtering(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error since all trips are filtered, got nil")
 				}
-				if !strings.Contains(err.Error(), "all trips were filtered out") {
+				if !strings.Contains(err.Error(), "every trip was filtered out") {
 					t.Errorf("unexpected error message: %v", err)
 				}
 			} else {
