@@ -1090,3 +1090,62 @@ func TestKeepShiftContainingTrip(t *testing.T) {
 		})
 	}
 }
+
+// closestAndNextStops follows Java's ScheduledBlockLocationServiceImpl: the
+// next stop is the first not yet reached, and the closest is the nearer in
+// time of it and the stop before, ties going to the next stop.
+func TestScheduledBlockSnapshot_ClosestAndNextStops(t *testing.T) {
+	stops := []blockStopMetric{
+		{StopID: "first", EffectiveStopSeconds: 1000},
+		{StopID: "second", EffectiveStopSeconds: 1600},
+	}
+	tests := []struct {
+		name           string
+		currentSeconds int64
+		want           scheduledStops
+	}{
+		{"at the first stop", 1000, scheduledStops{"first", 0, "first", 0}},
+		{"nearer the stop before", 1200, scheduledStops{"first", -200, "second", 400}},
+		{"halfway goes to the next stop", 1300, scheduledStops{"second", 300, "second", 300}},
+		{"nearer the next stop", 1500, scheduledStops{"second", 100, "second", 100}},
+		{"before the block starts", 900, scheduledStops{"first", 100, "first", 100}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := buildSnapshotFromStops(stops, nil, time.Unix(0, 0).UTC().Add(time.Duration(tt.currentSeconds)*time.Second), time.Unix(0, 0).UTC())
+			got, ok := snap.closestAndNextStops()
+			require.True(t, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	// A stop with a dwell holds the bus from arrival to departure, and the run
+	// to the next stop is measured from the departure.
+	dwell := []blockStopMetric{
+		{StopID: "first", EffectiveStopSeconds: 1000, DepartureSeconds: 1300},
+		{StopID: "second", EffectiveStopSeconds: 1600},
+	}
+	for _, tt := range []struct {
+		name           string
+		currentSeconds int64
+		want           scheduledStops
+	}{
+		{"during the dwell", 1200, scheduledStops{"first", 0, "first", 0}},
+		{"just after departing", 1400, scheduledStops{"first", -100, "second", 200}},
+		{"halfway from the departure", 1450, scheduledStops{"second", 150, "second", 150}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := buildSnapshotFromStops(dwell, nil, time.Unix(tt.currentSeconds, 0).UTC(), time.Unix(0, 0).UTC())
+			got, ok := snap.closestAndNextStops()
+			require.True(t, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	outside := buildSnapshotFromStops(stops, nil, time.Unix(2000, 0).UTC(), time.Unix(0, 0).UTC())
+	_, ok := outside.closestAndNextStops()
+	assert.False(t, ok, "past the block's last stop")
+	var none *scheduledBlockSnapshot
+	_, ok = none.closestAndNextStops()
+	assert.False(t, ok)
+}

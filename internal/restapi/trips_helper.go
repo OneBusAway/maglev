@@ -168,7 +168,26 @@ func (api *RestAPI) BuildTripStatus(
 			slog.String("error", err.Error()))
 	}
 
-	stopAgencies, err := api.loadStopAgencyIDs(ctx, stopIDsForStopTimes(stopTimes))
+	// Snap is built from BLOCK trip data (loadBlockTripData + emitBlockStops
+	// with per-block-trip haversine fallback), so it does not require the
+	// target trip's own shape. Computing it outside the target-shape gate
+	// means shapeless feeds still get ActiveTripID, ScheduledDistanceAlong
+	// Trip, and — most importantly — the snap that callers reuse for
+	// metricsForStop, which drives numberOfStopsAway / distanceFromStop.
+	//
+	// Apply the same schedule-deviation shift the live-vehicle branch
+	// below uses. Trip updates without vehicle positions are common;
+	// without this shift the response would self-contradict — publishing
+	// scheduleDeviation while placing the bus at its on-schedule position.
+	// When hasRealtimeTripUpdate is false, scheduleDeviation is 0 and the
+	// shift is a no-op.
+	var snap *scheduledBlockSnapshot
+	if len(stopTimes) > 0 {
+		effectiveTime := currentTime.Add(-time.Duration(scheduleDeviation) * time.Second)
+		snap = api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate)
+	}
+
+	stopAgencies, err := api.loadStopAgencyIDs(ctx, append(stopIDsForStopTimes(stopTimes), snap.stopIDs()...))
 	if err != nil {
 		return status, extras, err
 	}
@@ -205,6 +224,12 @@ func (api *RestAPI) BuildTripStatus(
 					stopTimesPtrs, currentTime, serviceDate, scheduleDeviation,
 				)
 			}
+		} else if blockStops, ok := snap.closestAndNextStops(); ok {
+			// Without a vehicle position, Java reads both stops off the block's
+			// scheduled location, shifted by any trip-update deviation, so a later
+			// trip in the block reports where the active trip is.
+			closestStopID, closestOffset = blockStops.closestStopID, blockStops.closestOffset
+			nextStopID, nextOffset = blockStops.nextStopID, blockStops.nextOffset
 		} else {
 			stopDelays := api.GetStopDelaysFromTripUpdates(dbTripID, stopTimesPtrs)
 			closestStopID, closestOffset = findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimesPtrs, stopDelays)
@@ -231,25 +256,6 @@ func (api *RestAPI) BuildTripStatus(
 			slog.String("trip_id", dbTripID),
 			slog.String("error", shapeErr.Error()))
 	}
-	// Snap is built from BLOCK trip data (loadBlockTripData + emitBlockStops
-	// with per-block-trip haversine fallback), so it does not require the
-	// target trip's own shape. Computing it outside the target-shape gate
-	// means shapeless feeds still get ActiveTripID, ScheduledDistanceAlong
-	// Trip, and — most importantly — the snap that callers reuse for
-	// metricsForStop, which drives numberOfStopsAway / distanceFromStop.
-	//
-	// Apply the same schedule-deviation shift the live-vehicle branch
-	// below uses. Trip updates without vehicle positions are common;
-	// without this shift the response would self-contradict — publishing
-	// scheduleDeviation while placing the bus at its on-schedule position.
-	// When hasRealtimeTripUpdate is false, scheduleDeviation is 0 and the
-	// shift is a no-op.
-	var snap *scheduledBlockSnapshot
-	if len(stopTimes) > 0 {
-		effectiveTime := currentTime.Add(-time.Duration(scheduleDeviation) * time.Second)
-		snap = api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate)
-	}
-
 	// Snap-derived status fields — independent of target's shape.
 	//
 	// Snapshot.InRange guard mirrors Java's null-BlockLocation semantics
