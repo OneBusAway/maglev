@@ -434,10 +434,17 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	if err := feedRows.err; err != nil {
 		return false, fmt.Errorf("unable to read stop times: %w", err)
 	}
+	removedTrips, err := removeTrips(ctx, qtx, feedRows.removedTrips)
+	if err != nil {
+		return false, err
+	}
 
 	// Collect frequency entries from all trips
 	var allFrequencyParams []CreateFrequencyParams
 	for _, t := range data.Static.Trips {
+		if removedTrips[t.ID] {
+			continue
+		}
 		for _, f := range t.Frequencies {
 			params := CreateFrequencyParams{
 				TripID:      t.ID,

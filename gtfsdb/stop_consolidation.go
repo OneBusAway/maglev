@@ -93,3 +93,16 @@ func storeStopConsolidations(ctx context.Context, qtx *Queries, stops []gtfs.Sto
 	}
 	return nil
 }
+
+// removeTrips deletes trips stop consolidation left too short to keep, and
+// returns their IDs as a set. They have no stop times by then.
+func removeTrips(ctx context.Context, qtx *Queries, tripIDs []string) (map[string]bool, error) {
+	removed := make(map[string]bool, len(tripIDs))
+	for _, tripID := range tripIDs {
+		if err := qtx.DeleteTrip(ctx, tripID); err != nil {
+			return nil, fmt.Errorf("unable to remove trip %s: %w", tripID, err)
+		}
+		removed[tripID] = true
+	}
+	return removed, nil
+}

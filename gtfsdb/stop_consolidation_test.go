@@ -12,7 +12,9 @@ import (
 
 // consolidationFeed has a canonical stop, an absorbed stop whose stop times
 // move to it, an absorbed stop whose stop times are dropped, and children of
-// both absorbed stops.
+// both absorbed stops. Trip t1 keeps two of its three stop times, short and
+// only_dropped are left with fewer than two, and one_stop keeps its only
+// stop time, which moves.
 func consolidationFeed(t *testing.T) *GtfsData {
 	t.Helper()
 	feed := zipFiles(t, map[string]string{
@@ -26,12 +28,16 @@ func consolidationFeed(t *testing.T) *GtfsData {
 			"mid,Mid,47.65,-122.35,0,\n" +
 			"child_of_moved,Child,47.60002,-122.3,0,moved\n" +
 			"child_of_dropped,Child,47.70001,-122.4,0,dropped\n",
-		"trips.txt": "route_id,service_id,trip_id,block_id\nr,s,t1,b\nr,s,only_dropped,b\n",
+		"trips.txt":       "route_id,service_id,trip_id,block_id\nr,s,t1,b\nr,s,short,b\nr,s,only_dropped,b\nr,s,one_stop,c\n",
+		"frequencies.txt": "trip_id,start_time,end_time,headway_secs\nshort,10:00:00,11:00:00,600\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"t1,08:00:00,08:00:00,moved,1\n" +
 			"t1,08:10:00,08:10:00,mid,2\n" +
 			"t1,08:20:00,08:20:00,dropped,3\n" +
-			"only_dropped,09:00:00,09:00:00,dropped,1\n",
+			"short,10:00:00,10:00:00,mid,1\n" +
+			"short,10:10:00,10:10:00,dropped,2\n" +
+			"only_dropped,09:00:00,09:00:00,dropped,1\n" +
+			"one_stop,11:00:00,11:00:00,moved,1\n",
 	})
 	data, err := ParseGtfsStream(bytes.NewReader(feed), int64(len(feed)), strings.Repeat("a", 64), "source")
 	require.NoError(t, err)
@@ -60,8 +66,16 @@ func TestStoreGtfsData_ConsolidatesStops(t *testing.T) {
 
 	t.Run("stop times move to the canonical stop or are dropped", func(t *testing.T) {
 		assert.Equal(t,
-			[]string{"t1 1 canonical", "t1 2 mid"},
+			[]string{"one_stop 1 canonical", "t1 1 canonical", "t1 2 mid"},
 			queryStrings(t, client, `SELECT trip_id || ' ' || stop_sequence || ' ' || stop_id FROM stop_times ORDER BY trip_id, stop_sequence`))
+	})
+
+	// Java's TripEntriesFactory drops a trip left with fewer than two stop
+	// times; a one-stop trip consolidation didn't shorten stays, as in
+	// any maglev import.
+	t.Run("trips consolidation leaves with fewer than two stop times are removed", func(t *testing.T) {
+		assert.Equal(t, []string{"one_stop", "t1"}, queryStrings(t, client, `SELECT id FROM trips ORDER BY id`))
+		assert.Empty(t, queryStrings(t, client, `SELECT trip_id FROM frequencies`))
 	})
 
 	t.Run("children follow their parent", func(t *testing.T) {
@@ -90,10 +104,12 @@ func TestFeedRows_TripEndsUseConsolidatedStops(t *testing.T) {
 	}
 	require.NoError(t, rows.err)
 
-	require.Len(t, rows.tripEnds, 1, "a trip whose stop times are all dropped has no ends")
+	require.Len(t, rows.tripEnds, 2, "removed trips have no ends")
 	assert.Equal(t, "t1", rows.tripEnds[0].tripID)
 	assert.Equal(t, "canonical", rows.tripEnds[0].firstStopID)
 	assert.Equal(t, "mid", rows.tripEnds[0].lastStopID)
+	assert.Equal(t, "one_stop", rows.tripEnds[1].tripID)
+	assert.ElementsMatch(t, []string{"short", "only_dropped"}, rows.removedTrips)
 }
 
 func TestStoreGtfsData_ReimportClearsStopConsolidations(t *testing.T) {

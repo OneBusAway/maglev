@@ -1562,3 +1562,8 @@ ORDER BY
 
 -- name: ClearStopConsolidations :exec
 DELETE FROM stop_consolidations;
+
+-- name: DeleteTrip :exec
+DELETE FROM trips
+WHERE
+    id = ?;
