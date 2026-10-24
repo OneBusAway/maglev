@@ -1,0 +1,468 @@
+{
+ "stop-ids-for-agency/40": {
+  "found": true,
+  "ids": [
+   "list=40_A",
+   "list=40_B",
+   "list=40_B2",
+   "list=40_C",
+   "list=40_STA",
+   "list=40_U"
+  ]
+ },
+ "stop-ids-for-agency/1": {
+  "found": true,
+  "ids": []
+ },
+ "stops-for-agency/40": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_A",
+   "id=40_B",
+   "id=40_B2",
+   "id=40_C",
+   "id=40_R40",
+   "id=40_STA",
+   "id=40_U",
+   "parent=40_STA",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40"
+  ]
+ },
+ "stops-for-agency/1": {
+  "found": true,
+  "ids": []
+ },
+ "stop/40_A": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_A",
+   "id=40_R40",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40"
+  ]
+ },
+ "stop/1_A": {
+  "found": false,
+  "ids": []
+ },
+ "stop/40_B": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_B",
+   "routeIds=1_R1",
+   "staticRouteIds=1_R1"
+  ]
+ },
+ "stop/1_B": {
+  "found": false,
+  "ids": []
+ },
+ "stop/40_U": {
+  "found": true,
+  "ids": [
+   "id=40_U"
+  ]
+ },
+ "stop/1_U": {
+  "found": false,
+  "ids": []
+ },
+ "stop/40_STA": {
+  "found": true,
+  "ids": [
+   "id=40_STA"
+  ]
+ },
+ "stop/1_STA": {
+  "found": false,
+  "ids": []
+ },
+ "stop/40_B2": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_B2",
+   "id=40_STA",
+   "parent=40_STA",
+   "routeIds=1_R1",
+   "staticRouteIds=1_R1"
+  ]
+ },
+ "stop/1_B2": {
+  "found": false,
+  "ids": []
+ },
+ "stops-for-route/40_R40": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_A",
+   "id=40_C",
+   "id=40_R40",
+   "routeId=40_R40",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40",
+   "stopIds=40_A",
+   "stopIds=40_C"
+  ]
+ },
+ "stops-for-route/1_R1": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_A",
+   "id=40_B",
+   "id=40_B2",
+   "id=40_R40",
+   "id=40_STA",
+   "parent=40_STA",
+   "routeId=1_R1",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40",
+   "stopIds=40_A",
+   "stopIds=40_B",
+   "stopIds=40_B2"
+  ]
+ },
+ "schedule-for-stop/40_A?date=2026-10-24": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_A",
+   "id=40_R40",
+   "routeId=1_R1",
+   "routeId=40_R40",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "serviceId=40_ALL",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40",
+   "stopId=40_A"
+  ]
+ },
+ "schedule-for-stop/1_A?date=2026-10-24": {
+  "found": false,
+  "ids": []
+ },
+ "schedule-for-stop/40_B?date=2026-10-24": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_B",
+   "routeId=1_R1",
+   "routeIds=1_R1",
+   "serviceId=40_ALL",
+   "staticRouteIds=1_R1",
+   "stopId=40_B"
+  ]
+ },
+ "schedule-for-stop/1_B?date=2026-10-24": {
+  "found": false,
+  "ids": []
+ },
+ "arrivals-and-departures-for-stop/40_A?time=1792861260000": {
+  "found": true,
+  "ids": [
+   "closestStop=40_A",
+   "closestStop=40_B2",
+   "closestStop=40_C",
+   "id=1_R1",
+   "id=40_A",
+   "id=40_B",
+   "id=40_B2",
+   "id=40_C",
+   "id=40_R40",
+   "id=40_STA",
+   "id=40_U",
+   "nearbyStopIds=40_B",
+   "nearbyStopIds=40_B2",
+   "nearbyStopIds=40_C",
+   "nearbyStopIds=40_STA",
+   "nearbyStopIds=40_U",
+   "nextStop=40_A",
+   "nextStop=40_B",
+   "nextStop=40_C",
+   "parent=40_STA",
+   "routeId=1_R1",
+   "routeId=40_R40",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "serviceId=40_ALL",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40",
+   "stopId=40_A"
+  ]
+ },
+ "arrivals-and-departures-for-stop/1_A?time=1792861260000": {
+  "found": false,
+  "ids": []
+ },
+ "arrivals-and-departures-for-stop/40_B?time=1792861260000": {
+  "found": true,
+  "ids": [
+   "closestStop=40_A",
+   "closestStop=40_B2",
+   "id=1_R1",
+   "id=40_A",
+   "id=40_B",
+   "id=40_B2",
+   "id=40_C",
+   "id=40_R40",
+   "id=40_STA",
+   "id=40_U",
+   "nearbyStopIds=40_A",
+   "nearbyStopIds=40_B2",
+   "nearbyStopIds=40_C",
+   "nearbyStopIds=40_STA",
+   "nearbyStopIds=40_U",
+   "nextStop=40_B",
+   "parent=40_STA",
+   "routeId=1_R1",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "serviceId=40_ALL",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40",
+   "stopId=40_B"
+  ]
+ },
+ "arrivals-and-departures-for-stop/40_U?time=1792861260000": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_A",
+   "id=40_B",
+   "id=40_B2",
+   "id=40_C",
+   "id=40_R40",
+   "id=40_STA",
+   "id=40_U",
+   "nearbyStopIds=40_A",
+   "nearbyStopIds=40_B",
+   "nearbyStopIds=40_B2",
+   "nearbyStopIds=40_C",
+   "nearbyStopIds=40_STA",
+   "parent=40_STA",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40",
+   "stopId=40_U"
+  ]
+ },
+ "arrival-and-departure-for-stop/40_A?tripId=1_R1-0-08&serviceDate=1792825200000&time=1792861260000": {
+  "found": true,
+  "ids": [
+   "closestStop=40_A",
+   "id=1_R1",
+   "id=40_A",
+   "id=40_B",
+   "id=40_R40",
+   "nextStop=40_B",
+   "routeId=1_R1",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "serviceId=40_ALL",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40",
+   "stopId=40_A"
+  ]
+ },
+ "arrival-and-departure-for-stop/1_A?tripId=1_R1-0-08&serviceDate=1792825200000&time=1792861260000": {
+  "found": false,
+  "ids": []
+ },
+ "stops-for-location?lat=47.6002&lon=-122.33&radius=300": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_A",
+   "id=40_B",
+   "id=40_B2",
+   "id=40_C",
+   "id=40_R40",
+   "id=40_STA",
+   "parent=40_STA",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40"
+  ]
+ },
+ "stops-for-location?lat=47.6002&lon=-122.33&radius=300&query=999": {
+  "found": true,
+  "ids": [
+   "id=40_U"
+  ]
+ },
+ "stops-for-location?lat=47.6002&lon=-122.33&radius=300&query=250": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_B2",
+   "id=40_STA",
+   "parent=40_STA",
+   "routeIds=1_R1",
+   "staticRouteIds=1_R1"
+  ]
+ },
+ "routes-for-location?lat=47.6002&lon=-122.33&radius=300": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_R40"
+  ]
+ },
+ "trip/1_R1-0-08": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "routeId=1_R1",
+   "serviceId=40_ALL"
+  ]
+ },
+ "trip-details/1_R1-0-08?serviceDate=1792825200000&time=1792861260000": {
+  "found": true,
+  "ids": [
+   "closestStop=40_A",
+   "id=1_R1",
+   "id=40_A",
+   "id=40_B",
+   "id=40_B2",
+   "id=40_R40",
+   "id=40_STA",
+   "nextStop=40_B",
+   "parent=40_STA",
+   "routeId=1_R1",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "serviceId=40_ALL",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40",
+   "stopId=40_A",
+   "stopId=40_B",
+   "stopId=40_B2"
+  ]
+ },
+ "trips-for-route/1_R1?time=1792861260000&includeSchedule=true": {
+  "found": true,
+  "ids": [
+   "closestStop=40_A",
+   "closestStop=40_B2",
+   "id=1_R1",
+   "id=40_A",
+   "id=40_B",
+   "id=40_B2",
+   "id=40_C",
+   "id=40_R40",
+   "id=40_STA",
+   "nextStop=40_B",
+   "nextStop=40_C",
+   "parent=40_STA",
+   "routeId=1_R1",
+   "routeId=40_R40",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "serviceId=40_ALL",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40",
+   "stopId=40_A",
+   "stopId=40_B",
+   "stopId=40_B2",
+   "stopId=40_C"
+  ]
+ },
+ "trips-for-location?lat=47.6002&lon=-122.33&latSpan=0.01&lonSpan=0.01&time=1792861260000": {
+  "found": true,
+  "ids": []
+ },
+ "block/1_R1-0-BLK04": {
+  "found": true,
+  "ids": [
+   "activeServiceIds=40_ALL",
+   "id=1_R1",
+   "id=40_A",
+   "id=40_B",
+   "id=40_B2",
+   "id=40_R40",
+   "id=40_STA",
+   "parent=40_STA",
+   "routeId=1_R1",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "serviceId=40_ALL",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40",
+   "stopId=40_A",
+   "stopId=40_B",
+   "stopId=40_B2"
+  ]
+ },
+ "block/40_R40-0-BLK04": {
+  "found": true,
+  "ids": [
+   "activeServiceIds=40_ALL",
+   "id=1_R1",
+   "id=40_A",
+   "id=40_C",
+   "id=40_R40",
+   "routeId=40_R40",
+   "routeIds=1_R1",
+   "routeIds=40_R40",
+   "serviceId=40_ALL",
+   "staticRouteIds=1_R1",
+   "staticRouteIds=40_R40",
+   "stopId=40_A",
+   "stopId=40_C"
+  ]
+ },
+ "schedule-for-route/1_R1?date=2026-10-24": {
+  "found": true,
+  "ids": [
+   "id=1_R1",
+   "id=40_A",
+   "id=40_B",
+   "id=40_B2",
+   "id=40_STA",
+   "parent=40_STA",
+   "routeId=1_R1",
+   "routeIds=1_R1",
+   "serviceId=40_ALL",
+   "serviceIds=40_ALL",
+   "stopId=40_A",
+   "stopId=40_B",
+   "stopId=40_B2",
+   "stopIds=40_A",
+   "stopIds=40_B",
+   "stopIds=40_B2"
+  ]
+ },
+ "schedule-for-route/40_R40?date=2026-10-24": {
+  "found": true,
+  "ids": [
+   "id=40_A",
+   "id=40_C",
+   "id=40_R40",
+   "routeId=40_R40",
+   "routeIds=40_R40",
+   "serviceId=40_ALL",
+   "serviceIds=40_ALL",
+   "stopId=40_A",
+   "stopId=40_C",
+   "stopIds=40_A",
+   "stopIds=40_C"
+  ]
+ }
+}

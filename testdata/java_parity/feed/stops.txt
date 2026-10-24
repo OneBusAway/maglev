@@ -1,0 +1,7 @@
+stop_id,stop_code,stop_name,stop_lat,stop_lon,location_type,parent_station
+C,300,Stop C,47.600000,-122.330000,,
+A,100,Stop A,47.600200,-122.330000,,
+B,200,Stop B,47.600400,-122.330000,,
+STA,,Station,47.600600,-122.330000,1,
+B2,250,Stop B2,47.600600,-122.330000,,STA
+U,999,Stop U,47.600800,-122.330000,,
