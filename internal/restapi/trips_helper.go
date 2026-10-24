@@ -534,6 +534,11 @@ func (api *RestAPI) applyShapeToStatus(
 	stopTimes []gtfsdb.StopTime,
 ) {
 	if len(shapeRows) <= 1 {
+		// A trip with no shape still gets the block's scheduled position,
+		// between stops when no block trip has a shape either.
+		if !vehicleHasCoordinates(input.vehicle) {
+			applySnapshotPosition(status, snap)
+		}
 		return
 	}
 	shapePoints := shapeRowsToPoints(shapeRows)
@@ -580,14 +585,10 @@ func applyVehiclePositionOnShape(status *models.TripStatus, vehicle *gtfs.Vehicl
 	}
 }
 
-// applySnapshotPosition places a bus with no live vehicle at the interpolated
-// position on the block's currently-active trip.
+// applySnapshotPosition places a bus with no live vehicle at the block's
+// scheduled position: along the active trip's shape, else between stops.
 func applySnapshotPosition(status *models.TripStatus, snap *scheduledBlockSnapshot) {
-	position, orientation := positionAndOrientationAtDistance(
-		snap.ActiveTripShape,
-		snap.ActiveTripCumulativeDistances,
-		snap.ActiveTripScheduledDistance,
-	)
+	position, orientation := snap.scheduledPosition()
 	if position == nil {
 		return
 	}
