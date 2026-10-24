@@ -104,7 +104,7 @@ func (api *RestAPI) buildParentStationReferences(ctx context.Context, agencyID s
 		parentRawIDs = append(parentRawIDs, rawID)
 	}
 
-	parentRefs, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, parentRawIDs)
+	parentRefs, _, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, parentRawIDs)
 	if err != nil {
 		return nil, err
 	}

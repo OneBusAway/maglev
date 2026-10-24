@@ -302,7 +302,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 		}
 
-		stops, stopRoutes, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, id, stopIDs)
+		stops, stopRoutes, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, stopIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return

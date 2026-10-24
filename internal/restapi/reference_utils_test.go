@@ -15,6 +15,7 @@ import (
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -106,9 +107,8 @@ func firstRabaStopIDs(t *testing.T, api *RestAPI, limit int) []string {
 
 func TestBuildStopReferencesAndRouteIDsForStops_Empty(t *testing.T) {
 	api := createTestApi(t)
-	agency := mustGetAgencies(t, api)[0]
 
-	stops, routeMap, err := BuildStopReferencesAndRouteIDsForStops(api, context.Background(), agency.ID, []string{})
+	stops, routeMap, err := BuildStopReferencesAndRouteIDsForStops(api, context.Background(), []string{})
 	require.NoError(t, err)
 	assert.Empty(t, stops)
 	assert.Empty(t, routeMap)
@@ -118,21 +118,20 @@ func TestBuildStopReferencesAndRouteIDsForStops_Empty(t *testing.T) {
 
 func TestBuildStopReferencesAndRouteIDsForStops(t *testing.T) {
 	api := createTestApi(t)
-	agency := mustGetAgencies(t, api)[0]
 	stopIDs := firstRabaStopIDs(t, api, 3)
 
-	stops, routeMap, err := BuildStopReferencesAndRouteIDsForStops(api, context.Background(), agency.ID, stopIDs)
+	stops, routeMap, err := BuildStopReferencesAndRouteIDsForStops(api, context.Background(), stopIDs)
 	require.NoError(t, err)
 	require.Len(t, stops, len(stopIDs), "should return one model per unique stop ID")
 
 	for _, stop := range stops {
 		// IDs are agency-combined.
-		assert.True(t, strings.HasPrefix(stop.ID, agency.ID+"_"), "stop ID %q should be agency-combined", stop.ID)
+		assert.True(t, strings.HasPrefix(stop.ID, testdata.Raba.ID+"_"), "stop ID %q should be agency-combined", stop.ID)
 
 		// RouteIDs and StaticRouteIDs mirror each other and are agency-combined.
 		assert.Equal(t, stop.RouteIDs, stop.StaticRouteIDs)
 		for _, rid := range stop.RouteIDs {
-			assert.True(t, strings.HasPrefix(rid, agency.ID+"_"), "route ID %q should be agency-combined", rid)
+			assert.True(t, strings.HasPrefix(rid, testdata.Raba.ID+"_"), "route ID %q should be agency-combined", rid)
 		}
 
 		// Route IDs are sorted in natural order (no duplicates, stable ordering).
@@ -254,14 +253,13 @@ func TestStopReferences_DirectionAndCodeMatchBuildStopModel(t *testing.T) {
 
 func TestBuildStopReferencesAndRouteIDsForStops_DeduplicatesStopIDs(t *testing.T) {
 	api := createTestApi(t)
-	agency := mustGetAgencies(t, api)[0]
 	stopIDs := firstRabaStopIDs(t, api, 2)
 
 	// Pass duplicates; the result should contain each stop only once.
 	withDupes := append([]string{}, stopIDs...)
 	withDupes = append(withDupes, stopIDs...)
 
-	stops, _, err := BuildStopReferencesAndRouteIDsForStops(api, context.Background(), agency.ID, withDupes)
+	stops, _, err := BuildStopReferencesAndRouteIDsForStops(api, context.Background(), withDupes)
 	require.NoError(t, err)
 	assert.Len(t, stops, len(stopIDs), "duplicate stop IDs should be collapsed")
 }

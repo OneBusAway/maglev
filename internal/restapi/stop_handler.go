@@ -106,7 +106,7 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if nulls.StringOrEmpty(stop.ParentStation) != "" {
-			parentRefs, parentRoutesMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, []string{stop.ParentStation.String})
+			parentRefs, parentRoutesMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, []string{stop.ParentStation.String})
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return
