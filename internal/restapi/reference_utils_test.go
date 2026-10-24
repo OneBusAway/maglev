@@ -320,7 +320,8 @@ func TestBuildRouteReferences_MultiAgencyScopingAndCollision(t *testing.T) {
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
 			"r100,svc1,t1,Headsign,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			"t1,08:00:00,08:00:00,s1,1\n",
+			"t1,08:00:00,08:00:00,s1,1\n" +
+			"t1,08:05:00,08:05:00,s2,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "multi-agency-routes.zip", multiAgencyFiles)
@@ -422,7 +423,9 @@ func TestAppendTripRouteReferences(t *testing.T) {
 			"r300,svc1,t2,Headsign,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"t1,08:00:00,08:00:00,s1,1\n" +
-			"t2,09:00:00,09:00:00,s1,1\n",
+			"t1,08:05:00,08:05:00,s1,2\n" +
+			"t2,09:00:00,09:00:00,s1,1\n" +
+			"t2,09:05:00,09:05:00,s1,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "trip-route-references.zip", files)
@@ -484,7 +487,9 @@ func TestBuildReferencedTrips_CrossAgencyRouteID(t *testing.T) {
 			"r300,svc1,t2,Headsign,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"t1,08:00:00,08:00:00,s1,1\n" +
-			"t2,09:00:00,09:00:00,s1,1\n",
+			"t1,08:05:00,08:05:00,s1,2\n" +
+			"t2,09:00:00,09:00:00,s1,1\n" +
+			"t2,09:05:00,09:05:00,s1,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "cross-agency-referenced-trips.zip", files)

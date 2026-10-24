@@ -12,9 +12,9 @@ import (
 
 // consolidationFeed has a canonical stop, an absorbed stop whose stop times
 // move to it, an absorbed stop whose stop times are dropped, and children of
-// both absorbed stops. Trip t1 keeps two of its three stop times, short and
-// only_dropped are left with fewer than two, and one_stop keeps its only
-// stop time, which moves.
+// both absorbed stops. Trip t1 keeps two of its three stop times, short is
+// left with one, and only_dropped and one_stop have only one stop time in the
+// feed.
 func consolidationFeed(t *testing.T) *GtfsData {
 	t.Helper()
 	feed := zipFiles(t, map[string]string{
@@ -66,15 +66,14 @@ func TestStoreGtfsData_ConsolidatesStops(t *testing.T) {
 
 	t.Run("stop times move to the canonical stop or are dropped", func(t *testing.T) {
 		assert.Equal(t,
-			[]string{"one_stop 1 canonical", "t1 1 canonical", "t1 2 mid"},
+			[]string{"t1 1 canonical", "t1 2 mid"},
 			queryStrings(t, client, `SELECT trip_id || ' ' || stop_sequence || ' ' || stop_id FROM stop_times ORDER BY trip_id, stop_sequence`))
 	})
 
-	// Java's TripEntriesFactory drops a trip left with fewer than two stop
-	// times; a one-stop trip consolidation didn't shorten stays, as in
-	// any maglev import.
-	t.Run("trips consolidation leaves with fewer than two stop times are removed", func(t *testing.T) {
-		assert.Equal(t, []string{"one_stop", "t1"}, queryStrings(t, client, `SELECT id FROM trips ORDER BY id`))
+	// Java's TripEntriesFactory drops a trip with fewer than two stop times,
+	// whether the feed or stop consolidation left it short.
+	t.Run("trips with fewer than two stop times are removed", func(t *testing.T) {
+		assert.Equal(t, []string{"t1"}, queryStrings(t, client, `SELECT id FROM trips ORDER BY id`))
 		assert.Empty(t, queryStrings(t, client, `SELECT trip_id FROM frequencies`))
 	})
 
@@ -104,12 +103,11 @@ func TestFeedRows_TripEndsUseConsolidatedStops(t *testing.T) {
 	}
 	require.NoError(t, rows.err)
 
-	require.Len(t, rows.tripEnds, 2, "removed trips have no ends")
+	require.Len(t, rows.tripEnds, 1, "removed trips have no ends")
 	assert.Equal(t, "t1", rows.tripEnds[0].tripID)
 	assert.Equal(t, "canonical", rows.tripEnds[0].firstStopID)
 	assert.Equal(t, "mid", rows.tripEnds[0].lastStopID)
-	assert.Equal(t, "one_stop", rows.tripEnds[1].tripID)
-	assert.ElementsMatch(t, []string{"short", "only_dropped"}, rows.removedTrips)
+	assert.Equal(t, []string{"short"}, rows.removedTrips, "validation already dropped the one-stop trips")
 }
 
 func TestStoreGtfsData_ReimportClearsStopConsolidations(t *testing.T) {
