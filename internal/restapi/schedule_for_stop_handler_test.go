@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -796,14 +797,15 @@ func TestScheduleForStopHandlerDirectionPartitioning(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	agencies := mustGetAgencies(t, api)
-	stops := mustGetStops(t, api)
+	// Other tests leave fixture stops of their own agencies in the shared database.
+	stopCodes, err := api.GtfsManager.GtfsDB.Queries.GetStopIDsForAgency(context.Background(), testdata.Raba.ID)
+	assert.NoError(t, err)
 	require := assert.New(t)
 
 	t.Run("Validates direction partitioning and alphabetical sorting by headsign", func(t *testing.T) {
 		// Iterate through all stops on active test date 2025-06-12
-		for _, stop := range stops {
-			stopID := utils.FormCombinedID(agencies[0].ID, stop.ID)
+		for _, stopCode := range stopCodes {
+			stopID := utils.FormCombinedID(testdata.Raba.ID, stopCode)
 			endpoint := "/api/where/schedule-for-stop/" + stopID + ".json?key=org.onebusaway.iphone&date=2025-06-12"
 			resp, model := serveApiAndRetrieveEndpoint(t, api, endpoint)
 			require.Equal(http.StatusOK, resp.StatusCode)

@@ -3628,6 +3628,24 @@ func (q *Queries) GetStop(ctx context.Context, id string) (Stop, error) {
 	return i, err
 }
 
+const getStopAgencyID = `-- name: GetStopAgencyID :one
+SELECT
+    agency_id
+FROM
+    stop_agencies
+WHERE
+    stop_id = ?
+`
+
+// The agency in the stop's public ID. Read a stop's agency here, never from the
+// routes serving it; see stop_agencies in schema.sql.
+func (q *Queries) GetStopAgencyID(ctx context.Context, stopID string) (string, error) {
+	row := q.queryRow(ctx, q.getStopAgencyIDStmt, getStopAgencyID, stopID)
+	var agency_id string
+	err := row.Scan(&agency_id)
+	return agency_id, err
+}
+
 const getStopBoundsPerAgency = `-- name: GetStopBoundsPerAgency :many
 SELECT
     r.agency_id,

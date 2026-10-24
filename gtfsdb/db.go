@@ -288,6 +288,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getStopStmt, err = db.PrepareContext(ctx, getStop); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStop: %w", err)
 	}
+	if q.getStopAgencyIDStmt, err = db.PrepareContext(ctx, getStopAgencyID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetStopAgencyID: %w", err)
+	}
 	if q.getStopBoundsPerAgencyStmt, err = db.PrepareContext(ctx, getStopBoundsPerAgency); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopBoundsPerAgency: %w", err)
 	}
@@ -847,6 +850,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getStopStmt: %w", cerr)
 		}
 	}
+	if q.getStopAgencyIDStmt != nil {
+		if cerr := q.getStopAgencyIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getStopAgencyIDStmt: %w", cerr)
+		}
+	}
 	if q.getStopBoundsPerAgencyStmt != nil {
 		if cerr := q.getStopBoundsPerAgencyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getStopBoundsPerAgencyStmt: %w", cerr)
@@ -1164,6 +1172,7 @@ type Queries struct {
 	getShapePointsWithDistanceStmt            *sql.Stmt
 	getShapesGroupedByTripHeadSignStmt        *sql.Stmt
 	getStopStmt                               *sql.Stmt
+	getStopAgencyIDStmt                       *sql.Stmt
 	getStopBoundsPerAgencyStmt                *sql.Stmt
 	getStopIDsForAgencyStmt                   *sql.Stmt
 	getStopIDsForRouteStmt                    *sql.Stmt
@@ -1296,6 +1305,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getShapePointsWithDistanceStmt:            q.getShapePointsWithDistanceStmt,
 		getShapesGroupedByTripHeadSignStmt:        q.getShapesGroupedByTripHeadSignStmt,
 		getStopStmt:                               q.getStopStmt,
+		getStopAgencyIDStmt:                       q.getStopAgencyIDStmt,
 		getStopBoundsPerAgencyStmt:                q.getStopBoundsPerAgencyStmt,
 		getStopIDsForAgencyStmt:                   q.getStopIDsForAgencyStmt,
 		getStopIDsForRouteStmt:                    q.getStopIDsForRouteStmt,

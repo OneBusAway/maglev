@@ -41,11 +41,18 @@ func TestEntityHandlers_AgencyPrefixMustOwnEntity(t *testing.T) {
 	entities := []struct {
 		endpoint string
 		entityID string
+		query    string
 	}{
-		{"trip", "own-trip"},
-		{"route", "own-route"},
-		{"shape", "own-shape"},
-		{"block", "own-block"},
+		{"trip", "own-trip", ""},
+		{"route", "own-route", ""},
+		{"shape", "own-shape", ""},
+		{"block", "own-block", ""},
+		// Java OneBusAway gives each stop one ID, under its feed's first agency,
+		// even when another agency's routes serve it.
+		{"stop", "stop-1", ""},
+		{"schedule-for-stop", "stop-1", ""},
+		{"arrivals-and-departures-for-stop", "stop-1", ""},
+		{"arrival-and-departure-for-stop", "stop-1", "&tripId=own_own-trip&serviceDate=1735689600000"},
 	}
 	prefixes := []struct {
 		agencyID   string
@@ -58,7 +65,7 @@ func TestEntityHandlers_AgencyPrefixMustOwnEntity(t *testing.T) {
 
 	for _, entity := range entities {
 		for _, prefix := range prefixes {
-			path := "/api/where/" + entity.endpoint + "/" + prefix.agencyID + "_" + entity.entityID + ".json?key=TEST"
+			path := "/api/where/" + entity.endpoint + "/" + prefix.agencyID + "_" + entity.entityID + ".json?key=TEST" + entity.query
 			t.Run(entity.endpoint+"/"+prefix.agencyID, func(t *testing.T) {
 				resp, model := serveApiAndRetrieveEndpoint(t, api, path)
 				assert.Equal(t, prefix.wantStatus, resp.StatusCode)

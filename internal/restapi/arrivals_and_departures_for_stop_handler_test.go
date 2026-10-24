@@ -540,6 +540,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 		Lat: 47.6062, Lon: -122.3321,
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{stopID: agencyA})
 	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
 		ID: agencyB, Name: "Transit Agency B", Url: "http://agency-b.com", Timezone: "America/Los_Angeles",
 	})
@@ -647,6 +648,7 @@ func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode
 		ID: stopCode, Name: nulls.String("Delay Test Stop"), Lat: 47.0, Lon: -122.0,
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{stopCode: agencyID})
 	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID: routeID, AgencyID: agencyID,
 		ShortName: nulls.String("DT"),
@@ -1222,6 +1224,7 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 		Lat: 40.5865, Lon: -122.3917,
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{stopID: agencyID})
 	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{ID: routeID, AgencyID: agencyID, Type: 3})
 	require.NoError(t, err)
 	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
@@ -1298,6 +1301,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *t
 		Lat: 47.6062, Lon: -122.3321,
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{sharedStop: agencyUTC})
 
 	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
 		ID: calID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
@@ -1391,23 +1395,9 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *t
 		assert.Equal(t, order, order2, "arrival order must be deterministic across requests")
 	}
 
-	// Query via LA Agency prefix
-	{
-		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, queryURLWithPrefix(agencyLA))
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.Equal(t, http.StatusOK, model.Code)
-
-		tripIDs := make(map[string]models.ArrivalAndDeparture)
-		for _, ad := range model.Data.Entry.ArrivalsAndDepartures {
-			tripIDs[ad.TripID] = ad
-		}
-		require.Contains(t, tripIDs, utils.FormCombinedID(agencyUTC, tripUTC), "LA query should include trip-utc from another timezone")
-		require.Contains(t, tripIDs, utils.FormCombinedID(agencyLA, tripLA), "LA query should include trip-la")
-		assert.True(t, tripIDs[utils.FormCombinedID(agencyLA, tripLA)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
-		assert.True(t, tripIDs[utils.FormCombinedID(agencyUTC, tripUTC)].ScheduledArrivalTime.Equal(expectedArrivalUTC))
-		assert.True(t, tripIDs[utils.FormCombinedID(agencyLA, tripLA)].ServiceDate.In(locLA).Equal(expectedMidnightLA),
-			"LA trip service date must be midnight in its own timezone")
-	}
+	// The stop's ID carries only its own agency, even though LA Agency's routes serve it.
+	resp, _ := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, queryURLWithPrefix(agencyLA))
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *testing.T) {
 	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
@@ -1458,6 +1448,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *
 		Lat: 47.6062, Lon: -122.3321,
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{sharedStop: agencyPrimary})
 
 	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
 		ID: calID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
@@ -1550,6 +1541,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 		Lat: 47.6062, Lon: -122.3321,
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{sharedStop: agencyPrimary})
 
 	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
 		ID: calID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
