@@ -2114,6 +2114,26 @@ func (q *Queries) GetCalendarDateExceptionsForServiceID(ctx context.Context, ser
 	return items, nil
 }
 
+const getFeedAgencyID = `-- name: GetFeedAgencyID :one
+SELECT
+    id
+FROM
+    agencies
+ORDER BY
+    rowid
+LIMIT
+    1
+`
+
+// The feed's default agency, as BuildStopAgencies picks it. Java names stops and
+// service IDs after it.
+func (q *Queries) GetFeedAgencyID(ctx context.Context) (string, error) {
+	row := q.queryRow(ctx, q.getFeedAgencyIDStmt, getFeedAgencyID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getFeedEndDate = `-- name: GetFeedEndDate :one
 SELECT COALESCE(CAST(MAX(max_date) AS TEXT), '') AS feed_end_date
 FROM (

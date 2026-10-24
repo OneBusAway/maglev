@@ -2,6 +2,8 @@ package gtfs
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -221,11 +223,16 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	}
 
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
+	newFeedAgencyID, err := manager.GtfsDB.Queries.GetFeedAgencyID(ctx)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		logging.LogError(logger, "Error reading the feed's default agency", err)
+	}
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 
 	manager.regionBounds = newRegionBounds
+	manager.feedAgencyID = newFeedAgencyID
 
 	// Replace direction and trip-distance caches together for the new feed.
 	// In-flight calculations retain the retired cache generation.
