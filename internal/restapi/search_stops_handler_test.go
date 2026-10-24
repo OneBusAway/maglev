@@ -37,14 +37,18 @@ func registerFixtureCleanup(t *testing.T, db *sql.DB, statements ...string) {
 	})
 }
 
-// rebuildStopAgencyIndex refreshes the precomputed stop-to-agency index that stop search
-// orders by. Tests insert fixture stops straight into the database, bypassing the import
-// that builds the index in production.
-func rebuildStopAgencyIndex(t *testing.T, api *RestAPI) {
+// assignStopAgencies writes fixture stops into the stop-to-agency index that stop
+// search reads. Tests insert stops straight into the shared database, bypassing the
+// import that builds the index, and rebuilding it would file every leftover fixture
+// stop under the feed's first agency. Giving stops different agencies stands in for
+// stops from different feeds.
+func assignStopAgencies(t *testing.T, api *RestAPI, agencyByStop map[string]string) {
 	t.Helper()
-	ctx := context.Background()
-	require.NoError(t, api.GtfsManager.GtfsDB.Queries.ClearStopAgencies(ctx))
-	require.NoError(t, api.GtfsManager.GtfsDB.Queries.BuildStopAgencies(ctx))
+	for stopID, agencyID := range agencyByStop {
+		_, err := api.GtfsManager.GtfsDB.DB.ExecContext(context.Background(),
+			"INSERT INTO stop_agencies (stop_id, agency_id) VALUES (?, ?)", stopID, agencyID)
+		require.NoError(t, err)
+	}
 }
 
 // clearIndexedStopAgencies removes the given stops from the index. Fixture cleanup has to
@@ -522,7 +526,7 @@ func TestSearchStopsHandlerOrdersByCombinedID(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	rebuildStopAgencyIndex(t, api)
+	assignStopAgencies(t, api, map[string]string{"aaa_stop": "999", "zzz_stop": "111"})
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Ordertest"}}))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -686,7 +690,13 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	rebuildStopAgencyIndex(t, api)
+	assignStopAgencies(t, api, map[string]string{
+		"child_stop_1":            "999",
+		"parent_stat_1":           "999",
+		"child_stop_2":            "888",
+		"child_stop_shared":       "888",
+		"child_stop_multi_agency": "888",
+	})
 
 	// Alerts must not add unreferenced situations or disturb parent/route/agency references.
 	stopID := "child_stop_1"
@@ -706,9 +716,8 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	seenIDs := make(map[string]bool, len(stopsResp.Data.List))
 	for _, stop := range stopsResp.Data.List {
 		stopsByName[stop.Name] = stop
-		// child_stop_multi_agency is served by both 888 and 999: stop_agencies holds one
-		// row per (stop, agency) pair, so joining it without collapsing to a single agency
-		// would return this stop twice.
+		// child_stop_multi_agency is served by both 888 and 999, so a join through
+		// routes rather than stop_agencies would return it twice.
 		assert.False(t, seenIDs[stop.ID], "stop %q appeared more than once in the result list", stop.ID)
 		seenIDs[stop.ID] = true
 	}
@@ -729,8 +738,8 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	assert.Equal(t, "888_child_stop_shared", childShared.ID)
 	assert.Equal(t, "888_parent_stat_1", childShared.Parent)
 
-	// A stop served by two agencies picks the lowest agency ID deterministically,
-	// rather than whichever route GetRoutesForStops happens to return first.
+	// A stop served by two agencies keeps the one agency in its ID, rather than
+	// whichever route GetRoutesForStops happens to return first.
 	childMultiAgency, ok := stopsByName["Child Stop Multi Agency"]
 	require.True(t, ok)
 	assert.Equal(t, "888_child_stop_multi_agency", childMultiAgency.ID)
@@ -853,7 +862,14 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	rebuildStopAgencyIndex(t, api)
+	assignStopAgencies(t, api, map[string]string{
+		"school_bus_stop":        "RABA",
+		"valid_bus_stop":         "RABA",
+		"two_school_routes_stop": "RABA",
+		"limit_ghost_1":          "RABA",
+		"limit_ghost_2":          "RABA",
+		"limit_valid_3":          "RABA",
+	})
 
 	// Test exclusion of a stop with no stop_times. zero_route_stop is dropped by the SQL
 	// revenue filter, which is now what excludes a routeless stop in practice: routes are
@@ -938,7 +954,7 @@ func TestSearchStopsHandlerParentStationCrossAgencyReference(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	rebuildStopAgencyIndex(t, api)
+	assignStopAgencies(t, api, map[string]string{"child_stop_cross": "888", "parent_station_cross": "999"})
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop Cross"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

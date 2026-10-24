@@ -37,15 +37,26 @@ func (q *Queries) BlockHasTripForAgency(ctx context.Context, arg BlockHasTripFor
 const buildStopAgencies = `-- name: BuildStopAgencies :exec
 INSERT INTO
     stop_agencies (stop_id, agency_id)
-SELECT DISTINCT
-    stop_times.stop_id,
-    routes.agency_id
+SELECT
+    stops.id,
+    first_agency.id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stops
+    CROSS JOIN (
+        SELECT
+            id
+        FROM
+            agencies
+        ORDER BY
+            rowid
+        LIMIT
+            1
+    ) AS first_agency
 `
 
+// Java OneBusAway names every stop after its feed's default agency, the first row of
+// agency.txt (GtfsReader.getDefaultAgencyId), whichever agencies' routes serve it.
+// Agencies are inserted in feed order, so the lowest rowid is the first row.
 func (q *Queries) BuildStopAgencies(ctx context.Context) error {
 	_, err := q.exec(ctx, q.buildStopAgenciesStmt, buildStopAgencies)
 	return err

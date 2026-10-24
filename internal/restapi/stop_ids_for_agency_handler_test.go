@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 )
 
@@ -132,4 +133,19 @@ func TestStopIdsForAgencyVersionIsTwo(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 2, model.Version)
+}
+
+// Java OneBusAway names every stop after its feed's first agency, whichever
+// agencies' routes serve it, and lists stops no route serves too.
+func TestStopIdsForAgency_ListsEachStopUnderTheFeedsFirstAgency(t *testing.T) {
+	files := agencyPrefixFiles()
+	files["stops.txt"] += "unserved,Unserved,37.79,-122.40\n"
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "agency-prefix.zip", files)
+
+	_, own := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL("own"))
+	assert.ElementsMatch(t, []string{"own_stop-1", "own_stop-2", "own_unserved"}, own.Data.List)
+
+	resp, other := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL("other"))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, other.Data.List)
 }

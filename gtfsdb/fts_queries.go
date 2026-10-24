@@ -84,10 +84,8 @@ func (q *Queries) SearchRoutesByFullText(ctx context.Context, arg SearchRoutesBy
 // rather than by the raw stop ID. The sort key has to be built here, before LIMIT, or the
 // wrong set of stops would be truncated away.
 //
-// stop_agencies holds one row per (stop, agency) pair, so a stop served by more than one
-// agency is resolved with MIN() to the single agency whose prefix its combined ID carries -
-// otherwise the join would fan out into one result row per agency. A stop no route serves
-// has no row at all and therefore no combined ID; those sort last, by raw stop ID.
+// stop_agencies holds the agency in each stop's combined ID. A stop without a row has no
+// combined ID; those sort last, by raw stop ID.
 const searchStopsByName = `
 SELECT
     s.id,
