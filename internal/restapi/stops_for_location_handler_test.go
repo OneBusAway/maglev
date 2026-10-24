@@ -858,7 +858,8 @@ func TestStopsForLocationStopCodeFallback(t *testing.T) {
 		"trips.txt": "route_id,service_id,trip_id\n" +
 			routeID + "," + svcID + "," + tripID + "\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			tripID + ",12:00:00,12:00:00," + stopID + ",1\n",
+			tripID + ",12:00:00,12:00:00," + stopID + ",1\n" +
+			tripID + ",12:05:00,12:05:00," + stopID + ",2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, mockClock, "no-stop-code.zip", files)

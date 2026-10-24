@@ -1269,9 +1269,9 @@ func validateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger, stopTimeC
 			continue
 		}
 
-		// Ensure the trip has stop times
-		if stopTimeCount(i) == 0 {
-			logger.Warn("trip has no stop times, skipping trip", slog.String("trip_id", trip.ID))
+		// Java's TripEntriesFactory drops a trip with fewer than two stop times
+		if stopTimeCount(i) < minStopTimesPerTrip {
+			logger.Warn("trip has fewer than two stop times, skipping trip", slog.String("trip_id", trip.ID))
 			continue
 		}
 

@@ -67,7 +67,7 @@ func (r *feedRows) stopTimes() iter.Seq[CreateStopTimeParams] {
 				return nil
 			}
 			consolidated := r.replacements.consolidate(stopTimes)
-			if isTooShortAfterConsolidation(stopTimes, consolidated) {
+			if len(consolidated) < minStopTimesPerTrip {
 				r.removedTrips = append(r.removedTrips, trip.ID)
 				return nil
 			}
@@ -85,15 +85,9 @@ func (r *feedRows) stopTimes() iter.Seq[CreateStopTimeParams] {
 }
 
 // minStopTimesPerTrip is the fewest stop times Java's TripEntriesFactory
-// keeps a trip with.
+// keeps a trip with. Validation drops trips the feed leaves shorter; the
+// stop-times stream drops trips stop consolidation leaves shorter.
 const minStopTimesPerTrip = 2
-
-// isTooShortAfterConsolidation reports whether stop consolidation dropped
-// enough of a trip's stop times that Java would drop the trip. A trip that
-// was already short in the feed is left alone, as maglev always has.
-func isTooShortAfterConsolidation(original, consolidated []gtfs.ScheduledStopTime) bool {
-	return len(consolidated) < len(original) && len(consolidated) < minStopTimesPerTrip
-}
 
 // shapes yields the points of every shape, one shape at a time.
 func (r *feedRows) shapes() iter.Seq[CreateShapeParams] {

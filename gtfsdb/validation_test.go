@@ -24,6 +24,7 @@ func createValidGTFS() *gtfs.Static {
 		Service: &service,
 		StopTimes: []gtfs.ScheduledStopTime{
 			{Stop: &stop, StopSequence: 1},
+			{Stop: &stop, StopSequence: 2},
 		},
 	}
 
@@ -174,6 +175,15 @@ func TestValidateAndFilterGTFSData_ForeignKeys_Filtering(t *testing.T) {
 			mutate: func(d *gtfs.Static) {
 				d.Trips = append(d.Trips, d.Trips[0])
 				d.Trips[0].StopTimes = nil
+			},
+			expectedTrips: 1,
+			expectError:   false,
+		},
+		{
+			name: "one valid and one single-stop trip - filters short",
+			mutate: func(d *gtfs.Static) {
+				d.Trips = append(d.Trips, d.Trips[0])
+				d.Trips[0].StopTimes = d.Trips[0].StopTimes[:1:1]
 			},
 			expectedTrips: 1,
 			expectError:   false,
