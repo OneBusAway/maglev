@@ -39,6 +39,9 @@ type feedRows struct {
 	// tripEnds holds the ends of every stored trip once stopTimes has been
 	// read to the end.
 	tripEnds []tripEnds
+	// removedTrips holds the trips stop consolidation left too short to
+	// keep, once stopTimes has been read to the end.
+	removedTrips []string
 	// err holds the first error reading from the stream.
 	err error
 }
@@ -63,10 +66,12 @@ func (r *feedRows) stopTimes() iter.Seq[CreateStopTimeParams] {
 			if !r.storedTrips[trip.ID] {
 				return nil
 			}
-			stopTimes = r.replacements.consolidate(stopTimes)
-			if len(stopTimes) == 0 {
+			consolidated := r.replacements.consolidate(stopTimes)
+			if isTooShortAfterConsolidation(stopTimes, consolidated) {
+				r.removedTrips = append(r.removedTrips, trip.ID)
 				return nil
 			}
+			stopTimes = consolidated
 			r.tripEnds = append(r.tripEnds, newTripEnds(trip, stopTimes[0], stopTimes[len(stopTimes)-1]))
 			for _, stopTime := range stopTimes {
 				if !yield(stopTimeParams(trip.ID, stopTime)) {
@@ -77,6 +82,17 @@ func (r *feedRows) stopTimes() iter.Seq[CreateStopTimeParams] {
 		})
 		r.recordError(err)
 	}
+}
+
+// minStopTimesPerTrip is the fewest stop times Java's TripEntriesFactory
+// keeps a trip with.
+const minStopTimesPerTrip = 2
+
+// isTooShortAfterConsolidation reports whether stop consolidation dropped
+// enough of a trip's stop times that Java would drop the trip. A trip that
+// was already short in the feed is left alone, as maglev always has.
+func isTooShortAfterConsolidation(original, consolidated []gtfs.ScheduledStopTime) bool {
+	return len(consolidated) < len(original) && len(consolidated) < minStopTimesPerTrip
 }
 
 // shapes yields the points of every shape, one shape at a time.
