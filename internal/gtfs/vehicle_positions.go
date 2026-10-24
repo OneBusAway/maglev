@@ -99,6 +99,16 @@ func (manager *Manager) feedConfigRanks(sortedFeedIDs []string) map[string]int {
 	return ranks
 }
 
+// feedIDsInConfigOrder returns the feeds in their feedConfigRanks order.
+func (manager *Manager) feedIDsInConfigOrder(sortedFeedIDs []string) []string {
+	feedRanks := manager.feedConfigRanks(sortedFeedIDs)
+	ordered := slices.Clone(sortedFeedIDs)
+	slices.SortFunc(ordered, func(a, b string) int {
+		return feedRanks[a] - feedRanks[b]
+	})
+	return ordered
+}
+
 func hasExportablePosition(vehicle gtfs.Vehicle) bool {
 	hasVehicleID := vehicle.ID != nil && vehicle.ID.ID != ""
 	hasLocation := vehicle.Position != nil &&
