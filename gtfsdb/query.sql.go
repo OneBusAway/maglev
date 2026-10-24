@@ -1487,45 +1487,6 @@ func (q *Queries) GetAgency(ctx context.Context, id string) (Agency, error) {
 	return i, err
 }
 
-const getAgencyForStop = `-- name: GetAgencyForStop :one
-SELECT DISTINCT
-    a.id,
-    a.name,
-    a.url,
-    a.timezone,
-    a.lang,
-    a.phone,
-    a.fare_url,
-    a.email
-FROM
-    agencies a
-    JOIN routes r ON a.id = r.agency_id
-    JOIN trips t ON r.id = t.route_id
-    JOIN stop_times st ON t.id = st.trip_id
-WHERE
-    st.stop_id = ?
-ORDER BY
-    a.id
-LIMIT
-    1
-`
-
-func (q *Queries) GetAgencyForStop(ctx context.Context, stopID string) (Agency, error) {
-	row := q.queryRow(ctx, q.getAgencyForStopStmt, getAgencyForStop, stopID)
-	var i Agency
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Url,
-		&i.Timezone,
-		&i.Lang,
-		&i.Phone,
-		&i.FareUrl,
-		&i.Email,
-	)
-	return i, err
-}
-
 const getAllShapes = `-- name: GetAllShapes :many
 SELECT
     id, shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
@@ -3721,75 +3682,6 @@ func (q *Queries) GetStopBoundsPerAgency(ctx context.Context) ([]GetStopBoundsPe
 		return nil, err
 	}
 	return items, nil
-}
-
-const getStopForAgency = `-- name: GetStopForAgency :one
-SELECT DISTINCT
-    stops.id,
-    stops.code,
-    stops.name,
-    stops."desc",
-    stops.lat,
-    stops.lon,
-    stops.zone_id,
-    stops.url,
-    stops.location_type,
-    stops.timezone,
-    stops.wheelchair_boarding,
-    stops.platform_code,
-    stops.direction
-FROM
-    stops
-    JOIN stop_times ON stops.id = stop_times.stop_id
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
-WHERE
-    stops.id = ?
-    AND routes.agency_id = ?
-`
-
-type GetStopForAgencyParams struct {
-	ID       string
-	AgencyID string
-}
-
-type GetStopForAgencyRow struct {
-	ID                 string
-	Code               sql.NullString
-	Name               sql.NullString
-	Desc               sql.NullString
-	Lat                float64
-	Lon                float64
-	ZoneID             sql.NullString
-	Url                sql.NullString
-	LocationType       sql.NullInt64
-	Timezone           sql.NullString
-	WheelchairBoarding sql.NullInt64
-	PlatformCode       sql.NullString
-	Direction          sql.NullString
-}
-
-// Return the stop only if it is served by any route that belongs to the specified agency.
-// We join stop_times -> trips -> routes and filter by routes.agency_id to enforce agency ownership.
-func (q *Queries) GetStopForAgency(ctx context.Context, arg GetStopForAgencyParams) (GetStopForAgencyRow, error) {
-	row := q.queryRow(ctx, q.getStopForAgencyStmt, getStopForAgency, arg.ID, arg.AgencyID)
-	var i GetStopForAgencyRow
-	err := row.Scan(
-		&i.ID,
-		&i.Code,
-		&i.Name,
-		&i.Desc,
-		&i.Lat,
-		&i.Lon,
-		&i.ZoneID,
-		&i.Url,
-		&i.LocationType,
-		&i.Timezone,
-		&i.WheelchairBoarding,
-		&i.PlatformCode,
-		&i.Direction,
-	)
-	return i, err
 }
 
 const getStopIDsForAgency = `-- name: GetStopIDsForAgency :many

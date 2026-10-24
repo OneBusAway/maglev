@@ -156,9 +156,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getAgencyStmt, err = db.PrepareContext(ctx, getAgency); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAgency: %w", err)
 	}
-	if q.getAgencyForStopStmt, err = db.PrepareContext(ctx, getAgencyForStop); err != nil {
-		return nil, fmt.Errorf("error preparing query GetAgencyForStop: %w", err)
-	}
 	if q.getAllShapesStmt, err = db.PrepareContext(ctx, getAllShapes); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAllShapes: %w", err)
 	}
@@ -293,9 +290,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getStopBoundsPerAgencyStmt, err = db.PrepareContext(ctx, getStopBoundsPerAgency); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopBoundsPerAgency: %w", err)
-	}
-	if q.getStopForAgencyStmt, err = db.PrepareContext(ctx, getStopForAgency); err != nil {
-		return nil, fmt.Errorf("error preparing query GetStopForAgency: %w", err)
 	}
 	if q.getStopIDsForAgencyStmt, err = db.PrepareContext(ctx, getStopIDsForAgency); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStopIDsForAgency: %w", err)
@@ -633,11 +627,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getAgencyStmt: %w", cerr)
 		}
 	}
-	if q.getAgencyForStopStmt != nil {
-		if cerr := q.getAgencyForStopStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getAgencyForStopStmt: %w", cerr)
-		}
-	}
 	if q.getAllShapesStmt != nil {
 		if cerr := q.getAllShapesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getAllShapesStmt: %w", cerr)
@@ -861,11 +850,6 @@ func (q *Queries) Close() error {
 	if q.getStopBoundsPerAgencyStmt != nil {
 		if cerr := q.getStopBoundsPerAgencyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getStopBoundsPerAgencyStmt: %w", cerr)
-		}
-	}
-	if q.getStopForAgencyStmt != nil {
-		if cerr := q.getStopForAgencyStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getStopForAgencyStmt: %w", cerr)
 		}
 	}
 	if q.getStopIDsForAgencyStmt != nil {
@@ -1136,7 +1120,6 @@ type Queries struct {
 	getAgenciesByIDsStmt                      *sql.Stmt
 	getAgenciesForStopsStmt                   *sql.Stmt
 	getAgencyStmt                             *sql.Stmt
-	getAgencyForStopStmt                      *sql.Stmt
 	getAllShapesStmt                          *sql.Stmt
 	getAllStopIDsStmt                         *sql.Stmt
 	getAllTripsForRouteStmt                   *sql.Stmt
@@ -1182,7 +1165,6 @@ type Queries struct {
 	getShapesGroupedByTripHeadSignStmt        *sql.Stmt
 	getStopStmt                               *sql.Stmt
 	getStopBoundsPerAgencyStmt                *sql.Stmt
-	getStopForAgencyStmt                      *sql.Stmt
 	getStopIDsForAgencyStmt                   *sql.Stmt
 	getStopIDsForRouteStmt                    *sql.Stmt
 	getStopIDsForTripStmt                     *sql.Stmt
@@ -1270,7 +1252,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getAgenciesByIDsStmt:                      q.getAgenciesByIDsStmt,
 		getAgenciesForStopsStmt:                   q.getAgenciesForStopsStmt,
 		getAgencyStmt:                             q.getAgencyStmt,
-		getAgencyForStopStmt:                      q.getAgencyForStopStmt,
 		getAllShapesStmt:                          q.getAllShapesStmt,
 		getAllStopIDsStmt:                         q.getAllStopIDsStmt,
 		getAllTripsForRouteStmt:                   q.getAllTripsForRouteStmt,
@@ -1316,7 +1297,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getShapesGroupedByTripHeadSignStmt:        q.getShapesGroupedByTripHeadSignStmt,
 		getStopStmt:                               q.getStopStmt,
 		getStopBoundsPerAgencyStmt:                q.getStopBoundsPerAgencyStmt,
-		getStopForAgencyStmt:                      q.getStopForAgencyStmt,
 		getStopIDsForAgencyStmt:                   q.getStopIDsForAgencyStmt,
 		getStopIDsForRouteStmt:                    q.getStopIDsForRouteStmt,
 		getStopIDsForTripStmt:                     q.getStopIDsForTripStmt,

@@ -261,28 +261,6 @@ FROM
 WHERE
     routes.agency_id = ?;
 
--- name: GetAgencyForStop :one
-SELECT DISTINCT
-    a.id,
-    a.name,
-    a.url,
-    a.timezone,
-    a.lang,
-    a.phone,
-    a.fare_url,
-    a.email
-FROM
-    agencies a
-    JOIN routes r ON a.id = r.agency_id
-    JOIN trips t ON r.id = t.route_id
-    JOIN stop_times st ON t.id = st.trip_id
-WHERE
-    st.stop_id = ?
-ORDER BY
-    a.id
-LIMIT
-    1;
-
 -- name: GetAllStopIDs :many
 SELECT
     id
@@ -360,32 +338,6 @@ ORDER BY
     id
 LIMIT
     10;
-
--- name: GetStopForAgency :one
--- Return the stop only if it is served by any route that belongs to the specified agency.
--- We join stop_times -> trips -> routes and filter by routes.agency_id to enforce agency ownership.
-SELECT DISTINCT
-    stops.id,
-    stops.code,
-    stops.name,
-    stops."desc",
-    stops.lat,
-    stops.lon,
-    stops.zone_id,
-    stops.url,
-    stops.location_type,
-    stops.timezone,
-    stops.wheelchair_boarding,
-    stops.platform_code,
-    stops.direction
-FROM
-    stops
-    JOIN stop_times ON stops.id = stop_times.stop_id
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
-WHERE
-    stops.id = ?
-    AND routes.agency_id = ?;
 
 -- name: ListStops :many
 SELECT
