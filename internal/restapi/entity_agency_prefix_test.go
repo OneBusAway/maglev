@@ -2,10 +2,13 @@ package restapi
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 )
 
 func agencyPrefixFiles() map[string]string {
@@ -95,4 +98,40 @@ func TestStopReferences_UseTheStopsOwnAgency(t *testing.T) {
 			assert.ElementsMatch(t, []string{"own_stop-1", "own_stop-2"}, stopIDs)
 		})
 	}
+}
+
+// Trip status, trip stop times and block stop times name each stop by its own
+// agency, not the agency of the trip that visits it.
+func TestTripStopIDs_UseTheStopsOwnAgency(t *testing.T) {
+	now := time.Date(2025, 1, 1, 10, 15, 0, 0, time.UTC)
+	midTrip := clock.NewMockClock(now)
+	api := createTestApiWithGTFSFixture(t, midTrip, "agency-prefix.zip", agencyPrefixFiles())
+	serviceDate := strconv.FormatInt(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), 10)
+	api.GtfsManager.MockAddVehicleWithOptions("bus", "other-trip", "other-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, details := serveApiAndRetrieveEndpoint(t, api,
+		"/api/where/trip-details/other_other-trip.json?key=TEST&includeStatus=true&serviceDate="+serviceDate)
+	entry := details.Data.(map[string]any)["entry"].(map[string]any)
+	status := entry["status"].(map[string]any)
+	assert.Equal(t, "own_stop-1", status["closestStop"])
+	assert.Equal(t, "own_stop-2", status["nextStop"])
+	assert.Equal(t, []string{"own_stop-1", "own_stop-2"}, stopIDsOf(entry["schedule"].(map[string]any)["stopTimes"]))
+
+	_, block := serveApiAndRetrieveEndpoint(t, api, "/api/where/block/other_other-block.json?key=TEST")
+	configuration := block.Data.(map[string]any)["entry"].(map[string]any)["configurations"].([]any)[0].(map[string]any)
+	trip := configuration["trips"].([]any)[0].(map[string]any)
+	var blockStopIDs []string
+	for _, blockStopTime := range trip["blockStopTimes"].([]any) {
+		blockStopIDs = append(blockStopIDs, blockStopTime.(map[string]any)["stopTime"].(map[string]any)["stopId"].(string))
+	}
+	assert.Equal(t, []string{"own_stop-1", "own_stop-2"}, blockStopIDs)
+}
+
+func stopIDsOf(stopTimes any) []string {
+	var stopIDs []string
+	for _, stopTime := range stopTimes.([]any) {
+		stopIDs = append(stopIDs, stopTime.(map[string]any)["stopId"].(string))
+	}
+	return stopIDs
 }

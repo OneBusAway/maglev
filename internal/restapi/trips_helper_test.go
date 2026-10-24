@@ -222,7 +222,7 @@ func TestCalculateBatchStopDistances(t *testing.T) {
 		{StopID: "stop_C", ArrivalTime: 300},
 	}
 
-	results := api.calculateBatchStopDistances(stops, shapePoints, stopCoords, "agency_1")
+	results := api.calculateBatchStopDistances(stops, shapePoints, tripStops{coords: stopCoords})
 
 	assert.Equal(t, 3, len(results), "Should return 3 results")
 
@@ -747,22 +747,20 @@ func TestFillStopsFromSchedule_BeforeAllStops(t *testing.T) {
 	ctx := context.Background()
 
 	trip := mustGetTrip(t, api)
-	agencies := mustGetAgencies(t, api)
-	require.NotEmpty(t, agencies)
-
-	agencyID := agencies[0].ID
 	tripID := trip.ID
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 	require.NoError(t, err)
 	require.NotEmpty(t, stopTimes)
+	stopAgencies, err := api.loadStopAgencyIDs(ctx, stopIDsForStopTimes(stopTimes))
+	require.NoError(t, err)
 
 	// Set currentTime well before the first stop
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	currentTime := serviceDate.Add(time.Second) // 00:00:01 — before any stop
 
 	status := models.NewTripStatus()
-	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID, nil)
+	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, stopAgencies, nil)
 
 	// When before all stops, NextStop should be the first stop
 	assert.NotEmpty(t, status.NextStop, "NextStop should be set when currentTime is before all stops")
@@ -774,22 +772,20 @@ func TestFillStopsFromSchedule_AfterAllStops(t *testing.T) {
 	ctx := context.Background()
 
 	trip := mustGetTrip(t, api)
-	agencies := mustGetAgencies(t, api)
-	require.NotEmpty(t, agencies)
-
-	agencyID := agencies[0].ID
 	tripID := trip.ID
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
 	require.NoError(t, err)
 	require.NotEmpty(t, stopTimes)
+	stopAgencies, err := api.loadStopAgencyIDs(ctx, stopIDsForStopTimes(stopTimes))
+	require.NoError(t, err)
 
 	// Set currentTime well past the last stop (next day)
 	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	currentTime := serviceDate.Add(30 * time.Hour)
 
 	status := models.NewTripStatus()
-	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, agencyID, nil)
+	api.fillStopsFromSchedule(ctx, status, tripID, currentTime, serviceDate, stopAgencies, nil)
 
 	// When past all stops, ClosestStop should be the last stop
 	assert.NotEmpty(t, status.ClosestStop, "ClosestStop should be set to last stop when past all stops")
@@ -805,7 +801,7 @@ func TestFillStopsFromSchedule_InvalidTripID(t *testing.T) {
 	status := models.NewTripStatus()
 
 	// Should not panic or set any stops for an invalid trip
-	api.fillStopsFromSchedule(ctx, status, "non-existent-trip", serviceDate, serviceDate, "any-agency", nil)
+	api.fillStopsFromSchedule(ctx, status, "non-existent-trip", serviceDate, serviceDate, nil, nil)
 
 	assert.Empty(t, status.ClosestStop)
 	assert.Empty(t, status.NextStop)
@@ -1376,7 +1372,7 @@ func BenchmarkOptimized_MonotonicBatch(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		// Single call handles all logic -> O(N+M)
-		api.calculateBatchStopDistances(stops, shape, coords, "agency_1")
+		api.calculateBatchStopDistances(stops, shape, tripStops{coords: coords})
 	}
 }
 

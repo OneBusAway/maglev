@@ -60,9 +60,19 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	blockEntry := transformBlockToEntry(block, utils.FormCombinedID(agencyID, blockID), agencyID)
+	stopIDs := make([]string, len(block))
+	for i, row := range block {
+		stopIDs[i] = row.StopID
+	}
+	stopAgencies, err := api.loadStopAgencyIDs(ctx, stopIDs)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
-	references, err := api.getReferences(ctx, agencyID, block)
+	blockEntry := transformBlockToEntry(block, utils.FormCombinedID(agencyID, blockID), agencyID, stopAgencies)
+
+	references, err := api.getReferences(ctx, agencyID, stopAgencies, block)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -72,7 +82,7 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 	api.sendResponse(w, r, response)
 }
 
-func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID string) models.BlockEntry {
+func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID string, stopAgencies stopAgencyIDs) models.BlockEntry {
 	serviceGroups := make(map[string][]gtfsdb.GetBlockDetailsRow)
 
 	for _, row := range block {
@@ -137,7 +147,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 						StopTime: models.StopTime{
 							ArrivalTime:   models.NewModelDuration(time.Duration(stop.ArrivalTime)),
 							DepartureTime: models.NewModelDuration(time.Duration(stop.DepartureTime)),
-							StopID:        utils.FormCombinedID(agencyID, stop.StopID),
+							StopID:        stopAgencies.combinedStopID(stop.StopID),
 						},
 						DropOffType: int(stop.DropOffType.Int64),
 						PickupType:  int(stop.PickupType.Int64),
@@ -173,7 +183,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 	}
 }
 
-func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []gtfsdb.GetBlockDetailsRow) (models.ReferencesModel, error) {
+func (api *RestAPI) getReferences(ctx context.Context, agencyID string, stopAgencies stopAgencyIDs, block []gtfsdb.GetBlockDetailsRow) (models.ReferencesModel, error) {
 	routeIDs := make(map[string]struct{})
 	stopIDs := make(map[string]struct{})
 	tripIDs := make(map[string]struct{})
@@ -227,7 +237,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 	stops := make([]models.Stop, 0)
 	for _, stop := range batchedStops {
 		stops = append(stops, models.Stop{
-			ID:             utils.FormCombinedID(agencyID, stop.ID),
+			ID:             stopAgencies.combinedStopID(stop.ID),
 			Name:           stop.Name.String,
 			Code:           stop.Code.String,
 			Lat:            stop.Lat,

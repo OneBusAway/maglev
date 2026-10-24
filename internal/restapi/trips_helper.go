@@ -168,7 +168,12 @@ func (api *RestAPI) BuildTripStatus(
 			slog.String("error", err.Error()))
 	}
 
-	if err == nil && len(stopTimes) > 0 {
+	stopAgencies, err := api.loadStopAgencyIDs(ctx, stopIDsForStopTimes(stopTimes))
+	if err != nil {
+		return status, extras, err
+	}
+
+	if len(stopTimes) > 0 {
 		stopTimesPtrs := make([]*gtfsdb.StopTime, len(stopTimes))
 		for i := range stopTimes {
 			stopTimesPtrs[i] = &stopTimes[i]
@@ -207,17 +212,17 @@ func (api *RestAPI) BuildTripStatus(
 		}
 
 		if closestStopID != "" {
-			status.ClosestStop = utils.FormCombinedID(agencyID, closestStopID)
+			status.ClosestStop = stopAgencies.combinedStopID(closestStopID)
 			status.ClosestStopTimeOffset = closestOffset
 		}
 		if nextStopID != "" {
-			status.NextStop = utils.FormCombinedID(agencyID, nextStopID)
+			status.NextStop = stopAgencies.combinedStopID(nextStopID)
 			status.NextStopTimeOffset = nextOffset
 		}
 	}
 
 	if status.ClosestStop == "" || status.NextStop == "" {
-		api.fillStopsFromSchedule(ctx, status, dbTripID, currentTime, serviceDate, agencyID, stopTimes)
+		api.fillStopsFromSchedule(ctx, status, dbTripID, currentTime, serviceDate, stopAgencies, stopTimes)
 	}
 
 	shapeRows, shapeErr := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, dbTripID)
@@ -470,23 +475,12 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 		return nil, err
 	}
 
-	// Batch-fetch all stop coordinates at once
-	stopIDs := make([]string, len(stopTimes))
-	for i, st := range stopTimes {
-		stopIDs[i] = st.StopID
-	}
-
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+	stops, err := api.loadTripStops(ctx, stopIDsForStopTimes(stopTimes))
 	if err != nil {
 		return nil, err
 	}
 
-	stopCoords := make(map[string]struct{ lat, lon float64 })
-	for _, stop := range stops {
-		stopCoords[stop.ID] = struct{ lat, lon float64 }{lat: stop.Lat, lon: stop.Lon}
-	}
-
-	stopTimesVals := api.calculateBatchStopDistances(stopTimes, shapePoints, stopCoords, agencyID)
+	stopTimesVals := api.calculateBatchStopDistances(stopTimes, shapePoints, stops)
 
 	// Populate frequency data for the schedule sub-object.
 	var scheduleFrequency *models.Frequency
@@ -579,7 +573,7 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 	return nextTripID, previousTripID, stopTimes, nil
 }
 
-func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.TripStatus, tripID string, currentTime time.Time, serviceDate time.Time, agencyID string, preloaded []gtfsdb.StopTime) {
+func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.TripStatus, tripID string, currentTime time.Time, serviceDate time.Time, stopAgencies stopAgencyIDs, preloaded []gtfsdb.StopTime) {
 	var stopTimes []gtfsdb.StopTime
 	if len(preloaded) > 0 {
 		stopTimes = preloaded
@@ -608,12 +602,12 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 
 		if predictedArrival > currentSeconds {
 			if i > 0 && status.ClosestStop == "" {
-				status.ClosestStop = utils.FormCombinedID(agencyID, stopTimes[i-1].StopID)
+				status.ClosestStop = stopAgencies.combinedStopID(stopTimes[i-1].StopID)
 				closestArrival := utils.EffectiveStopTimeSeconds(stopTimes[i-1].ArrivalTime, stopTimes[i-1].DepartureTime)
 				status.ClosestStopTimeOffset = int(closestArrival + schedDev - currentSeconds)
 			}
 			if status.NextStop == "" {
-				status.NextStop = utils.FormCombinedID(agencyID, st.StopID)
+				status.NextStop = stopAgencies.combinedStopID(st.StopID)
 				status.NextStopTimeOffset = int(predictedArrival - currentSeconds)
 			}
 			return
@@ -622,7 +616,7 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 
 	if len(stopTimes) > 0 && status.ClosestStop == "" {
 		lastStop := stopTimes[len(stopTimes)-1]
-		status.ClosestStop = utils.FormCombinedID(agencyID, lastStop.StopID)
+		status.ClosestStop = stopAgencies.combinedStopID(lastStop.StopID)
 		arrivalTime := utils.EffectiveStopTimeSeconds(lastStop.ArrivalTime, lastStop.DepartureTime)
 		status.ClosestStopTimeOffset = int(arrivalTime + schedDev - currentSeconds)
 	}
@@ -1010,8 +1004,7 @@ func (api *RestAPI) findNextStopAfter(
 func (api *RestAPI) calculateBatchStopDistances(
 	timeStops []gtfsdb.StopTime,
 	shapePoints []gtfs.ShapePoint,
-	stopCoords map[string]struct{ lat, lon float64 },
-	agencyID string,
+	stops tripStops,
 ) []models.StopTime {
 	stopTimesList := make([]models.StopTime, 0, len(timeStops))
 
@@ -1025,7 +1018,7 @@ func (api *RestAPI) calculateBatchStopDistances(
 		cumulativeDistances = preCalculateCumulativeDistances(shapePoints)
 	}
 	if len(cumulativeDistances) == len(shapePoints) {
-		stopByID := stopByIDFromCoords(timeStops, stopCoords)
+		stopByID := stopByIDFromCoords(timeStops, stops.coords)
 		distances = projectStopsInSequence(timeStops, stopByID, shapePoints, cumulativeDistances)
 	} else {
 		distances = make([]float64, len(timeStops))
@@ -1033,7 +1026,7 @@ func (api *RestAPI) calculateBatchStopDistances(
 
 	for i, stopTime := range timeStops {
 		stopTimesList = append(stopTimesList, models.StopTime{
-			StopID:              utils.FormCombinedID(agencyID, stopTime.StopID),
+			StopID:              stops.agencies.combinedStopID(stopTime.StopID),
 			ArrivalTime:         models.NewModelDuration(time.Duration(stopTime.ArrivalTime)),
 			DepartureTime:       models.NewModelDuration(time.Duration(stopTime.DepartureTime)),
 			StopHeadsign:        nulls.StringOrEmpty(stopTime.StopHeadsign),
@@ -1042,6 +1035,38 @@ func (api *RestAPI) calculateBatchStopDistances(
 		})
 	}
 	return stopTimesList
+}
+
+// stopIDsForStopTimes returns the stop ID of each stop time, in order.
+func stopIDsForStopTimes(stopTimes []gtfsdb.StopTime) []string {
+	stopIDs := make([]string, len(stopTimes))
+	for i, st := range stopTimes {
+		stopIDs[i] = st.StopID
+	}
+	return stopIDs
+}
+
+// tripStops holds what a trip's stop-time list needs about the stops it visits.
+type tripStops struct {
+	coords   map[string]struct{ lat, lon float64 }
+	agencies stopAgencyIDs
+}
+
+// loadTripStops reads the coordinates and agency of each stop in stopIDs.
+func (api *RestAPI) loadTripStops(ctx context.Context, stopIDs []string) (tripStops, error) {
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
+	if err != nil {
+		return tripStops{}, err
+	}
+	agencies, err := api.loadStopAgencyIDs(ctx, stopIDs)
+	if err != nil {
+		return tripStops{}, err
+	}
+	coords := make(map[string]struct{ lat, lon float64 }, len(stops))
+	for _, stop := range stops {
+		coords[stop.ID] = struct{ lat, lon float64 }{lat: stop.Lat, lon: stop.Lon}
+	}
+	return tripStops{coords: coords, agencies: agencies}, nil
 }
 
 // stopByIDFromCoords bridges calculateBatchStopDistances's stopCoords map

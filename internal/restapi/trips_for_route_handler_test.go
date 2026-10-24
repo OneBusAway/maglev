@@ -319,15 +319,15 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 		assert.Equal(t, time.Date(2025, 6, 12, 0, 0, 0, 0, laLoc).UnixMilli(), entry.Status.ServiceDate.UnixMilli())
 	})
 
-	t.Run("references contain combined stop IDs for queried and cross agencies", func(t *testing.T) {
+	// Each stop has one ID, under the feed's first agency, even on the other
+	// agency's interlined trip.
+	t.Run("references contain one combined ID per stop", func(t *testing.T) {
 		refStops := model.Data.References.Stops
-		require.Len(t, refStops, 4, fmt.Sprintf("expected 4 stop references, got %d", len(refStops)))
+		require.Len(t, refStops, 2, fmt.Sprintf("expected 2 stop references, got %d", len(refStops)))
 
 		expectedStopIDs := map[string]bool{
 			utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop1ID): true,
 			utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop2ID): true,
-			utils.FormCombinedID(tfrAgencyB, tripsForRouteStop1ID):            true,
-			utils.FormCombinedID(tfrAgencyB, tripsForRouteStop2ID):            true,
 		}
 		recvdStopsByID := make(map[string]models.Stop)
 
@@ -348,23 +348,6 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 		for _, stopID := range []string{entry.Status.ClosestStop, entry.Status.NextStop} {
 			assert.Contains(t, recvdStopsByID, stopID,
 				"status stop %q must resolve in references.stops", stopID)
-		}
-
-		// combined stopIDs for both agencies on the same bare stop ID should have the same
-		// stop-specific data
-		for _, bareID := range []string{tripsForRouteStop1ID, tripsForRouteStop2ID} {
-			scheduledTripStopID := utils.FormCombinedID(tripsForRouteAgencyID, bareID)
-			activeTripStopID := utils.FormCombinedID(tfrAgencyB, bareID)
-			scheduledTripStop := recvdStopsByID[scheduledTripStopID]
-			activeTripStop := recvdStopsByID[activeTripStopID]
-
-			// clear the agency-specific values and assert the stop-specific
-			// values are equal
-			scheduledTripStop.ID, scheduledTripStop.Parent = "", ""
-			activeTripStop.ID, activeTripStop.Parent = "", ""
-
-			assert.Equal(t, scheduledTripStop, activeTripStop,
-				"shared stop %q should have the same data for both agency-qualified IDs", bareID)
 		}
 	})
 }
