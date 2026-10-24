@@ -16,7 +16,6 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -1119,30 +1118,21 @@ func isRouteTypeAllowed(routeType int64, allowed []int) bool {
 	return false
 }
 
-// arrivalsReferencesInput describes how to namespace the entities gathered in an
-// arrivalsAccumulator. stopAgencies maps a bare stop ID to its owning agency;
-// stops missing from it fall back to fallbackAgencyID.
-type arrivalsReferencesInput struct {
-	fallbackAgencyID string
-	stopAgencies     map[string]string
-	primaryAgency    *gtfsdb.Agency
-}
-
 // buildArrivalsReferences assembles the references block for a set of arrivals:
 // their trips, the stops those arrivals and trip statuses point at, the routes
-// serving them, and every route's agency.
-func (api *RestAPI) buildArrivalsReferences(ctx context.Context, in arrivalsReferencesInput, acc *arrivalsAccumulator) (*models.ReferencesModel, error) {
+// serving them, and every route's agency. primaryAgency, when set, is listed first.
+func (api *RestAPI) buildArrivalsReferences(ctx context.Context, primaryAgency *gtfsdb.Agency, acc *arrivalsAccumulator) (*models.ReferencesModel, error) {
 	references := models.NewEmptyReferences()
 
 	addedAgencyIDs := make(map[string]bool)
-	if in.primaryAgency != nil {
-		references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(in.primaryAgency))
-		addedAgencyIDs[in.primaryAgency.ID] = true
+	if primaryAgency != nil {
+		references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(primaryAgency))
+		addedAgencyIDs[primaryAgency.ID] = true
 	}
 
 	api.appendTripReferences(ctx, references, acc)
 
-	if err := api.appendStopReferences(ctx, references, in, acc); err != nil {
+	if err := api.appendStopReferences(ctx, references, acc); err != nil {
 		return nil, err
 	}
 
@@ -1181,109 +1171,23 @@ func (api *RestAPI) appendTripReferences(ctx context.Context, references *models
 	}
 }
 
-func (api *RestAPI) appendStopReferences(ctx context.Context, references *models.ReferencesModel, in arrivalsReferencesInput, acc *arrivalsAccumulator) error {
-	reqLogger := logging.ForComponent(ctx, "http_server")
-	stopsByID, routesByStop, err := api.loadStopReferenceData(ctx, slices.Collect(maps.Keys(acc.stopIDs)))
+// appendStopReferences adds full records for the stops the arrivals point at,
+// and their parent stations, through the shared stop builder. Their routes go
+// into the accumulator so they reach references.routes.
+func (api *RestAPI) appendStopReferences(ctx context.Context, references *models.ReferencesModel, acc *arrivalsAccumulator) error {
+	stops, routes, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, slices.Collect(maps.Keys(acc.stopIDs)))
 	if err != nil {
 		return err
 	}
-
-	for stopID := range acc.stopIDs {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		stopData, ok := stopsByID[stopID]
-		if !ok {
-			reqLogger.Debug("skipping stop reference: stop not found", slog.String("stopID", stopID))
-			continue
-		}
-
-		combinedRouteIDs := collectStopRoutes(routesByStop[stopID], acc)
-
-		stopAgencyID := in.fallbackAgencyID
-		if agencyID, ok := in.stopAgencies[stopID]; ok && agencyID != "" {
-			stopAgencyID = agencyID
-		}
-
-		references.Stops = append(references.Stops, models.Stop{
-			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
-			Name:               stopData.Name.String,
-			Lat:                stopData.Lat,
-			Lon:                stopData.Lon,
-			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
-			Parent:             parentStationID(stopAgencyID, stopData),
-			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
-			LocationType:       int(stopData.LocationType.Int64),
-			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
-			RouteIDs:           combinedRouteIDs,
-			StaticRouteIDs:     combinedRouteIDs,
-		})
-	}
-
-	added, parentRoutes, err := api.missingParentStops(ctx, references.Stops)
-	if err != nil {
-		reqLogger.Warn("failed to resolve parent stops", slog.Any("error", err))
-		return nil
-	}
-	references.Stops = append(references.Stops, added...)
-	collectStopRoutes(parentRoutes, acc)
-
-	return nil
-}
-
-// loadStopReferenceData batch-fetches the stops and their routes in one shot
-// instead of a query per stop.
-//
-// Both stop and route lookup failures are logged and degrade gracefully: a
-// failed stop lookup costs the response its stop references, and a failed
-// route lookup only costs each stop its routeIds. Neither is worth a 500 for
-// what is otherwise a complete arrivals response.
-func (api *RestAPI) loadStopReferenceData(ctx context.Context, stopIDs []string) (
-	map[string]gtfsdb.Stop,
-	map[string][]gtfsdb.GetRoutesForStopsRow,
-	error,
-) {
-	reqLogger := logging.ForComponent(ctx, "http_server")
-	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDs)
-	if err != nil {
-		reqLogger.Warn("failed to batch fetch stop references", slog.Any("error", err))
-		stops = nil
-	}
-
-	stopsByID := make(map[string]gtfsdb.Stop, len(stops))
-	for _, s := range stops {
-		stopsByID[s.ID] = s
-	}
-
-	routesByStop := make(map[string][]gtfsdb.GetRoutesForStopsRow)
-	routeRows, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDs)
-	if err != nil {
-		reqLogger.Warn("failed to batch fetch routes for stop references", slog.Any("error", err))
-		return stopsByID, routesByStop, nil
-	}
-	for _, row := range routeRows {
-		routesByStop[row.StopID] = append(routesByStop[row.StopID], row)
-	}
-
-	return stopsByID, routesByStop, nil
-}
-
-// collectStopRoutes renders one stop's routes as combined IDs, recording any
-// route not already known into the accumulator so it reaches references.routes.
-func collectStopRoutes(routesForStop []gtfsdb.GetRoutesForStopsRow, acc *arrivalsAccumulator) []string {
-	combinedRouteIDs := make([]string, len(routesForStop))
-	for i, route := range routesForStop {
-		// Use route.AgencyID instead of the stop's agency
-		combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)
-
+	references.Stops = append(references.Stops, stops...)
+	for _, route := range routes {
 		if _, exists := acc.routes[route.ID]; exists {
 			continue
 		}
 		copied := routeFromStopRow(route)
 		acc.routes[route.ID] = &copied
 	}
-	return combinedRouteIDs
+	return nil
 }
 
 func (api *RestAPI) appendRouteReferences(ctx context.Context, references *models.ReferencesModel, addedAgencyIDs map[string]bool, acc *arrivalsAccumulator) {
