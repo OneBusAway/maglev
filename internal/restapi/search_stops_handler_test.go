@@ -37,26 +37,6 @@ func registerFixtureCleanup(t *testing.T, db *sql.DB, statements ...string) {
 	})
 }
 
-// assignStopAgencies writes fixture stops into the stop-to-agency index that stop
-// search reads. Tests insert stops straight into the shared database, bypassing the
-// import that builds the index, and rebuilding it would file every leftover fixture
-// stop under the feed's first agency. Giving stops different agencies stands in for
-// stops from different feeds.
-func assignStopAgencies(t *testing.T, api *RestAPI, agencyByStop map[string]string) {
-	t.Helper()
-	for stopID, agencyID := range agencyByStop {
-		_, err := api.GtfsManager.GtfsDB.DB.ExecContext(context.Background(),
-			"INSERT INTO stop_agencies (stop_id, agency_id) VALUES (?, ?)", stopID, agencyID)
-		require.NoError(t, err)
-	}
-}
-
-// clearIndexedStopAgencies removes the given stops from the index. Fixture cleanup has to
-// run this before deleting the stops or agencies the index rows point at.
-func clearIndexedStopAgencies(stopIDs string) string {
-	return `DELETE FROM stop_agencies WHERE stop_id IN (` + stopIDs + `)`
-}
-
 func TestSearchStopsHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -476,7 +456,6 @@ func TestSearchStopsHandlerOrdersByCombinedID(t *testing.T) {
 	ctx := context.Background()
 
 	registerFixtureCleanup(t, api.GtfsManager.GtfsDB.DB,
-		clearIndexedStopAgencies(`'aaa_stop', 'zzz_stop'`),
 		`DELETE FROM stop_times WHERE trip_id IN ('trip_ord_alpha', 'trip_ord_zulu')`,
 		`DELETE FROM trips WHERE id IN ('trip_ord_alpha', 'trip_ord_zulu')`,
 		`DELETE FROM routes WHERE id IN ('route_ord_alpha', 'route_ord_zulu')`,
@@ -553,7 +532,6 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	ctx := context.Background()
 
 	registerFixtureCleanup(t, api.GtfsManager.GtfsDB.DB,
-		clearIndexedStopAgencies(`'child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared', 'child_stop_multi_agency'`),
 		`DELETE FROM stop_times WHERE trip_id IN ('trip_parent_test', 'trip_parent_test_2', 'trip_parent_only', 'trip_multi_agency')`,
 		`DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2', 'trip_parent_only', 'trip_multi_agency')`,
 		`DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2', 'route_parent_only')`,
@@ -817,7 +795,6 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 
 	// The RABA agency and the service_1 calendar are shared records and are left in place.
 	registerFixtureCleanup(t, db,
-		clearIndexedStopAgencies(`'zero_route_stop', 'school_bus_stop', 'valid_bus_stop', 'two_school_routes_stop', 'limit_ghost_1', 'limit_ghost_2', 'limit_valid_3'`),
 		`DELETE FROM stop_times WHERE trip_id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`,
 		`DELETE FROM trips WHERE id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`,
 		`DELETE FROM routes WHERE id IN ('school_route_1', 'school_route_2', 'valid_route_1')`,
@@ -917,7 +894,6 @@ func TestSearchStopsHandlerParentStationCrossAgencyReference(t *testing.T) {
 	db := api.GtfsManager.GtfsDB.DB
 
 	registerFixtureCleanup(t, db,
-		clearIndexedStopAgencies(`'child_stop_cross', 'parent_station_cross'`),
 		`DELETE FROM stop_times WHERE trip_id IN ('child_trip', 'parent_trip')`,
 		`DELETE FROM trips WHERE id IN ('child_trip', 'parent_trip')`,
 		`DELETE FROM routes WHERE id IN ('child_route', 'parent_route')`,

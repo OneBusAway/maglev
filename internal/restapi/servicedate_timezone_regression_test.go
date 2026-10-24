@@ -34,9 +34,10 @@ type tzTestData struct {
 // setupTzTestGTFS creates a minimal GTFS dataset in the test DB:
 // one agency, one route, one stop, one calendar, two trips in a block, and stop times.
 // The calendar activeDays is a [7]int (Mon-Sun) so the test can control which day is active.
-func setupTzTestGTFS(t *testing.T, queries *gtfsdb.Queries, td tzTestData, activeDays [7]int) {
+func setupTzTestGTFS(t *testing.T, api *RestAPI, td tzTestData, activeDays [7]int) {
 	t.Helper()
 	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
 
 	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
 		ID: td.AgencyID, Name: td.AgencyID, Url: "http://test.example.com", Timezone: td.Timezone,
@@ -56,6 +57,7 @@ func setupTzTestGTFS(t *testing.T, queries *gtfsdb.Queries, td tzTestData, activ
 		Lat: -36.8485, Lon: 174.7633,
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{td.StopID: td.AgencyID})
 
 	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
 		ID:        td.ServiceID,
@@ -144,7 +146,7 @@ func TestServiceDateTimezoneRegression_ArrivalDeparture(t *testing.T) {
 
 	// All days active so the arrival lookup succeeds regardless of date
 	allDays := [7]int{1, 1, 1, 1, 1, 1, 1}
-	setupTzTestGTFS(t, api.GtfsManager.GtfsDB.Queries, td, allDays)
+	setupTzTestGTFS(t, api, td, allDays)
 
 	// Trip1 has arrival at 06:00 (set by setupTzTestGTFS)
 	arrivalNs := int64(6 * 3600 * int64(time.Second))
@@ -227,7 +229,7 @@ func TestServiceDateTimezoneRegression_BlockTripSequence(t *testing.T) {
 			api := createTestApiWithClock(t, mockClock)
 			defer api.Shutdown()
 
-			setupTzTestGTFS(t, api.GtfsManager.GtfsDB.Queries, td, days)
+			setupTzTestGTFS(t, api, td, days)
 
 			// Add a vehicle for the trip so BuildTripStatus returns a tracked
 			// status (extension 4e omits the status key when no tracking exists).

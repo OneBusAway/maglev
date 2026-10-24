@@ -159,6 +159,7 @@ func TestStopHandlerMultiAgencyScenario(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	assignStopAgencies(t, api, map[string]string{stopID: agencyA})
 	resp, model := callAPIHandler[StopEntryResponse](t, api,
 		stopURL(utils.FormCombinedID(agencyA, stopID)))
 
@@ -232,6 +233,7 @@ func TestStopHandler_StopCodeFallback(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	assignStopAgencies(t, api, map[string]string{stopID: agencyID})
 	resp, model := callAPIHandler[StopEntryResponse](t, api,
 		stopURL(utils.FormCombinedID(agencyID, stopID)))
 
@@ -345,6 +347,7 @@ func TestStopHandler_ParentStation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	assignStopAgencies(t, api, map[string]string{parentStopID: agencyID, childStopID: agencyID})
 	resp, model := callAPIHandler[StopEntryResponse](t, api,
 		stopURL(utils.FormCombinedID(agencyID, childStopID)))
 
@@ -457,6 +460,7 @@ func TestStopHandler_NaturalSorting(t *testing.T) {
 	}
 
 	// Call Endpoint
+	assignStopAgencies(t, api, map[string]string{stopID: agencyID})
 	resp, model := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(agencyID, stopID)))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -529,6 +533,7 @@ func TestStopHandler_ParentStationNaturalSorting(t *testing.T) {
 	}
 
 	// Call Endpoint for the CHILD stop
+	assignStopAgencies(t, api, map[string]string{parentStopID: agencyID, childStopID: agencyID})
 	resp, model := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(agencyID, childStopID)))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -636,6 +641,7 @@ func TestStopHandler_WrongAgency(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test 1: Request with the valid agency namespace -> 200 OK
+	assignStopAgencies(t, api, map[string]string{stopID: validAgency, orphanStopID: validAgency})
 	respValid, modelValid := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(validAgency, stopID)))
 	require.Equal(t, http.StatusOK, respValid.StatusCode)
 	assert.Equal(t, http.StatusOK, modelValid.Code)

@@ -70,6 +70,10 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
+	if !api.requireStopAgency(w, r, stopAgencyID, stopCode) {
+		return
+	}
+
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopCode)
 	if err != nil {
 		api.dbErrorResponse(w, r, err)

@@ -604,6 +604,7 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 		Lon:  -122.3321,
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{stopID: agencyA})
 
 	// 2. Setup: Agency B owns the route
 	agencyB := "AgencyB"
@@ -1052,6 +1053,7 @@ func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *t
 		ID: stopID, Lat: 52.52, Lon: 13.405,
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{stopID: agencyID})
 
 	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
 		ID:     serviceID,
@@ -1177,6 +1179,7 @@ func TestArrivalAndDepartureForStopHandler_StopSequenceStartsAtOne(t *testing.T)
 			ID: sid, Name: nulls.String(sid), Lat: 47.0, Lon: -122.0,
 		})
 		require.NoError(t, err)
+		assignStopAgencies(t, api, map[string]string{sid: agencyID})
 	}
 
 	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
@@ -1266,6 +1269,7 @@ func TestArrivalAndDepartureForStopHandler_NoStopSequence_PicksClosestToQueryTim
 		ID: stopID, Name: nulls.String("No-Sequence Loop Stop"), Lat: 47.0, Lon: -122.0,
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{stopID: agencyID})
 
 	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
 		ID:     serviceID,
@@ -1475,6 +1479,7 @@ func TestArrivalAndDepartureForStop_ScheduleOnlyBlock_SnapshotMetrics(t *testing
 			ID: sid, Name: nulls.String(sid), Lat: 47.0, Lon: -122.0,
 		})
 		require.NoError(t, err)
+		assignStopAgencies(t, api, map[string]string{sid: agencyID})
 	}
 	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID: routeID, AgencyID: agencyID,
@@ -1617,6 +1622,7 @@ func TestArrivalAndDepartureForStop_LoopTripPredictionMatchesRequestedSequence(t
 		Lon:  -122.0,
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{stopID: agencyID})
 
 	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
 		ID:        serviceID,
@@ -1802,6 +1808,7 @@ func TestArrivalAndDepartureForStopHandler_CrossAgencyTimezone(t *testing.T) {
 		Lat: 47.6062, Lon: -122.3321,
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{sharedStop: agencyUTC})
 
 	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
 		ID: calID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,

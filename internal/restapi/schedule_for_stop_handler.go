@@ -49,6 +49,10 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	if !api.requireStopAgency(w, r, agencyID, stopID) {
+		return
+	}
+
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
 		api.dbErrorResponse(w, r, err)

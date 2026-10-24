@@ -225,6 +225,10 @@ func seedStopRecordFixture(t *testing.T, api *RestAPI) {
 		Code: nulls.String("PLAT"),
 	})
 	require.NoError(t, err)
+	assignStopAgencies(t, api, map[string]string{
+		"hub": "s1547", "servedstation": "s1547", "emptystation": "s1547",
+		"nullstop": "s1547", "emptystop": "s1547", "keptstop": "s1547",
+	})
 
 	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
 		ID: "r1", AgencyID: "s1547", ShortName: nulls.String("R1"), Type: 3,
