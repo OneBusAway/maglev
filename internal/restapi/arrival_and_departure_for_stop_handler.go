@@ -443,7 +443,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	tripRef := models.NewTripReference(
 		utils.FormCombinedID(route.AgencyID, tripID),
 		utils.FormCombinedID(route.AgencyID, trip.RouteID),
-		utils.FormCombinedID(route.AgencyID, trip.ServiceID),
+		api.feedAgency().combinedServiceID(trip.ServiceID),
 		trip.TripHeadsign.String,
 		"", // trip short name
 		strconv.FormatInt(trip.DirectionID.Int64, 10),
@@ -465,7 +465,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 					activeTripRef := models.NewTripReference(
 						utils.FormCombinedID(activeRoute.AgencyID, activeTripID),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.RouteID),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ServiceID),
+						api.feedAgency().combinedServiceID(activeTrip.ServiceID),
 						activeTrip.TripHeadsign.String,
 						"", // trip short name
 						strconv.FormatInt(activeTrip.DirectionID.Int64, 10),

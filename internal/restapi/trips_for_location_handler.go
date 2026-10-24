@@ -1275,7 +1275,7 @@ func (rb *referenceBuilder) createTripReference(trip models.Trip, currentAgency 
 	return models.Trip{
 		ID:            utils.FormCombinedID(currentAgency, trip.ID),
 		RouteID:       utils.FormCombinedID(currentAgency, trip.RouteID),
-		ServiceID:     utils.FormCombinedID(currentAgency, trip.ServiceID),
+		ServiceID:     rb.api.feedAgency().combinedServiceID(trip.ServiceID),
 		TripHeadsign:  trip.TripHeadsign,
 		TripShortName: trip.TripShortName,
 		DirectionID:   trip.DirectionID,

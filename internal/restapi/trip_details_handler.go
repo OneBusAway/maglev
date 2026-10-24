@@ -458,7 +458,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 		refTripModel := &models.Trip{
 			ID:             entry.combinedID,
 			RouteID:        utils.FormCombinedID(refRoute.AgencyID, refTrip.RouteID),
-			ServiceID:      utils.FormCombinedID(agencyID, refTrip.ServiceID),
+			ServiceID:      api.feedAgency().combinedServiceID(refTrip.ServiceID),
 			ShapeID:        utils.FormCombinedID(agencyID, refTrip.ShapeID.String),
 			TripHeadsign:   refTrip.TripHeadsign.String,
 			TripShortName:  refTrip.TripShortName.String,

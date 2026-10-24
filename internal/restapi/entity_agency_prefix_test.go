@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
@@ -244,4 +245,68 @@ func TestScheduleForStop_FrequencyTripIDsUseTheRoutesAgency(t *testing.T) {
 	require.Len(t, frequencies, 1)
 	assert.Equal(t, "other_other-trip", frequencies[0]["tripId"])
 	assert.Equal(t, "own_svc", frequencies[0]["serviceId"])
+}
+
+// Java names every service ID after the feed's first agency, whichever
+// agency runs the trip (GtfsReader gives calendars the default agency ID).
+func TestServiceIDs_UseTheFeedsFirstAgency(t *testing.T) {
+	now := time.Date(2025, 1, 1, 10, 15, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now), "agency-prefix.zip", agencyPrefixFiles())
+	lat, lon := float32(37.78), float32(-122.414)
+	api.GtfsManager.MockAddVehicleWithOptions("bus", "other-trip", "other-route", internalgtfs.MockVehicleOptions{
+		Timestamp: &now,
+		Position:  &gtfs.Position{Latitude: &lat, Longitude: &lon},
+	})
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	serviceDate := strconv.FormatInt(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), 10)
+
+	for _, endpoint := range []string{
+		"trip/other_other-trip.json?key=TEST",
+		"trip-details/other_other-trip.json?key=TEST&serviceDate=" + serviceDate,
+		"trip-for-vehicle/other_bus.json?key=TEST",
+		"trips-for-route/other_other-route.json?key=TEST",
+		"trips-for-location.json?key=TEST&lat=37.78&lon=-122.41&latSpan=0.1&lonSpan=0.1",
+		"block/other_other-block.json?key=TEST",
+		"schedule-for-route/other_other-route.json?key=TEST&date=2025-01-01",
+		"arrivals-and-departures-for-stop/own_stop-1.json?key=TEST&minutesBefore=60",
+		"arrival-and-departure-for-stop/own_stop-1.json?key=TEST&tripId=other_other-trip&serviceDate=" + serviceDate,
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/"+endpoint)
+			require.Equal(t, http.StatusOK, model.Code)
+			serviceIDs := serviceIDsIn(model.Data)
+			require.NotEmpty(t, serviceIDs)
+			for _, serviceID := range serviceIDs {
+				assert.Equal(t, "own_svc", serviceID)
+			}
+		})
+	}
+}
+
+// serviceIDsIn collects every value under a serviceId, serviceIds or
+// activeServiceIds key anywhere in a decoded response.
+func serviceIDsIn(node any) []string {
+	var found []string
+	switch value := node.(type) {
+	case map[string]any:
+		for key, child := range value {
+			switch key {
+			case "serviceId":
+				if id, ok := child.(string); ok {
+					found = append(found, id)
+				}
+			case "serviceIds", "activeServiceIds":
+				for _, id := range child.([]any) {
+					found = append(found, id.(string))
+				}
+			default:
+				found = append(found, serviceIDsIn(child)...)
+			}
+		}
+	case []any:
+		for _, child := range value {
+			found = append(found, serviceIDsIn(child)...)
+		}
+	}
+	return found
 }

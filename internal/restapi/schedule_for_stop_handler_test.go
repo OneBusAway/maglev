@@ -961,7 +961,7 @@ func TestScheduleForStopHandlerSpecShape(t *testing.T) {
 func TestGroupScheduleRowsByRouteAndDirection(t *testing.T) {
 	startOfDay := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
 	agencyID := "1"
-	rowCtx := scheduleRowContext{serviceAgencyID: agencyID, startOfDay: startOfDay, serviceStart: startOfDay}
+	rowCtx := scheduleRowContext{services: feedAgency(agencyID), startOfDay: startOfDay, serviceStart: startOfDay}
 
 	makeRow := func(tripID, routeID string, directionID sql.NullInt64, headsign string) gtfsdb.GetScheduleForStopOnDateRow {
 		return gtfsdb.GetScheduleForStopOnDateRow{

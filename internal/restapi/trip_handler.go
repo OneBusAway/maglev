@@ -61,7 +61,7 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 	tripModel := &models.Trip{
 		ID:            utils.FormCombinedID(agencyID, trip.ID),
 		RouteID:       utils.FormCombinedID(agencyID, trip.RouteID),
-		ServiceID:     utils.FormCombinedID(agencyID, trip.ServiceID),
+		ServiceID:     api.feedAgency().combinedServiceID(trip.ServiceID),
 		DirectionID:   strconv.FormatInt(trip.DirectionID.Int64, 10),
 		BlockID:       blockID,
 		ShapeID:       shapeID,
