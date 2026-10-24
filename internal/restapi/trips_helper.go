@@ -368,12 +368,7 @@ func (api *RestAPI) BuildTripStatus(
 		} else if snap != nil && snap.ActiveTripID != "" && snap.InRange {
 			// No live vehicle: place the bus at the interpolated position
 			// on the block's currently-active trip.
-			if pos, orient := snap.scheduledPosition(); pos != nil {
-				status.Position = *pos
-				if orient >= 0 {
-					status.Orientation = orient
-				}
-			}
+			applyScheduledPosition(status, snap)
 		} else if len(stopTimes) > 0 {
 			// currentTime is outside the shift's schedule — fall back to
 			// within-target interpolation so position / orientation are not
@@ -386,16 +381,25 @@ func (api *RestAPI) BuildTripStatus(
 	} else if !vehicleHasPosition(vehicle) {
 		// A trip with no shape still gets the block's scheduled position,
 		// between stops when no block trip has a shape either.
-		if pos, orient := snap.scheduledPosition(); pos != nil {
-			status.Position = *pos
-			if orient >= 0 {
-				status.Orientation = orient
-			}
-		}
+		applyScheduledPosition(status, snap)
 	}
 
 	extras.snapshot = snap
 	return status, extras, nil
+}
+
+// applyScheduledPosition sets the status's position, and orientation when
+// known, to where the block's schedule places it. It leaves both alone when
+// the schedule places the block nowhere.
+func applyScheduledPosition(status *models.TripStatus, snap *scheduledBlockSnapshot) {
+	pos, orient := snap.scheduledPosition()
+	if pos == nil {
+		return
+	}
+	status.Position = *pos
+	if orient >= 0 {
+		status.Orientation = orient
+	}
 }
 
 // vehicleHasPosition reports whether the vehicle sent a latitude and longitude.

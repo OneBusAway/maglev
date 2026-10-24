@@ -320,7 +320,7 @@ func (s *scheduledBlockSnapshot) closestAndNextStops() (stops scheduledStops, ok
 // stops before and after, by time. Returns (nil, -1) when the snapshot is nil,
 // its time falls outside the block, or the stops have no coordinates.
 func (s *scheduledBlockSnapshot) scheduledPosition() (*models.Location, float64) {
-	if s == nil || !s.InRange || s.NextStopIndex < 0 {
+	if s == nil || !s.InRange {
 		return nil, -1
 	}
 	if position, orientation := positionAndOrientationAtDistance(
@@ -332,22 +332,25 @@ func (s *scheduledBlockSnapshot) scheduledPosition() (*models.Location, float64)
 }
 
 // positionBetweenStops interpolates between the stops the snapshot's time falls
-// between. At a stop, or before the first one, Java reports the stop itself
-// with orientation 0.
+// between, from the earlier stop's departure to the later one's arrival.
+// During a stop's dwell, or at the block's first stop, Java reports the stop
+// itself with orientation 0.
 func (s *scheduledBlockSnapshot) positionBetweenStops() (*models.Location, float64) {
-	next := s.Stops[s.NextStopIndex]
-	if next.Location == nil {
+	index, atStop, ok := s.scheduledStopIndex()
+	if !ok || s.Stops[index].Location == nil {
 		return nil, -1
 	}
-	if s.NextStopIndex == 0 || next.EffectiveStopSeconds == s.CurrentSeconds {
+	next := s.Stops[index]
+	if atStop || index == 0 {
 		return next.Location, 0
 	}
-	previous := s.Stops[s.NextStopIndex-1]
-	span := next.EffectiveStopSeconds - previous.EffectiveStopSeconds
+	previous := s.Stops[index-1]
+	departed := previous.departureSeconds()
+	span := next.EffectiveStopSeconds - departed
 	if previous.Location == nil || span <= 0 {
 		return next.Location, 0
 	}
-	ratio := float64(s.CurrentSeconds-previous.EffectiveStopSeconds) / float64(span)
+	ratio := float64(s.CurrentSeconds-departed) / float64(span)
 	from, to := *previous.Location, *next.Location
 	position := &models.Location{
 		Lat: from.Lat + ratio*(to.Lat-from.Lat),

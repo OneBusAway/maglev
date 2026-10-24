@@ -1149,3 +1149,42 @@ func TestScheduledBlockSnapshot_ClosestAndNextStops(t *testing.T) {
 	_, ok = none.closestAndNextStops()
 	assert.False(t, ok)
 }
+
+// Without a shape, scheduledPosition places the bus between stops by time, as
+// Java does: at a stop during its dwell, then from its departure to the next
+// stop's arrival.
+func TestScheduledBlockSnapshot_ScheduledPositionWithoutShape(t *testing.T) {
+	stops := []blockStopMetric{
+		{StopID: "first", EffectiveStopSeconds: 1000, DepartureSeconds: 1200, Location: &models.Location{Lat: 47.0, Lon: -122.0}},
+		{StopID: "second", EffectiveStopSeconds: 1600, Location: &models.Location{Lat: 47.4, Lon: -122.0}},
+	}
+	tests := []struct {
+		name           string
+		currentSeconds int64
+		wantLat        float64
+		wantAtStop     bool
+	}{
+		{"at the first stop", 1000, 47.0, true},
+		{"during the dwell", 1100, 47.0, true},
+		{"a quarter of the run after departing", 1300, 47.1, false},
+		{"at the next stop", 1600, 47.4, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := buildSnapshotFromStops(stops, nil, time.Unix(tt.currentSeconds, 0).UTC(), time.Unix(0, 0).UTC())
+			pos, orientation := snap.scheduledPosition()
+			require.NotNil(t, pos)
+			assert.InDelta(t, tt.wantLat, pos.Lat, 1e-9)
+			assert.InDelta(t, -122.0, pos.Lon, 1e-9)
+			if tt.wantAtStop {
+				assert.Zero(t, orientation)
+			} else {
+				assert.InDelta(t, 90, orientation, 1e-9, "due north")
+			}
+		})
+	}
+
+	outside := buildSnapshotFromStops(stops, nil, time.Unix(2000, 0).UTC(), time.Unix(0, 0).UTC())
+	pos, _ := outside.scheduledPosition()
+	assert.Nil(t, pos, "past the block's last stop")
+}
