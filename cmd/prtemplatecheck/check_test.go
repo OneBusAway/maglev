@@ -192,6 +192,38 @@ func TestCheckBody(t *testing.T) {
 			},
 		},
 		{
+			name: "stray_paragraph_after_empty_field",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\nAn unrelated paragraph in the section.")
+			},
+			wantRules:    []string{ruleField},
+			wantMentions: []string{"Manual check"},
+		},
+		{
+			name: "filled_field_followed_by_stray_paragraph",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", " ran unit tests\n\nAn unrelated paragraph in the section.")
+			},
+		},
+		{
+			name: "field_value_unindented_code_fence_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n```\ncurl localhost:4000\n```")
+			},
+		},
+		{
+			name: "field_value_unindented_tilde_fence_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n~~~\ncurl localhost:4000\n~~~")
+			},
+		},
+		{
+			name: "field_value_details_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n<details>\nmanual check\n</details>")
+			},
+		},
+		{
 			name: "checkbox_in_comment",
 			body: func(t *testing.T) string {
 				return replaceOnce(t, filled, "- [x] This PR addresses one issue.",
