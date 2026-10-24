@@ -201,6 +201,18 @@ FROM
             1
     ) AS first_agency;
 
+-- name: GetFeedAgencyID :one
+-- The feed's default agency, as BuildStopAgencies picks it. Java names stops and
+-- service IDs after it.
+SELECT
+    id
+FROM
+    agencies
+ORDER BY
+    rowid
+LIMIT
+    1;
+
 -- name: CreateCalendarDate :one
 INSERT
 OR REPLACE INTO calendar_dates (service_id, date, exception_type)
