@@ -3,10 +3,11 @@ package restapi
 import (
 	"context"
 	"net/http"
+	"slices"
 	"time"
 
+	"maglev.onebusaway.org/gtfsdb"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
-	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -96,8 +97,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	params.Time = params.Time.In(loc)
 
 	acc := newArrivalsAccumulator(stopAgencyID)
-	references := models.NewEmptyReferences()
-	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
 	result, err := api.arrivalsForStop(ctx, stopArrivalsInput{
 		StopCode:  stopCode,
@@ -119,21 +118,26 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// Sort after buildArrival so predicted times are already filled in.
 	sortArrivalsByBestTime(result.Arrivals)
 
-	// Nothing scheduled in the window: emit the bare envelope without paying
-	// for reference, alert or nearby-stop lookups.
-	if !result.Matched {
-		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, []string{}, []string{}, stopID, api.Clock)
-		api.sendResponse(w, r, response)
-		return
+	// Java names the stop and every stop near it in references, whether or not
+	// the window has arrivals.
+	nearbyIDs := api.nearbyStopIDs(ctx, stop)
+	acc.stopIDs[stopCode] = true
+	for _, nearbyID := range nearbyIDs {
+		acc.stopIDs[nearbyID] = true
 	}
 
-	references, err = api.buildArrivalsReferences(ctx, &agency, acc)
+	references, err := api.buildArrivalsReferences(ctx, &agency, acc)
 	if err != nil {
 		if ctx.Err() != nil {
 			api.clientCanceledResponse(w, r, ctx.Err())
 		} else {
 			api.serverErrorResponse(w, r, err)
 		}
+		return
+	}
+	nearbyAgencies, err := api.loadStopAgencyIDs(ctx, nearbyIDs)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
 		return
 	}
 
@@ -144,50 +148,21 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// was matched through an arrival's trip or through the stop itself.
 	topLevelSituationIDs := situationIDsFromRefs(acc.situations.refs)
 
-	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
+	nearbyStopIDs := nearbyAgencies.combinedStopIDs(nearbyIDs)
 	response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nearbyStopIDs, topLevelSituationIDs, stopID, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
-func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) []string {
-	// Mirrors Java: StopWithArrivalsAndDeparturesBeanServiceImpl calls
-	// NearbyStopsBeanService with radius=100 m and no count limit
-	// (StopWithArrivalsAndDeparturesBeanServiceImpl.java:74-75 +
-	// NearbyStopsBeanServiceImpl.java:60-72). LatSpan/LonSpan must stay
-	// zero so BoundsFromParams uses Radius — otherwise span-in-degrees
-	// takes precedence and produces a city-sized bounding box.
+// nearbyStopIDs returns the raw IDs of every stop within 100 m of stop, served
+// or not and stations included, leaving out stop itself. This mirrors Java's
+// NearbyStopsBeanServiceImpl, which StopWithArrivalsAndDeparturesBeanServiceImpl
+// calls with a 100 m radius and no count limit. LatSpan and LonSpan stay zero so
+// BoundsFromParams uses Radius; a span would take precedence in degrees.
+func (api *RestAPI) nearbyStopIDs(ctx context.Context, stop gtfsdb.Stop) []string {
 	const nearbyRadiusMeters = 100
-	const nearbyLimit = 0 // 0 = no cap
-	loc := &internalgtfs.LocationParams{Lat: lat, Lon: lon, Radius: nearbyRadiusMeters}
-	nearbyIDs := api.GtfsManager.GetStopIDsWithinBounds(ctx, loc, nearbyLimit)
-	if len(nearbyIDs) == 0 {
-		return nil
-	}
-
-	// Exclude the current stop from nearby results
-	var candidateIDs []string
-	for _, id := range nearbyIDs {
-		if id != stopID {
-			candidateIDs = append(candidateIDs, id)
-		}
-	}
-	if len(candidateIDs) == 0 {
-		return nil
-	}
-
-	stopAgencies, err := api.loadStopAgencyIDs(ctx, candidateIDs)
-	if err != nil {
-		logging.ForComponent(ctx, "http_server").Warn("failed to resolve agencies for nearby stops, using fallback",
-			"error", err, "fallbackAgencyID", fallbackAgencyID)
-	}
-
-	nearbyStopIDs := make([]string, 0, len(candidateIDs))
-	for _, sid := range candidateIDs {
-		agency := fallbackAgencyID
-		if resolved, ok := stopAgencies[sid]; ok {
-			agency = resolved
-		}
-		nearbyStopIDs = append(nearbyStopIDs, utils.FormCombinedID(agency, sid))
-	}
-	return nearbyStopIDs
+	const noLimit = 0
+	loc := &internalgtfs.LocationParams{Lat: stop.Lat, Lon: stop.Lon, Radius: nearbyRadiusMeters}
+	return slices.DeleteFunc(api.GtfsManager.GetStopIDsWithinBounds(ctx, loc, noLimit), func(id string) bool {
+		return id == stop.ID
+	})
 }
