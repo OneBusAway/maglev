@@ -132,21 +132,10 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Batch query to get agencies for all stops
-	agenciesForStops, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, stopIDs)
+	stopAgencies, err := api.loadStopAgencyIDs(ctx, stopIDs)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
-	}
-
-	stopAgency := make(map[string]*gtfsdb.GetAgenciesForStopsRow)
-
-	// Group agencies by stop (take the first agency for each stop)
-	for _, agencyRow := range agenciesForStops {
-		stopID := agencyRow.StopID
-		if _, exists := stopAgency[stopID]; !exists {
-			stopAgency[stopID] = &agencyRow
-		}
 	}
 
 	isLimitExceeded := limitExceeded
@@ -161,16 +150,16 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 		stop := stopMap[stopID]
 		rids := stopRouteIDs[stopID]
-		agency := stopAgency[stopID]
+		agencyID, hasAgency := stopAgencies[stopID]
 
 		// A stop-code lookup still resolves the stop when nothing is scheduled that day.
-		if agency == nil || (len(rids) == 0 && query == "") {
+		if !hasAgency || (len(rids) == 0 && query == "") {
 			continue
 		}
 
 		resultRawStopIDs = append(resultRawStopIDs, stopID)
 
-		results = append(results, api.buildStopModel(ctx, agency.ID, stop, rids))
+		results = append(results, api.buildStopModel(ctx, agencyID, stop, rids))
 	}
 
 	if ctx.Err() != nil {
@@ -197,7 +186,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	// When includeReferences=false the references block is present but empty.
 	if includeReferences {
 		// References describe the returned stops, so they are collected after capping.
-		parentStops, parentRouteIDs, err := api.parentStationReferences(ctx, resultRawStopIDs, stopMap, stopAgency)
+		parentStops, parentRouteIDs, err := api.parentStationReferences(ctx, resultRawStopIDs, stopMap, stopAgencies)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
@@ -254,12 +243,12 @@ func (api *RestAPI) parentStationReferences(
 	ctx context.Context,
 	stopIDs []string,
 	stopMap map[string]gtfsdb.Stop,
-	stopAgency map[string]*gtfsdb.GetAgenciesForStopsRow,
+	stopAgencies stopAgencyIDs,
 ) ([]models.Stop, map[string][]string, error) {
 	parentIDsByBareID := make(map[string][]string)
 	for _, stopID := range stopIDs {
 		stop := stopMap[stopID]
-		parentID := parentStationID(stopAgency[stopID].ID, stop)
+		parentID := parentStationID(stopAgencies[stopID], stop)
 		bareParentID := nulls.StringOrEmpty(stop.ParentStation)
 		if parentID == "" || slices.Contains(parentIDsByBareID[bareParentID], parentID) {
 			continue

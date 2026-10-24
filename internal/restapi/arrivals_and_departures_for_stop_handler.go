@@ -178,27 +178,16 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 		return nil
 	}
 
-	reqLogger := logging.ForComponent(ctx, "http_server")
-	// Batch-resolve the owning agency for each nearby stop so that
-	// multi-agency feeds produce correct combined IDs.
-	stopAgencyMap := make(map[string]string, len(candidateIDs))
-	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, candidateIDs)
+	stopAgencies, err := api.loadStopAgencyIDs(ctx, candidateIDs)
 	if err != nil {
-		reqLogger.Warn("failed to resolve agencies for nearby stops, using fallback",
+		logging.ForComponent(ctx, "http_server").Warn("failed to resolve agencies for nearby stops, using fallback",
 			"error", err, "fallbackAgencyID", fallbackAgencyID)
-	} else {
-		for _, row := range agencyRows {
-			// First agency wins; a stop served by multiple agencies uses the first one found.
-			if _, exists := stopAgencyMap[row.StopID]; !exists {
-				stopAgencyMap[row.StopID] = row.ID
-			}
-		}
 	}
 
 	nearbyStopIDs := make([]string, 0, len(candidateIDs))
 	for _, sid := range candidateIDs {
 		agency := fallbackAgencyID
-		if resolved, ok := stopAgencyMap[sid]; ok {
+		if resolved, ok := stopAgencies[sid]; ok {
 			agency = resolved
 		}
 		nearbyStopIDs = append(nearbyStopIDs, utils.FormCombinedID(agency, sid))

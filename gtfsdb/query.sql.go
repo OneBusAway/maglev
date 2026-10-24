@@ -1417,6 +1417,8 @@ type GetAgenciesForStopsRow struct {
 	StopID   string
 }
 
+// The agencies whose routes serve each stop, for references.agencies. A stop's own
+// agency, the one in its ID, comes from GetStopAgencyIDs.
 func (q *Queries) GetAgenciesForStops(ctx context.Context, stopIds []string) ([]GetAgenciesForStopsRow, error) {
 	query := getAgenciesForStops
 	var queryParams []interface{}
