@@ -455,6 +455,11 @@ CREATE INDEX IF NOT EXISTS idx_block_trip_index_service_ids ON block_trip_index 
 CREATE INDEX IF NOT EXISTS idx_block_trip_entry_index_id ON block_trip_entry (block_trip_index_id);
 
 -- migrate
+-- Block-wide joins (e.g. GetBlocksForBlockTripIndexIDs, which finds a route's
+-- active blocks for trips-for-route) match block_trip_entry rows by block_id.
+CREATE INDEX IF NOT EXISTS idx_block_trip_entry_block_id ON block_trip_entry (block_id);
+
+-- migrate
 CREATE INDEX IF NOT EXISTS idx_block_trip_entry_trip_id ON block_trip_entry (trip_id);
 
 -- migrate
