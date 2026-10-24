@@ -436,3 +436,16 @@ func TestCompressionConfig(t *testing.T) {
 		assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
 	})
 }
+
+// assignStopAgencies gives fixture stops the agency in their IDs. Tests insert stops
+// straight into the shared database, bypassing the import that fills stop_agencies,
+// and rebuilding it would file every leftover fixture stop under the feed's first
+// agency. Giving stops different agencies stands in for stops from different feeds.
+func assignStopAgencies(t *testing.T, api *RestAPI, agencyByStop map[string]string) {
+	t.Helper()
+	for stopID, agencyID := range agencyByStop {
+		_, err := api.GtfsManager.GtfsDB.DB.ExecContext(context.Background(),
+			"INSERT INTO stop_agencies (stop_id, agency_id) VALUES (?, ?)", stopID, agencyID)
+		require.NoError(t, err)
+	}
+}
