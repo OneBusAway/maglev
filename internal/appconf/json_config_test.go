@@ -249,7 +249,7 @@ func TestToGtfsConfigData_NoFeeds(t *testing.T) {
 	jsonConfig := &JSONConfig{
 		Port: 4000,
 		Env:  "development",
-		GtfsStaticFeed: GtfsStaticFeed{
+		GtfsStaticFeed: &GtfsStaticFeed{
 			URL:             "https://example.com/gtfs.zip",
 			AuthHeaderName:  "X-API-Key",
 			AuthHeaderValue: "secret123",
@@ -275,7 +275,7 @@ func TestToGtfsConfigData_WithMultipleFeeds(t *testing.T) {
 	jsonConfig := &JSONConfig{
 		Port: 4000,
 		Env:  "production",
-		GtfsStaticFeed: GtfsStaticFeed{
+		GtfsStaticFeed: &GtfsStaticFeed{
 			URL: "https://example.com/gtfs.zip",
 		},
 		GtfsRtFeeds: []GtfsRtFeed{
@@ -445,7 +445,7 @@ func TestValidate_FileURLNotAllowed(t *testing.T) {
 				ApiKeys:          []string{"test"},
 				ProtectedApiKeys: []string{"test"},
 				RateLimit:        100,
-				GtfsStaticFeed: GtfsStaticFeed{
+				GtfsStaticFeed: &GtfsStaticFeed{
 					URL: tt.gtfsURL,
 				},
 				LogLevel:  "info",
@@ -483,7 +483,7 @@ func TestValidate_PathTraversalGtfsURL(t *testing.T) {
 				ApiKeys:          []string{"test"},
 				ProtectedApiKeys: []string{"test"},
 				RateLimit:        100,
-				GtfsStaticFeed: GtfsStaticFeed{
+				GtfsStaticFeed: &GtfsStaticFeed{
 					URL: tt.gtfsURL,
 				},
 				LogLevel:  "info",
@@ -519,7 +519,7 @@ func TestValidate_ValidAbsolutePaths(t *testing.T) {
 				ApiKeys:          []string{"test"},
 				ProtectedApiKeys: []string{"test"},
 				RateLimit:        100,
-				GtfsStaticFeed: GtfsStaticFeed{
+				GtfsStaticFeed: &GtfsStaticFeed{
 					URL: tt.gtfsURL,
 				},
 				DataPath:  "./gtfs.db",
@@ -557,7 +557,7 @@ func TestValidate_PartialAuthHeaders(t *testing.T) {
 				ApiKeys:          []string{"test"},
 				ProtectedApiKeys: []string{"test"},
 				RateLimit:        100,
-				GtfsStaticFeed: GtfsStaticFeed{
+				GtfsStaticFeed: &GtfsStaticFeed{
 					URL:             "https://example.com/gtfs.zip",
 					AuthHeaderName:  tt.authName,
 					AuthHeaderValue: tt.authValue,
