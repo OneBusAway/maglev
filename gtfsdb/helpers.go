@@ -583,25 +583,52 @@ func buildStopAgencyIndex(ctx context.Context, qtx *Queries) error {
 	return nil
 }
 
+// FeedDateRange returns the earliest and latest service dates from the calendar
+// and calendar_dates tables as YYYYMMDD strings, or empty strings if absent.
+func (c *Client) FeedDateRange(ctx context.Context) (startDate, endDate string, err error) {
+	if c == nil || c.Queries == nil {
+		return "", "", nil
+	}
+	row, err := c.Queries.GetFeedDateRange(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	start, err := extractDateString(row.FeedStartDate)
+	if err != nil {
+		return "", "", err
+	}
+	end, err := extractDateString(row.FeedEndDate)
+	if err != nil {
+		return "", "", err
+	}
+	return start, end, nil
+}
+
+func extractDateString(val interface{}) (string, error) {
+	switch v := val.(type) {
+	case nil:
+		return "", nil
+	case string:
+		return v, nil
+	case []byte:
+		return string(v), nil
+	default:
+		return "", fmt.Errorf("unexpected date string type: %T", val)
+	}
+}
+
 // updateFeedExpiresAtFromCalendar persists the end of the latest service date
 // in the latest-expiring agency timezone. Call within a transaction so expiry
 // is atomic with the calendar and agency data it was derived from.
 func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
-	val, err := qtx.GetFeedEndDate(ctx)
+	row, err := qtx.GetFeedDateRange(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get feed end date: %w", err)
+		return fmt.Errorf("failed to get feed date range: %w", err)
 	}
 
-	var dateStr string
-	switch v := val.(type) {
-	case nil:
-		// No calendar data — feed_expires_at will be NULL.
-	case string:
-		dateStr = v
-	case []byte:
-		dateStr = string(v)
-	default:
-		return fmt.Errorf("unexpected type from GetFeedEndDate: %T", val)
+	dateStr, err := extractDateString(row.FeedEndDate)
+	if err != nil {
+		return fmt.Errorf("failed to extract feed end date: %w", err)
 	}
 
 	var expires sql.NullInt64

@@ -2142,20 +2142,27 @@ func (q *Queries) GetCalendarDateExceptionsForServiceID(ctx context.Context, ser
 	return items, nil
 }
 
-const getFeedEndDate = `-- name: GetFeedEndDate :one
-SELECT COALESCE(CAST(MAX(max_date) AS TEXT), '') AS feed_end_date
+const getFeedDateRange = `-- name: GetFeedDateRange :one
+SELECT 
+    COALESCE(CAST(MIN(min_date) AS TEXT), '') AS feed_start_date,
+    COALESCE(CAST(MAX(max_date) AS TEXT), '') AS feed_end_date
 FROM (
-    SELECT MAX(end_date) AS max_date FROM calendar
+    SELECT MIN(start_date) AS min_date, MAX(end_date) AS max_date FROM calendar
     UNION ALL
-    SELECT MAX(date) AS max_date FROM calendar_dates WHERE exception_type = 1
+    SELECT MIN(date) AS min_date, MAX(date) AS max_date FROM calendar_dates WHERE exception_type = 1
 )
 `
 
-func (q *Queries) GetFeedEndDate(ctx context.Context) (interface{}, error) {
-	row := q.queryRow(ctx, q.getFeedEndDateStmt, getFeedEndDate)
-	var feed_end_date interface{}
-	err := row.Scan(&feed_end_date)
-	return feed_end_date, err
+type GetFeedDateRangeRow struct {
+	FeedStartDate interface{}
+	FeedEndDate   interface{}
+}
+
+func (q *Queries) GetFeedDateRange(ctx context.Context) (GetFeedDateRangeRow, error) {
+	row := q.queryRow(ctx, q.getFeedDateRangeStmt, getFeedDateRange)
+	var i GetFeedDateRangeRow
+	err := row.Scan(&i.FeedStartDate, &i.FeedEndDate)
+	return i, err
 }
 
 const getFirstStopOfNextTripInBlock = `-- name: GetFirstStopOfNextTripInBlock :one

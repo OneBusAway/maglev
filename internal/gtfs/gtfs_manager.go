@@ -838,6 +838,14 @@ func (manager *Manager) GetSystemETag(ctx context.Context) string {
 	return `W/"` + metadata.FileHash + `"`
 }
 
+// FeedServiceDateRange returns the earliest and latest service date strings (YYYYMMDD) in the feed.
+func (manager *Manager) FeedServiceDateRange(ctx context.Context) (startDate, endDate string, err error) {
+	if manager == nil || manager.GtfsDB == nil {
+		return "", "", nil
+	}
+	return manager.GtfsDB.FeedDateRange(ctx)
+}
+
 // FeedExpiresAt reads the feed expiry time from the database.
 func (manager *Manager) FeedExpiresAt(ctx context.Context) time.Time {
 	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)

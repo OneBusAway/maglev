@@ -198,8 +198,8 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getCalendarDateExceptionsForServiceIDStmt, err = db.PrepareContext(ctx, getCalendarDateExceptionsForServiceID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetCalendarDateExceptionsForServiceID: %w", err)
 	}
-	if q.getFeedEndDateStmt, err = db.PrepareContext(ctx, getFeedEndDate); err != nil {
-		return nil, fmt.Errorf("error preparing query GetFeedEndDate: %w", err)
+	if q.getFeedDateRangeStmt, err = db.PrepareContext(ctx, getFeedDateRange); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFeedDateRange: %w", err)
 	}
 	if q.getFirstStopOfNextTripInBlockStmt, err = db.PrepareContext(ctx, getFirstStopOfNextTripInBlock); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFirstStopOfNextTripInBlock: %w", err)
@@ -703,9 +703,9 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getCalendarDateExceptionsForServiceIDStmt: %w", cerr)
 		}
 	}
-	if q.getFeedEndDateStmt != nil {
-		if cerr := q.getFeedEndDateStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getFeedEndDateStmt: %w", cerr)
+	if q.getFeedDateRangeStmt != nil {
+		if cerr := q.getFeedDateRangeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFeedDateRangeStmt: %w", cerr)
 		}
 	}
 	if q.getFirstStopOfNextTripInBlockStmt != nil {
@@ -1150,7 +1150,7 @@ type Queries struct {
 	getBlocksForBlockTripIndexIDsStmt         *sql.Stmt
 	getCalendarByServiceIDStmt                *sql.Stmt
 	getCalendarDateExceptionsForServiceIDStmt *sql.Stmt
-	getFeedEndDateStmt                        *sql.Stmt
+	getFeedDateRangeStmt                      *sql.Stmt
 	getFirstStopOfNextTripInBlockStmt         *sql.Stmt
 	getFrequenciesForTripStmt                 *sql.Stmt
 	getFrequenciesForTripsStmt                *sql.Stmt
@@ -1284,7 +1284,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getBlocksForBlockTripIndexIDsStmt:         q.getBlocksForBlockTripIndexIDsStmt,
 		getCalendarByServiceIDStmt:                q.getCalendarByServiceIDStmt,
 		getCalendarDateExceptionsForServiceIDStmt: q.getCalendarDateExceptionsForServiceIDStmt,
-		getFeedEndDateStmt:                        q.getFeedEndDateStmt,
+		getFeedDateRangeStmt:                      q.getFeedDateRangeStmt,
 		getFirstStopOfNextTripInBlockStmt:         q.getFirstStopOfNextTripInBlockStmt,
 		getFrequenciesForTripStmt:                 q.getFrequenciesForTripStmt,
 		getFrequenciesForTripsStmt:                q.getFrequenciesForTripsStmt,

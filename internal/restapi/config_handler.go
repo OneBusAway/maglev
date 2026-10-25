@@ -1,7 +1,10 @@
 package restapi
 
 import (
+	"log/slog"
 	"net/http"
+	"strconv"
+	"time"
 
 	"maglev.onebusaway.org/internal/buildinfo"
 	"maglev.onebusaway.org/internal/models"
@@ -34,12 +37,24 @@ func (api *RestAPI) configHandler(w http.ResponseWriter, r *http.Request) {
 		GitCommitIdDescribeShort: buildinfo.Version,
 	}
 
+	var serviceDateFrom, serviceDateTo string
+	if api.GtfsManager != nil {
+		startDate, endDate, err := api.GtfsManager.FeedServiceDateRange(r.Context())
+		if err != nil {
+			slog.ErrorContext(r.Context(), "failed to get feed service date range", "error", err)
+		} else {
+			loc := agencyTimezone(api, r)
+			serviceDateFrom = formatServiceDate(startDate, loc)
+			serviceDateTo = formatServiceDate(endDate, loc)
+		}
+	}
+
 	configEntry := models.ConfigModel{
 		GitProperties:   gitProps,
 		Id:              "oba-maglev",
 		Name:            "OneBusAway Go",
-		ServiceDateFrom: "",
-		ServiceDateTo:   "",
+		ServiceDateFrom: serviceDateFrom,
+		ServiceDateTo:   serviceDateTo,
 	}
 
 	response := models.NewEntryResponse(
@@ -49,4 +64,15 @@ func (api *RestAPI) configHandler(w http.ResponseWriter, r *http.Request) {
 	)
 
 	api.sendResponse(w, r, response)
+}
+
+func formatServiceDate(dateStr string, loc *time.Location) string {
+	if dateStr == "" {
+		return ""
+	}
+	t, err := time.ParseInLocation("20060102", dateStr, loc)
+	if err != nil {
+		return ""
+	}
+	return strconv.FormatInt(t.UnixMilli(), 10)
 }
