@@ -81,6 +81,8 @@ func TestLoadFromFile_StaticFeedKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("GTFS_PROTECTED_API_KEYS", "")
+			t.Setenv("GTFS_STATIC_AUTH_NAME", "")
+			t.Setenv("GTFS_STATIC_AUTH_VALUE", "")
 			path := writeConfigFile(t, `{`+tt.staticFeedKey+` "port": 4000}`)
 
 			config, err := LoadFromFile(path)
@@ -334,7 +336,7 @@ func TestToGtfsConfigData_WarnsAboutIgnoredStaticFeeds(t *testing.T) {
 			wantInLog: []string{
 				"accepted but not applied",
 				"feed=metro",
-				"unused_fields=\"[default-agency-id agency-id-mappings headers]\"",
+				"unused_fields=\"[agency-id-mappings headers]\"",
 			},
 		},
 	}

@@ -192,7 +192,7 @@
         "agency-id-mappings": {
           "type": "object",
           "description": "Renames agency IDs from agency.txt and routes.txt, old value to new value. New values must be non-empty and must not contain '_'. Validated but not applied until multi-feed import lands.",
-          "additionalProperties": { "type": "string", "pattern": "^[^_]*$" }
+          "additionalProperties": { "type": "string", "minLength": 1, "pattern": "^[^_]*$" }
         },
         "auth-header-name": {
           "type": "string",
