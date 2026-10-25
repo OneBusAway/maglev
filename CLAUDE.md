@@ -583,6 +583,7 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
 - `url` is required on every feed. The Sound Transit default URL is filled in when neither key is set, or when the `gtfs-static-feed` object has no `url`; never for a list entry
 - In code, `JSONConfig.normalizeStaticFeeds` moves the singular key into `GtfsStaticFeeds` (and fills in ids), so read `GtfsStaticFeeds` only; the `GtfsStaticFeed` pointer is set only by JSON decoding
 - `GTFS_STATIC_AUTH_NAME`/`GTFS_STATIC_AUTH_VALUE` apply only when exactly one static feed is configured; with more feeds they are a startup error, so a secret is never dropped silently
+- `gtfs-bundle-inputs-url` (manifest mode) points at an obacloud `bundle-inputs.json` (version 1, URL or local path) instead of listing feeds. It cannot be combined with either static feed key, and no default feed is added. `cmd/api` `resolveBundleInputs` fetches it at startup with `internal/bundleinputs` and fills `GtfsConfigData.StaticFeeds` with each feed's `id`, `url` and `defaultAgencyId`; a fetch or parse failure stops startup. The periodic static reload does not read the manifest again yet. Manifest feeds take no auth headers, so `GTFS_STATIC_AUTH_*` is a startup error in this mode
 - For now the importer loads only the first feed. `default-agency-id` and `agency-id-mappings` are validated but not yet applied, and `headers` is accepted but not sent (use `auth-header-name`/`auth-header-value`); `ToGtfsConfigData` logs a warning when `agency-id-mappings` or `headers` is set
 
 ### GTFS-RT Feed Defaults
