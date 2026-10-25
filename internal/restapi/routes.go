@@ -123,4 +123,8 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/where/trips-for-route/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.tripsForRouteHandler)))
 	mux.Handle("GET /api/where/situation/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.situationHandler)))
 	mux.Handle("GET /api/where/arrivals-and-departures-for-stop/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.arrivalsAndDeparturesForStopHandler)))
+
+	// Unknown API paths get the JSON 404 envelope. Every registered pattern is
+	// more specific, so this only catches paths no endpoint serves.
+	mux.HandleFunc("GET /api/", api.sendNotFound)
 }
