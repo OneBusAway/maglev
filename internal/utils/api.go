@@ -339,6 +339,9 @@ func ParsePaginationParams(r *http.Request) (offset int, limit int) {
 // PaginateSlice slices a slice based on offset and limit.
 // Returns the sliced items and a boolean indicating if the limit was exceeded (more items exist).
 func PaginateSlice[T any](items []T, offset, limit int) ([]T, bool) {
+	if offset < 0 {
+		offset = 0
+	}
 	if offset >= len(items) {
 		return []T{}, false
 	}
@@ -346,6 +349,9 @@ func PaginateSlice[T any](items []T, offset, limit int) ([]T, bool) {
 	// If limit is -1, return everything from offset
 	if limit == -1 {
 		return items[offset:], false
+	}
+	if limit < 0 {
+		limit = 0
 	}
 
 	end := offset + limit
