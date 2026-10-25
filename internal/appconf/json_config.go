@@ -307,6 +307,9 @@ func (feed GtfsStaticFeed) validate() error {
 	}
 	for _, from := range slices.Sorted(maps.Keys(feed.AgencyIDMappings)) {
 		to := feed.AgencyIDMappings[from]
+		if from == "" {
+			return fmt.Errorf("agency-id-mappings key for %q cannot be empty", to)
+		}
 		if to == "" {
 			return fmt.Errorf("agency-id-mappings target for %q cannot be empty", from)
 		}
