@@ -107,6 +107,7 @@ func TestValidate_StaticFeedList(t *testing.T) {
 	tests := []struct {
 		name    string
 		feeds   []GtfsStaticFeed
+		legacy  *GtfsStaticFeed // set as gtfs-static-feed instead of feeds
 		wantErr string
 	}{
 		{
@@ -161,6 +162,16 @@ func TestValidate_StaticFeedList(t *testing.T) {
 			wantErr: `gtfs-static-feeds "metro": url is required`,
 		},
 		{
+			name:    "legacy feed error names the legacy key",
+			legacy:  &GtfsStaticFeed{URL: urlA, DefaultAgencyID: "a_b"},
+			wantErr: `gtfs-static-feed "feed-0": default-agency-id`,
+		},
+		{
+			name:    "legacy feed without url",
+			legacy:  &GtfsStaticFeed{},
+			wantErr: `gtfs-static-feed "feed-0": url is required`,
+		},
+		{
 			name:    "auth name without value",
 			feeds:   []GtfsStaticFeed{{URL: urlA}, {URL: urlB, AuthHeaderName: "Authorization"}},
 			wantErr: "both auth-header-name and auth-header-value must be provided together",
@@ -169,7 +180,10 @@ func TestValidate_StaticFeedList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validConfigWithStaticFeeds(tt.feeds...).Validate()
+			config := validConfigWithStaticFeeds(tt.feeds...)
+			config.GtfsStaticFeed = tt.legacy
+
+			err := config.Validate()
 
 			if tt.wantErr == "" {
 				assert.NoError(t, err)
@@ -181,47 +195,49 @@ func TestValidate_StaticFeedList(t *testing.T) {
 	}
 }
 
-func TestValidate_SingularStaticFeedErrorNamesKey(t *testing.T) {
-	config := validConfigWithStaticFeeds()
-	config.GtfsStaticFeeds = nil
-	config.GtfsStaticFeed = &GtfsStaticFeed{URL: "https://example.com/a.zip", DefaultAgencyID: "a_b"}
-
-	err := config.Validate()
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `gtfs-static-feed "feed-0": default-agency-id`)
-}
-
 func TestApplyStaticAuthEnvOverrides(t *testing.T) {
 	const urlA = "https://example.com/a.zip"
 	const urlB = "https://example.com/b.zip"
 
 	tests := []struct {
 		name         string
+		envName      string
+		envValue     string
 		config       JSONConfig
 		wantAuthName []string
 	}{
 		{
 			name:         "singular feed",
+			envName:      "X-Env",
+			envValue:     "env-secret",
 			config:       JSONConfig{GtfsStaticFeed: &GtfsStaticFeed{URL: urlA}},
 			wantAuthName: []string{"X-Env"},
 		},
 		{
 			name:         "one-element list",
+			envName:      "X-Env",
+			envValue:     "env-secret",
 			config:       JSONConfig{GtfsStaticFeeds: []GtfsStaticFeed{{URL: urlA}}},
 			wantAuthName: []string{"X-Env"},
 		},
 		{
 			name:         "longer list is left alone",
+			envName:      "X-Env",
+			envValue:     "env-secret",
 			config:       JSONConfig{GtfsStaticFeeds: []GtfsStaticFeed{{URL: urlA}, {URL: urlB}}},
 			wantAuthName: []string{"", ""},
+		},
+		{
+			name:         "no env leaves the file value",
+			config:       JSONConfig{GtfsStaticFeeds: []GtfsStaticFeed{{URL: urlA, AuthHeaderName: "X-File", AuthHeaderValue: "file-secret"}}},
+			wantAuthName: []string{"X-File"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("GTFS_STATIC_AUTH_NAME", "X-Env")
-			t.Setenv("GTFS_STATIC_AUTH_VALUE", "env-secret")
+			t.Setenv("GTFS_STATIC_AUTH_NAME", tt.envName)
+			t.Setenv("GTFS_STATIC_AUTH_VALUE", tt.envValue)
 			require.NoError(t, tt.config.normalizeStaticFeeds())
 
 			tt.config.applyStaticAuthEnvOverrides()
@@ -233,17 +249,6 @@ func TestApplyStaticAuthEnvOverrides(t *testing.T) {
 			assert.Equal(t, tt.wantAuthName, gotAuthNames)
 		})
 	}
-}
-
-func TestApplyStaticAuthEnvOverrides_NoEnvLeavesFeedAlone(t *testing.T) {
-	t.Setenv("GTFS_STATIC_AUTH_NAME", "")
-	t.Setenv("GTFS_STATIC_AUTH_VALUE", "")
-	config := JSONConfig{GtfsStaticFeeds: []GtfsStaticFeed{{AuthHeaderName: "X-File", AuthHeaderValue: "file-secret"}}}
-
-	config.applyStaticAuthEnvOverrides()
-
-	assert.Equal(t, "X-File", config.GtfsStaticFeeds[0].AuthHeaderName)
-	assert.Equal(t, "file-secret", config.GtfsStaticFeeds[0].AuthHeaderValue)
 }
 
 func TestToGtfsConfigData_FlattensFirstStaticFeed(t *testing.T) {
@@ -263,7 +268,6 @@ func TestToGtfsConfigData_FlattensFirstStaticFeed(t *testing.T) {
 
 func TestToGtfsConfigData_NoStaticFeeds(t *testing.T) {
 	config := validConfigWithStaticFeeds()
-	config.GtfsStaticFeeds = nil
 
 	gtfsConfig, err := config.ToGtfsConfigData()
 
