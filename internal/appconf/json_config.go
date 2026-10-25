@@ -58,45 +58,41 @@ type JSONConfig struct {
 	LogFormat       string           `json:"log-format"`
 	TLSCertPath     string           `json:"tls-cert-path"`
 	TLSKeyPath      string           `json:"tls-key-path"`
+
+	// staticFeedsKey names the key GtfsStaticFeeds came from, for errors.
+	staticFeedsKey string
 }
 
-// staticFeeds returns the configured static feeds as one list. The legacy
-// gtfs-static-feed key becomes a one-element list.
-func (j *JSONConfig) staticFeeds() []GtfsStaticFeed {
-	if j.GtfsStaticFeeds != nil {
-		return j.GtfsStaticFeeds
+const (
+	legacyStaticFeedKey = "gtfs-static-feed"
+	staticFeedListKey   = "gtfs-static-feeds"
+)
+
+// normalizeStaticFeeds moves the legacy gtfs-static-feed key into
+// GtfsStaticFeeds, records which key the feeds came from and fills in
+// missing feed IDs. Calling it again is harmless.
+func (j *JSONConfig) normalizeStaticFeeds() error {
+	if j.GtfsStaticFeed != nil && j.GtfsStaticFeeds != nil {
+		return fmt.Errorf("gtfs-static-feed and gtfs-static-feeds cannot both be set")
 	}
 	if j.GtfsStaticFeed != nil {
-		return []GtfsStaticFeed{*j.GtfsStaticFeed}
+		j.GtfsStaticFeeds = []GtfsStaticFeed{*j.GtfsStaticFeed}
+		j.GtfsStaticFeed = nil
+		j.staticFeedsKey = legacyStaticFeedKey
+	}
+	if j.GtfsStaticFeeds != nil && j.staticFeedsKey == "" {
+		j.staticFeedsKey = staticFeedListKey
+	}
+	for i := range j.GtfsStaticFeeds {
+		j.GtfsStaticFeeds[i].ID = feedIDOrDefault(i, j.GtfsStaticFeeds[i].ID)
 	}
 	return nil
 }
 
-// staticFeedsKey names the config key the static feeds came from, for
-// error messages.
-func (j *JSONConfig) staticFeedsKey() string {
-	if j.GtfsStaticFeeds != nil {
-		return "gtfs-static-feeds"
-	}
-	return "gtfs-static-feed"
-}
-
-// soleStaticFeed returns the only configured static feed, or nil when the
-// list holds more than one.
-func (j *JSONConfig) soleStaticFeed() *GtfsStaticFeed {
-	if len(j.GtfsStaticFeeds) == 1 {
-		return &j.GtfsStaticFeeds[0]
-	}
-	if j.GtfsStaticFeeds == nil {
-		return j.GtfsStaticFeed
-	}
-	return nil
-}
-
-// staticFeedID returns the feed's id, or "feed-{index}" when it has none.
-func staticFeedID(index int, feed GtfsStaticFeed) string {
-	if feed.ID != "" {
-		return feed.ID
+// feedIDOrDefault returns id, or "feed-{index}" when id is empty.
+func feedIDOrDefault(index int, id string) string {
+	if id != "" {
+		return id
 	}
 	return fmt.Sprintf("feed-%d", index)
 }
@@ -164,22 +160,26 @@ func (j *JSONConfig) setDefaults() {
 	}
 }
 
-// setStaticFeedDefaults gives the legacy single feed the default URL. A
-// configured gtfs-static-feeds list is left alone.
+// setStaticFeedDefaults adds the default feed when no static feed key is
+// set, and gives the legacy single feed the default URL when it has none.
+// A gtfs-static-feeds list is left alone. It expects normalized feeds.
 func (j *JSONConfig) setStaticFeedDefaults() {
-	if j.GtfsStaticFeeds != nil {
+	if j.GtfsStaticFeeds == nil {
+		j.GtfsStaticFeeds = []GtfsStaticFeed{{ID: feedIDOrDefault(0, ""), URL: defaultStaticFeedURL}}
+		j.staticFeedsKey = legacyStaticFeedKey
 		return
 	}
-	if j.GtfsStaticFeed == nil {
-		j.GtfsStaticFeed = &GtfsStaticFeed{}
-	}
-	if j.GtfsStaticFeed.URL == "" {
-		j.GtfsStaticFeed.URL = defaultStaticFeedURL
+	if j.staticFeedsKey == legacyStaticFeedKey && j.GtfsStaticFeeds[0].URL == "" {
+		j.GtfsStaticFeeds[0].URL = defaultStaticFeedURL
 	}
 }
 
 // validate checks that the configuration is valid
 func (j *JSONConfig) Validate() error {
+	if err := j.normalizeStaticFeeds(); err != nil {
+		return err
+	}
+
 	if j.Port < 1 || j.Port > 65535 {
 		return fmt.Errorf("port must be between 1 and 65535, got %d", j.Port)
 	}
@@ -266,67 +266,38 @@ func (j *JSONConfig) Validate() error {
 	return j.validateStaticFeeds()
 }
 
-// validateStaticFeeds applies the configuration-time checks to the static
-// feed list: one key only, a non-empty list, unique ids and default
+// validateStaticFeeds applies the configuration-time checks to the
+// normalized static feed list: a non-empty list, unique ids and default
 // agencies, and valid fields in each feed.
 func (j *JSONConfig) validateStaticFeeds() error {
-	if j.GtfsStaticFeed != nil && j.GtfsStaticFeeds != nil {
-		return fmt.Errorf("gtfs-static-feed and gtfs-static-feeds cannot both be set")
-	}
 	if j.GtfsStaticFeeds != nil && len(j.GtfsStaticFeeds) == 0 {
 		return fmt.Errorf("gtfs-static-feeds cannot be empty")
 	}
 
 	seenIDs := make(map[string]bool)
 	seenDefaultAgencyIDs := make(map[string]bool)
-	for i, feed := range j.staticFeeds() {
-		feedID := staticFeedID(i, feed)
-		if seenIDs[feedID] {
-			return fmt.Errorf("duplicate %s id: %q", j.staticFeedsKey(), feedID)
+	for _, feed := range j.GtfsStaticFeeds {
+		if seenIDs[feed.ID] {
+			return fmt.Errorf("duplicate %s id: %q", j.staticFeedsKey, feed.ID)
 		}
-		seenIDs[feedID] = true
+		seenIDs[feed.ID] = true
 
 		if feed.DefaultAgencyID != "" && seenDefaultAgencyIDs[feed.DefaultAgencyID] {
-			return fmt.Errorf("duplicate %s default-agency-id: %q", j.staticFeedsKey(), feed.DefaultAgencyID)
+			return fmt.Errorf("duplicate %s default-agency-id: %q", j.staticFeedsKey, feed.DefaultAgencyID)
 		}
 		seenDefaultAgencyIDs[feed.DefaultAgencyID] = true
 
-		// The legacy key may leave url empty: setDefaults fills it, and
-		// the CLI path may pass "".
-		if j.GtfsStaticFeeds != nil && feed.URL == "" {
-			return fmt.Errorf("gtfs-static-feeds %q: url is required", feedID)
-		}
-
 		if err := feed.validate(); err != nil {
-			return fmt.Errorf("%s %q: %w", j.staticFeedsKey(), feedID, err)
+			return fmt.Errorf("%s %q: %w", j.staticFeedsKey, feed.ID, err)
 		}
 	}
 	return nil
 }
 
-// validate checks one static feed's agency IDs, auth pair and URL.
+// validate checks one static feed's agency IDs, auth pair and URL. Agency
+// IDs must not contain "_", which separates the agency from the entity in
+// combined IDs.
 func (feed GtfsStaticFeed) validate() error {
-	if err := feed.validateAgencyIDs(); err != nil {
-		return err
-	}
-
-	if (feed.AuthHeaderName != "") != (feed.AuthHeaderValue != "") {
-		return fmt.Errorf("both auth-header-name and auth-header-value must be provided together")
-	}
-
-	if strings.HasPrefix(strings.ToLower(feed.URL), "file://") {
-		return fmt.Errorf("file:// URLs are not allowed in url for security reasons")
-	}
-	isHTTPURL := strings.HasPrefix(feed.URL, "http://") || strings.HasPrefix(feed.URL, "https://")
-	if isHTTPURL {
-		return nil
-	}
-	return validatePath(feed.URL, "url")
-}
-
-// validateAgencyIDs rejects agency IDs containing "_", which separates the
-// agency from the entity in combined IDs.
-func (feed GtfsStaticFeed) validateAgencyIDs() error {
 	if strings.Contains(feed.DefaultAgencyID, "_") {
 		return fmt.Errorf("default-agency-id %q must not contain '_'", feed.DefaultAgencyID)
 	}
@@ -335,7 +306,22 @@ func (feed GtfsStaticFeed) validateAgencyIDs() error {
 			return fmt.Errorf("agency-id-mappings target %q for %q must not contain '_'", to, from)
 		}
 	}
-	return nil
+
+	if (feed.AuthHeaderName != "") != (feed.AuthHeaderValue != "") {
+		return fmt.Errorf("both auth-header-name and auth-header-value must be provided together")
+	}
+
+	if feed.URL == "" {
+		return fmt.Errorf("url is required")
+	}
+	if strings.HasPrefix(strings.ToLower(feed.URL), "file://") {
+		return fmt.Errorf("file:// URLs are not allowed in url for security reasons")
+	}
+	isHTTPURL := strings.HasPrefix(feed.URL, "http://") || strings.HasPrefix(feed.URL, "https://")
+	if isHTTPURL {
+		return nil
+	}
+	return validatePath(feed.URL, "url")
 }
 
 // validatePath checks a file path for security issues
@@ -409,12 +395,16 @@ type GtfsConfigData struct {
 
 // ToGtfsConfigData converts JSONConfig to GtfsConfigData
 func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
+	if err := j.normalizeStaticFeeds(); err != nil {
+		return GtfsConfigData{}, err
+	}
+
 	cfg := GtfsConfigData{
 		GTFSDataPath: j.DataPath,
 		Env:          EnvFlagToEnvironment(j.Env),
 	}
 	// The importer still loads only the first static feed.
-	feeds := j.staticFeeds()
+	feeds := j.GtfsStaticFeeds
 	warnIgnoredStaticFeeds(feeds)
 	if len(feeds) > 0 {
 		cfg.GtfsURL = feeds[0].URL
@@ -426,10 +416,7 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 	seen := make(map[string]struct{})
 
 	for i, feed := range j.GtfsRtFeeds {
-		feedID := feed.ID
-		if feedID == "" {
-			feedID = fmt.Sprintf("feed-%d", i)
-		}
+		feedID := feedIDOrDefault(i, feed.ID)
 
 		if _, exists := seen[feedID]; exists {
 			return GtfsConfigData{}, fmt.Errorf("duplicate feed ID found: %q", feedID)
@@ -489,12 +476,12 @@ func warnIgnoredStaticFeeds(feeds []GtfsStaticFeed) {
 		return
 	}
 	ignoredIDs := make([]string, 0, len(feeds)-1)
-	for i := 1; i < len(feeds); i++ {
-		ignoredIDs = append(ignoredIDs, staticFeedID(i, feeds[i]))
+	for _, feed := range feeds[1:] {
+		ignoredIDs = append(ignoredIDs, feed.ID)
 	}
 	slog.Warn("only the first static feed is loaded until multi-feed import lands",
 		"component", "config_loader",
-		"loaded_feed", staticFeedID(0, feeds[0]),
+		"loaded_feed", feeds[0].ID,
 		"ignored_feeds", ignoredIDs)
 }
 
@@ -508,12 +495,12 @@ func (j *JSONConfig) applyStaticAuthEnvOverrides() {
 		return
 	}
 
-	feed := j.soleStaticFeed()
-	if feed == nil {
+	if len(j.GtfsStaticFeeds) != 1 {
 		slog.Warn("GTFS_STATIC_AUTH env vars ignored: they apply only when one static feed is configured",
 			"component", "config_loader")
 		return
 	}
+	feed := &j.GtfsStaticFeeds[0]
 	if name != "" {
 		feed.AuthHeaderName = name
 	}
@@ -554,6 +541,9 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 	var config JSONConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON config: %w", err)
+	}
+	if err := config.normalizeStaticFeeds(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	// Apply defaults

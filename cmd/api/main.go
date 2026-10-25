@@ -129,11 +129,11 @@ func main() {
 			LogLevel:         "info",
 			LogFormat:        "text",
 			RateLimit:        cfg.RateLimit,
-			GtfsStaticFeed: &appconf.GtfsStaticFeed{
+			GtfsStaticFeeds: []appconf.GtfsStaticFeed{{
 				URL:             gtfsCfg.GtfsURL,
 				AuthHeaderName:  gtfsCfg.StaticAuthHeaderKey,
 				AuthHeaderValue: gtfsCfg.StaticAuthHeaderValue,
-			},
+			}},
 			GtfsRtFeeds: []appconf.GtfsRtFeed{
 				{
 					ID:                      "feed-0",
