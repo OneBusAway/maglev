@@ -282,10 +282,12 @@ func (j *JSONConfig) validateStaticFeeds() error {
 		}
 		seenIDs[feed.ID] = true
 
-		if feed.DefaultAgencyID != "" && seenDefaultAgencyIDs[feed.DefaultAgencyID] {
-			return fmt.Errorf("duplicate %s default-agency-id: %q", j.staticFeedsKey, feed.DefaultAgencyID)
+		if feed.DefaultAgencyID != "" {
+			if seenDefaultAgencyIDs[feed.DefaultAgencyID] {
+				return fmt.Errorf("duplicate %s default-agency-id: %q", j.staticFeedsKey, feed.DefaultAgencyID)
+			}
+			seenDefaultAgencyIDs[feed.DefaultAgencyID] = true
 		}
-		seenDefaultAgencyIDs[feed.DefaultAgencyID] = true
 
 		if err := feed.validate(); err != nil {
 			return fmt.Errorf("%s %q: %w", j.staticFeedsKey, feed.ID, err)
@@ -302,6 +304,9 @@ func (feed GtfsStaticFeed) validate() error {
 		return fmt.Errorf("default-agency-id %q must not contain '_'", feed.DefaultAgencyID)
 	}
 	for from, to := range feed.AgencyIDMappings {
+		if to == "" {
+			return fmt.Errorf("agency-id-mappings target for %q cannot be empty", from)
+		}
 		if strings.Contains(to, "_") {
 			return fmt.Errorf("agency-id-mappings target %q for %q must not contain '_'", to, from)
 		}
@@ -407,6 +412,7 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 	feeds := j.GtfsStaticFeeds
 	warnIgnoredStaticFeeds(feeds)
 	if len(feeds) > 0 {
+		warnUnusedStaticFeedFields(feeds[0])
 		cfg.GtfsURL = feeds[0].URL
 		cfg.StaticAuthHeaderKey = feeds[0].AuthHeaderName
 		cfg.StaticAuthHeaderValue = feeds[0].AuthHeaderValue
@@ -485,20 +491,42 @@ func warnIgnoredStaticFeeds(feeds []GtfsStaticFeed) {
 		"ignored_feeds", ignoredIDs)
 }
 
+// warnUnusedStaticFeedFields logs the fields of the loaded static feed that
+// the importer does not apply yet, so a config that sets them does not fail
+// silently at fetch or import time.
+func warnUnusedStaticFeedFields(feed GtfsStaticFeed) {
+	var unused []string
+	if feed.DefaultAgencyID != "" {
+		unused = append(unused, "default-agency-id")
+	}
+	if len(feed.AgencyIDMappings) > 0 {
+		unused = append(unused, "agency-id-mappings")
+	}
+	if len(feed.Headers) > 0 {
+		unused = append(unused, "headers")
+	}
+	if len(unused) == 0 {
+		return
+	}
+	slog.Warn("static feed fields are accepted but not applied until multi-feed import lands",
+		"component", "config_loader",
+		"feed", feed.ID,
+		"unused_fields", unused)
+}
+
 // applyStaticAuthEnvOverrides sets the static feed auth header from
 // GTFS_STATIC_AUTH_NAME and GTFS_STATIC_AUTH_VALUE. The variables name no
-// feed, so they apply only when exactly one static feed is configured.
-func (j *JSONConfig) applyStaticAuthEnvOverrides() {
+// feed, so with more than one static feed they are an error: dropping a
+// deployment secret silently would leave the feed fetching unauthenticated.
+func (j *JSONConfig) applyStaticAuthEnvOverrides() error {
 	name := os.Getenv("GTFS_STATIC_AUTH_NAME")
 	value := os.Getenv("GTFS_STATIC_AUTH_VALUE")
 	if name == "" && value == "" {
-		return
+		return nil
 	}
 
 	if len(j.GtfsStaticFeeds) != 1 {
-		slog.Warn("GTFS_STATIC_AUTH env vars ignored: they apply only when one static feed is configured",
-			"component", "config_loader")
-		return
+		return fmt.Errorf("GTFS_STATIC_AUTH_NAME/GTFS_STATIC_AUTH_VALUE apply to one static feed, but %d are configured; set auth-header-name and auth-header-value on each feed instead", len(j.GtfsStaticFeeds))
 	}
 	feed := &j.GtfsStaticFeeds[0]
 	if name != "" {
@@ -507,6 +535,7 @@ func (j *JSONConfig) applyStaticAuthEnvOverrides() {
 	if value != "" {
 		feed.AuthHeaderValue = value
 	}
+	return nil
 }
 
 // LoadFromFile loads configuration from a JSON file
@@ -576,7 +605,9 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 		config.ProtectedApiKeys = envProtectedKeys
 	}
 
-	config.applyStaticAuthEnvOverrides()
+	if err := config.applyStaticAuthEnvOverrides(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
 
 	// Override Realtime Feed Auth (Name + Value)
 	// Note: Currently only overrides the first configured realtime feed explicitly

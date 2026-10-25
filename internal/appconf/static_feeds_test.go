@@ -147,6 +147,11 @@ func TestValidate_StaticFeedList(t *testing.T) {
 			wantErr: `agency-id-mappings target "sound_transit" for "ST" must not contain '_'`,
 		},
 		{
+			name:    "empty agency id mapping target",
+			feeds:   []GtfsStaticFeed{{URL: urlA, AgencyIDMappings: map[string]string{"ST": ""}}},
+			wantErr: `agency-id-mappings target for "ST" cannot be empty`,
+		},
+		{
 			name:    "file URL in a later feed",
 			feeds:   []GtfsStaticFeed{{URL: urlA}, {ID: "local", URL: "file:///etc/passwd"}},
 			wantErr: `gtfs-static-feeds "local": file:// URLs are not allowed`,
@@ -205,6 +210,7 @@ func TestApplyStaticAuthEnvOverrides(t *testing.T) {
 		envValue     string
 		config       JSONConfig
 		wantAuthName []string
+		wantErr      string
 	}{
 		{
 			name:         "singular feed",
@@ -221,11 +227,11 @@ func TestApplyStaticAuthEnvOverrides(t *testing.T) {
 			wantAuthName: []string{"X-Env"},
 		},
 		{
-			name:         "longer list is left alone",
-			envName:      "X-Env",
-			envValue:     "env-secret",
-			config:       JSONConfig{GtfsStaticFeeds: []GtfsStaticFeed{{URL: urlA}, {URL: urlB}}},
-			wantAuthName: []string{"", ""},
+			name:     "longer list is an error, not a dropped secret",
+			envName:  "X-Env",
+			envValue: "env-secret",
+			config:   JSONConfig{GtfsStaticFeeds: []GtfsStaticFeed{{URL: urlA}, {URL: urlB}}},
+			wantErr:  "apply to one static feed, but 2 are configured",
 		},
 		{
 			name:         "no env leaves the file value",
@@ -240,7 +246,12 @@ func TestApplyStaticAuthEnvOverrides(t *testing.T) {
 			t.Setenv("GTFS_STATIC_AUTH_VALUE", tt.envValue)
 			require.NoError(t, tt.config.normalizeStaticFeeds())
 
-			tt.config.applyStaticAuthEnvOverrides()
+			err := tt.config.applyStaticAuthEnvOverrides()
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
 
 			var gotAuthNames []string
 			for _, feed := range tt.config.GtfsStaticFeeds {
@@ -309,6 +320,21 @@ func TestToGtfsConfigData_WarnsAboutIgnoredStaticFeeds(t *testing.T) {
 				"component=config_loader",
 				"loaded_feed=metro",
 				"ignored_feeds=\"[st feed-2]\"",
+			},
+		},
+		{
+			name: "unused fields on the loaded feed are named",
+			feeds: []GtfsStaticFeed{{
+				ID:               "metro",
+				URL:              "https://example.com/a.zip",
+				DefaultAgencyID:  "1",
+				AgencyIDMappings: map[string]string{"M": "1"},
+				Headers:          map[string]string{"Authorization": "Bearer x"},
+			}},
+			wantInLog: []string{
+				"accepted but not applied",
+				"feed=metro",
+				"unused_fields=\"[default-agency-id agency-id-mappings headers]\"",
 			},
 		},
 	}

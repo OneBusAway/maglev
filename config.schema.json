@@ -186,12 +186,12 @@
         },
         "default-agency-id": {
           "type": "string",
-          "description": "Agency ID for entities in this feed that name no agency. Must be unique across feeds and must not contain '_'.",
+          "description": "Agency ID for entities in this feed that name no agency. Must be unique across feeds and must not contain '_'. Validated but not applied until multi-feed import lands.",
           "pattern": "^[^_]*$"
         },
         "agency-id-mappings": {
           "type": "object",
-          "description": "Renames agency IDs from agency.txt and routes.txt, old value to new value. New values must not contain '_'.",
+          "description": "Renames agency IDs from agency.txt and routes.txt, old value to new value. New values must be non-empty and must not contain '_'. Validated but not applied until multi-feed import lands.",
           "additionalProperties": { "type": "string", "pattern": "^[^_]*$" }
         },
         "auth-header-name": {
@@ -204,7 +204,7 @@
         },
         "headers": {
           "type": "object",
-          "description": "Optional HTTP headers to send with requests for this feed",
+          "description": "Optional HTTP headers to send with requests for this feed. Not applied until multi-feed import lands; use auth-header-name/auth-header-value for now.",
           "additionalProperties": { "type": "string" }
         },
         "enable-gtfs-tidy": {
