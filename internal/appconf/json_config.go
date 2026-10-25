@@ -395,13 +395,11 @@ type RTFeedConfigData struct {
 // GtfsConfigData holds GTFS configuration data without importing gtfs package
 // This avoids import cycles
 type GtfsConfigData struct {
-	GtfsURL               string
-	StaticAuthHeaderKey   string
-	StaticAuthHeaderValue string
-	RTFeeds               []RTFeedConfigData
-	GTFSDataPath          string
-	Env                   Environment
-	EnableGTFSTidy        bool
+	// StaticFeeds lists every static feed in load order, with ids filled in.
+	StaticFeeds  []GtfsStaticFeed
+	RTFeeds      []RTFeedConfigData
+	GTFSDataPath string
+	Env          Environment
 }
 
 // ToGtfsConfigData converts JSONConfig to GtfsConfigData
@@ -411,6 +409,7 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 	}
 
 	cfg := GtfsConfigData{
+		StaticFeeds:  j.GtfsStaticFeeds,
 		GTFSDataPath: j.DataPath,
 		Env:          EnvFlagToEnvironment(j.Env),
 	}
@@ -419,10 +418,6 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 	warnIgnoredStaticFeeds(feeds)
 	if len(feeds) > 0 {
 		warnUnusedStaticFeedFields(feeds[0])
-		cfg.GtfsURL = feeds[0].URL
-		cfg.StaticAuthHeaderKey = feeds[0].AuthHeaderName
-		cfg.StaticAuthHeaderValue = feeds[0].AuthHeaderValue
-		cfg.EnableGTFSTidy = feeds[0].EnableGTFSTidy
 	}
 
 	seen := make(map[string]struct{})
