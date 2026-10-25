@@ -3,6 +3,7 @@
 package gtfs
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
@@ -48,12 +50,11 @@ func TestImportMemory(t *testing.T) {
 	}
 
 	previousLogger := slog.Default()
-	stages := &importStageRecorder{
-		current: "startup",
-		peaks:   map[string]uint64{},
-		forward: previousLogger.Handler(),
-	}
-	slog.SetDefault(slog.New(stages))
+	stages := newImportStageRecorder()
+	// Warnings go straight to stderr. Forwarding them to previousLogger's
+	// handler would deadlock: slog's built-in handler writes through the log
+	// package, which SetDefault points back at this handler.
+	slog.SetDefault(slog.New(stages.handler(slog.NewTextHandler(os.Stderr, nil))))
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 
 	stopSampling := stages.sampleHeap(10 * time.Millisecond)
@@ -79,62 +80,61 @@ func TestImportMemory(t *testing.T) {
 	}
 }
 
-// importStageRecorder is a slog.Handler that treats each operation the
-// importer logs as the start of a stage, and records the peak heap seen
-// during each stage. Stage names are those log messages, so renaming one
-// renames its stage. Records at Warn and above still reach the test output.
+func TestImportStageHandler(t *testing.T) {
+	var forwarded bytes.Buffer
+	stages := newImportStageRecorder()
+	logger := slog.New(stages.handler(slog.NewTextHandler(&forwarded, nil))).With(slog.String("component", "gtfs_loader"))
+
+	logger.Warn("GTFS feed has expired")
+
+	assert.Contains(t, forwarded.String(), "component=gtfs_loader", "a forwarded warning keeps the logger's attributes")
+	assert.Contains(t, forwarded.String(), "GTFS feed has expired")
+}
+
+// importStageRecorder records the peak heap seen during each import stage.
+// A stage starts when the importer logs an operation; see importStageHandler.
 type importStageRecorder struct {
 	mu      sync.Mutex
 	current string
 	order   []string
 	peaks   map[string]uint64
-	forward slog.Handler
 }
 
-func (r *importStageRecorder) Enabled(context.Context, slog.Level) bool { return true }
-func (r *importStageRecorder) WithAttrs([]slog.Attr) slog.Handler       { return r }
-func (r *importStageRecorder) WithGroup(string) slog.Handler            { return r }
+func newImportStageRecorder() *importStageRecorder {
+	return &importStageRecorder{current: "startup", peaks: map[string]uint64{}}
+}
 
-func (r *importStageRecorder) Handle(ctx context.Context, record slog.Record) error {
-	if record.Level >= slog.LevelWarn {
-		return r.forward.Handle(ctx, record)
-	}
-	// logging.LogOperation logs at Debug. Progress and count messages repeat
-	// inside a stage, so they don't start one.
-	isRepeatedMessage := strings.HasSuffix(record.Message, "_progress") || strings.HasSuffix(record.Message, "_count")
-	if record.Level != slog.LevelDebug || isRepeatedMessage {
-		return nil
-	}
+func (r *importStageRecorder) startStage(name string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.current = record.Message
-	return nil
+	r.current = name
 }
 
 func (r *importStageRecorder) record(heapBytes uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.recordLocked(heapBytes)
+}
+
+func (r *importStageRecorder) recordLocked(heapBytes uint64) {
 	if _, seen := r.peaks[r.current]; !seen {
 		r.order = append(r.order, r.current)
 	}
 	r.peaks[r.current] = max(r.peaks[r.current], heapBytes)
 }
 
-// sampleHeap records the bytes held by heap objects every interval until the
-// returned function is called. runtime/metrics reads this without stopping
-// the world, unlike runtime.ReadMemStats.
+// sampleHeap records the heap every interval until the returned function is
+// called.
 func (r *importStageRecorder) sampleHeap(interval time.Duration) (stop func()) {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		sample := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
-			metrics.Read(sample)
-			r.record(sample[0].Value.Uint64())
+			r.record(heapObjectBytes())
 			select {
 			case <-done:
 				return
@@ -146,6 +146,50 @@ func (r *importStageRecorder) sampleHeap(interval time.Duration) (stop func()) {
 		close(done)
 		wg.Wait()
 	}
+}
+
+// heapObjectBytes returns the bytes held by heap objects. runtime/metrics
+// reads this without stopping the world, unlike runtime.ReadMemStats.
+func heapObjectBytes() uint64 {
+	sample := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}}
+	metrics.Read(sample)
+	return sample[0].Value.Uint64()
+}
+
+// handler returns a slog.Handler that starts a stage for each operation the
+// importer logs. Stage names are those log messages, so renaming one renames
+// its stage. Records at Warn and above go to forward.
+func (r *importStageRecorder) handler(forward slog.Handler) slog.Handler {
+	return &importStageHandler{stages: r, forward: forward}
+}
+
+type importStageHandler struct {
+	stages  *importStageRecorder
+	forward slog.Handler
+}
+
+func (h *importStageHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *importStageHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return h.stages.handler(h.forward.WithAttrs(attrs))
+}
+
+func (h *importStageHandler) WithGroup(name string) slog.Handler {
+	return h.stages.handler(h.forward.WithGroup(name))
+}
+
+func (h *importStageHandler) Handle(ctx context.Context, record slog.Record) error {
+	if record.Level >= slog.LevelWarn {
+		return h.forward.Handle(ctx, record)
+	}
+	// logging.LogOperation logs at Debug. Progress and count messages repeat
+	// inside a stage, so they don't start one.
+	isRepeatedMessage := strings.HasSuffix(record.Message, "_progress") || strings.HasSuffix(record.Message, "_count")
+	if record.Level != slog.LevelDebug || isRepeatedMessage {
+		return nil
+	}
+	h.stages.startStage(record.Message)
+	return nil
 }
 
 // peakRSS returns the process's peak resident set size. Unlike the Go heap,
