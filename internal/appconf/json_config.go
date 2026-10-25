@@ -26,6 +26,33 @@ type GtfsStaticFeed struct {
 	EnableGTFSTidy   bool              `json:"enable-gtfs-tidy,omitempty"`
 }
 
+// RedactedValue replaces secret values in redacted config output.
+const RedactedValue = "***REDACTED***"
+
+// Redacted returns a copy of the feed with its secrets hidden: the
+// AuthHeaderValue and every Headers value. Update it when adding a field
+// that can hold a secret.
+func (feed GtfsStaticFeed) Redacted() GtfsStaticFeed {
+	if feed.AuthHeaderValue != "" {
+		feed.AuthHeaderValue = RedactedValue
+	}
+	feed.Headers = RedactHeaderValues(feed.Headers)
+	return feed
+}
+
+// RedactHeaderValues keeps the header names and hides every value. It
+// returns nil for no headers.
+func RedactHeaderValues(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	redacted := make(map[string]string, len(headers))
+	for name := range headers {
+		redacted[name] = RedactedValue
+	}
+	return redacted
+}
+
 // GtfsRtFeed represents a single GTFS-RT feed configuration
 type GtfsRtFeed struct {
 	ID                      string            `json:"id"`
