@@ -261,9 +261,10 @@ func TestToGtfsConfigData_NoFeeds(t *testing.T) {
 	gtfsConfig, err := jsonConfig.ToGtfsConfigData()
 
 	assert.NoError(t, err)
-	assert.Equal(t, "https://example.com/gtfs.zip", gtfsConfig.GtfsURL)
-	assert.Equal(t, "X-API-Key", gtfsConfig.StaticAuthHeaderKey)
-	assert.Equal(t, "secret123", gtfsConfig.StaticAuthHeaderValue)
+	require.Len(t, gtfsConfig.StaticFeeds, 1)
+	assert.Equal(t, "https://example.com/gtfs.zip", gtfsConfig.StaticFeeds[0].URL)
+	assert.Equal(t, "X-API-Key", gtfsConfig.StaticFeeds[0].AuthHeaderName)
+	assert.Equal(t, "secret123", gtfsConfig.StaticFeeds[0].AuthHeaderValue)
 	assert.Equal(t, "/data/gtfs.db", gtfsConfig.GTFSDataPath)
 	assert.Equal(t, Development, gtfsConfig.Env)
 

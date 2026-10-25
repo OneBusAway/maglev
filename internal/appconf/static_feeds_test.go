@@ -264,19 +264,48 @@ func TestApplyStaticAuthEnvOverrides(t *testing.T) {
 	}
 }
 
-func TestToGtfsConfigData_FlattensFirstStaticFeed(t *testing.T) {
-	config := validConfigWithStaticFeeds(
-		GtfsStaticFeed{URL: "https://example.com/a.zip", AuthHeaderName: "X-Key", AuthHeaderValue: "secret", EnableGTFSTidy: true},
-		GtfsStaticFeed{URL: "https://example.com/b.zip"},
-	)
+func TestToGtfsConfigData_StaticFeedList(t *testing.T) {
+	fullFeed := GtfsStaticFeed{
+		ID:               "st",
+		URL:              "https://example.com/st.zip",
+		DefaultAgencyID:  "40",
+		AgencyIDMappings: map[string]string{"ST": "40"},
+		AuthHeaderName:   "X-Key",
+		AuthHeaderValue:  "secret",
+		Headers:          map[string]string{"Accept": "application/zip"},
+		EnableGTFSTidy:   true,
+	}
+	tests := []struct {
+		name   string
+		config *JSONConfig
+		want   []GtfsStaticFeed
+	}{
+		{
+			name:   "singular key becomes one feed",
+			config: &JSONConfig{GtfsStaticFeed: &GtfsStaticFeed{URL: "https://example.com/a.zip"}},
+			want:   []GtfsStaticFeed{{ID: "feed-0", URL: "https://example.com/a.zip"}},
+		},
+		{
+			name: "list keeps every field and fills in default ids",
+			config: &JSONConfig{GtfsStaticFeeds: []GtfsStaticFeed{
+				fullFeed,
+				{URL: "https://example.com/b.zip"},
+			}},
+			want: []GtfsStaticFeed{
+				fullFeed,
+				{ID: "feed-1", URL: "https://example.com/b.zip"},
+			},
+		},
+	}
 
-	gtfsConfig, err := config.ToGtfsConfigData()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gtfsConfig, err := tt.config.ToGtfsConfigData()
 
-	require.NoError(t, err)
-	assert.Equal(t, "https://example.com/a.zip", gtfsConfig.GtfsURL)
-	assert.Equal(t, "X-Key", gtfsConfig.StaticAuthHeaderKey)
-	assert.Equal(t, "secret", gtfsConfig.StaticAuthHeaderValue)
-	assert.True(t, gtfsConfig.EnableGTFSTidy)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, gtfsConfig.StaticFeeds)
+		})
+	}
 }
 
 func TestToGtfsConfigData_NoStaticFeeds(t *testing.T) {
@@ -285,8 +314,7 @@ func TestToGtfsConfigData_NoStaticFeeds(t *testing.T) {
 	gtfsConfig, err := config.ToGtfsConfigData()
 
 	require.NoError(t, err)
-	assert.Empty(t, gtfsConfig.GtfsURL)
-	assert.Empty(t, gtfsConfig.StaticAuthHeaderKey)
+	assert.Empty(t, gtfsConfig.StaticFeeds)
 }
 
 // captureDefaultLog sends slog's default logger to a buffer for the rest
