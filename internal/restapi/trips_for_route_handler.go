@@ -1242,17 +1242,13 @@ func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenc
 	api.fillMissingTrips(ctx, sets)
 
 	references := models.NewEmptyReferences()
-	var routeIDsByStopID map[string][]string
-	references.Stops, routeIDsByStopID = api.stopReferences(ctx, params.Stops, params.StopIDMap)
+	var routesByStopID map[string][]stopRoute
+	references.Stops, routesByStopID = api.stopReferences(ctx, params.Stops, params.StopIDMap)
 
-	for _, combinedRouteIDs := range routeIDsByStopID {
-		for _, combinedID := range combinedRouteIDs {
-			rawID, err := utils.ExtractCodeID(combinedID)
-			if err != nil {
-				continue
-			}
-			if _, exists := sets.routes[rawID]; !exists {
-				sets.routes[rawID] = models.Route{}
+	for _, routes := range routesByStopID {
+		for _, r := range routes {
+			if _, exists := sets.routes[r.routeID]; !exists {
+				sets.routes[r.routeID] = models.Route{}
 			}
 		}
 	}
