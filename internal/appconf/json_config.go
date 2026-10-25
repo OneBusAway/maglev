@@ -302,24 +302,30 @@ func (j *JSONConfig) validateStaticFeeds() error {
 	if j.GtfsStaticFeeds != nil && len(j.GtfsStaticFeeds) == 0 {
 		return fmt.Errorf("gtfs-static-feeds cannot be empty")
 	}
+	return ValidateStaticFeeds(j.GtfsStaticFeeds, j.staticFeedsKey)
+}
 
+// ValidateStaticFeeds checks a static feed list wherever it came from:
+// unique ids, unique default agencies, and valid fields in each feed.
+// key names the list's source in errors.
+func ValidateStaticFeeds(feeds []GtfsStaticFeed, key string) error {
 	seenIDs := make(map[string]bool)
 	seenDefaultAgencyIDs := make(map[string]bool)
-	for _, feed := range j.GtfsStaticFeeds {
+	for _, feed := range feeds {
 		if seenIDs[feed.ID] {
-			return fmt.Errorf("duplicate %s id: %q", j.staticFeedsKey, feed.ID)
+			return fmt.Errorf("duplicate %s id: %q", key, feed.ID)
 		}
 		seenIDs[feed.ID] = true
 
 		if feed.DefaultAgencyID != "" {
 			if seenDefaultAgencyIDs[feed.DefaultAgencyID] {
-				return fmt.Errorf("duplicate %s default-agency-id: %q", j.staticFeedsKey, feed.DefaultAgencyID)
+				return fmt.Errorf("duplicate %s default-agency-id: %q", key, feed.DefaultAgencyID)
 			}
 			seenDefaultAgencyIDs[feed.DefaultAgencyID] = true
 		}
 
 		if err := feed.validate(); err != nil {
-			return fmt.Errorf("%s %q: %w", j.staticFeedsKey, feed.ID, err)
+			return fmt.Errorf("%s %q: %w", key, feed.ID, err)
 		}
 	}
 	return nil
@@ -352,11 +358,16 @@ func (feed GtfsStaticFeed) validate() error {
 	if strings.HasPrefix(strings.ToLower(feed.URL), "file://") {
 		return fmt.Errorf("file:// URLs are not allowed in url for security reasons")
 	}
-	isHTTPURL := strings.HasPrefix(feed.URL, "http://") || strings.HasPrefix(feed.URL, "https://")
-	if isHTTPURL {
+	if IsHTTPURL(feed.URL) {
 		return nil
 	}
 	return validatePath(feed.URL, "url")
+}
+
+// IsHTTPURL reports whether source is an http:// or https:// URL rather
+// than a local path.
+func IsHTTPURL(source string) bool {
+	return strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://")
 }
 
 // validatePath checks a file path for security issues
