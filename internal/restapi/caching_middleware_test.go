@@ -33,8 +33,13 @@ func TestCacheControlHeaders(t *testing.T) {
 			expectedHeader: "public, max-age=30", // 30 seconds
 		},
 		{
-			name:           "User Reports (No Cache)",
+			name:           "User Reports with Stop (No Cache)",
 			endpoint:       "/api/where/report-problem-with-stop/123.json?key=TEST",
+			expectedHeader: "no-cache, no-store, must-revalidate", // 0 seconds
+		},
+		{
+			name:           "User Reports with Trip (No Cache)",
+			endpoint:       "/api/where/report-problem-with-trip/123.json?key=TEST",
 			expectedHeader: "no-cache, no-store, must-revalidate", // 0 seconds
 		},
 		{
@@ -47,7 +52,7 @@ func TestCacheControlHeaders(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resp, err := http.Get(server.URL + tt.endpoint)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			defer func() { _ = resp.Body.Close() }()
 
 			gotHeader := resp.Header.Get("Cache-Control")

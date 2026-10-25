@@ -115,7 +115,7 @@ maglev/
 │   ├── restapi/          # HTTP handlers and middleware
 │   ├── utils/            # Helper functions (geometry, ID parsing, validation)
 │   └── webui/            # Web interface handlers
-├── gtfsdb/               # SQLite database layer (sqlc-generated)
+├── gtfsdb/               # SQLite database layer (sqlc models & handwritten helpers)
 └── testdata/             # Test fixtures (RABA GTFS data, protobuf files)
 ```
 
@@ -125,7 +125,7 @@ maglev/
 - **REST API Layer** (`internal/restapi/`): HTTP handlers for the OneBusAway API endpoints
 - **Web UI Layer** (`internal/webui/`): HTTP handlers for the web interface and landing page
 - **GTFS Manager** (`internal/gtfs/`): Manages both static GTFS data and real-time feeds (trip updates, vehicle positions)
-- **Database Layer** (`gtfsdb/`): SQLite database with sqlc-generated Go code for type-safe SQL operations
+- **Database Layer** (`gtfsdb/`): SQLite database with sqlc-generated queries and models, plus handwritten helpers
 - **Models** (`internal/models/`): Business logic and data structures for agencies, routes, stops, trips, vehicles
 - **Utilities** (`internal/utils/`, `internal/appconf/`, `internal/logging/`): Helper functions, configuration management, and logging
 
@@ -244,7 +244,7 @@ The project uses SQLite with sqlc for type-safe database access:
 
 - Schema: `gtfsdb/schema.sql`
 - Queries: `gtfsdb/query.sql`
-- Generated code: `gtfsdb/query.sql.go` and `gtfsdb/models.go`
+- Generated code: `gtfsdb/db.go`, `gtfsdb/models.go`, and `gtfsdb/query.sql.go`
 - Configuration: `gtfsdb/sqlc.yml`
 
 After modifying SQL queries or schema, run `make models` to regenerate the Go code.

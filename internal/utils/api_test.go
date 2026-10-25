@@ -292,6 +292,27 @@ func TestFormCombinedID(t *testing.T) {
 	}
 }
 
+func TestFormBlockID(t *testing.T) {
+	tests := []struct {
+		name     string
+		agencyID string
+		blockID  string
+		tripID   string
+		expected string
+	}{
+		{"Trip with a block", "agency", "block_1", "trip_1", "agency_block_1"},
+		{"Blockless trip uses its trip ID", "agency", "", "trip_1", "agency_trip_1"},
+		{"Empty agency ID", "", "block_1", "trip_1", ""},
+		{"Blockless trip with empty trip ID", "agency", "", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, FormBlockID(tt.agencyID, tt.blockID, tt.tripID))
+		})
+	}
+}
+
 func TestMapWheelchairBoarding(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1000,6 +1021,46 @@ func TestPaginateSlice(t *testing.T) {
 			name:          "Nil slice",
 			items:         nil,
 			offset:        0,
+			limit:         5,
+			expected:      []int{},
+			limitExceeded: false,
+		},
+		{
+			name:          "Negative offset with no limit",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        -1,
+			limit:         -1,
+			expected:      []int{1, 2, 3, 4, 5},
+			limitExceeded: false,
+		},
+		{
+			name:          "Negative offset with limit",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        -2,
+			limit:         2,
+			expected:      []int{1, 2},
+			limitExceeded: true,
+		},
+		{
+			name:          "Negative limit less than -1",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        0,
+			limit:         -2,
+			expected:      []int{},
+			limitExceeded: true,
+		},
+		{
+			name:          "Negative limit less than -1 with offset",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        1,
+			limit:         -5,
+			expected:      []int{},
+			limitExceeded: true,
+		},
+		{
+			name:          "Negative offset on empty slice",
+			items:         []int{},
+			offset:        -1,
 			limit:         5,
 			expected:      []int{},
 			limitExceeded: false,
