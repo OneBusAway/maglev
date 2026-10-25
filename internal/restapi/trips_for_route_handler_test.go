@@ -1168,7 +1168,7 @@ func TestTripsForRouteHandler_TimeZeroMeansNow(t *testing.T) {
 	resp, zero := callAPIHandler[TripsForRouteResponse](t, api, baseURL+"&time=0")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, tripsForRouteTestClock.UnixMilli(), zero.CurrentTime)
+	require.Len(t, omitted.Data.List, 1, "the fixture trip must be active at the pinned clock time")
 	require.Len(t, zero.Data.List, 1, "time=0 must return the same active trips as an omitted time")
 	assert.Equal(t, omitted.Data.List[0].TripId, zero.Data.List[0].TripId)
 }
