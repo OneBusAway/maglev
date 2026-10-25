@@ -697,3 +697,26 @@ func TestDumpConfigJSON_WithNoProtectedAPIKeys(t *testing.T) {
 	require.NoError(t, json.Unmarshal(output.Bytes(), &parsed))
 	assert.Equal(t, "***REDACTED*** (0 keys)", parsed["protected-api-keys"])
 }
+
+func TestGtfsConfigFromData_DerivesFlattenedFieldsFromFirstFeed(t *testing.T) {
+	staticFeeds := []appconf.GtfsStaticFeed{
+		{ID: "a", URL: "https://example.com/a.zip", AuthHeaderName: "X-Key", AuthHeaderValue: "secret", EnableGTFSTidy: true},
+		{ID: "b", URL: "https://example.com/b.zip"},
+	}
+
+	gtfsCfg := gtfsConfigFromData(appconf.GtfsConfigData{StaticFeeds: staticFeeds})
+
+	assert.Equal(t, staticFeeds, gtfsCfg.StaticFeeds)
+	assert.Equal(t, "https://example.com/a.zip", gtfsCfg.GtfsURL)
+	assert.Equal(t, "X-Key", gtfsCfg.StaticAuthHeaderKey)
+	assert.Equal(t, "secret", gtfsCfg.StaticAuthHeaderValue)
+	assert.True(t, gtfsCfg.EnableGTFSTidy)
+}
+
+func TestGtfsConfigFromData_NoStaticFeeds(t *testing.T) {
+	gtfsCfg := gtfsConfigFromData(appconf.GtfsConfigData{})
+
+	assert.Empty(t, gtfsCfg.StaticFeeds)
+	assert.Empty(t, gtfsCfg.GtfsURL)
+	assert.Empty(t, gtfsCfg.StaticAuthHeaderKey)
+}

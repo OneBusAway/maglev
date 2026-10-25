@@ -22,6 +22,10 @@ type RTFeedConfig struct {
 
 // Config holds GTFS configuration for the manager.
 type Config struct {
+	// StaticFeeds lists every static feed in load order. StaticFeeds[0] is
+	// authoritative: GtfsURL, StaticAuthHeader* and EnableGTFSTidy are
+	// derived from it, and the importer still reads only those fields.
+	StaticFeeds           []appconf.GtfsStaticFeed
 	GtfsURL               string
 	StaticAuthHeaderKey   string
 	StaticAuthHeaderValue string

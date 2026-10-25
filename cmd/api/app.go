@@ -32,13 +32,17 @@ const gtfsShutdownTimeout = 30 * time.Second
 
 func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 	gtfsCfg := gtfs.Config{
-		GtfsURL:               gtfsCfgData.GtfsURL,
-		StaticAuthHeaderKey:   gtfsCfgData.StaticAuthHeaderKey,
-		StaticAuthHeaderValue: gtfsCfgData.StaticAuthHeaderValue,
-		GTFSDataPath:          gtfsCfgData.GTFSDataPath,
-		Env:                   gtfsCfgData.Env,
-
-		EnableGTFSTidy: gtfsCfgData.EnableGTFSTidy,
+		StaticFeeds:  gtfsCfgData.StaticFeeds,
+		GTFSDataPath: gtfsCfgData.GTFSDataPath,
+		Env:          gtfsCfgData.Env,
+	}
+	// The importer still loads only the first static feed.
+	if len(gtfsCfgData.StaticFeeds) > 0 {
+		first := gtfsCfgData.StaticFeeds[0]
+		gtfsCfg.GtfsURL = first.URL
+		gtfsCfg.StaticAuthHeaderKey = first.AuthHeaderName
+		gtfsCfg.StaticAuthHeaderValue = first.AuthHeaderValue
+		gtfsCfg.EnableGTFSTidy = first.EnableGTFSTidy
 	}
 
 	for _, feedData := range gtfsCfgData.RTFeeds {
