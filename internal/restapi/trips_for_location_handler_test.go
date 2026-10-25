@@ -636,8 +636,15 @@ func TestTripsForLocationHandler_TimeParameter(t *testing.T) {
 	})
 
 	t.Run("Zero Time Means Now", func(t *testing.T) {
-		_, omittedModel := callAPIHandler[TripsForLocationResponse](t, api, tripsForLocationURL(1.0, 1.0, "includeStatus=true"))
-		resp, zeroModel := callAPIHandler[TripsForLocationResponse](t, api, tripsForLocationURL(1.0, 1.0, "includeStatus=true&time=0"))
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		// Pin the clock to a date with service so the comparison cannot pass on two empty lists.
+		mockAPI, cleanupMock := createTestApiWithRealTimeData(t, clock.NewMockClock(time.Date(2025, 6, 15, 14, 30, 0, 0, loc)))
+		defer cleanupMock()
+
+		_, omittedModel := callAPIHandler[TripsForLocationResponse](t, mockAPI, tripsForLocationURL(1.0, 1.0, "includeStatus=true"))
+		require.NotEmpty(t, omittedModel.Data.List, "the fixture date must have trips in range")
+		resp, zeroModel := callAPIHandler[TripsForLocationResponse](t, mockAPI, tripsForLocationURL(1.0, 1.0, "includeStatus=true&time=0"))
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		require.Len(t, zeroModel.Data.List, len(omittedModel.Data.List), "time=0 must return the same entries as an omitted time")
