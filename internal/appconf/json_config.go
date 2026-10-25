@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -14,14 +16,14 @@ const defaultStaticFeedURL = "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip
 
 // GtfsStaticFeed represents one static GTFS feed configuration
 type GtfsStaticFeed struct {
-	ID               string            `json:"id"`
+	ID               string            `json:"id,omitempty"`
 	URL              string            `json:"url"`
-	DefaultAgencyID  string            `json:"default-agency-id"`
-	AgencyIDMappings map[string]string `json:"agency-id-mappings"`
-	AuthHeaderName   string            `json:"auth-header-name"`
-	AuthHeaderValue  string            `json:"auth-header-value"`
-	Headers          map[string]string `json:"headers"`
-	EnableGTFSTidy   bool              `json:"enable-gtfs-tidy"`
+	DefaultAgencyID  string            `json:"default-agency-id,omitempty"`
+	AgencyIDMappings map[string]string `json:"agency-id-mappings,omitempty"`
+	AuthHeaderName   string            `json:"auth-header-name,omitempty"`
+	AuthHeaderValue  string            `json:"auth-header-value,omitempty"`
+	Headers          map[string]string `json:"headers,omitempty"`
+	EnableGTFSTidy   bool              `json:"enable-gtfs-tidy,omitempty"`
 }
 
 // GtfsRtFeed represents a single GTFS-RT feed configuration
@@ -303,7 +305,8 @@ func (feed GtfsStaticFeed) validate() error {
 	if strings.Contains(feed.DefaultAgencyID, "_") {
 		return fmt.Errorf("default-agency-id %q must not contain '_'", feed.DefaultAgencyID)
 	}
-	for from, to := range feed.AgencyIDMappings {
+	for _, from := range slices.Sorted(maps.Keys(feed.AgencyIDMappings)) {
+		to := feed.AgencyIDMappings[from]
 		if to == "" {
 			return fmt.Errorf("agency-id-mappings target for %q cannot be empty", from)
 		}
@@ -495,10 +498,9 @@ func warnIgnoredStaticFeeds(feeds []GtfsStaticFeed) {
 // the importer does not apply yet, so a config that sets them does not fail
 // silently at fetch or import time.
 func warnUnusedStaticFeedFields(feed GtfsStaticFeed) {
+	// default-agency-id is not listed: setting it now is recommended, and the
+	// example configs do.
 	var unused []string
-	if feed.DefaultAgencyID != "" {
-		unused = append(unused, "default-agency-id")
-	}
 	if len(feed.AgencyIDMappings) > 0 {
 		unused = append(unused, "agency-id-mappings")
 	}
@@ -525,7 +527,10 @@ func (j *JSONConfig) applyStaticAuthEnvOverrides() error {
 		return nil
 	}
 
-	if len(j.GtfsStaticFeeds) != 1 {
+	if len(j.GtfsStaticFeeds) == 0 {
+		return nil // Validate rejects the empty list
+	}
+	if len(j.GtfsStaticFeeds) > 1 {
 		return fmt.Errorf("GTFS_STATIC_AUTH_NAME/GTFS_STATIC_AUTH_VALUE apply to one static feed, but %d are configured; set auth-header-name and auth-header-value on each feed instead", len(j.GtfsStaticFeeds))
 	}
 	feed := &j.GtfsStaticFeeds[0]
