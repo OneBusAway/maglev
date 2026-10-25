@@ -110,6 +110,10 @@ func main() {
 			slog.Error("failed to convert config", "error", err)
 			os.Exit(1)
 		}
+		if err := resolveBundleInputs(ctx, &gtfsCfgData); err != nil {
+			startupLogger.Error("failed to resolve static feeds", "error", err)
+			os.Exit(1)
+		}
 		gtfsCfg = gtfsConfigFromData(gtfsCfgData)
 
 	} else {
