@@ -1575,3 +1575,63 @@ func TestVehiclesForAgencyHandler_ReferencesAgenciesOfSharedStopRoutes(t *testin
 			"route %s names agency %s, which must be referenced", route.ID, route.AgencyID)
 	}
 }
+
+// mustGetTripWithFullReferenceFields returns a trip that has the fields Java
+// includes in trip references populated, so a thin id/routeId-only reference
+// would fail the assertions below.
+func mustGetTripWithFullReferenceFields(t testing.TB, api *RestAPI) gtfsdb.Trip {
+	t.Helper()
+	var tripID string
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(context.Background(), `
+		SELECT id FROM trips
+		WHERE block_id IS NOT NULL AND block_id != ''
+		  AND shape_id IS NOT NULL AND shape_id != ''
+		  AND trip_headsign IS NOT NULL AND trip_headsign != ''
+		  AND service_id IS NOT NULL AND service_id != ''
+		  AND direction_id IS NOT NULL
+		LIMIT 1`).Scan(&tripID)
+	require.NoError(t, err, "test data should contain a trip with full reference fields")
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(context.Background(), tripID)
+	require.NoError(t, err)
+	return trip
+}
+
+// TestVehiclesForAgencyHandler_FullTripReferences verifies that references.trips
+// carries the full static trip record (blockId, serviceId, shapeId, directionId,
+// tripHeadsign), not just id and routeId.
+func TestVehiclesForAgencyHandler_FullTripReferences(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	trip := mustGetTripWithFullReferenceFields(t, api)
+	const vehicleID = "v_full_trip_refs"
+	api.GtfsManager.MockAddVehicleWithOptions(vehicleID, trip.ID, trip.RouteID, gtfs.MockVehicleOptions{})
+
+	_, model := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID))
+	require.NotNil(t, findVehicleStatusByID(model.Data.List, vehicleID),
+		"mock vehicle not returned by VehiclesForAgencyID")
+
+	agencyID := testdata.Raba.ID
+	expectedID := utils.FormCombinedID(agencyID, trip.ID)
+	var tripRef *models.Trip
+	for i := range model.Data.References.Trips {
+		if model.Data.References.Trips[i].ID == expectedID {
+			tripRef = &model.Data.References.Trips[i]
+			break
+		}
+	}
+	require.NotNil(t, tripRef, "trip must appear in references.trips")
+
+	assert.Equal(t, utils.FormCombinedID(agencyID, trip.RouteID), tripRef.RouteID)
+	assert.Equal(t, utils.FormCombinedID(agencyID, trip.ServiceID), tripRef.ServiceID)
+	assert.Equal(t, utils.FormCombinedID(agencyID, trip.BlockID.String), tripRef.BlockID)
+	assert.Equal(t, utils.FormCombinedID(agencyID, trip.ShapeID.String), tripRef.ShapeID)
+	assert.Equal(t, strconv.FormatInt(trip.DirectionID.Int64, 10), tripRef.DirectionID)
+	assert.Equal(t, trip.TripHeadsign.String, tripRef.TripHeadsign)
+
+	require.NotEmpty(t, tripRef.ServiceID, "serviceId must be populated")
+	require.NotEmpty(t, tripRef.BlockID, "blockId must be populated")
+	require.NotEmpty(t, tripRef.ShapeID, "shapeId must be populated")
+	require.NotEmpty(t, tripRef.TripHeadsign, "tripHeadsign must be populated")
+}
