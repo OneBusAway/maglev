@@ -154,6 +154,11 @@ func TestValidate_StaticFeedList(t *testing.T) {
 			wantErr: `gtfs-static-feeds "feed-1": url cannot start with '..'`,
 		},
 		{
+			name:    "list entry without url",
+			feeds:   []GtfsStaticFeed{{URL: urlA}, {ID: "metro"}},
+			wantErr: `gtfs-static-feeds "metro": url is required`,
+		},
+		{
 			name:    "auth name without value",
 			feeds:   []GtfsStaticFeed{{URL: urlA}, {URL: urlB, AuthHeaderName: "Authorization"}},
 			wantErr: "both auth-header-name and auth-header-value must be provided together",
@@ -183,6 +188,14 @@ func TestValidate_SingularStaticFeedErrorNamesKey(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `gtfs-static-feed "feed-0": default-agency-id`)
+}
+
+func TestValidate_SingularStaticFeedMayOmitURL(t *testing.T) {
+	config := validConfigWithStaticFeeds()
+	config.GtfsStaticFeeds = nil
+	config.GtfsStaticFeed = &GtfsStaticFeed{}
+
+	assert.NoError(t, config.Validate())
 }
 
 func TestApplyStaticAuthEnvOverrides(t *testing.T) {
