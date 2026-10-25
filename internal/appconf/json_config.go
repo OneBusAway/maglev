@@ -9,12 +9,19 @@ import (
 	"strings"
 )
 
-// GtfsStaticFeed represents the static GTFS feed configuration
+// defaultStaticFeedURL is used when no static feed key is configured.
+const defaultStaticFeedURL = "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip"
+
+// GtfsStaticFeed represents one static GTFS feed configuration
 type GtfsStaticFeed struct {
-	URL             string `json:"url"`
-	AuthHeaderName  string `json:"auth-header-name"`
-	AuthHeaderValue string `json:"auth-header-value"`
-	EnableGTFSTidy  bool   `json:"enable-gtfs-tidy"`
+	ID               string            `json:"id"`
+	URL              string            `json:"url"`
+	DefaultAgencyID  string            `json:"default-agency-id"`
+	AgencyIDMappings map[string]string `json:"agency-id-mappings"`
+	AuthHeaderName   string            `json:"auth-header-name"`
+	AuthHeaderValue  string            `json:"auth-header-value"`
+	Headers          map[string]string `json:"headers"`
+	EnableGTFSTidy   bool              `json:"enable-gtfs-tidy"`
 }
 
 // GtfsRtFeed represents a single GTFS-RT feed configuration
@@ -33,20 +40,65 @@ type GtfsRtFeed struct {
 
 // JSONConfig represents the JSON configuration file structure
 type JSONConfig struct {
-	Port             int            `json:"port"`
-	Host             string         `json:"host"`
-	Env              string         `json:"env"`
-	ApiKeys          []string       `json:"api-keys"`
-	ProtectedApiKeys []string       `json:"protected-api-keys"`
-	ExemptApiKeys    []string       `json:"exempt-api-keys"`
-	RateLimit        int            `json:"rate-limit"`
-	GtfsStaticFeed   GtfsStaticFeed `json:"gtfs-static-feed"`
-	GtfsRtFeeds      []GtfsRtFeed   `json:"gtfs-rt-feeds"`
-	DataPath         string         `json:"data-path"`
-	LogLevel         string         `json:"log-level"`
-	LogFormat        string         `json:"log-format"`
-	TLSCertPath      string         `json:"tls-cert-path"`
-	TLSKeyPath       string         `json:"tls-key-path"`
+	Port             int      `json:"port"`
+	Host             string   `json:"host"`
+	Env              string   `json:"env"`
+	ApiKeys          []string `json:"api-keys"`
+	ProtectedApiKeys []string `json:"protected-api-keys"`
+	ExemptApiKeys    []string `json:"exempt-api-keys"`
+	RateLimit        int      `json:"rate-limit"`
+	// GtfsStaticFeed is the legacy single-feed key. It is a pointer so an
+	// absent key can be told apart from an empty one.
+	GtfsStaticFeed *GtfsStaticFeed `json:"gtfs-static-feed"`
+	// GtfsStaticFeeds is nil when the key is absent and empty for "[]".
+	GtfsStaticFeeds []GtfsStaticFeed `json:"gtfs-static-feeds"`
+	GtfsRtFeeds     []GtfsRtFeed     `json:"gtfs-rt-feeds"`
+	DataPath        string           `json:"data-path"`
+	LogLevel        string           `json:"log-level"`
+	LogFormat       string           `json:"log-format"`
+	TLSCertPath     string           `json:"tls-cert-path"`
+	TLSKeyPath      string           `json:"tls-key-path"`
+}
+
+// staticFeeds returns the configured static feeds as one list. The legacy
+// gtfs-static-feed key becomes a one-element list.
+func (j *JSONConfig) staticFeeds() []GtfsStaticFeed {
+	if j.GtfsStaticFeeds != nil {
+		return j.GtfsStaticFeeds
+	}
+	if j.GtfsStaticFeed != nil {
+		return []GtfsStaticFeed{*j.GtfsStaticFeed}
+	}
+	return nil
+}
+
+// staticFeedsKey names the config key the static feeds came from, for
+// error messages.
+func (j *JSONConfig) staticFeedsKey() string {
+	if j.GtfsStaticFeeds != nil {
+		return "gtfs-static-feeds"
+	}
+	return "gtfs-static-feed"
+}
+
+// soleStaticFeed returns the only configured static feed, or nil when the
+// list holds more than one.
+func (j *JSONConfig) soleStaticFeed() *GtfsStaticFeed {
+	if len(j.GtfsStaticFeeds) == 1 {
+		return &j.GtfsStaticFeeds[0]
+	}
+	if j.GtfsStaticFeeds == nil {
+		return j.GtfsStaticFeed
+	}
+	return nil
+}
+
+// staticFeedID returns the feed's id, or "feed-{index}" when it has none.
+func staticFeedID(index int, feed GtfsStaticFeed) string {
+	if feed.ID != "" {
+		return feed.ID
+	}
+	return fmt.Sprintf("feed-%d", index)
 }
 
 // DefaultProtectedAPIKeys returns the protected API keys used when none are
@@ -92,9 +144,7 @@ func (j *JSONConfig) setDefaults() {
 	if j.RateLimit == 0 {
 		j.RateLimit = 100
 	}
-	if j.GtfsStaticFeed.URL == "" {
-		j.GtfsStaticFeed.URL = "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip"
-	}
+	j.setStaticFeedDefaults()
 	if len(j.GtfsRtFeeds) == 0 {
 		j.GtfsRtFeeds = []GtfsRtFeed{
 			{
@@ -111,6 +161,20 @@ func (j *JSONConfig) setDefaults() {
 	}
 	if j.LogFormat == "" {
 		j.LogFormat = "text"
+	}
+}
+
+// setStaticFeedDefaults gives the legacy single feed the default URL. A
+// configured gtfs-static-feeds list is left alone.
+func (j *JSONConfig) setStaticFeedDefaults() {
+	if j.GtfsStaticFeeds != nil {
+		return
+	}
+	if j.GtfsStaticFeed == nil {
+		j.GtfsStaticFeed = &GtfsStaticFeed{}
+	}
+	if j.GtfsStaticFeed.URL == "" {
+		j.GtfsStaticFeed.URL = defaultStaticFeedURL
 	}
 }
 
@@ -199,31 +263,72 @@ func (j *JSONConfig) Validate() error {
 		return err
 	}
 
-	// Validate that both auth header fields are provided together or neither
-	if (j.GtfsStaticFeed.AuthHeaderName != "" && j.GtfsStaticFeed.AuthHeaderValue == "") ||
-		(j.GtfsStaticFeed.AuthHeaderName == "" && j.GtfsStaticFeed.AuthHeaderValue != "") {
-		return fmt.Errorf("both auth-header-name and auth-header-value must be provided together for gtfs-static-feed")
+	return j.validateStaticFeeds()
+}
+
+// validateStaticFeeds applies the configuration-time checks to the static
+// feed list: one key only, a non-empty list, unique ids and default
+// agencies, and valid fields in each feed.
+func (j *JSONConfig) validateStaticFeeds() error {
+	if j.GtfsStaticFeed != nil && j.GtfsStaticFeeds != nil {
+		return fmt.Errorf("gtfs-static-feed and gtfs-static-feeds cannot both be set")
+	}
+	if j.GtfsStaticFeeds != nil && len(j.GtfsStaticFeeds) == 0 {
+		return fmt.Errorf("gtfs-static-feeds cannot be empty")
 	}
 
-	// Validate GtfsStaticFeed.URL to prevent file:// URLs and other security issues
-	if j.GtfsStaticFeed.URL != "" {
-		// Block file:// URLs (case-insensitive)
-		if strings.HasPrefix(strings.ToLower(j.GtfsStaticFeed.URL), "file://") {
-			return fmt.Errorf("file:// URLs are not allowed for gtfs-static-feed.url for security reasons")
+	seenIDs := make(map[string]bool)
+	seenDefaultAgencyIDs := make(map[string]bool)
+	for i, feed := range j.staticFeeds() {
+		feedID := staticFeedID(i, feed)
+		if seenIDs[feedID] {
+			return fmt.Errorf("duplicate %s id: %q", j.staticFeedsKey(), feedID)
 		}
+		seenIDs[feedID] = true
 
-		// For HTTP(S) URLs, no path checks needed
-		if strings.HasPrefix(j.GtfsStaticFeed.URL, "http://") ||
-			strings.HasPrefix(j.GtfsStaticFeed.URL, "https://") {
-			return nil
+		if feed.DefaultAgencyID != "" && seenDefaultAgencyIDs[feed.DefaultAgencyID] {
+			return fmt.Errorf("duplicate %s default-agency-id: %q", j.staticFeedsKey(), feed.DefaultAgencyID)
 		}
+		seenDefaultAgencyIDs[feed.DefaultAgencyID] = true
 
-		// For file paths, validate for path traversal
-		if err := validatePath(j.GtfsStaticFeed.URL, "gtfs-static-feed.url"); err != nil {
-			return err
+		if err := feed.validate(); err != nil {
+			return fmt.Errorf("%s %q: %w", j.staticFeedsKey(), feedID, err)
 		}
 	}
+	return nil
+}
 
+// validate checks one static feed's agency IDs, auth pair and URL.
+func (feed GtfsStaticFeed) validate() error {
+	if err := feed.validateAgencyIDs(); err != nil {
+		return err
+	}
+
+	if (feed.AuthHeaderName != "") != (feed.AuthHeaderValue != "") {
+		return fmt.Errorf("both auth-header-name and auth-header-value must be provided together")
+	}
+
+	if strings.HasPrefix(strings.ToLower(feed.URL), "file://") {
+		return fmt.Errorf("file:// URLs are not allowed in url for security reasons")
+	}
+	isHTTPURL := strings.HasPrefix(feed.URL, "http://") || strings.HasPrefix(feed.URL, "https://")
+	if isHTTPURL {
+		return nil
+	}
+	return validatePath(feed.URL, "url")
+}
+
+// validateAgencyIDs rejects agency IDs containing "_", which separates the
+// agency from the entity in combined IDs.
+func (feed GtfsStaticFeed) validateAgencyIDs() error {
+	if strings.Contains(feed.DefaultAgencyID, "_") {
+		return fmt.Errorf("default-agency-id %q must not contain '_'", feed.DefaultAgencyID)
+	}
+	for from, to := range feed.AgencyIDMappings {
+		if strings.Contains(to, "_") {
+			return fmt.Errorf("agency-id-mappings target %q for %q must not contain '_'", to, from)
+		}
+	}
 	return nil
 }
 
@@ -299,12 +404,15 @@ type GtfsConfigData struct {
 // ToGtfsConfigData converts JSONConfig to GtfsConfigData
 func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 	cfg := GtfsConfigData{
-		GtfsURL:               j.GtfsStaticFeed.URL,
-		StaticAuthHeaderKey:   j.GtfsStaticFeed.AuthHeaderName,
-		StaticAuthHeaderValue: j.GtfsStaticFeed.AuthHeaderValue,
-		GTFSDataPath:          j.DataPath,
-		Env:                   EnvFlagToEnvironment(j.Env),
-		EnableGTFSTidy:        j.GtfsStaticFeed.EnableGTFSTidy,
+		GTFSDataPath: j.DataPath,
+		Env:          EnvFlagToEnvironment(j.Env),
+	}
+	// The importer still loads only the first static feed.
+	if feeds := j.staticFeeds(); len(feeds) > 0 {
+		cfg.GtfsURL = feeds[0].URL
+		cfg.StaticAuthHeaderKey = feeds[0].AuthHeaderName
+		cfg.StaticAuthHeaderValue = feeds[0].AuthHeaderValue
+		cfg.EnableGTFSTidy = feeds[0].EnableGTFSTidy
 	}
 
 	seen := make(map[string]struct{})
@@ -364,6 +472,30 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 	}
 
 	return cfg, nil
+}
+
+// applyStaticAuthEnvOverrides sets the static feed auth header from
+// GTFS_STATIC_AUTH_NAME and GTFS_STATIC_AUTH_VALUE. The variables name no
+// feed, so they apply only when exactly one static feed is configured.
+func (j *JSONConfig) applyStaticAuthEnvOverrides() {
+	name := os.Getenv("GTFS_STATIC_AUTH_NAME")
+	value := os.Getenv("GTFS_STATIC_AUTH_VALUE")
+	if name == "" && value == "" {
+		return
+	}
+
+	feed := j.soleStaticFeed()
+	if feed == nil {
+		slog.Warn("GTFS_STATIC_AUTH env vars ignored: they apply only when one static feed is configured",
+			"component", "config_loader")
+		return
+	}
+	if name != "" {
+		feed.AuthHeaderName = name
+	}
+	if value != "" {
+		feed.AuthHeaderValue = value
+	}
 }
 
 // LoadFromFile loads configuration from a JSON file
@@ -430,13 +562,7 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 		config.ProtectedApiKeys = envProtectedKeys
 	}
 
-	// Override Static Feed Auth (Name + Value)
-	if staticName := os.Getenv("GTFS_STATIC_AUTH_NAME"); staticName != "" {
-		config.GtfsStaticFeed.AuthHeaderName = staticName
-	}
-	if staticValue := os.Getenv("GTFS_STATIC_AUTH_VALUE"); staticValue != "" {
-		config.GtfsStaticFeed.AuthHeaderValue = staticValue
-	}
+	config.applyStaticAuthEnvOverrides()
 
 	// Override Realtime Feed Auth (Name + Value)
 	// Note: Currently only overrides the first configured realtime feed explicitly
