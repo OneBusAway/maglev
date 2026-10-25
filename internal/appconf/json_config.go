@@ -291,6 +291,12 @@ func (j *JSONConfig) validateStaticFeeds() error {
 		}
 		seenDefaultAgencyIDs[feed.DefaultAgencyID] = true
 
+		// The legacy key may leave url empty: setDefaults fills it, and
+		// the CLI path may pass "".
+		if j.GtfsStaticFeeds != nil && feed.URL == "" {
+			return fmt.Errorf("gtfs-static-feeds %q: url is required", feedID)
+		}
+
 		if err := feed.validate(); err != nil {
 			return fmt.Errorf("%s %q: %w", j.staticFeedsKey(), feedID, err)
 		}
