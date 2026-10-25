@@ -13,10 +13,14 @@
   ],
   "_comment": "WARNING: Change 'api-keys' before deploying to production! The default 'test' key is for development only.",
   "rate-limit": 100,
-  "gtfs-static-feed": {
-    "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip",
-    "enable-gtfs-tidy": false
-  },
+  "gtfs-static-feeds": [
+    {
+      "id": "sound-transit",
+      "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip",
+      "default-agency-id": "40",
+      "enable-gtfs-tidy": false
+    }
+  ],
   "gtfs-rt-feeds": [
     {
       "trip-updates-url": "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/trip-updates-for-agency/40.pb?key=org.onebusaway.iphone",

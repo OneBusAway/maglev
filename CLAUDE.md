@@ -551,7 +551,15 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
   "env": "development",
   "api-keys": ["test"],
   "rate-limit": 100,
-  "gtfs-static-feed": { "url": "..." },
+  "gtfs-static-feeds": [
+    {
+      "id": "sound-transit",
+      "url": "...",
+      "default-agency-id": "40",
+      "agency-id-mappings": { "ST": "40" },
+      "headers": { "Authorization": "Bearer ..." }
+    }
+  ],
   "gtfs-rt-feeds": [
     {
       "id": "my-feed",
@@ -566,6 +574,15 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
   ]
 }
 ```
+
+### Static Feeds
+- `gtfs-static-feeds` is a list of static feeds. The older `gtfs-static-feed` object still works and is read as a one-element list. Setting both keys, or an empty list, is an error.
+- Each feed takes `id`, `url`, `default-agency-id`, `agency-id-mappings`, `auth-header-name`/`auth-header-value`, `headers` and `enable-gtfs-tidy`.
+- `id` — defaults to `"feed-0"`, `"feed-1"`, …; must be unique
+- `default-agency-id` — must be unique across feeds; it and `agency-id-mappings` targets must not contain `_`
+- The Sound Transit default URL is used only when neither key is set
+- `GTFS_STATIC_AUTH_NAME`/`GTFS_STATIC_AUTH_VALUE` apply only when exactly one static feed is configured
+- For now the importer loads only the first feed, and `default-agency-id`, `agency-id-mappings` and `headers` are validated but not yet used
 
 ### GTFS-RT Feed Defaults
 - `id` — auto-generated as `"feed-0"`, `"feed-1"`, … when omitted
