@@ -92,7 +92,7 @@ func TestLoadFromFile_StaticFeedKeys(t *testing.T) {
 			}
 			require.NoError(t, err)
 			var gotURLs []string
-			for _, feed := range config.staticFeeds() {
+			for _, feed := range config.GtfsStaticFeeds {
 				gotURLs = append(gotURLs, feed.URL)
 			}
 			assert.Equal(t, tt.wantURLs, gotURLs)
@@ -192,14 +192,6 @@ func TestValidate_SingularStaticFeedErrorNamesKey(t *testing.T) {
 	assert.Contains(t, err.Error(), `gtfs-static-feed "feed-0": default-agency-id`)
 }
 
-func TestValidate_SingularStaticFeedMayOmitURL(t *testing.T) {
-	config := validConfigWithStaticFeeds()
-	config.GtfsStaticFeeds = nil
-	config.GtfsStaticFeed = &GtfsStaticFeed{}
-
-	assert.NoError(t, config.Validate())
-}
-
 func TestApplyStaticAuthEnvOverrides(t *testing.T) {
 	const urlA = "https://example.com/a.zip"
 	const urlB = "https://example.com/b.zip"
@@ -230,11 +222,12 @@ func TestApplyStaticAuthEnvOverrides(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("GTFS_STATIC_AUTH_NAME", "X-Env")
 			t.Setenv("GTFS_STATIC_AUTH_VALUE", "env-secret")
+			require.NoError(t, tt.config.normalizeStaticFeeds())
 
 			tt.config.applyStaticAuthEnvOverrides()
 
 			var gotAuthNames []string
-			for _, feed := range tt.config.staticFeeds() {
+			for _, feed := range tt.config.GtfsStaticFeeds {
 				gotAuthNames = append(gotAuthNames, feed.AuthHeaderName)
 			}
 			assert.Equal(t, tt.wantAuthName, gotAuthNames)
@@ -245,12 +238,12 @@ func TestApplyStaticAuthEnvOverrides(t *testing.T) {
 func TestApplyStaticAuthEnvOverrides_NoEnvLeavesFeedAlone(t *testing.T) {
 	t.Setenv("GTFS_STATIC_AUTH_NAME", "")
 	t.Setenv("GTFS_STATIC_AUTH_VALUE", "")
-	config := JSONConfig{GtfsStaticFeed: &GtfsStaticFeed{AuthHeaderName: "X-File", AuthHeaderValue: "file-secret"}}
+	config := JSONConfig{GtfsStaticFeeds: []GtfsStaticFeed{{AuthHeaderName: "X-File", AuthHeaderValue: "file-secret"}}}
 
 	config.applyStaticAuthEnvOverrides()
 
-	assert.Equal(t, "X-File", config.GtfsStaticFeed.AuthHeaderName)
-	assert.Equal(t, "file-secret", config.GtfsStaticFeed.AuthHeaderValue)
+	assert.Equal(t, "X-File", config.GtfsStaticFeeds[0].AuthHeaderName)
+	assert.Equal(t, "file-secret", config.GtfsStaticFeeds[0].AuthHeaderValue)
 }
 
 func TestToGtfsConfigData_FlattensFirstStaticFeed(t *testing.T) {

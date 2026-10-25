@@ -580,7 +580,8 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
 - Each feed takes `id`, `url`, `default-agency-id`, `agency-id-mappings`, `auth-header-name`/`auth-header-value`, `headers` and `enable-gtfs-tidy`.
 - `id` — defaults to `"feed-0"`, `"feed-1"`, …; must be unique
 - `default-agency-id` — must be unique across feeds; it and `agency-id-mappings` targets must not contain `_`
-- The Sound Transit default URL is used only when neither key is set
+- `url` is required on every feed. The Sound Transit default URL is filled in when neither key is set, or when the `gtfs-static-feed` object has no `url`; never for a list entry
+- In code, `JSONConfig.normalizeStaticFeeds` moves the singular key into `GtfsStaticFeeds` (and fills in ids), so read `GtfsStaticFeeds` only; the `GtfsStaticFeed` pointer is set only by JSON decoding
 - `GTFS_STATIC_AUTH_NAME`/`GTFS_STATIC_AUTH_VALUE` apply only when exactly one static feed is configured
 - For now the importer loads only the first feed, and `default-agency-id`, `agency-id-mappings` and `headers` are validated but not yet used
 
