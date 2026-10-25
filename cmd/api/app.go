@@ -344,12 +344,16 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 		"exempt-api-keys":    fmt.Sprintf("%s (%d keys)", appconf.RedactedValue, len(cfg.ExemptApiKeys)),
 		"protected-api-keys": fmt.Sprintf("%s (%d keys)", appconf.RedactedValue, len(cfg.ProtectedApiKeys)),
 		"rate-limit":         cfg.RateLimit,
-		"gtfs-static-feeds":  dumpStaticFeeds(gtfsCfg.StaticFeeds),
 		"data-path":          gtfsCfg.GTFSDataPath,
 	}
 
+	// In manifest mode the manifest is the source of truth, and the config
+	// rejects it next to gtfs-static-feeds. The startup log lists the feeds
+	// it resolved to.
 	if gtfsCfg.BundleInputsURL != "" {
 		jsonConfig["gtfs-bundle-inputs-url"] = gtfsCfg.BundleInputsURL
+	} else {
+		jsonConfig["gtfs-static-feeds"] = dumpStaticFeeds(gtfsCfg.StaticFeeds)
 	}
 
 	var feeds []map[string]any

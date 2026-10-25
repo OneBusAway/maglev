@@ -827,20 +827,38 @@ func TestResolveBundleInputs(t *testing.T) {
 	})
 }
 
-func TestDumpConfigJSON_BundleInputsURL(t *testing.T) {
+func TestDumpConfigJSON_BundleInputsURLRoundTrip(t *testing.T) {
+	t.Setenv("GTFS_PROTECTED_API_KEYS", "")
+	t.Setenv("GTFS_STATIC_AUTH_NAME", "")
+	t.Setenv("GTFS_STATIC_AUTH_VALUE", "")
+	const manifestURL = "https://example.com/bundle-inputs.json"
 	gtfsCfg := gtfs.Config{
-		BundleInputsURL: "https://example.com/bundle-inputs.json",
+		BundleInputsURL: manifestURL,
 		StaticFeeds:     []appconf.GtfsStaticFeed{{ID: "metro", URL: "https://example.com/metro.zip", DefaultAgencyID: "1"}},
+		GTFSDataPath:    "./gtfs.db",
 	}
+	cfg := appconf.Config{Port: 4000, RateLimit: 100}
 
-	output := captureDumpConfig(t, appconf.Config{}, gtfsCfg)
+	output := captureDumpConfig(t, cfg, gtfsCfg)
 
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal(output, &parsed))
-	assert.Equal(t, "https://example.com/bundle-inputs.json", parsed["gtfs-bundle-inputs-url"])
-	staticFeeds, ok := parsed["gtfs-static-feeds"].([]any)
-	require.True(t, ok, "gtfs-static-feeds should be an array")
-	assert.Len(t, staticFeeds, 1)
+	assert.Equal(t, manifestURL, parsed["gtfs-bundle-inputs-url"])
+	assert.NotContains(t, parsed, "gtfs-static-feeds", "the manifest is the source of truth")
+
+	// The API key fields are dumped as redaction summaries, not lists, so
+	// drop them; every other key must load again unchanged.
+	for _, redactedKey := range []string{"api-keys", "exempt-api-keys", "protected-api-keys"} {
+		delete(parsed, redactedKey)
+	}
+	reloadable, err := json.Marshal(parsed)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "dumped.json")
+	require.NoError(t, os.WriteFile(path, reloadable, 0o600))
+	reloaded, err := appconf.LoadFromFile(path)
+	require.NoError(t, err, "a manifest-mode dump loads again as-is")
+	assert.Equal(t, manifestURL, reloaded.BundleInputsURL)
+	assert.Nil(t, reloaded.GtfsStaticFeeds)
 }
 
 func TestDumpConfigJSON_OmitsEmptyBundleInputsURL(t *testing.T) {
