@@ -61,7 +61,7 @@ func readSource(ctx context.Context, source string) ([]byte, error) {
 
 func openSource(ctx context.Context, source string) (io.ReadCloser, error) {
 	if !appconf.IsHTTPURL(source) {
-		return os.Open(source)
+		return openLocalSource(source)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
@@ -78,4 +78,18 @@ func openSource(ctx context.Context, source string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("received HTTP status %s", resp.Status)
 	}
 	return resp.Body, nil
+}
+
+// openLocalSource opens a manifest on disk. Like the config file, it must
+// be a regular file: a directory, device or FIFO is rejected instead of
+// being read (a FIFO would block startup).
+func openLocalSource(source string) (io.ReadCloser, error) {
+	info, err := os.Lstat(source)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("manifest must be a regular file, not a %s", info.Mode().Type())
+	}
+	return os.Open(source)
 }
