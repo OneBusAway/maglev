@@ -40,8 +40,12 @@ type Feed struct {
 // Parse decodes and validates a manifest. Unknown keys are ignored.
 func Parse(r io.Reader) (*Manifest, error) {
 	var manifest Manifest
-	if err := json.NewDecoder(r).Decode(&manifest); err != nil {
+	decoder := json.NewDecoder(r)
+	if err := decoder.Decode(&manifest); err != nil {
 		return nil, fmt.Errorf("invalid bundle inputs JSON: %w", err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, fmt.Errorf("invalid bundle inputs JSON: unexpected data after the manifest")
 	}
 	if err := manifest.validate(); err != nil {
 		return nil, err

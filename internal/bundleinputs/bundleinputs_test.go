@@ -73,6 +73,11 @@ func TestParse_Validation(t *testing.T) {
 			wantErr:  "invalid bundle inputs JSON",
 		},
 		{
+			name:     "trailing data after the manifest",
+			manifest: `{"version": 1, "feeds": [` + feedA + `]} {}`,
+			wantErr:  "unexpected data after the manifest",
+		},
+		{
 			name:     "missing version",
 			manifest: `{"feeds": [` + feedA + `]}`,
 			wantErr:  "unsupported bundle inputs version 0",

@@ -66,6 +66,11 @@ func TestFetch(t *testing.T) {
 			source:  filepath.Join(t.TempDir(), "missing.json"),
 			wantErr: "no such file",
 		},
+		{
+			name:    "local directory",
+			source:  t.TempDir(),
+			wantErr: "manifest must be a regular file",
+		},
 	}
 
 	for _, tt := range tests {
