@@ -774,3 +774,79 @@ func TestGtfsConfigFromData_NoStaticFeeds(t *testing.T) {
 	assert.Empty(t, gtfsCfg.GtfsURL)
 	assert.Empty(t, gtfsCfg.StaticAuthHeaderKey)
 }
+
+func TestResolveBundleInputs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/bundle-inputs.json", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"version": 1, "feeds": [
+			{"id": "metro", "defaultAgencyId": "1", "url": "https://example.com/metro.zip"},
+			{"id": "st", "defaultAgencyId": "40", "url": "https://example.com/st.zip"}
+		], "stopConsolidationUrl": "https://example.com/consolidation.txt"}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	t.Run("manifest feeds replace the static feed list", func(t *testing.T) {
+		var logOutput bytes.Buffer
+		previousLogger := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logOutput, nil)))
+		defer slog.SetDefault(previousLogger)
+		gtfsCfgData := appconf.GtfsConfigData{BundleInputsURL: server.URL + "/bundle-inputs.json"}
+
+		require.NoError(t, resolveBundleInputs(context.Background(), &gtfsCfgData))
+
+		want := []appconf.GtfsStaticFeed{
+			{ID: "metro", URL: "https://example.com/metro.zip", DefaultAgencyID: "1"},
+			{ID: "st", URL: "https://example.com/st.zip", DefaultAgencyID: "40"},
+		}
+		assert.Equal(t, want, gtfsCfgData.StaticFeeds)
+		assert.Equal(t, gtfsCfgData.BundleInputsURL, gtfsConfigFromData(gtfsCfgData).BundleInputsURL)
+		assert.Contains(t, logOutput.String(), "only the first static feed is loaded")
+		assert.Contains(t, logOutput.String(), "ignored_feeds=[st]")
+		assert.Contains(t, logOutput.String(), "feed_count=2")
+		assert.Contains(t, logOutput.String(), "has_stop_consolidation_url=true")
+	})
+
+	t.Run("fetch failure names the manifest", func(t *testing.T) {
+		source := server.URL + "/missing.json"
+		gtfsCfgData := appconf.GtfsConfigData{BundleInputsURL: source}
+
+		err := resolveBundleInputs(context.Background(), &gtfsCfgData)
+
+		require.ErrorContains(t, err, source)
+		assert.Empty(t, gtfsCfgData.StaticFeeds)
+	})
+
+	t.Run("no manifest leaves the static feeds alone", func(t *testing.T) {
+		feeds := []appconf.GtfsStaticFeed{{ID: "feed-0", URL: "https://example.com/a.zip"}}
+		gtfsCfgData := appconf.GtfsConfigData{StaticFeeds: feeds}
+
+		require.NoError(t, resolveBundleInputs(context.Background(), &gtfsCfgData))
+
+		assert.Equal(t, feeds, gtfsCfgData.StaticFeeds)
+	})
+}
+
+func TestDumpConfigJSON_BundleInputsURL(t *testing.T) {
+	gtfsCfg := gtfs.Config{
+		BundleInputsURL: "https://example.com/bundle-inputs.json",
+		StaticFeeds:     []appconf.GtfsStaticFeed{{ID: "metro", URL: "https://example.com/metro.zip", DefaultAgencyID: "1"}},
+	}
+
+	output := captureDumpConfig(t, appconf.Config{}, gtfsCfg)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(output, &parsed))
+	assert.Equal(t, "https://example.com/bundle-inputs.json", parsed["gtfs-bundle-inputs-url"])
+	staticFeeds, ok := parsed["gtfs-static-feeds"].([]any)
+	require.True(t, ok, "gtfs-static-feeds should be an array")
+	assert.Len(t, staticFeeds, 1)
+}
+
+func TestDumpConfigJSON_OmitsEmptyBundleInputsURL(t *testing.T) {
+	output := captureDumpConfig(t, appconf.Config{}, gtfs.Config{})
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(output, &parsed))
+	assert.NotContains(t, parsed, "gtfs-bundle-inputs-url")
+}
