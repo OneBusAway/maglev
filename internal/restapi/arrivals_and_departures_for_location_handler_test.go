@@ -212,6 +212,38 @@ func TestArrivalsAndDeparturesForLocationIncludesStopAlertsWithoutArrivals(t *te
 	assert.True(t, referenced, "the stop alert must resolve in references.situations")
 }
 
+func TestArrivalsAndDeparturesForLocationIncludesAgencyAlertsWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencyID := testdata.Raba.ID
+	const alertID = "location-no-arrivals-agency-alert"
+	api.GtfsManager.AddAlertForTest(gtfs.Alert{
+		ID:               alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agencyID}},
+		Header:           []gtfs.AlertText{{Text: "Agency alert without arrivals", Language: "en"}},
+	})
+
+	quietTime := time.Date(2025, 6, 13, 3, 0, 0, 0, arrivalsTestClock.Location())
+	resp, model := callArrivalsForLocation(t, api, url.Values{
+		"time":          {strconv.FormatInt(quietTime.UnixMilli(), 10)},
+		"minutesBefore": {"0"},
+		"minutesAfter":  {"0"},
+	})
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the quiet-time query must have no arrivals")
+
+	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+	assert.Contains(t, model.Data.Entry.SituationIDs, wantSituationID)
+	referenced := slices.ContainsFunc(model.Data.References.Situations, func(situation models.Situation) bool {
+		return situation.ID == wantSituationID
+	})
+	assert.True(t, referenced, "the agency alert must resolve in references.situations")
+}
+
 // stopIds come nearest first so maxCount truncation drops the farthest
 // stops; arrivals group by stop in the same order with best-arrival-time
 // order inside each stop.
