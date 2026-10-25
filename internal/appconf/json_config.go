@@ -414,7 +414,9 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 		Env:          EnvFlagToEnvironment(j.Env),
 	}
 	// The importer still loads only the first static feed.
-	if feeds := j.staticFeeds(); len(feeds) > 0 {
+	feeds := j.staticFeeds()
+	warnIgnoredStaticFeeds(feeds)
+	if len(feeds) > 0 {
 		cfg.GtfsURL = feeds[0].URL
 		cfg.StaticAuthHeaderKey = feeds[0].AuthHeaderName
 		cfg.StaticAuthHeaderValue = feeds[0].AuthHeaderValue
@@ -478,6 +480,22 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 	}
 
 	return cfg, nil
+}
+
+// warnIgnoredStaticFeeds logs the static feeds after the first, which the
+// importer skips until multi-feed import lands.
+func warnIgnoredStaticFeeds(feeds []GtfsStaticFeed) {
+	if len(feeds) <= 1 {
+		return
+	}
+	ignoredIDs := make([]string, 0, len(feeds)-1)
+	for i := 1; i < len(feeds); i++ {
+		ignoredIDs = append(ignoredIDs, staticFeedID(i, feeds[i]))
+	}
+	slog.Warn("only the first static feed is loaded until multi-feed import lands",
+		"component", "config_loader",
+		"loaded_feed", staticFeedID(0, feeds[0]),
+		"ignored_feeds", ignoredIDs)
 }
 
 // applyStaticAuthEnvOverrides sets the static feed auth header from

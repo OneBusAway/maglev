@@ -1,6 +1,8 @@
 package appconf
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -275,4 +277,59 @@ func TestToGtfsConfigData_NoStaticFeeds(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, gtfsConfig.GtfsURL)
 	assert.Empty(t, gtfsConfig.StaticAuthHeaderKey)
+}
+
+// captureDefaultLog sends slog's default logger to a buffer for the rest
+// of the test.
+func captureDefaultLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &buf
+}
+
+func TestToGtfsConfigData_WarnsAboutIgnoredStaticFeeds(t *testing.T) {
+	tests := []struct {
+		name      string
+		feeds     []GtfsStaticFeed
+		wantInLog []string
+	}{
+		{
+			name:  "one feed logs nothing",
+			feeds: []GtfsStaticFeed{{ID: "metro", URL: "https://example.com/a.zip"}},
+		},
+		{
+			name: "later feeds are named",
+			feeds: []GtfsStaticFeed{
+				{ID: "metro", URL: "https://example.com/a.zip"},
+				{ID: "st", URL: "https://example.com/b.zip"},
+				{URL: "https://example.com/c.zip"},
+			},
+			wantInLog: []string{
+				"only the first static feed is loaded",
+				"component=config_loader",
+				"loaded_feed=metro",
+				"ignored_feeds=\"[st feed-2]\"",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logOutput := captureDefaultLog(t)
+
+			_, err := validConfigWithStaticFeeds(tt.feeds...).ToGtfsConfigData()
+
+			require.NoError(t, err)
+			if len(tt.wantInLog) == 0 {
+				assert.Empty(t, logOutput.String())
+				return
+			}
+			for _, want := range tt.wantInLog {
+				assert.Contains(t, logOutput.String(), want)
+			}
+		})
+	}
 }
