@@ -36,11 +36,11 @@ var parityIgnoredColumns = map[string]bool{
 	"block_trip_index.created_at": true,
 }
 
-// parityTableQueries replaces the generic dump for tables with a foreign key
-// to an autoincrement ID, so the reference is compared by its natural key.
-var parityTableQueries = map[string]string{
-	"block_trip_entry": `SELECT bti.index_key, bte.trip_id, bte.block_id, bte.service_id, bte.block_trip_sequence
-		FROM block_trip_entry bte JOIN block_trip_index bti ON bti.id = bte.block_trip_index_id`,
+// parityColumnReplacements compares a foreign key to an autoincrement ID by
+// the referenced row's natural key, because the ID depends on insertion order.
+var parityColumnReplacements = map[string]string{
+	"block_trip_entry.block_trip_index_id": `(SELECT index_key FROM block_trip_index
+		WHERE block_trip_index.id = block_trip_entry.block_trip_index_id)`,
 }
 
 type tableDigest struct {
@@ -77,10 +77,7 @@ func parityTables(t *testing.T, db *sql.DB) []string {
 // autoincrement keys and import timestamps.
 func normalizedTableRows(t *testing.T, db *sql.DB, table string) []string {
 	t.Helper()
-	query, ok := parityTableQueries[table]
-	if !ok {
-		query = fmt.Sprintf("SELECT %s FROM %s", strings.Join(parityColumns(t, db, table), ", "), table)
-	}
+	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(parityColumns(t, db, table), ", "), table)
 	rows, err := db.Query(query)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
@@ -104,25 +101,32 @@ func normalizedTableRows(t *testing.T, db *sql.DB, table string) []string {
 	return result
 }
 
-// parityColumns returns the table's columns minus its autoincrement key and
-// import timestamps. It fails for a foreign key to another table's
-// autoincrement ID, whose value depends on insertion order; such a table needs
-// an entry in parityTableQueries.
+// parityColumns returns the expressions that select the table's columns,
+// minus its autoincrement key and import timestamps. It fails for a foreign
+// key to another table's autoincrement ID, whose value depends on insertion
+// order, unless parityColumnReplacements has an entry for that column.
 func parityColumns(t *testing.T, db *sql.DB, table string) []string {
 	t.Helper()
 	autoincrementTables := queryStrings(t, db, `SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE '%AUTOINCREMENT%'`)
-
-	for _, referenced := range queryStrings(t, db, `SELECT "table" FROM pragma_foreign_key_list(?) WHERE "to" = 'id'`, table) {
-		require.NotContains(t, autoincrementTables, referenced,
-			"%s references an autoincrement ID in %s; add it to parityTableQueries", table, referenced)
-	}
+	// A REFERENCES clause without a column name targets the primary key, and
+	// SQLite reports its "to" as NULL.
+	autoincrementReferences := queryStrings(t, db, `SELECT fk."from" FROM pragma_foreign_key_list(?) fk
+		WHERE (fk."to" = 'id' OR fk."to" IS NULL)
+		AND fk."table" IN (SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE '%AUTOINCREMENT%')`, table)
 
 	var columns []string
 	for _, column := range queryStrings(t, db, `SELECT name FROM pragma_table_info(?)`, table) {
+		key := table + "." + column
 		isAutoincrementKey := column == "id" && slices.Contains(autoincrementTables, table)
-		if isAutoincrementKey || parityIgnoredColumns[table+"."+column] {
+		if isAutoincrementKey || parityIgnoredColumns[key] {
 			continue
 		}
+		if replacement, ok := parityColumnReplacements[key]; ok {
+			columns = append(columns, replacement)
+			continue
+		}
+		require.NotContains(t, autoincrementReferences, column,
+			"%s references an autoincrement ID; add it to parityColumnReplacements", key)
 		columns = append(columns, column)
 	}
 	return columns
