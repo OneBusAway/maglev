@@ -85,8 +85,13 @@ func TestImportStageHandler(t *testing.T) {
 	stages := newImportStageRecorder()
 	logger := slog.New(stages.handler(slog.NewTextHandler(&forwarded, nil))).With(slog.String("component", "gtfs_loader"))
 
+	logger.Debug("reading_gtfs_data")
+	logger.Debug("inserting_stops")
+	logger.Debug("inserting_stops_progress")
 	logger.Warn("GTFS feed has expired")
 
+	assert.Equal(t, []string{"reading_gtfs_data", "inserting_stops"}, stages.order,
+		"each stage is sampled when it starts, with no sampler running")
 	assert.Contains(t, forwarded.String(), "component=gtfs_loader", "a forwarded warning keeps the logger's attributes")
 	assert.Contains(t, forwarded.String(), "GTFS feed has expired")
 }
@@ -104,10 +109,13 @@ func newImportStageRecorder() *importStageRecorder {
 	return &importStageRecorder{current: "startup", peaks: map[string]uint64{}}
 }
 
+// startStage begins a stage and samples the heap at once, so a stage shorter
+// than the sampling interval still appears in the report.
 func (r *importStageRecorder) startStage(name string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.current = name
+	r.recordLocked(heapObjectBytes())
 }
 
 func (r *importStageRecorder) record(heapBytes uint64) {
