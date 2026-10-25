@@ -617,22 +617,7 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 		gtfsCfg.RTFeeds[0].Headers["X-API-Key"] = "my-secret-api-key"
 	}
 
-	// Make a pipe to capture stdout
-	oldStdout := os.Stdout
-	defer func() { os.Stdout = oldStdout }()
-	r, w, err := os.Pipe()
-	require.NoError(t, err, "Failed to create OS Pipe")
-	os.Stdout = w
-
-	dumpConfigJSON(cfg, gtfsCfg)
-
-	_ = w.Close()
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, r)
-
-	output := buf.String()
+	output := string(captureDumpConfig(t, cfg, gtfsCfg))
 
 	// Parse and validate json
 	var parsed map[string]any
@@ -641,8 +626,12 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 	require.NoError(t, err, "Output is not a valid JSON")
 
 	assert.Equal(t, float64(cfg.Port), parsed["port"])
-	staticFeed, ok := parsed["gtfs-static-feed"].(map[string]any)
-	require.True(t, ok, "gtfs-static-feed should be a map")
+	assert.NotContains(t, parsed, "gtfs-static-feed")
+	staticFeeds, ok := parsed["gtfs-static-feeds"].([]any)
+	require.True(t, ok, "gtfs-static-feeds should be an array")
+	require.Len(t, staticFeeds, 1)
+	staticFeed, ok := staticFeeds[0].(map[string]any)
+	require.True(t, ok, "gtfs-static-feeds[0] should be a map")
 	assert.Equal(t, gtfsCfg.GtfsURL, staticFeed["url"])
 
 	feeds, ok := parsed["gtfs-rt-feeds"].([]any)
@@ -656,7 +645,7 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 	headersMap, ok := rtFeed["headers"].(map[string]any)
 	require.True(t, ok, "headers should be a map")
 	assert.NotEqual(t, "my-secret-api-key", headersMap["X-API-Key"])
-	assert.Equal(t, "***REDACTED***", headersMap["X-API-Key"])
+	assert.Equal(t, appconf.RedactedValue, headersMap["X-API-Key"])
 
 	// Check that API keys are redacted
 	apiKeysStr, ok := parsed["api-keys"].(string)
@@ -669,7 +658,7 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 
 	protectedApiKeysStr, ok := parsed["protected-api-keys"].(string)
 	require.True(t, ok, "protected-api-keys should be a string")
-	assert.Equal(t, "***REDACTED*** (1 keys)", protectedApiKeysStr)
+	assert.Equal(t, appconf.RedactedValue+" (1 keys)", protectedApiKeysStr)
 	assert.NotContains(t, output, "your-secure-test-key-here")
 
 	assert.NotEqual(t, "", rtFeed["trip-updates-url"])
@@ -677,25 +666,90 @@ func TestDumpConfigJSON_WithExampleFile(t *testing.T) {
 }
 
 func TestDumpConfigJSON_WithNoProtectedAPIKeys(t *testing.T) {
+	output := captureDumpConfig(t, appconf.Config{}, gtfs.Config{})
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(output, &parsed))
+	assert.Equal(t, appconf.RedactedValue+" (0 keys)", parsed["protected-api-keys"])
+}
+
+func TestDumpConfigJSON_StaticFeedsRoundTrip(t *testing.T) {
+	t.Setenv("GTFS_STATIC_AUTH_NAME", "")
+	t.Setenv("GTFS_STATIC_AUTH_VALUE", "")
+	loaded := loadGtfsConfigData(t, `{"gtfs-static-feeds": [
+		{
+			"id": "metro",
+			"url": "https://example.com/metro.zip",
+			"default-agency-id": "1",
+			"agency-id-mappings": {"KCM": "1"},
+			"auth-header-name": "X-Key",
+			"auth-header-value": "secret",
+			"headers": {"Authorization": "Bearer token"},
+			"enable-gtfs-tidy": true
+		},
+		{"url": "https://example.com/st.zip", "default-agency-id": "40"}
+	]}`)
+
+	output := captureDumpConfig(t, appconf.Config{}, gtfsConfigFromData(loaded))
+
+	var parsed map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(output, &parsed))
+	assert.NotContains(t, parsed, "gtfs-static-feed")
+	assert.NotContains(t, string(output), "secret")
+	assert.NotContains(t, string(output), "Bearer token")
+	reloaded := loadGtfsConfigData(t, `{"gtfs-static-feeds": `+string(parsed["gtfs-static-feeds"])+`}`)
+
+	want := []appconf.GtfsStaticFeed{
+		{
+			ID:               "metro",
+			URL:              "https://example.com/metro.zip",
+			DefaultAgencyID:  "1",
+			AgencyIDMappings: map[string]string{"KCM": "1"},
+			AuthHeaderName:   "X-Key",
+			AuthHeaderValue:  appconf.RedactedValue,
+			Headers:          map[string]string{"Authorization": appconf.RedactedValue},
+			EnableGTFSTidy:   true,
+		},
+		{
+			ID:              "feed-1",
+			URL:             "https://example.com/st.zip",
+			DefaultAgencyID: "40",
+		},
+	}
+	assert.Equal(t, want, reloaded.StaticFeeds)
+}
+
+// loadGtfsConfigData writes configJSON to a file and returns what
+// appconf.LoadFromFile and ToGtfsConfigData produce from it.
+func loadGtfsConfigData(t *testing.T, configJSON string) appconf.GtfsConfigData {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(configJSON), 0o600))
+
+	jsonConfig, err := appconf.LoadFromFile(path)
+	require.NoError(t, err)
+	gtfsCfgData, err := jsonConfig.ToGtfsConfigData()
+	require.NoError(t, err)
+	return gtfsCfgData
+}
+
+// captureDumpConfig returns what dumpConfigJSON prints for cfg and gtfsCfg.
+func captureDumpConfig(t *testing.T, cfg appconf.Config, gtfsCfg gtfs.Config) []byte {
+	t.Helper()
 	oldStdout := os.Stdout
 	defer func() { os.Stdout = oldStdout }()
 	r, w, err := os.Pipe()
-	require.NoError(t, err, "Failed to create OS Pipe")
+	require.NoError(t, err)
 	defer r.Close()
 	os.Stdout = w
 
-	dumpConfigJSON(appconf.Config{}, gtfs.Config{})
+	dumpConfigJSON(cfg, gtfsCfg)
 
 	require.NoError(t, w.Close())
-	os.Stdout = oldStdout
-
 	var output bytes.Buffer
 	_, err = io.Copy(&output, r)
 	require.NoError(t, err)
-
-	var parsed map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &parsed))
-	assert.Equal(t, "***REDACTED*** (0 keys)", parsed["protected-api-keys"])
+	return output.Bytes()
 }
 
 func TestGtfsConfigFromData_DerivesFlattenedFieldsFromFirstFeed(t *testing.T) {

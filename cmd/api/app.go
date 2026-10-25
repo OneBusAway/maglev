@@ -313,38 +313,20 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 		envStr = "production"
 	}
 
-	// Build gtfs-static-feed object
-	staticAuthValue := gtfsCfg.StaticAuthHeaderValue
-	if staticAuthValue != "" {
-		staticAuthValue = "***REDACTED***"
-	}
-	staticFeed := map[string]string{
-		"url": gtfsCfg.GtfsURL,
-	}
-	if gtfsCfg.StaticAuthHeaderKey != "" {
-		staticFeed["auth-header-name"] = gtfsCfg.StaticAuthHeaderKey
-		staticFeed["auth-header-value"] = staticAuthValue
-	}
-
 	// Build JSON config structure
 	jsonConfig := map[string]any{
 		"port":               cfg.Port,
 		"env":                envStr,
-		"api-keys":           fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ApiKeys)),
-		"exempt-api-keys":    fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ExemptApiKeys)),
-		"protected-api-keys": fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ProtectedApiKeys)),
+		"api-keys":           fmt.Sprintf("%s (%d keys)", appconf.RedactedValue, len(cfg.ApiKeys)),
+		"exempt-api-keys":    fmt.Sprintf("%s (%d keys)", appconf.RedactedValue, len(cfg.ExemptApiKeys)),
+		"protected-api-keys": fmt.Sprintf("%s (%d keys)", appconf.RedactedValue, len(cfg.ProtectedApiKeys)),
 		"rate-limit":         cfg.RateLimit,
-		"gtfs-static-feed":   staticFeed,
+		"gtfs-static-feeds":  dumpStaticFeeds(gtfsCfg.StaticFeeds),
 		"data-path":          gtfsCfg.GTFSDataPath,
 	}
 
 	var feeds []map[string]any
 	for _, feedCfg := range gtfsCfg.RTFeeds {
-		redactedHeaders := make(map[string]string)
-		for k := range feedCfg.Headers {
-			redactedHeaders[k] = "***REDACTED***"
-		}
-
 		feed := map[string]any{
 			"id":                    feedCfg.ID,
 			"trip-updates-url":      feedCfg.TripUpdatesURL,
@@ -356,8 +338,8 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 		if len(feedCfg.AgencyIDs) > 0 {
 			feed["agency-ids"] = feedCfg.AgencyIDs
 		}
-		if len(redactedHeaders) > 0 {
-			feed["headers"] = redactedHeaders
+		if len(feedCfg.Headers) > 0 {
+			feed["headers"] = appconf.RedactHeaderValues(feedCfg.Headers)
 		}
 		feeds = append(feeds, feed)
 	}
@@ -372,4 +354,15 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	}
 
 	fmt.Println(string(output))
+}
+
+// dumpStaticFeeds returns the static feeds with their secrets redacted.
+// GtfsStaticFeed carries the config-file keys, so the dump loads again
+// through appconf.LoadFromFile.
+func dumpStaticFeeds(feeds []appconf.GtfsStaticFeed) []appconf.GtfsStaticFeed {
+	dumped := make([]appconf.GtfsStaticFeed, 0, len(feeds))
+	for _, feed := range feeds {
+		dumped = append(dumped, feed.Redacted())
+	}
+	return dumped
 }
