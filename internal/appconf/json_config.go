@@ -81,12 +81,15 @@ type JSONConfig struct {
 	GtfsStaticFeed *GtfsStaticFeed `json:"gtfs-static-feed"`
 	// GtfsStaticFeeds is nil when the key is absent and empty for "[]".
 	GtfsStaticFeeds []GtfsStaticFeed `json:"gtfs-static-feeds"`
-	GtfsRtFeeds     []GtfsRtFeed     `json:"gtfs-rt-feeds"`
-	DataPath        string           `json:"data-path"`
-	LogLevel        string           `json:"log-level"`
-	LogFormat       string           `json:"log-format"`
-	TLSCertPath     string           `json:"tls-cert-path"`
-	TLSKeyPath      string           `json:"tls-key-path"`
+	// BundleInputsURL points at an obacloud bundle-inputs.json manifest that
+	// lists the static feeds. It replaces both static feed keys.
+	BundleInputsURL string       `json:"gtfs-bundle-inputs-url"`
+	GtfsRtFeeds     []GtfsRtFeed `json:"gtfs-rt-feeds"`
+	DataPath        string       `json:"data-path"`
+	LogLevel        string       `json:"log-level"`
+	LogFormat       string       `json:"log-format"`
+	TLSCertPath     string       `json:"tls-cert-path"`
+	TLSKeyPath      string       `json:"tls-key-path"`
 
 	// staticFeedsKey names the key GtfsStaticFeeds came from, for errors.
 	staticFeedsKey string
@@ -95,6 +98,7 @@ type JSONConfig struct {
 const (
 	legacyStaticFeedKey = "gtfs-static-feed"
 	staticFeedListKey   = "gtfs-static-feeds"
+	bundleInputsURLKey  = "gtfs-bundle-inputs-url"
 )
 
 // normalizeStaticFeeds moves the legacy gtfs-static-feed key into
@@ -103,6 +107,10 @@ const (
 func (j *JSONConfig) normalizeStaticFeeds() error {
 	if j.GtfsStaticFeed != nil && j.GtfsStaticFeeds != nil {
 		return fmt.Errorf("gtfs-static-feed and gtfs-static-feeds cannot both be set")
+	}
+	hasStaticFeedKey := j.GtfsStaticFeed != nil || j.GtfsStaticFeeds != nil
+	if j.isManifestMode() && hasStaticFeedKey {
+		return fmt.Errorf("gtfs-bundle-inputs-url cannot be set together with gtfs-static-feed or gtfs-static-feeds")
 	}
 	if j.GtfsStaticFeed != nil {
 		j.GtfsStaticFeeds = []GtfsStaticFeed{*j.GtfsStaticFeed}
@@ -117,6 +125,10 @@ func (j *JSONConfig) normalizeStaticFeeds() error {
 	}
 	return nil
 }
+
+// isManifestMode reports whether the static feeds come from a
+// bundle-inputs manifest instead of the config file.
+func (j *JSONConfig) isManifestMode() bool { return j.BundleInputsURL != "" }
 
 // feedIDOrDefault returns id, or "feed-{index}" when id is empty.
 func feedIDOrDefault(index int, id string) string {
@@ -191,8 +203,12 @@ func (j *JSONConfig) setDefaults() {
 
 // setStaticFeedDefaults adds the default feed when no static feed key is
 // set, and gives the legacy single feed the default URL when it has none.
-// A gtfs-static-feeds list is left alone. It expects normalized feeds.
+// A gtfs-static-feeds list is left alone, and so is manifest mode, which
+// gets its feeds at startup. It expects normalized feeds.
 func (j *JSONConfig) setStaticFeedDefaults() {
+	if j.isManifestMode() {
+		return
+	}
 	if j.GtfsStaticFeeds == nil {
 		j.GtfsStaticFeeds = []GtfsStaticFeed{{ID: feedIDOrDefault(0, ""), URL: defaultStaticFeedURL}}
 		j.staticFeedsKey = legacyStaticFeedKey
@@ -292,6 +308,9 @@ func (j *JSONConfig) Validate() error {
 		return err
 	}
 
+	if j.isManifestMode() {
+		return validateSource(j.BundleInputsURL, bundleInputsURLKey)
+	}
 	return j.validateStaticFeeds()
 }
 
@@ -355,13 +374,19 @@ func (feed GtfsStaticFeed) validate() error {
 	if feed.URL == "" {
 		return fmt.Errorf("url is required")
 	}
-	if strings.HasPrefix(strings.ToLower(feed.URL), "file://") {
-		return fmt.Errorf("file:// URLs are not allowed in url for security reasons")
+	return validateSource(feed.URL, "url")
+}
+
+// validateSource checks an http(s) URL or local path read at startup:
+// file:// URLs and path traversal are rejected.
+func validateSource(source, fieldName string) error {
+	if strings.HasPrefix(strings.ToLower(source), "file://") {
+		return fmt.Errorf("file:// URLs are not allowed in %s for security reasons", fieldName)
 	}
-	if IsHTTPURL(feed.URL) {
+	if IsHTTPURL(source) {
 		return nil
 	}
-	return validatePath(feed.URL, "url")
+	return validatePath(source, fieldName)
 }
 
 // IsHTTPURL reports whether source is an http:// or https:// URL rather
@@ -431,10 +456,20 @@ type RTFeedConfigData struct {
 // This avoids import cycles
 type GtfsConfigData struct {
 	// StaticFeeds lists every static feed in load order, with ids filled in.
-	StaticFeeds  []GtfsStaticFeed
-	RTFeeds      []RTFeedConfigData
-	GTFSDataPath string
-	Env          Environment
+	// In manifest mode it is empty until UseStaticFeeds fills it.
+	StaticFeeds []GtfsStaticFeed
+	// BundleInputsURL is the manifest that lists the static feeds, if any.
+	BundleInputsURL string
+	RTFeeds         []RTFeedConfigData
+	GTFSDataPath    string
+	Env             Environment
+}
+
+// UseStaticFeeds replaces the static feed list, as manifest mode does once
+// it has read the manifest, and warns about the feeds the importer skips.
+func (cfg *GtfsConfigData) UseStaticFeeds(feeds []GtfsStaticFeed) {
+	cfg.StaticFeeds = feeds
+	warnIgnoredStaticFeeds(feeds)
 }
 
 // ToGtfsConfigData converts JSONConfig to GtfsConfigData
@@ -444,9 +479,10 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 	}
 
 	cfg := GtfsConfigData{
-		StaticFeeds:  j.GtfsStaticFeeds,
-		GTFSDataPath: j.DataPath,
-		Env:          EnvFlagToEnvironment(j.Env),
+		StaticFeeds:     j.GtfsStaticFeeds,
+		BundleInputsURL: j.BundleInputsURL,
+		GTFSDataPath:    j.DataPath,
+		Env:             EnvFlagToEnvironment(j.Env),
 	}
 	// The importer still loads only the first static feed.
 	feeds := j.GtfsStaticFeeds
@@ -560,6 +596,9 @@ func (j *JSONConfig) applyStaticAuthEnvOverrides() error {
 		return nil
 	}
 
+	if j.isManifestMode() {
+		return fmt.Errorf("GTFS_STATIC_AUTH_NAME/GTFS_STATIC_AUTH_VALUE cannot be used with %s: manifest feeds take no auth headers", bundleInputsURLKey)
+	}
 	if len(j.GtfsStaticFeeds) == 0 {
 		return nil // Validate rejects the empty list
 	}

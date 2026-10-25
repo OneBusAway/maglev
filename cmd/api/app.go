@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/bundleinputs"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
@@ -32,9 +33,10 @@ const gtfsShutdownTimeout = 30 * time.Second
 
 func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 	gtfsCfg := gtfs.Config{
-		StaticFeeds:  gtfsCfgData.StaticFeeds,
-		GTFSDataPath: gtfsCfgData.GTFSDataPath,
-		Env:          gtfsCfgData.Env,
+		StaticFeeds:     gtfsCfgData.StaticFeeds,
+		BundleInputsURL: gtfsCfgData.BundleInputsURL,
+		GTFSDataPath:    gtfsCfgData.GTFSDataPath,
+		Env:             gtfsCfgData.Env,
 	}
 	// The importer still loads only the first static feed.
 	if len(gtfsCfgData.StaticFeeds) > 0 {
@@ -59,6 +61,27 @@ func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 	}
 
 	return gtfsCfg
+}
+
+// resolveBundleInputs fills the static feed list from the bundle-inputs
+// manifest when gtfs-bundle-inputs-url is set. The manifest is read once,
+// at startup: the periodic static reload keeps the feeds resolved here and
+// does not read the manifest again until multi-feed import lands.
+func resolveBundleInputs(ctx context.Context, gtfsCfgData *appconf.GtfsConfigData) error {
+	if gtfsCfgData.BundleInputsURL == "" {
+		return nil
+	}
+	manifest, err := bundleinputs.Fetch(ctx, gtfsCfgData.BundleInputsURL)
+	if err != nil {
+		return fmt.Errorf("failed to load gtfs-bundle-inputs-url: %w", err)
+	}
+	gtfsCfgData.UseStaticFeeds(manifest.StaticFeeds())
+	slog.Info("loaded static feeds from bundle inputs manifest",
+		"component", "config_loader",
+		"source", gtfsCfgData.BundleInputsURL,
+		"feed_count", len(manifest.Feeds),
+		"has_stop_consolidation_url", manifest.StopConsolidationURL != "")
+	return nil
 }
 
 // ParseAPIKeys splits a comma-separated string of API keys and trims whitespace from each key.
@@ -321,8 +344,16 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 		"exempt-api-keys":    fmt.Sprintf("%s (%d keys)", appconf.RedactedValue, len(cfg.ExemptApiKeys)),
 		"protected-api-keys": fmt.Sprintf("%s (%d keys)", appconf.RedactedValue, len(cfg.ProtectedApiKeys)),
 		"rate-limit":         cfg.RateLimit,
-		"gtfs-static-feeds":  dumpStaticFeeds(gtfsCfg.StaticFeeds),
 		"data-path":          gtfsCfg.GTFSDataPath,
+	}
+
+	// In manifest mode the manifest is the source of truth, and the config
+	// rejects it next to gtfs-static-feeds. The startup log lists the feeds
+	// it resolved to.
+	if gtfsCfg.BundleInputsURL != "" {
+		jsonConfig["gtfs-bundle-inputs-url"] = gtfsCfg.BundleInputsURL
+	} else {
+		jsonConfig["gtfs-static-feeds"] = dumpStaticFeeds(gtfsCfg.StaticFeeds)
 	}
 
 	var feeds []map[string]any

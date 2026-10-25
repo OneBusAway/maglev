@@ -85,6 +85,10 @@
       "items": { "$ref": "#/definitions/staticFeed" },
       "minItems": 1
     },
+    "gtfs-bundle-inputs-url": {
+      "type": "string",
+      "description": "URL or local path of an obacloud bundle-inputs.json manifest (version 1) that lists the static feeds. Read once at startup. Cannot be combined with gtfs-static-feed or gtfs-static-feeds. Only the first manifest feed is imported for now."
+    },
     "gtfs-rt-feeds": {
       "type": "array",
       "description": "Array of GTFS-RT feed configurations",
@@ -171,7 +175,11 @@
       "description": "Path to TLS private key file. When set together with tls-cert-path, the server serves HTTPS."
     }
   },
-  "not": { "required": ["gtfs-static-feed", "gtfs-static-feeds"] },
+  "allOf": [
+    { "not": { "required": ["gtfs-static-feed", "gtfs-static-feeds"] } },
+    { "not": { "required": ["gtfs-bundle-inputs-url", "gtfs-static-feed"] } },
+    { "not": { "required": ["gtfs-bundle-inputs-url", "gtfs-static-feeds"] } }
+  ],
   "definitions": {
     "staticFeed": {
       "type": "object",
@@ -249,6 +257,11 @@
     {
       "port": 3000,
       "env": "development"
+    },
+    {
+      "env": "production",
+      "gtfs-bundle-inputs-url": "https://example.com/bundles/bundle-inputs.json",
+      "data-path": "/data/gtfs.db"
     }
   ]
 }
