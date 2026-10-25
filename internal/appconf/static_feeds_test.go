@@ -149,6 +149,11 @@ func TestValidate_StaticFeedList(t *testing.T) {
 			wantErr: `agency-id-mappings target "sound_transit" for "ST" must not contain '_'`,
 		},
 		{
+			name:    "empty agency id mapping key",
+			feeds:   []GtfsStaticFeed{{URL: urlA, AgencyIDMappings: map[string]string{"": "40"}}},
+			wantErr: `agency-id-mappings key for "40" cannot be empty`,
+		},
+		{
 			name:    "empty agency id mapping target",
 			feeds:   []GtfsStaticFeed{{URL: urlA, AgencyIDMappings: map[string]string{"ST": ""}}},
 			wantErr: `agency-id-mappings target for "ST" cannot be empty`,
