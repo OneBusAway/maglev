@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 
@@ -204,18 +205,10 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	// that date. Per the wiki spec: "serviceDate is provided but no
 	// block instance exists for that service date → HTTP 404".
 	if params.ServiceDate != nil {
-		formattedDate := serviceDate.Format("20060102")
-		activeServiceIDs, svcErr := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+		serviceActive, svcErr := api.serviceActiveOn(ctx, trip.ServiceID, serviceDate)
 		if svcErr != nil {
 			api.serverErrorResponse(w, r, svcErr)
 			return
-		}
-		serviceActive := false
-		for _, svcID := range activeServiceIDs {
-			if svcID == trip.ServiceID {
-				serviceActive = true
-				break
-			}
 		}
 		if !serviceActive {
 			api.sendNotFound(w, r)
@@ -250,6 +243,14 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		requestedVehicle = v
 	}
 
+	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	if err != nil {
+		reqLogger.Warn("GetFrequenciesForTrip failed",
+			"trip_id", tripID,
+			"error", err.Error())
+		freqRows = nil
+	}
+
 	var schedule *models.Schedule
 	var status *models.TripStatus
 	var statusExtras *tripStatusExtras
@@ -262,10 +263,19 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Extension 4e: Explicitly nil out the status if there is no actual tracking record.
-		// BuildTripStatus returns a default placeholder when tracking is absent, so we nil it to trigger JSON omitempty.
+		// Without a tracking record Java still reports where the schedule puts
+		// the trip (AbstractBlockLocationServiceImpl.getBlockLocation); it has no
+		// status only when the schedule places it nowhere. So drop the untracked
+		// placeholder only when the trip is not scheduled to be running.
 		if status != nil && status.IsUntracked() {
-			status = nil
+			scheduled, schedErr := api.tripScheduledToRunAt(ctx, trip, freqRows, serviceDate, currentTime)
+			if schedErr != nil {
+				api.serverErrorResponse(w, r, schedErr)
+				return
+			}
+			if !scheduled {
+				status = nil
+			}
 		}
 	}
 
@@ -282,14 +292,6 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	// trip is looked up by tripID and BuildTripStatus was given trip.ID, so when
 	// the status was built its situations are this trip's and are reused here.
 	situationsIDs, situationRefs := api.tripSituationsFor(ctx, tripID, statusExtras)
-
-	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
-	if err != nil {
-		reqLogger.Warn("GetFrequenciesForTrip failed",
-			"trip_id", tripID,
-			"error", err.Error())
-		freqRows = nil
-	}
 
 	var frequency *models.Frequency
 	if len(freqRows) > 0 {
@@ -379,6 +381,44 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := models.NewEntryResponse(tripDetails, *references, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// serviceActiveOn reports whether serviceID runs on serviceDate.
+func (api *RestAPI) serviceActiveOn(ctx context.Context, serviceID string, serviceDate time.Time) (bool, error) {
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(activeServiceIDs, serviceID), nil
+}
+
+// tripScheduledToRunAt reports whether trip's schedule has it running at currentTime on
+// serviceDate: its service runs that day and currentTime falls within its stop-time
+// span or, for a frequency-based trip, within a frequency window plus one run.
+func (api *RestAPI) tripScheduledToRunAt(ctx context.Context, trip gtfsdb.Trip, freqs []gtfsdb.Frequency, serviceDate, currentTime time.Time) (bool, error) {
+	offset := currentTime.Sub(servicedate.OffsetBase(serviceDate))
+	if !tripSpanCovers(trip, freqs, offset) {
+		return false, nil
+	}
+	return api.serviceActiveOn(ctx, trip.ServiceID, serviceDate)
+}
+
+// tripSpanCovers reports whether offset (since the service-day start) falls in the
+// trip's scheduled span, widened to its frequency windows when it has any.
+func tripSpanCovers(trip gtfsdb.Trip, freqs []gtfsdb.Frequency, offset time.Duration) bool {
+	if tripWindowOverlapsRange(trip, offset, offset) {
+		return true
+	}
+	if !trip.MinArrivalTime.Valid || !trip.MaxDepartureTime.Valid {
+		return false
+	}
+	runDuration := trip.MaxDepartureTime.Int64 - trip.MinArrivalTime.Int64
+	for _, freq := range freqs {
+		if freq.StartTime <= offset.Nanoseconds() && offset.Nanoseconds() <= freq.EndTime+runDuration {
+			return true
+		}
+	}
+	return false
 }
 
 func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, tripsToInclude []string, mainTrip gtfsdb.Trip) ([]*models.Trip, error) {
