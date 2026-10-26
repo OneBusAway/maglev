@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -8,10 +9,28 @@ import (
 	"maglev.onebusaway.org/internal/logging"
 )
 
-// DataFreshness represents the last update timestamps for GTFS data.
+// DataFreshness represents the last update timestamps for GTFS data and
+// which static bundle is loaded.
 type DataFreshness struct {
-	StaticGtfsLastUpdated *time.Time           `json:"staticGtfsLastUpdated,omitempty"`
-	RealtimeFeeds         map[string]time.Time `json:"realtimeFeeds,omitempty"`
+	StaticGtfsLastUpdated *time.Time `json:"staticGtfsLastUpdated,omitempty"`
+	// StaticGtfsHash is the hex sha256 of the raw static GTFS zip, so an
+	// external service can tell whether it validates against the same bundle.
+	StaticGtfsHash string               `json:"staticGtfsHash,omitempty"`
+	RealtimeFeeds  map[string]time.Time `json:"realtimeFeeds,omitempty"`
+}
+
+// dataFreshness reports when the static and realtime data were last updated
+// and which static bundle is loaded.
+func (api *RestAPI) dataFreshness(ctx context.Context) DataFreshness {
+	var staticTime *time.Time
+	if t := api.GtfsManager.GetStaticLastUpdated(ctx); !t.IsZero() {
+		staticTime = &t
+	}
+	return DataFreshness{
+		StaticGtfsLastUpdated: staticTime,
+		StaticGtfsHash:        api.GtfsManager.GetSystemETag(ctx),
+		RealtimeFeeds:         api.GtfsManager.GetFeedUpdateTimes(),
+	}
 }
 
 // HealthResponse represents the JSON response from the health endpoint.
@@ -64,15 +83,8 @@ func (api *RestAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 	// Fetch data freshness from the manager only if verbose=true is passed
 	var freshness *DataFreshness
 	if r.URL.Query().Get("verbose") == "true" {
-		t := api.GtfsManager.GetStaticLastUpdated(r.Context())
-		var staticTime *time.Time
-		if !t.IsZero() {
-			staticTime = &t
-		}
-		freshness = &DataFreshness{
-			StaticGtfsLastUpdated: staticTime,
-			RealtimeFeeds:         api.GtfsManager.GetFeedUpdateTimes(),
-		}
+		f := api.dataFreshness(r.Context())
+		freshness = &f
 	}
 
 	// All checks passed

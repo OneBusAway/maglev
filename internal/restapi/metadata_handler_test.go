@@ -2,12 +2,18 @@ package restapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/app"
 )
 
@@ -80,4 +86,40 @@ func TestMetadataHandler(t *testing.T) {
 	if response.StaticGtfsLastUpdated.Unix() != staticTime.Unix() {
 		t.Errorf("Expected StaticGtfsLastUpdated to match set time")
 	}
+}
+
+// rabaZipSha256 hashes the static fixture the way an external consumer such
+// as Watchdog would, independently of what Maglev stored.
+func rabaZipSha256(t *testing.T) string {
+	t.Helper()
+	zipBytes, err := os.ReadFile(filepath.Join("../../testdata", "raba.zip"))
+	require.NoError(t, err)
+	sum := sha256.Sum256(zipBytes)
+	return hex.EncodeToString(sum[:])
+}
+
+func TestMetadataHandler_StaticGtfsHash(t *testing.T) {
+	api := createTestApi(t)
+
+	resp, freshness := callAPIHandler[DataFreshness](t, api, "/api/v2/metadata.json?key=TEST")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, rabaZipSha256(t), freshness.StaticGtfsHash)
+}
+
+func TestMetadataHandler_NoImportOmitsHash(t *testing.T) {
+	api := &RestAPI{
+		Application: &app.Application{
+			GtfsManager: newTestManagerNoData(t),
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/metadata.json", nil)
+	rr := httptest.NewRecorder()
+	api.metadataHandler(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+	assert.NotContains(t, body, "staticGtfsHash")
 }

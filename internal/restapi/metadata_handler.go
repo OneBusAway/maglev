@@ -19,16 +19,7 @@ func (api *RestAPI) metadataHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t := api.GtfsManager.GetStaticLastUpdated(r.Context())
-	var staticTime *time.Time
-	if !t.IsZero() {
-		staticTime = &t
-	}
-
-	response := DataFreshness{
-		StaticGtfsLastUpdated: staticTime,
-		RealtimeFeeds:         api.GtfsManager.GetFeedUpdateTimes(),
-	}
+	response := api.dataFreshness(r.Context())
 
 	// Ensure the map isn't nil for JSON serialization
 	if response.RealtimeFeeds == nil {

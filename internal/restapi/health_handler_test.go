@@ -195,3 +195,13 @@ func TestHealthHandlerVerboseMode(t *testing.T) {
 	assert.NotNil(t, healthRespVerbose.DataFreshness.StaticGtfsLastUpdated)
 	assert.Contains(t, healthRespVerbose.DataFreshness.RealtimeFeeds, "feed-1")
 }
+
+func TestHealthHandler_VerboseIncludesHash(t *testing.T) {
+	api := createTestApi(t)
+
+	resp, health := callAPIHandler[HealthResponse](t, api, "/healthz?verbose=true")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotNil(t, health.DataFreshness)
+	assert.Equal(t, rabaZipSha256(t), health.DataFreshness.StaticGtfsHash)
+}
