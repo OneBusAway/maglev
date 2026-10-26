@@ -128,29 +128,6 @@ func TestSituationHandler(t *testing.T) {
 	}
 }
 
-func TestAlertMatchesSituationID(t *testing.T) {
-	agency := "25"
-	route := "1"
-	alert := gtfs.Alert{
-		ID:               "late",
-		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agency}},
-	}
-	routeOnly := gtfs.Alert{
-		ID:               "detour",
-		InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &route}},
-	}
-	prefixed := gtfs.Alert{ID: "25_late"}
-	nameless := gtfs.Alert{ID: ""}
-
-	assert.True(t, alertMatchesSituationID(alert, "25", "25_late"))
-	assert.True(t, alertMatchesSituationID(routeOnly, "25", "25_detour"))
-	assert.False(t, alertMatchesSituationID(routeOnly, "40", "25_detour"))
-	assert.True(t, alertMatchesSituationID(prefixed, "25", "25_late"))
-	assert.False(t, alertMatchesSituationID(alert, "25", "40_late"))
-	assert.False(t, alertMatchesSituationID(nameless, "25", "25_late"))
-	assert.False(t, alertMatchesSituationID(alert, "25", ""))
-}
-
 func TestFindSituationAlertPrefersPublishedID(t *testing.T) {
 	agency25 := "25"
 	agency40 := "40"
@@ -172,5 +149,8 @@ func TestFindSituationAlertPrefersPublishedID(t *testing.T) {
 	assert.Equal(t, "25_late", got.ID, "a raw id still matches when nothing publishes it")
 
 	_, ok = findSituationAlert([]gtfs.Alert{published}, "25", "")
+	assert.False(t, ok)
+
+	_, ok = findSituationAlert([]gtfs.Alert{published}, "40", "40_late")
 	assert.False(t, ok)
 }
