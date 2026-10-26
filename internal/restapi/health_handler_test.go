@@ -205,3 +205,19 @@ func TestHealthHandler_VerboseIncludesHash(t *testing.T) {
 	require.NotNil(t, health.DataFreshness)
 	assert.Equal(t, rabaZipSha256(t), health.DataFreshness.StaticGtfsHash)
 }
+
+func TestHealthHandler_VerboseImportMetadataQueryFails(t *testing.T) {
+	manager := newTestManagerWithoutImportMetadata(t)
+	manager.MarkReady()
+	api := NewRestAPI(&app.Application{GtfsManager: manager})
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz?verbose=true", nil)
+	rr := httptest.NewRecorder()
+	api.healthHandler(rr, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+	var health HealthResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &health))
+	assert.Equal(t, "unavailable", health.Status)
+	assert.Nil(t, health.DataFreshness)
+}

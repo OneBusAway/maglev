@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/gtfs"
 )
 
 func TestMetadataHandler_NilManager(t *testing.T) {
@@ -121,5 +122,34 @@ func TestMetadataHandler_NoImportOmitsHash(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+	assert.NotContains(t, body, "staticGtfsHash")
+}
+
+// newTestManagerWithoutImportMetadata returns a manager whose database is
+// reachable but fails import metadata reads, unlike an empty database.
+func newTestManagerWithoutImportMetadata(t *testing.T) *gtfs.Manager {
+	t.Helper()
+	manager := newTestManagerNoData(t)
+	_, err := manager.GtfsDB.DB.Exec("DROP TABLE import_metadata")
+	require.NoError(t, err)
+	return manager
+}
+
+func TestMetadataHandler_ImportMetadataQueryFails(t *testing.T) {
+	manager := newTestManagerWithoutImportMetadata(t)
+	api := &RestAPI{
+		Application: &app.Application{
+			GtfsManager: manager,
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/metadata.json", nil)
+	rr := httptest.NewRecorder()
+	api.metadataHandler(rr, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+	assert.Equal(t, "unavailable", body["status"])
 	assert.NotContains(t, body, "staticGtfsHash")
 }
