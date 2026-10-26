@@ -397,7 +397,8 @@ SELECT * FROM stop_times WHERE trip_id = ? ORDER BY stop_sequence`,
 		{
 			name: "GetActiveRouteIDsForStopsOnDate (stops-for-location batch)",
 			sql: `EXPLAIN QUERY PLAN
-SELECT DISTINCT routes.agency_id || '_' || routes.id AS route_id,
+SELECT DISTINCT routes.id AS route_id,
+                routes.agency_id,
                 stop_times.stop_id
 FROM stop_times
 JOIN trips  ON stop_times.trip_id  = trips.id
