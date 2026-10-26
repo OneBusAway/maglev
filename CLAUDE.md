@@ -504,7 +504,7 @@ arrivalTimeMs := startOfDay.Add(arrivalDuration).UnixMilli()
 ## New Endpoint Implementation Workflow
 
 ### 1. Research and Planning
-- Fetch official API documentation from https://developer.onebusaway.org/api/where/methods
+- Read the endpoint's page on the [maglev.wiki](https://github.com/OneBusAway/maglev/wiki), including its Implementation Decisions
 - Examine production API responses to understand exact JSON structure
 - Check existing similar endpoints for patterns and data access methods
 
@@ -575,8 +575,10 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
 
 ## REST API Documentation
 
-The official REST API documentation is available at: https://developer.onebusaway.org/api/where/methods
+**The [maglev.wiki](https://github.com/OneBusAway/maglev/wiki) spec is the source of truth for endpoint behavior**: request parameters, defaults, response fields and status codes. Each endpoint page describes the Java OneBusAway server's behavior, which Maglev matches unless the page's Implementation Decisions section records a deliberate difference.
 
-The Open API specification is located at https://github.com/OneBusAway/sdk-config/blob/main/stainless/openapi.yml
+The OpenAPI spec (`testdata/openapi.yml`, synced from [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/stainless/openapi.yml)) comes second. It generates the client SDKs and has known errors. For example, it gives trips-for-route's `includeStatus` and `includeSchedule` a default of `false`, where Java and the wiki use `true`.
 
-**All API endpoints MUST behave identically to what is defined in this OpenAPI spec.** This is the single source of truth for request parameters, response schemas, field names, types, and status codes. Always fetch the latest version of this spec before implementing new endpoints or modifying existing ones. If the codebase diverges from the spec, the spec wins.
+When the wiki and openapi.yml disagree, follow the wiki and raise the discrepancy on OneBusAway/sdk-config. Don't change Maglev's behavior to match openapi.yml. An endpoint outside the SDK (such as `/api/ondemand`) needs no openapi.yml entry, but the PR description must say why.
+
+The legacy API documentation is at https://developer.onebusaway.org/api/where/methods.
