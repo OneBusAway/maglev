@@ -2014,3 +2014,17 @@ func TestArrivalsAndDeparturesForStopHandler_EmptyWindowKeepsStopAndRouteReferen
 	assert.NotEmpty(t, model.Data.References.Routes,
 		"the routes serving the requested stop must be references even with no arrivals")
 }
+
+func TestArrivalsAndDeparturesForStopHandler_MultiDayWindow(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	endpoint := arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{
+		"minutesBefore": {"60"},
+		"minutesAfter":  {"2000"},
+	})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures, "multi-day window should return scheduled arrivals")
+}
