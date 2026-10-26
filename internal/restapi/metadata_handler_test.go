@@ -101,10 +101,10 @@ func rabaZipSha256(t *testing.T) string {
 func TestMetadataHandler_StaticGtfsHash(t *testing.T) {
 	api := createTestApi(t)
 
-	resp, freshness := callAPIHandler[DataFreshness](t, api, "/api/v2/metadata.json?key=TEST")
+	resp, body := callAPIHandler[map[string]any](t, api, "/api/v2/metadata.json?key=TEST")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, rabaZipSha256(t), freshness.StaticGtfsHash)
+	assert.Equal(t, rabaZipSha256(t), body["staticGtfsHash"])
 }
 
 func TestMetadataHandler_NoImportOmitsHash(t *testing.T) {
