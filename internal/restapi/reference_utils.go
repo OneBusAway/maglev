@@ -72,6 +72,13 @@ func candidateRouteIDs(routeID string, agencyIDs []string) []string {
 			}
 		}
 	}
+	parts := strings.Split(routeID, "_")
+	for i := 1; i < len(parts); i++ {
+		bareID := strings.Join(parts[i:], "_")
+		if !slices.Contains(candidates, bareID) {
+			candidates = append(candidates, bareID)
+		}
+	}
 	if _, rID, err := utils.ExtractAgencyIDAndCodeID(routeID); err == nil {
 		if !slices.Contains(candidates, rID) {
 			candidates = append(candidates, rID)
