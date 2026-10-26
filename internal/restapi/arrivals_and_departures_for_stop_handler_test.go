@@ -1934,3 +1934,18 @@ func TestArrivalsAndDeparturesForStopHandler_NoArrivalsStillListsNearbyStops(t *
 	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures, "precondition: no service at 03:00")
 	assert.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
 }
+
+func TestArrivalsAndDeparturesForStopHandler_MultiDayWindow(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	endpoint := arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{
+		"minutesBefore": {"60"},
+		"minutesAfter":  {"2000"},
+	})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures, "multi-day window should return scheduled arrivals")
+}
+}
