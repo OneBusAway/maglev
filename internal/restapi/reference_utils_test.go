@@ -544,4 +544,60 @@ func TestStopReferences_AgencyWithUnderscore(t *testing.T) {
 	require.Len(t, routes, 1)
 	assert.Equal(t, "AGENCY_ONE", routes[0].agencyID)
 	assert.Equal(t, "ROUTE_100", routes[0].routeID)
+
+	// Verify BuildRouteReferences resolves static route IDs for an agency containing an underscore
+	routeRefs, err := api.BuildRouteReferences(ctx, "AGENCY_ONE", refs)
+	require.NoError(t, err)
+	require.Len(t, routeRefs, 1)
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", routeRefs[0].ID)
+	assert.Equal(t, "AGENCY_ONE", routeRefs[0].AgencyID)
+
+	// Verify appendTripRouteReferences resolves a trip whose routeId belongs to an agency with an underscore
+	tripRefs := &models.ReferencesModel{
+		Trips: []models.Trip{
+			{ID: "AGENCY_ONE_t1", RouteID: "AGENCY_ONE_ROUTE_100"},
+		},
+	}
+	require.NoError(t, api.appendTripRouteReferences(ctx, tripRefs, "AGENCY_ONE"))
+	require.Len(t, tripRefs.Routes, 1)
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", tripRefs.Routes[0].ID)
+	assert.Equal(t, "AGENCY_ONE", tripRefs.Routes[0].AgencyID)
+}
+
+func TestCandidateRouteIDs_AmbiguousAgencyPrefixes(t *testing.T) {
+	agencyIDs := []string{"AGENCY_SUB", "AGENCY"}
+	cands := candidateRouteIDs("AGENCY_SUB_ROUTE1", agencyIDs)
+	assert.Contains(t, cands, "ROUTE1")
+	assert.Contains(t, cands, "SUB_ROUTE1")
+	assert.Contains(t, cands, "AGENCY_SUB_ROUTE1")
+}
+
+func TestBuildRouteReferences_BareRouteIDWithUnderscore(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"A1,Agency One,http://agency1.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"Blue_Line,A1,BL,Blue Line,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1,Stop 1,37.7749,-122.4194\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"Blue_Line,svc1,t1,Headsign,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,08:00:00,08:00:00,s1,1\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "bare-route-underscore.zip", files)
+	ctx := context.Background()
+
+	stops := []models.Stop{
+		{ID: "A1_s1", StaticRouteIDs: []string{"Blue_Line"}},
+	}
+
+	routes, err := api.BuildRouteReferences(ctx, "A1", stops)
+	require.NoError(t, err)
+	require.Len(t, routes, 1)
+	assert.Equal(t, "A1_Blue_Line", routes[0].ID)
+	assert.Equal(t, "A1", routes[0].AgencyID)
 }
