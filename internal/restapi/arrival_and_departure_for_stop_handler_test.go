@@ -641,13 +641,19 @@ func TestParseArrivalAndDepartureParams_NegativeValues(t *testing.T) {
 }
 
 func TestParseArrivalAndDepartureParams_LargeValues(t *testing.T) {
-	req := httptest.NewRequest("GET", "/test?minutesAfter=9999&minutesBefore=9999", nil)
+	req := httptest.NewRequest("GET", "/test?minutesAfter=2000&minutesBefore=2000", nil)
 
 	params, errs := parseArrivalAndDepartureParams(req)
 
 	assert.Empty(t, errs)
-	assert.Equal(t, 1440, params.MinutesAfter)
-	assert.Equal(t, 1440, params.MinutesBefore)
+	assert.Equal(t, 2000, params.MinutesAfter)
+	assert.Equal(t, 2000, params.MinutesBefore)
+
+	overflowReq := httptest.NewRequest("GET", "/test?minutesAfter=153722868&minutesBefore=153722868", nil)
+	overflowParams, overflowErrs := parseArrivalAndDepartureParams(overflowReq)
+	assert.Empty(t, overflowErrs)
+	assert.Equal(t, maxDurationMinutes, overflowParams.MinutesAfter)
+	assert.Equal(t, maxDurationMinutes, overflowParams.MinutesBefore)
 }
 
 func TestArrivalAndDepartureForStopHandlerWithMalformedID(t *testing.T) {
