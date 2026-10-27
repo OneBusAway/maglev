@@ -128,7 +128,7 @@ func TestReportProblemAcceptsQueryID(t *testing.T) {
 	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
 
 	stopIDs := []string{"path-stop", "query-stop", "path-wins", "query-ignored"}
-	tripIDs := []string{"path-trip", "query-trip"}
+	tripIDs := []string{"path-trip", "query-trip", "path-loses", "query-wins"}
 	t.Cleanup(func() {
 		for _, id := range stopIDs {
 			_, err := api.GtfsManager.GtfsDB.DB.Exec(`DELETE FROM problem_reports_stop WHERE stop_id = ?`, id)
@@ -171,10 +171,10 @@ func TestReportProblemAcceptsQueryID(t *testing.T) {
 			storedStop: "query-stop",
 		},
 		{
-			name:       "stop path id wins over stopId",
+			name:       "stopId wins over the path id",
 			url:        "/api/where/report-problem-with-stop/1_path-wins.json?key=TEST&stopId=1_query-ignored&code=other",
 			wantStatus: http.StatusOK,
-			storedStop: "path-wins",
+			storedStop: "query-ignored",
 		},
 		{
 			name:       "stop query id missing",
@@ -202,6 +202,13 @@ func TestReportProblemAcceptsQueryID(t *testing.T) {
 			url:            "/api/where/report-problem-with-trip.json?key=TEST&tripId=1_query-trip&stopId=1_assoc-stop&code=vehicle_never_came",
 			wantStatus:     http.StatusOK,
 			storedTrip:     "query-trip",
+			storedTripStop: "1_assoc-stop",
+		},
+		{
+			name:           "tripId wins over the path id",
+			url:            "/api/where/report-problem-with-trip/1_path-loses.json?key=TEST&tripId=1_query-wins&stopId=1_assoc-stop&code=vehicle_never_came",
+			wantStatus:     http.StatusOK,
+			storedTrip:     "query-wins",
 			storedTripStop: "1_assoc-stop",
 		},
 		{
@@ -247,7 +254,10 @@ func TestReportProblemAcceptsQueryID(t *testing.T) {
 		})
 	}
 
-	ignored, err := api.GtfsManager.GtfsDB.Queries.GetProblemReportsByStop(t.Context(), "query-ignored")
+	pathStop, err := api.GtfsManager.GtfsDB.Queries.GetProblemReportsByStop(t.Context(), "path-wins")
 	require.NoError(t, err)
-	assert.Empty(t, ignored, "a path id must not be replaced by stopId")
+	assert.Empty(t, pathStop, "stopId must replace the path id")
+	pathTrip, err := api.GtfsManager.GtfsDB.Queries.GetProblemReportsByTrip(t.Context(), "path-loses")
+	require.NoError(t, err)
+	assert.Empty(t, pathTrip, "tripId must replace the path id")
 }

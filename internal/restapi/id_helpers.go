@@ -24,18 +24,28 @@ func (api *RestAPI) extractAndValidateAgencyCodeID(w http.ResponseWriter, r *htt
 	return api.extractAgencyCodeID(w, r, "")
 }
 
-// extractAgencyCodeID reads a combined agency_code id from the path. When the
-// path has none and queryParam is set, it reads that query parameter instead.
-// Android submits report-problem-with-stop.json?stopId= and
-// report-problem-with-trip.json?tripId= with no path id; Java fills the
-// action's setStopId/setTripId from the query string. A path id wins when
-// both are present. Validation failures use the same rules as a path id.
+// extractAgencyCodeID reads a combined agency_code id. A non-empty queryParam
+// wins over the path: Java applies the path id first and the query string
+// after it, and setStopId/setTripId call setId, so
+// /report-problem-with-stop/1_A.json?stopId=1_B stores B. The path id is the
+// fallback when that query parameter is absent. Android submits
+// report-problem-with-stop.json?stopId= and
+// report-problem-with-trip.json?tripId= with no path id. Validation failures
+// use the same rules as a path id.
 func (api *RestAPI) extractAgencyCodeID(w http.ResponseWriter, r *http.Request, queryParam string) (string, string, bool) {
-	id := utils.ExtractIDFromParams(r)
+	id := ""
 	field := "id"
-	if id == "" && queryParam != "" {
-		id = r.URL.Query().Get(queryParam)
+	if queryParam != "" {
 		field = queryParam
+		if q := r.URL.Query().Get(queryParam); q != "" {
+			id = q
+		}
+	}
+	if id == "" {
+		if pathID := utils.ExtractIDFromParams(r); pathID != "" {
+			id = pathID
+			field = "id"
+		}
 	}
 
 	if err := utils.ValidateID(id); err != nil {
