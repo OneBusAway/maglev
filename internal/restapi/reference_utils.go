@@ -2,8 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -32,7 +30,7 @@ func buildAgencyReferences(agencies []gtfsdb.Agency) []models.AgencyReference {
 // of the stop's StaticRouteIDs are returned, each carrying its own agency
 // rather than being overwritten with the caller's.
 func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, stops []models.Stop) ([]models.Route, error) {
-	expectedCombinedIDs, originalRouteIDs, err := api.expectedRouteIDsForStops(ctx, stops, agencyID)
+	expectedCombinedIDs, originalRouteIDs, err := expectedRouteIDsForStops(ctx, stops, agencyID)
 	if err != nil {
 		return nil, err
 	}
@@ -49,39 +47,15 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 	return buildRouteModels(ctx, agencyID, filteredRoutes)
 }
 
-// hasKnownAgencyPrefix reports whether id begins with any known agency ID followed by an underscore.
-func hasKnownAgencyPrefix(id string, agencyIDs []string) bool {
-	for _, aID := range agencyIDs {
-		if strings.HasPrefix(id, aID+"_") {
-			return true
-		}
-	}
-	return false
-}
-
 // candidateRouteIDs returns all possible bare route IDs for a route ID string,
-// checking known agency prefixes as well as standard underscore extraction.
-func candidateRouteIDs(routeID string, agencyIDs []string) []string {
-	var candidates []string
-	for _, aID := range agencyIDs {
-		prefix := aID + "_"
-		if strings.HasPrefix(routeID, prefix) {
-			bareID := strings.TrimPrefix(routeID, prefix)
-			if !slices.Contains(candidates, bareID) {
-				candidates = append(candidates, bareID)
-			}
-		}
-	}
+// including every underscore-separated suffix and the full string itself.
+func candidateRouteIDs(routeID string) []string {
 	parts := strings.Split(routeID, "_")
+	candidates := make([]string, 0, len(parts))
 	for i := 1; i < len(parts); i++ {
 		bareID := strings.Join(parts[i:], "_")
 		if !slices.Contains(candidates, bareID) {
 			candidates = append(candidates, bareID)
-		}
-	}
-	if _, rID, err := utils.ExtractAgencyIDAndCodeID(routeID); err == nil {
-		if !slices.Contains(candidates, rID) {
-			candidates = append(candidates, rID)
 		}
 	}
 	if !slices.Contains(candidates, routeID) {
@@ -90,35 +64,14 @@ func candidateRouteIDs(routeID string, agencyIDs []string) []string {
 	return candidates
 }
 
-func (api *RestAPI) knownAgencyIDs(ctx context.Context, preferredAgencyID string) []string {
-	var agencyIDs []string
-	if api != nil && api.GtfsManager != nil {
-		if ags, err := api.GtfsManager.GetAgencies(ctx); err == nil {
-			for _, a := range ags {
-				if a.ID != "" && !slices.Contains(agencyIDs, a.ID) {
-					agencyIDs = append(agencyIDs, a.ID)
-				}
-			}
-		}
-	}
-	if preferredAgencyID != "" && !slices.Contains(agencyIDs, preferredAgencyID) {
-		agencyIDs = append(agencyIDs, preferredAgencyID)
-	}
-	slices.SortFunc(agencyIDs, func(a, b string) int {
-		return len(b) - len(a)
-	})
-	return agencyIDs
-}
-
 // expectedRouteIDsForStops walks every stop's StaticRouteIDs and returns the
 // set of agency-combined IDs a route must match to be a legitimate reference,
 // plus the deduplicated bare route IDs to query the database for. A
 // cancelled context aborts the walk and surfaces ctx.Err() to the caller.
-func (api *RestAPI) expectedRouteIDsForStops(ctx context.Context, stops []models.Stop, agencyID string) (map[string]bool, []string, error) {
+func expectedRouteIDsForStops(ctx context.Context, stops []models.Stop, agencyID string) (map[string]bool, []string, error) {
 	routeIDSet := make(map[string]bool)
 	expectedCombinedIDs := make(map[string]bool)
 	originalRouteIDs := make([]string, 0)
-	agencyIDs := api.knownAgencyIDs(ctx, agencyID)
 
 	for _, stop := range stops {
 		if ctx.Err() != nil {
@@ -127,11 +80,11 @@ func (api *RestAPI) expectedRouteIDsForStops(ctx context.Context, stops []models
 
 		for _, routeID := range stop.StaticRouteIDs {
 			expectedCombinedIDs[routeID] = true
-			if !hasKnownAgencyPrefix(routeID, agencyIDs) && agencyID != "" {
+			if !strings.Contains(routeID, "_") && agencyID != "" {
 				expectedCombinedIDs[utils.FormCombinedID(agencyID, routeID)] = true
 			}
 
-			for _, candID := range candidateRouteIDs(routeID, agencyIDs) {
+			for _, candID := range candidateRouteIDs(routeID) {
 				if !routeIDSet[candID] {
 					routeIDSet[candID] = true
 					originalRouteIDs = append(originalRouteIDs, candID)
@@ -288,25 +241,26 @@ func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *m
 		present[route.ID] = true
 	}
 
-	agencyIDs := api.knownAgencyIDs(ctx, requestAgencyID)
-
 	for _, trip := range references.Trips {
 		if trip.RouteID == "" || present[trip.RouteID] {
 			continue
 		}
 
-		var matchedRoute models.Route
+		candidates := candidateRouteIDs(trip.RouteID)
+		routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, candidates)
+		if err != nil {
+			return err
+		}
+
+		var matchedRoute gtfsdb.Route
 		var found bool
-		for _, candRouteID := range candidateRouteIDs(trip.RouteID, agencyIDs) {
-			route, err := api.routeReferenceByID(ctx, candRouteID)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
+		for _, row := range routes {
+			targetAgency := row.AgencyID
+			if targetAgency == "" {
+				targetAgency = requestAgencyID
 			}
-			if err != nil {
-				return err
-			}
-			if route.ID == trip.RouteID {
-				matchedRoute = route
+			if utils.FormCombinedID(targetAgency, row.ID) == trip.RouteID {
+				matchedRoute = row
 				found = true
 				break
 			}
@@ -316,10 +270,16 @@ func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *m
 			continue
 		}
 
+		routeModels, err := buildRouteModels(ctx, matchedRoute.AgencyID, []gtfsdb.Route{matchedRoute})
+		if err != nil {
+			return err
+		}
+		routeModel := routeModels[0]
+
 		present[trip.RouteID] = true
-		present[matchedRoute.ID] = true
-		references.Routes = append(references.Routes, matchedRoute)
-		api.appendRouteAgencyReference(ctx, references, matchedRoute.AgencyID, requestAgencyID)
+		present[routeModel.ID] = true
+		references.Routes = append(references.Routes, routeModel)
+		api.appendRouteAgencyReference(ctx, references, routeModel.AgencyID, requestAgencyID)
 	}
 
 	return nil

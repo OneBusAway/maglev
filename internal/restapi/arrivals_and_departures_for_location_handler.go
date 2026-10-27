@@ -357,11 +357,6 @@ func retainRoute(refAcc, acc *arrivalsAccumulator, combinedRouteID string) {
 			return
 		}
 	}
-	if _, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedRouteID); err == nil {
-		if route, ok := acc.routes[bareID]; ok {
-			refAcc.routes[bareID] = route
-		}
-	}
 }
 
 // locationReferences builds the references block, or an empty one when the
