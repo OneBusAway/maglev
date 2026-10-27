@@ -826,13 +826,25 @@ func TestRetainedStopCodes(t *testing.T) {
 		"25_",
 		"40_4063",
 		"",
-	}))
-	assert.Empty(t, retainedStopCodes(nil))
+	}, nil))
+	assert.Empty(t, retainedStopCodes(nil, nil))
+
+	idx := &stopAgencyIndex{
+		byStopID: map[string]string{
+			"s1": "AGENCY_ONE",
+			"s2": "AGENCY_ONE",
+		},
+		fallbackAgencyID: "AGENCY_ONE",
+	}
+	assert.Equal(t, []string{"s1", "s2"}, retainedStopCodes([]string{
+		"AGENCY_ONE_s1",
+		"AGENCY_ONE_s2",
+	}, idx))
 }
 
 func TestAddRouteAlertsForRetainedStopsSkipsBadIDs(t *testing.T) {
 	api := createTestApi(t)
-	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{"not-combined"}, newSituationCollector()))
+	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{"not-combined"}, newSituationCollector(), nil))
 }
 
 func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
@@ -840,7 +852,7 @@ func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := api.addRouteAlertsForRetainedStops(ctx, []string{arrivalsTestStopID}, newSituationCollector())
+	err := api.addRouteAlertsForRetainedStops(ctx, []string{arrivalsTestStopID}, newSituationCollector(), nil)
 	require.Error(t, err)
 }
 
@@ -948,7 +960,7 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	})
 
 	situations := newSituationCollector()
-	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{arrivalsTestStopID}, situations))
+	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{arrivalsTestStopID}, situations, nil))
 
 	ids := situationIDsFromRefs(situations.refs)
 	assert.Contains(t, ids, utils.FormCombinedID(agencyID, alertID))

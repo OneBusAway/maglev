@@ -217,12 +217,8 @@ func truncateLocationLists(lists locationLists, maxCount int) locationLists {
 // retained stop. Agency and route ids stay in separate columns: an agency id
 // can contain an underscore, so the combined agency_code form is not split
 // back apart. Alerts are indexed by the bare route id.
-func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combinedStopIDs []string, situations *situationCollector, agencies ...*stopAgencyIndex) error {
-	var agencyIndex *stopAgencyIndex
-	if len(agencies) > 0 {
-		agencyIndex = agencies[0]
-	}
-	stopIDs := retainedStopCodes(combinedStopIDs, agencyIndex)
+func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combinedStopIDs []string, situations *situationCollector, agencies *stopAgencyIndex) error {
+	stopIDs := retainedStopCodes(combinedStopIDs, agencies)
 	if len(stopIDs) == 0 {
 		return nil
 	}
@@ -262,16 +258,29 @@ func candidateBareIDs(id string) []string {
 }
 
 // resolveBareStopID resolves a combined stop ID back to its bare ID.
-// It prioritises exact matches against the agency stop index, falls back to
-// stripping the fallback agency prefix, checks candidate bare ID suffixes
+// It prioritises split-point matches against the agency stop index, falls back
+// to stripping the fallback agency prefix, checks candidate bare ID suffixes
 // against the accumulator and agency index, and finally falls back to
 // ExtractAgencyIDAndCodeID.
 func resolveBareStopID(combinedStopID string, agencies *stopAgencyIndex, acc *arrivalsAccumulator) string {
 	if agencies != nil {
-		for bareID, agencyID := range agencies.byStopID {
-			if utils.FormCombinedID(agencyID, bareID) == combinedStopID {
-				return bareID
+		parts := strings.Split(combinedStopID, "_")
+		var matched []string
+		for i := 1; i < len(parts); i++ {
+			prefix := strings.Join(parts[:i], "_")
+			suffix := strings.Join(parts[i:], "_")
+			if actualAgency, ok := agencies.byStopID[suffix]; ok && actualAgency == prefix {
+				matched = append(matched, suffix)
 			}
+		}
+		if len(matched) == 1 {
+			return matched[0]
+		}
+		if len(matched) > 1 {
+			// Deterministic tie-break for ambiguous multi-split matches:
+			// select the lexicographically smallest bare ID.
+			sort.Strings(matched)
+			return matched[0]
 		}
 		if agencies.fallbackAgencyID != "" {
 			prefix := agencies.fallbackAgencyID + "_"
@@ -296,15 +305,11 @@ func resolveBareStopID(combinedStopID string, agencies *stopAgencyIndex, acc *ar
 
 // retainedStopCodes returns each bare stop id in combinedIDs once, in order.
 // A value that is not an agency_code id is skipped.
-func retainedStopCodes(combinedIDs []string, agencies ...*stopAgencyIndex) []string {
-	var agencyIndex *stopAgencyIndex
-	if len(agencies) > 0 {
-		agencyIndex = agencies[0]
-	}
+func retainedStopCodes(combinedIDs []string, agencies *stopAgencyIndex) []string {
 	codes := make([]string, 0, len(combinedIDs))
 	seen := make(map[string]struct{}, len(combinedIDs))
 	for _, id := range combinedIDs {
-		bareID := resolveBareStopID(id, agencyIndex, nil)
+		bareID := resolveBareStopID(id, agencies, nil)
 		if bareID == "" {
 			continue
 		}
@@ -352,29 +357,28 @@ func retainedAccumulator(
 	nearby []models.StopWithDistance,
 	acc *arrivalsAccumulator,
 	entrySituations *situationCollector,
-	agencies ...*stopAgencyIndex,
+	agencies *stopAgencyIndex,
 ) *arrivalsAccumulator {
-	var agencyIndex *stopAgencyIndex
-	if len(agencies) > 0 {
-		agencyIndex = agencies[0]
-	}
 	refAcc := newArrivalsAccumulator("")
 	refAcc.situations = newSituationCollector()
 	refAcc.situations.addRefs(entrySituations.refs)
 	refAcc.situations.addRefs(acc.situations.refs)
 
 	for _, id := range stopIDs {
-		retainStop(refAcc, acc, id, agencyIndex)
+		retainStop(refAcc, acc, id, agencies)
 	}
 	for _, n := range nearby {
-		retainStop(refAcc, acc, n.StopID, agencyIndex)
+		retainStop(refAcc, acc, n.StopID, agencies)
 	}
 
+	tripIndex := buildCombinedTripIndex(acc, agencies)
+	routeIndex := buildCombinedRouteIndex(acc, agencies)
+
 	for _, a := range arrivals {
-		retainStop(refAcc, acc, a.StopID, agencyIndex)
-		retainTrip(refAcc, acc, a.TripID, agencyIndex)
-		retainRoute(refAcc, acc, a.RouteID, agencyIndex)
-		retainTripStatusEntities(refAcc, acc, a.TripStatus, agencyIndex)
+		retainStop(refAcc, acc, a.StopID, agencies)
+		retainTrip(refAcc, acc, a.TripID, tripIndex)
+		retainRoute(refAcc, acc, a.RouteID, routeIndex)
+		retainTripStatusEntities(refAcc, acc, a.TripStatus, agencies, tripIndex)
 	}
 
 	return refAcc
@@ -383,27 +387,24 @@ func retainedAccumulator(
 // retainTripStatusEntities retains the stops and the reassigned active trip a
 // trip status points at. recordTripStatusReferences resolved these into acc
 // while the arrival was built, so nothing here needs a query.
-func retainTripStatusEntities(refAcc, acc *arrivalsAccumulator, status *models.TripStatus, agencies ...*stopAgencyIndex) {
+func retainTripStatusEntities(
+	refAcc, acc *arrivalsAccumulator,
+	status *models.TripStatus,
+	agencies *stopAgencyIndex,
+	tripIndex map[string]*gtfsdb.Trip,
+) {
 	if status == nil {
 		return
 	}
-	var agencyIndex *stopAgencyIndex
-	if len(agencies) > 0 {
-		agencyIndex = agencies[0]
-	}
-	retainStop(refAcc, acc, status.NextStop, agencyIndex)
-	retainStop(refAcc, acc, status.ClosestStop, agencyIndex)
-	retainTrip(refAcc, acc, status.ActiveTripID, agencyIndex)
+	retainStop(refAcc, acc, status.NextStop, agencies)
+	retainStop(refAcc, acc, status.ClosestStop, agencies)
+	retainTrip(refAcc, acc, status.ActiveTripID, tripIndex)
 }
 
 // retainStop records a combined stop ID under the bare ID appendStopReferences
 // looks it up by. A malformed or empty ID is skipped.
-func retainStop(refAcc, acc *arrivalsAccumulator, combinedStopID string, agencies ...*stopAgencyIndex) {
-	var agencyIndex *stopAgencyIndex
-	if len(agencies) > 0 {
-		agencyIndex = agencies[0]
-	}
-	if bareID := resolveBareStopID(combinedStopID, agencyIndex, acc); bareID != "" {
+func retainStop(refAcc, acc *arrivalsAccumulator, combinedStopID string, agencies *stopAgencyIndex) {
+	if bareID := resolveBareStopID(combinedStopID, agencies, acc); bareID != "" {
 		refAcc.stopIDs[bareID] = true
 	}
 }
@@ -411,21 +412,13 @@ func retainStop(refAcc, acc *arrivalsAccumulator, combinedStopID string, agencie
 // retainTrip carries a combined trip ID's entity over from acc, which already
 // resolved it. A trip missing from acc is skipped rather than queried: it would
 // have had to come from a row that never reached the accumulator.
-func retainTrip(refAcc, acc *arrivalsAccumulator, combinedTripID string, agencies ...*stopAgencyIndex) {
-	var agencyIndex *stopAgencyIndex
-	if len(agencies) > 0 {
-		agencyIndex = agencies[0]
+func retainTrip(refAcc, acc *arrivalsAccumulator, combinedTripID string, tripIndex map[string]*gtfsdb.Trip) {
+	if acc == nil {
+		return
 	}
-	for bareID, trip := range acc.trips {
-		agencyID := ""
-		if route, ok := acc.routes[trip.RouteID]; ok {
-			agencyID = route.AgencyID
-		}
-		if agencyID == "" && agencyIndex != nil {
-			agencyID = agencyIndex.fallbackAgencyID
-		}
-		if utils.FormCombinedID(agencyID, trip.ID) == combinedTripID {
-			refAcc.trips[bareID] = trip
+	if tripIndex != nil {
+		if trip, ok := tripIndex[combinedTripID]; ok {
+			refAcc.trips[trip.ID] = trip
 			return
 		}
 	}
@@ -442,18 +435,13 @@ func retainTrip(refAcc, acc *arrivalsAccumulator, combinedTripID string, agencie
 
 // retainRoute carries a combined route ID's entity over from acc, under the
 // same contract as retainTrip.
-func retainRoute(refAcc, acc *arrivalsAccumulator, combinedRouteID string, agencies ...*stopAgencyIndex) {
-	var agencyIndex *stopAgencyIndex
-	if len(agencies) > 0 {
-		agencyIndex = agencies[0]
+func retainRoute(refAcc, acc *arrivalsAccumulator, combinedRouteID string, routeIndex map[string]*gtfsdb.Route) {
+	if acc == nil {
+		return
 	}
-	for bareID, route := range acc.routes {
-		agencyID := route.AgencyID
-		if agencyID == "" && agencyIndex != nil {
-			agencyID = agencyIndex.fallbackAgencyID
-		}
-		if utils.FormCombinedID(agencyID, route.ID) == combinedRouteID {
-			refAcc.routes[bareID] = route
+	if routeIndex != nil {
+		if route, ok := routeIndex[combinedRouteID]; ok {
+			refAcc.routes[route.ID] = route
 			return
 		}
 	}
@@ -472,6 +460,63 @@ func retainRoute(refAcc, acc *arrivalsAccumulator, combinedRouteID string, agenc
 			refAcc.routes[bareID] = route
 		}
 	}
+}
+
+// buildCombinedTripIndex maps each trip's combined ID to its *gtfsdb.Trip.
+// If multiple trips map to the same combined ID, the lexicographically
+// smallest bare ID is retained.
+func buildCombinedTripIndex(acc *arrivalsAccumulator, agencies *stopAgencyIndex) map[string]*gtfsdb.Trip {
+	if acc == nil || len(acc.trips) == 0 {
+		return nil
+	}
+	index := make(map[string]*gtfsdb.Trip, len(acc.trips))
+	bareIDs := make([]string, 0, len(acc.trips))
+	for bareID := range acc.trips {
+		bareIDs = append(bareIDs, bareID)
+	}
+	sort.Strings(bareIDs)
+	for _, bareID := range bareIDs {
+		trip := acc.trips[bareID]
+		agencyID := ""
+		if route, ok := acc.routes[trip.RouteID]; ok {
+			agencyID = route.AgencyID
+		}
+		if agencyID == "" && agencies != nil {
+			agencyID = agencies.fallbackAgencyID
+		}
+		comb := utils.FormCombinedID(agencyID, trip.ID)
+		if _, exists := index[comb]; !exists {
+			index[comb] = trip
+		}
+	}
+	return index
+}
+
+// buildCombinedRouteIndex maps each route's combined ID to its *gtfsdb.Route.
+// If multiple routes map to the same combined ID, the lexicographically
+// smallest bare ID is retained.
+func buildCombinedRouteIndex(acc *arrivalsAccumulator, agencies *stopAgencyIndex) map[string]*gtfsdb.Route {
+	if acc == nil || len(acc.routes) == 0 {
+		return nil
+	}
+	index := make(map[string]*gtfsdb.Route, len(acc.routes))
+	bareIDs := make([]string, 0, len(acc.routes))
+	for bareID := range acc.routes {
+		bareIDs = append(bareIDs, bareID)
+	}
+	sort.Strings(bareIDs)
+	for _, bareID := range bareIDs {
+		route := acc.routes[bareID]
+		agencyID := route.AgencyID
+		if agencyID == "" && agencies != nil {
+			agencyID = agencies.fallbackAgencyID
+		}
+		comb := utils.FormCombinedID(agencyID, route.ID)
+		if _, exists := index[comb]; !exists {
+			index[comb] = route
+		}
+	}
+	return index
 }
 
 // locationReferences builds the references block, or an empty one when the
