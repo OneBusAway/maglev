@@ -746,7 +746,7 @@ func TestStopsForLocationAcceptsDocumentedTimeFormats(t *testing.T) {
 	}{
 		{name: "epoch millis", timeParam: serviceDateEpochMs, expectStops: true},
 		{name: "date and time", timeParam: "2025-06-13_14-00-00", expectStops: true},
-		{name: "date only", timeParam: "2025-06-13", expectStops: true},
+		{name: "date only", timeParam: "2025-06-13", expectStops: false},
 		{name: "malformed", timeParam: "garbage", expectStops: false},
 		{name: "absent", timeParam: "", expectStops: false},
 	}

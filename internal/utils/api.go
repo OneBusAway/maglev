@@ -187,6 +187,9 @@ func isFinite(f float64) bool {
 	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }
 
+// ParseTimeParameter parses an epoch millisecond timestamp or legacy date-time
+// string (yyyy-MM-dd_HH-mm-ss) in the provided location. If timeParam is empty,
+// it uses the current time from the provided clock.
 func ParseTimeParameter(timeParam string, currentLocation *time.Location, c clock.Clock) (string, time.Time, map[string][]string, bool) {
 	if timeParam == "" {
 		// No time parameter, use the provided clock's current time
@@ -203,14 +206,8 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location, c cloc
 		parsedTime = time.UnixMilli(epochTime).In(currentLocation)
 		validFormat = true
 	} else if strings.Contains(timeParam, "-") {
-		// Try yyyy-MM-dd_HH-mm-ss first (e.g. "2024-03-15_12-00-00")
+		// Try yyyy-MM-dd_HH-mm-ss (e.g. "2024-03-15_12-00-00") matching Java DateTimeConverter
 		parsed, err := time.ParseInLocation("2006-01-02_15-04-05", timeParam, currentLocation)
-		if err != nil {
-			// If it fails, fall back to yyyy-MM-dd (e.g. "2024-03-15")
-			parsed, err = time.ParseInLocation("2006-01-02", timeParam, currentLocation)
-		}
-
-		// If either parsing attempt succeeded, apply the result
 		if err == nil {
 			parsedTime = parsed
 			validFormat = true
@@ -393,7 +390,7 @@ func ParseDate(date string, loc *time.Location) (time.Time, error) {
 
 	// Parsing as an integer (Unix milliseconds)
 	if v, err := strconv.ParseInt(date, 10, 64); err == nil {
-		if v < minUnixMillis || v > maxUnixMillis {
+		if strings.HasPrefix(date, "+") || strings.HasPrefix(date, "-") || v < minUnixMillis || v > maxUnixMillis {
 			return time.Time{}, errors.New("unix millisecond timestamp out of reasonable bounds")
 		}
 		// Convert to the provided timezone and explicitly set to midnight

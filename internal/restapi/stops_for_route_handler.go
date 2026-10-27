@@ -57,11 +57,15 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	var serviceIDs []string
 	if filterByDate {
-		formattedDate, _, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation, api.Clock)
-		if !success {
+		parsedDate, err := utils.ParseDate(timeParam, currentLocation)
+		if err != nil {
+			fieldErrors := map[string][]string{
+				"time": {`Invalid field value for field "time".`},
+			}
 			api.validationErrorResponse(w, r, fieldErrors)
 			return
 		}
+		formattedDate := parsedDate.Format("20060102")
 		serviceIDs, err = api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)

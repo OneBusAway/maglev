@@ -542,15 +542,11 @@ func TestParseTimeParameter(t *testing.T) {
 			},
 		},
 		{
-			name:         "Valid YYYY-MM-DD format (yesterday)",
-			timeParam:    yesterdayDateString,
-			expectedDate: yesterdayFormatted,
-			expectError:  false,
-			validateParsedTime: func(t *testing.T, parsedTime time.Time) {
-				assert.Equal(t, yesterday.Year(), parsedTime.Year())
-				assert.Equal(t, yesterday.Month(), parsedTime.Month())
-				assert.Equal(t, yesterday.Day(), parsedTime.Day())
-			},
+			name:             "Reject YYYY-MM-DD format without time (yesterday)",
+			timeParam:        yesterdayDateString,
+			expectedDate:     "",
+			expectError:      true,
+			expectedErrorKey: "time",
 		},
 		{
 			name:             "Invalid format",
@@ -561,7 +557,7 @@ func TestParseTimeParameter(t *testing.T) {
 		},
 		{
 			name:         "Future date",
-			timeParam:    now.AddDate(0, 0, 1).Format("2006-01-02"),
+			timeParam:    now.AddDate(0, 0, 1).Format("2006-01-02_15-04-05"),
 			expectedDate: now.AddDate(0, 0, 1).Format("20060102"),
 			expectError:  false,
 			validateParsedTime: func(t *testing.T, parsedTime time.Time) {
@@ -569,6 +565,9 @@ func TestParseTimeParameter(t *testing.T) {
 				assert.Equal(t, tomorrow.Year(), parsedTime.Year())
 				assert.Equal(t, tomorrow.Month(), parsedTime.Month())
 				assert.Equal(t, tomorrow.Day(), parsedTime.Day())
+				assert.Equal(t, tomorrow.Hour(), parsedTime.Hour())
+				assert.Equal(t, tomorrow.Minute(), parsedTime.Minute())
+				assert.Equal(t, tomorrow.Second(), parsedTime.Second())
 			},
 		},
 		{
@@ -641,7 +640,7 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 
 	t.Run("Today at midnight (edge case)", func(t *testing.T) {
 		todayMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-		todayDateStr := todayMidnight.Format("2006-01-02")
+		todayDateStr := todayMidnight.Format("2006-01-02_15-04-05")
 
 		dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter(todayDateStr, loc, clock.RealClock{})
 
@@ -651,6 +650,15 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 		assert.Equal(t, todayMidnight.Year(), parsedTime.Year())
 		assert.Equal(t, todayMidnight.Month(), parsedTime.Month())
 		assert.Equal(t, todayMidnight.Day(), parsedTime.Day())
+	})
+
+	t.Run("Reject YYYY-MM-DD format", func(t *testing.T) {
+		todayDateOnly := now.Format("2006-01-02")
+		_, _, fieldErrors, valid := ParseTimeParameter(todayDateOnly, loc, clock.RealClock{})
+
+		assert.False(t, valid)
+		assert.NotNil(t, fieldErrors)
+		assert.Contains(t, fieldErrors, "time")
 	})
 
 	t.Run("Malformed YYYY-MM-DD", func(t *testing.T) {
@@ -706,7 +714,7 @@ func TestParseTimeParameter_DateStringUsesProvidedLocation(t *testing.T) {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
 
-	dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter("2026-03-12", loc, clock.RealClock{})
+	dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter("2026-03-12_00-00-00", loc, clock.RealClock{})
 
 	require.True(t, valid)
 	require.Nil(t, fieldErrors)
@@ -1232,6 +1240,24 @@ func TestParseDate(t *testing.T) {
 		{
 			name:    "negative timestamp",
 			date:    "-1000",
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "negative zero timestamp",
+			date:    "-0",
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "negative zero padded timestamp",
+			date:    "-00",
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "positive signed timestamp",
+			date:    "+5",
 			wantErr: true,
 			errMsg:  "unix millisecond timestamp out of reasonable bounds",
 		},
