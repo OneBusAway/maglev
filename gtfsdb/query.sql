@@ -677,7 +677,8 @@ ORDER BY
 
 -- name: GetRouteIDsForStops :many
 SELECT DISTINCT
-    routes.agency_id || '_' || routes.id AS route_id,
+    routes.id AS route_id,
+    routes.agency_id,
     stop_times.stop_id
 FROM
     stop_times
@@ -688,7 +689,8 @@ WHERE
 
 -- name: GetActiveRouteIDsForStopsOnDate :many
 SELECT DISTINCT
-    routes.agency_id || '_' || routes.id AS route_id,
+    routes.id AS route_id,
+    routes.agency_id,
     stop_times.stop_id
 FROM
     stop_times

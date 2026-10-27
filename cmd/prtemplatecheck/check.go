@@ -35,6 +35,7 @@ var (
 	fieldPattern         = regexp.MustCompile(`^\s*[-*]\s+\*\*([^*]+):\*\*(.*)$`)
 	checkboxPattern      = regexp.MustCompile(`^\s*[-*]\s+\[([ xX])\]\s+(.+?)\s*$`)
 	headingSuffixPattern = regexp.MustCompile(`\s*\([^)]*\)\s*$`)
+	deleteHintPattern    = regexp.MustCompile(`(?i)\(\s*delete\s+if\s+([^)]+?)\s*\)`)
 )
 
 // problem is one way a PR description falls short of the template.
@@ -51,10 +52,18 @@ type templateRules struct {
 }
 
 type templateSection struct {
-	key      string
-	title    string
-	required bool
-	fields   []templateField
+	key        string
+	title      string
+	required   bool
+	deleteHint string
+	fields     []templateField
+}
+
+func (ts templateSection) emptyMessage() string {
+	if ts.deleteHint != "" {
+		return fmt.Sprintf("Section **%s** is empty. Delete it if %s, or fill it in.", ts.title, ts.deleteHint)
+	}
+	return fmt.Sprintf("Section **%s** is empty.", ts.title)
 }
 
 type templateField struct {
@@ -73,6 +82,7 @@ type document struct {
 type section struct {
 	heading    string
 	hasText    bool
+	hasProse   bool
 	fields     []field
 	checkboxes []checkbox
 	// fieldOpen is set while lines may still belong to the last field.
@@ -120,10 +130,19 @@ func parseTemplate(template string) (templateRules, error) {
 }
 
 func newTemplateSection(key string, s *section) templateSection {
-	heading := strings.ToLower(s.heading)
-	isOptional := strings.Contains(heading, "(optional)") || strings.Contains(heading, "(delete if")
+	deleteHint := ""
+	if m := deleteHintPattern.FindStringSubmatch(s.heading); m != nil {
+		deleteHint = m[1]
+	}
+	headingLower := strings.ToLower(s.heading)
+	isOptional := strings.Contains(headingLower, "(optional)") || deleteHint != ""
 
-	ts := templateSection{key: key, title: sectionTitle(s.heading), required: !isOptional}
+	ts := templateSection{
+		key:        key,
+		title:      sectionTitle(s.heading),
+		required:   !isOptional,
+		deleteHint: deleteHint,
+	}
 	for _, f := range s.fields {
 		ts.fields = append(ts.fields, templateField{
 			label:       f.label,
@@ -175,6 +194,13 @@ func sectionProblems(ts templateSection, doc document) []problem {
 		return nil
 	case ts.required && !s.hasText:
 		return []problem{{Rule: ruleSection, Message: fmt.Sprintf("Section **%s** is empty.", ts.title)}}
+	}
+
+	if !ts.required {
+		hasContent := s.hasProse || s.hasCheckedCheckbox() || s.hasAnyFieldValue()
+		if !hasContent && (ts.deleteHint != "" || len(ts.fields) > 0) {
+			return []problem{{Rule: ruleSection, Message: ts.emptyMessage()}}
+		}
 	}
 
 	var problems []problem
@@ -288,6 +314,10 @@ func (s *section) addLine(line string, inFence bool) {
 	// block or a <details> block under "Manual check:".
 	if s.fieldOpen && hasText {
 		s.fields[len(s.fields)-1].hasValue = true
+		return
+	}
+	if hasText {
+		s.hasProse = true
 	}
 }
 
@@ -295,6 +325,24 @@ func (s *section) fieldHasValue(label string) bool {
 	for _, f := range s.fields {
 		if f.label == label {
 			return f.hasValue
+		}
+	}
+	return false
+}
+
+func (s *section) hasAnyFieldValue() bool {
+	for _, f := range s.fields {
+		if f.hasValue {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *section) hasCheckedCheckbox() bool {
+	for _, box := range s.checkboxes {
+		if box.checked {
+			return true
 		}
 	}
 	return false

@@ -124,5 +124,6 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/where/trip-for-vehicle/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.tripForVehicleHandler)))
 	mux.Handle("GET /api/where/arrival-and-departure-for-stop/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.arrivalAndDepartureForStopHandler)))
 	mux.Handle("GET /api/where/trips-for-route/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.tripsForRouteHandler)))
+	mux.Handle("GET /api/where/situation/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.situationHandler)))
 	mux.Handle("GET /api/where/arrivals-and-departures-for-stop/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.arrivalsAndDeparturesForStopHandler)))
 }
