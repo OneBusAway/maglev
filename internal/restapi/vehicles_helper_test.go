@@ -502,3 +502,31 @@ func TestVehicleSituationRefs_InterlinedActiveRouteAlert(t *testing.T) {
 	}
 	assert.True(t, found, "an alert on the active trip's route must be looked up with that route, not the nominal one")
 }
+
+func TestGetVehicleActiveTripID(t *testing.T) {
+	tests := []struct {
+		vehicle    *gtfs.Vehicle
+		expectedID string
+	}{
+		{
+			vehicle:    nil,
+			expectedID: "",
+		},
+		{
+			vehicle:    &gtfs.Vehicle{Trip: nil},
+			expectedID: "",
+		},
+		{
+			vehicle:    &gtfs.Vehicle{Trip: &gtfs.Trip{ID: gtfs.TripID{ID: ""}}},
+			expectedID: "",
+		},
+		{
+			vehicle:    &gtfs.Vehicle{Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "valid_id"}}},
+			expectedID: "valid_id",
+		},
+	}
+
+	for _, test := range tests {
+		assert.Equal(t, test.expectedID, GetVehicleActiveTripID(test.vehicle))
+	}
+}
