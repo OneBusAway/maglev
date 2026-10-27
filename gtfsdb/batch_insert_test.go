@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"iter"
 	"slices"
 	"testing"
 
@@ -198,7 +199,7 @@ func TestInsertInBatchesShapes(t *testing.T) {
 	}
 	var inserted int
 	err = client.withTransaction(context.Background(), nil, "test", func(tx *sql.Tx) error {
-		inserted, err = insertInBatches(context.Background(), tx, 2, shapeInsert, shapeRows(shapes))
+		inserted, err = insertInBatches(context.Background(), tx, 2, shapeInsert, shapePoints(shapes))
 		return err
 	})
 	require.NoError(t, err)
@@ -211,14 +212,15 @@ func TestInsertInBatchesShapes(t *testing.T) {
 	assert.Equal(t, 5.0, points[1].Lat)
 }
 
-func TestShapeRowsStopsWhenAsked(t *testing.T) {
-	shapes := []gtfs.Shape{{ID: "A", Points: make([]gtfs.ShapePoint, 3)}, {ID: "B", Points: make([]gtfs.ShapePoint, 3)}}
-	var seen []string
-	for row := range shapeRows(shapes) {
-		seen = append(seen, fmt.Sprintf("%s/%d", row.ShapeID, row.ShapePtSequence))
-		if len(seen) == 4 {
-			break
+// shapePoints converts shapes to rows, numbering each shape's points from 0.
+func shapePoints(shapes []gtfs.Shape) iter.Seq[CreateShapeParams] {
+	return func(yield func(CreateShapeParams) bool) {
+		for _, shape := range shapes {
+			for idx, point := range shape.Points {
+				if !yield(shapePointParams(shape.ID, idx, point)) {
+					return
+				}
+			}
 		}
 	}
-	assert.Equal(t, []string{"A/0", "A/1", "A/2", "B/0"}, seen)
 }
