@@ -954,3 +954,96 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	assert.Contains(t, ids, utils.FormCombinedID(agencyID, alertID))
 	assert.NotContains(t, ids, utils.FormCombinedID("a", alertID))
 }
+
+func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"AGENCY_ONE,Agency One,http://agency1.org,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"ROUTE_100,AGENCY_ONE,100,Route 100,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1,Stop 1,37.7749,-122.4194\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"ROUTE_100,svc1,t1,Headsign,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,08:00:00,08:00:00,s1,1\n",
+	}
+
+	testTime := time.Date(2024, 6, 15, 8, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(testTime), "underscore-agency-location.zip", files)
+	defer api.Shutdown()
+
+	bareRoute := "ROUTE_100"
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID: "ALERT_1",
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			RouteID: &bareRoute,
+		}},
+		Header: []gtfs.AlertText{{Text: "Alert on Route 100", Language: "en"}},
+	})
+
+	u := "/api/where/arrivals-and-departures-for-location.json?" + url.Values{
+		"key":           {"TEST"},
+		"lat":           {"37.7749"},
+		"lon":           {"-122.4194"},
+		"radius":        {"1000"},
+		"minutesBefore": {"15"},
+		"minutesAfter":  {"15"},
+		"time":          {strconv.FormatInt(testTime.UnixMilli(), 10)},
+	}.Encode()
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api, u)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	require.NotEmpty(t, entry.ArrivalsAndDepartures)
+	arrival := entry.ArrivalsAndDepartures[0]
+
+	assert.Equal(t, "AGENCY_ONE_s1", arrival.StopID)
+	assert.Equal(t, "AGENCY_ONE_t1", arrival.TripID)
+
+	// Verify references.trips retains the trip for the agency with an underscore
+	require.NotEmpty(t, model.Data.References.Trips)
+	tripsByID := make(map[string]models.Trip, len(model.Data.References.Trips))
+	for _, tr := range model.Data.References.Trips {
+		tripsByID[tr.ID] = tr
+	}
+	tripRef, ok := tripsByID["AGENCY_ONE_t1"]
+	require.True(t, ok, "references.trips must retain AGENCY_ONE_t1")
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", tripRef.RouteID)
+
+	// Verify references.stops retains the stop for the agency with an underscore
+	require.NotEmpty(t, model.Data.References.Stops)
+	stopsByID := make(map[string]models.Stop, len(model.Data.References.Stops))
+	for _, s := range model.Data.References.Stops {
+		stopsByID[s.ID] = s
+	}
+	stopRef, ok := stopsByID["AGENCY_ONE_s1"]
+	require.True(t, ok, "references.stops must retain AGENCY_ONE_s1")
+	assert.Equal(t, "Stop 1", stopRef.Name)
+
+	// Verify references.routes retains the route for the agency with an underscore
+	require.NotEmpty(t, model.Data.References.Routes)
+	routesByID := make(map[string]models.Route, len(model.Data.References.Routes))
+	for _, r := range model.Data.References.Routes {
+		routesByID[r.ID] = r
+	}
+	routeRef, ok := routesByID["AGENCY_ONE_ROUTE_100"]
+	require.True(t, ok, "references.routes must retain AGENCY_ONE_ROUTE_100")
+	assert.Equal(t, "AGENCY_ONE", routeRef.AgencyID)
+
+	// Verify references.agencies retains the agency with an underscore
+	require.NotEmpty(t, model.Data.References.Agencies)
+	agenciesByID := make(map[string]models.AgencyReference, len(model.Data.References.Agencies))
+	for _, a := range model.Data.References.Agencies {
+		agenciesByID[a.ID] = a
+	}
+	agencyRef, ok := agenciesByID["AGENCY_ONE"]
+	require.True(t, ok, "references.agencies must retain AGENCY_ONE")
+	assert.Equal(t, "Agency One", agencyRef.Name)
+
+	// Verify route alerts for retained stops resolve when the agency has an underscore
+	assert.Contains(t, entry.SituationIDs, utils.FormCombinedID("AGENCY_ONE", "ALERT_1"))
+}
