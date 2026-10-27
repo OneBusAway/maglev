@@ -1,9 +1,13 @@
 package gtfs
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -557,4 +561,89 @@ func TestManager_DataFreshnessTracking(t *testing.T) {
 	feedTimes["feed-1"] = time.Now().Add(time.Hour)
 	feedTimes2 := manager.GetFeedUpdateTimes()
 	assert.Equal(t, now, feedTimes2["feed-1"])
+}
+
+// createTestManagerWithGTFSFiles creates an in-memory GTFS Manager loaded from a synthetic GTFS zip.
+func createTestManagerWithGTFSFiles(t *testing.T, files map[string]string) *Manager {
+	t.Helper()
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	for name, content := range files {
+		f, err := w.Create(name)
+		require.NoError(t, err)
+		_, err = f.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+
+	zipPath := filepath.Join(t.TempDir(), "feed.zip")
+	require.NoError(t, os.WriteFile(zipPath, buf.Bytes(), 0600))
+
+	gtfsConfig := Config{
+		GtfsURL:      zipPath,
+		GTFSDataPath: ":memory:",
+		Env:          appconf.Test,
+	}
+	manager, err := InitGTFSManager(context.Background(), gtfsConfig)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
+	return manager
+}
+
+// TestGetVehicleForTrip_BlocklessTripTreatedAsOwnBlock verifies that a trip without a block_id
+// is treated as its own single-trip block and does not match vehicles from other blockless trips.
+func TestGetVehicleForTrip_BlocklessTripTreatedAsOwnBlock(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"TEST,Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"R1,TEST,1,Route 1,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"S1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"STOP1,Stop 1,37.77,-122.41\n" +
+			"STOP2,Stop 2,37.78,-122.40\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			"R1,S1,T1,Headsign 1,0,\n" +
+			"R1,S1,T2,Headsign 2,0,\n" +
+			"R1,S1,T3,Headsign 3,0,B1\n" +
+			"R1,S1,T4,Headsign 4,0,B1\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"T1,10:00:00,10:00:00,STOP1,1\n" +
+			"T1,10:30:00,10:30:00,STOP2,2\n" +
+			"T2,11:00:00,11:00:00,STOP1,1\n" +
+			"T2,11:30:00,11:30:00,STOP2,2\n" +
+			"T3,12:00:00,12:00:00,STOP1,1\n" +
+			"T3,12:30:00,12:30:00,STOP2,2\n" +
+			"T4,13:00:00,13:00:00,STOP1,1\n" +
+			"T4,13:30:00,13:30:00,STOP2,2\n",
+	}
+
+	manager := createTestManagerWithGTFSFiles(t, files)
+
+	manager.feedVehicles = map[string][]gtfs.Vehicle{
+		"feed-0": {
+			{
+				ID:   &gtfs.VehicleID{ID: "V2"},
+				Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "T2"}},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	assert.Nil(t, manager.GetVehicleForTrip(context.Background(), "T1"))
+
+	v2 := manager.GetVehicleForTrip(context.Background(), "T2")
+	require.NotNil(t, v2)
+	assert.Equal(t, "V2", v2.ID.ID)
+
+	manager.feedVehicles["feed-0"] = append(manager.feedVehicles["feed-0"], gtfs.Vehicle{
+		ID:   &gtfs.VehicleID{ID: "V3"},
+		Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "T3"}},
+	})
+	manager.rebuildMergedRealtimeLocked()
+
+	v3 := manager.GetVehicleForTrip(context.Background(), "T4")
+	require.NotNil(t, v3)
+	assert.Equal(t, "V3", v3.ID.ID)
 }
