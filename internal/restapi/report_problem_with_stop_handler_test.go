@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,4 +117,147 @@ func TestReportProblemWithStopNullStorage(t *testing.T) {
 	latest := reports[0]
 	assert.False(t, latest.Code.Valid, "omitted code should be stored as SQL NULL, not empty string")
 	assert.False(t, latest.UserComment.Valid, "omitted userComment should be stored as SQL NULL, not empty string")
+}
+
+// TestReportProblemAcceptsQueryID covers the path form and the Android form
+// that puts the id in the query string (report-problem-with-stop.json?stopId=
+// and report-problem-with-trip.json?tripId=).
+func TestReportProblemAcceptsQueryID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+
+	stopIDs := []string{"path-stop", "query-stop", "path-wins", "query-ignored"}
+	tripIDs := []string{"path-trip", "query-trip", "path-loses", "query-wins"}
+	t.Cleanup(func() {
+		for _, id := range stopIDs {
+			_, err := api.GtfsManager.GtfsDB.DB.Exec(`DELETE FROM problem_reports_stop WHERE stop_id = ?`, id)
+			assert.NoError(t, err)
+		}
+		for _, id := range tripIDs {
+			_, err := api.GtfsManager.GtfsDB.DB.Exec(`DELETE FROM problem_reports_trip WHERE trip_id = ?`, id)
+			assert.NoError(t, err)
+		}
+	})
+
+	type response struct {
+		Code int    `json:"code"`
+		Text string `json:"text"`
+		Data struct {
+			FieldErrors map[string][]string `json:"fieldErrors"`
+		} `json:"data"`
+	}
+
+	tests := []struct {
+		name           string
+		url            string
+		wantStatus     int
+		wantText       string
+		wantField      string
+		storedStop     string
+		storedTrip     string
+		storedTripStop string
+	}{
+		{
+			name:       "stop path id",
+			url:        "/api/where/report-problem-with-stop/1_path-stop.json?key=TEST&code=stop_name_wrong",
+			wantStatus: http.StatusOK,
+			storedStop: "path-stop",
+		},
+		{
+			name:       "stop query id",
+			url:        "/api/where/report-problem-with-stop.json?key=TEST&stopId=1_query-stop&code=stop_name_wrong",
+			wantStatus: http.StatusOK,
+			storedStop: "query-stop",
+		},
+		{
+			name:       "stopId wins over the path id",
+			url:        "/api/where/report-problem-with-stop/1_path-wins.json?key=TEST&stopId=1_query-ignored&code=other",
+			wantStatus: http.StatusOK,
+			storedStop: "query-ignored",
+		},
+		{
+			name:       "stop query id missing",
+			url:        "/api/where/report-problem-with-stop.json?key=TEST",
+			wantStatus: http.StatusBadRequest,
+			wantText:   "id cannot be empty",
+			wantField:  "stopId",
+		},
+		{
+			name:       "stop query id malformed",
+			url:        "/api/where/report-problem-with-stop.json?key=TEST&stopId=not-combined",
+			wantStatus: http.StatusBadRequest,
+			wantText:   "invalid format: not-combined",
+			wantField:  "stopId",
+		},
+		{
+			name:           "trip path id",
+			url:            "/api/where/report-problem-with-trip/1_path-trip.json?key=TEST&code=vehicle_never_came&stopId=1_assoc-stop",
+			wantStatus:     http.StatusOK,
+			storedTrip:     "path-trip",
+			storedTripStop: "1_assoc-stop",
+		},
+		{
+			name:           "trip query id",
+			url:            "/api/where/report-problem-with-trip.json?key=TEST&tripId=1_query-trip&stopId=1_assoc-stop&code=vehicle_never_came",
+			wantStatus:     http.StatusOK,
+			storedTrip:     "query-trip",
+			storedTripStop: "1_assoc-stop",
+		},
+		{
+			name:           "tripId wins over the path id",
+			url:            "/api/where/report-problem-with-trip/1_path-loses.json?key=TEST&tripId=1_query-wins&stopId=1_assoc-stop&code=vehicle_never_came",
+			wantStatus:     http.StatusOK,
+			storedTrip:     "query-wins",
+			storedTripStop: "1_assoc-stop",
+		},
+		{
+			name:       "trip query id missing",
+			url:        "/api/where/report-problem-with-trip.json?key=TEST&stopId=1_assoc-stop",
+			wantStatus: http.StatusBadRequest,
+			wantText:   "id cannot be empty",
+			wantField:  "tripId",
+		},
+		{
+			name:       "trip query id malformed",
+			url:        "/api/where/report-problem-with-trip.json?key=TEST&tripId=not-combined",
+			wantStatus: http.StatusBadRequest,
+			wantText:   "invalid format: not-combined",
+			wantField:  "tripId",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, model := callAPIHandler[response](t, api, tc.url)
+			require.Equal(t, tc.wantStatus, resp.StatusCode)
+			require.Equal(t, tc.wantStatus, model.Code)
+			if tc.wantText != "" {
+				assert.Equal(t, tc.wantText, model.Text)
+			}
+			if tc.wantField != "" {
+				assert.NotEmpty(t, model.Data.FieldErrors[tc.wantField])
+			}
+			if tc.storedStop != "" {
+				reports, err := api.GtfsManager.GtfsDB.Queries.GetProblemReportsByStop(t.Context(), tc.storedStop)
+				require.NoError(t, err)
+				require.NotEmpty(t, reports)
+				assert.Equal(t, tc.storedStop, reports[0].StopID)
+			}
+			if tc.storedTrip != "" {
+				reports, err := api.GtfsManager.GtfsDB.Queries.GetProblemReportsByTrip(t.Context(), tc.storedTrip)
+				require.NoError(t, err)
+				require.Len(t, reports, 1)
+				assert.Equal(t, tc.storedTrip, reports[0].TripID)
+				assert.Equal(t, tc.storedTripStop, reports[0].StopID.String)
+			}
+		})
+	}
+
+	pathStop, err := api.GtfsManager.GtfsDB.Queries.GetProblemReportsByStop(t.Context(), "path-wins")
+	require.NoError(t, err)
+	assert.Empty(t, pathStop, "stopId must replace the path id")
+	pathTrip, err := api.GtfsManager.GtfsDB.Queries.GetProblemReportsByTrip(t.Context(), "path-loses")
+	require.NoError(t, err)
+	assert.Empty(t, pathTrip, "tripId must replace the path id")
 }
