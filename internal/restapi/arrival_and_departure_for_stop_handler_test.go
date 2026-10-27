@@ -981,9 +981,10 @@ func TestGetPredictedTimes_UnequalArrivalAndDepartureDeviation(t *testing.T) {
 	}
 }
 
-// Dwell between a scheduled arrival and departure absorbs lateness when the
-// feed did not send its own departure, matching Java's calculateDepartureDeviation.
-// A departure the feed did send is not rewritten.
+// Dwell absorbs lateness only when Java has no timepoint record for the stop:
+// a prior-stop delay across two or more updates, or a trip delay with no
+// updates. An arrival-only update, a single update, and a trip delay next to
+// any update keep the full delay on the departure.
 func TestGetPredictedTimes_DwellSlack(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -1035,28 +1036,44 @@ func TestGetPredictedTimes_DwellSlack(t *testing.T) {
 			wantDeparture: 4 * time.Minute,
 		},
 		{
-			name:          "arrival-only delay is absorbed by dwell",
+			name:          "arrival-only delay keeps the full delay on departure",
 			kind:          "arrival",
 			dwell:         6 * time.Minute,
 			delay:         3 * time.Minute,
 			wantArrival:   3 * time.Minute,
-			wantDeparture: 0,
+			wantDeparture: 3 * time.Minute,
 		},
 		{
-			name:          "arrival-only delay larger than dwell leaves a remainder",
+			name:          "arrival-only delay larger than dwell still keeps the full delay",
 			kind:          "arrival",
 			dwell:         6 * time.Minute,
 			delay:         10 * time.Minute,
 			wantArrival:   10 * time.Minute,
-			wantDeparture: 4 * time.Minute,
+			wantDeparture: 10 * time.Minute,
 		},
 		{
-			name:          "propagated prior delay is absorbed by dwell",
+			name:          "single prior update keeps the full delay",
 			kind:          "prior",
 			dwell:         4 * time.Minute,
 			delay:         9 * time.Minute,
 			wantArrival:   9 * time.Minute,
+			wantDeparture: 9 * time.Minute,
+		},
+		{
+			name:          "prior delay across two updates is absorbed by dwell",
+			kind:          "prior-two",
+			dwell:         4 * time.Minute,
+			delay:         9 * time.Minute,
+			wantArrival:   9 * time.Minute,
 			wantDeparture: 5 * time.Minute,
+		},
+		{
+			name:          "trip delay with a later update keeps the full delay",
+			kind:          "trip-with-later-stu",
+			dwell:         5 * time.Minute,
+			delay:         8 * time.Minute,
+			wantArrival:   8 * time.Minute,
+			wantDeparture: 8 * time.Minute,
 		},
 		{
 			name:          "feed-supplied departure is not rewritten",
@@ -1095,6 +1112,33 @@ func TestGetPredictedTimes_DwellSlack(t *testing.T) {
 					StopID:       &priorStop,
 					StopSequence: &priorSeq,
 					Departure:    &gtfs.StopTimeEvent{Delay: &delay},
+				}}
+			case "prior-two":
+				earlierStop := "earlier_stop"
+				earlierSeq := uint32(1)
+				closerSeq := uint32(2)
+				earlierDelay := time.Minute
+				updates = []gtfs.StopTimeUpdate{
+					{
+						StopID:       &earlierStop,
+						StopSequence: &earlierSeq,
+						Departure:    &gtfs.StopTimeEvent{Delay: &earlierDelay},
+					},
+					{
+						StopID:       &priorStop,
+						StopSequence: &closerSeq,
+						Departure:    &gtfs.StopTimeEvent{Delay: &delay},
+					},
+				}
+			case "trip-with-later-stu":
+				tripDelay = &delay
+				laterStop := "later_stop"
+				laterSeq := uint32(8)
+				laterTime := scheduledArrival.Add(time.Hour)
+				updates = []gtfs.StopTimeUpdate{{
+					StopID:       &laterStop,
+					StopSequence: &laterSeq,
+					Arrival:      &gtfs.StopTimeEvent{Time: &laterTime},
 				}}
 			default:
 				t.Fatalf("unknown kind %q", tc.kind)

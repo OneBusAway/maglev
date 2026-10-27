@@ -759,8 +759,8 @@ func TestPluralArrivals_PriorStopPropagation(t *testing.T) {
 	assert.True(t, arrival.Predicted, "should be predicted via prior stop propagation")
 	assert.Equal(t, scheduledArrivalMs+90000, arrival.PredictedArrivalTime.UnixMilli(),
 		"predicted arrival should be scheduled + propagated 90s delay")
-	assert.Equal(t, scheduledDepartureMs, arrival.PredictedDepartureTime.UnixMilli(),
-		"the 5-minute dwell absorbs the 90s delay, so the departure stays on time")
+	assert.Equal(t, scheduledDepartureMs+90000, arrival.PredictedDepartureTime.UnixMilli(),
+		"a single prior update keeps the full delay on the departure")
 }
 
 // TestPluralArrivals_TripLevelDelayFallback verifies that when a TripUpdate has a
@@ -794,8 +794,8 @@ func TestPluralArrivals_TripLevelDelayFallback(t *testing.T) {
 		assert.True(t, a.Predicted, "trip-level delay should mark arrival as predicted")
 		assert.Equal(t, scheduledArrivalMs+120000, a.PredictedArrivalTime.UnixMilli(),
 			"predicted arrival should be scheduled + trip-level 120s delay")
-		assert.Equal(t, scheduledDepartureMs, a.PredictedDepartureTime.UnixMilli(),
-			"the 5-minute dwell absorbs the 120s delay, so the departure stays on time")
+		assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli(),
+			"a trip delay next to a stop update keeps the full delay on the departure")
 		break
 	}
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
@@ -831,8 +831,8 @@ func TestPluralArrivals_TripLevelDelayWithoutVehicle(t *testing.T) {
 		found = true
 		assert.True(t, a.Predicted, "trip-level delay without vehicle should still be predicted")
 		assert.Equal(t, scheduledArrivalMs+120000, a.PredictedArrivalTime.UnixMilli())
-		assert.Equal(t, scheduledDepartureMs, a.PredictedDepartureTime.UnixMilli(),
-			"the 5-minute dwell absorbs the 120s delay, so the departure stays on time")
+		assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli(),
+			"a trip delay next to a stop update keeps the full delay on the departure")
 		break
 	}
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)

@@ -618,6 +618,23 @@ func departureDeviationAfterDwell(deviation, slack time.Duration) time.Duration 
 	return deviation
 }
 
+// dwellAbsorbsLateness reports whether Java would run calculateDepartureDeviation
+// for this stop. That runs only when the stop has no timepoint record. A target
+// update, a single stop-time update, or a trip delay alongside any stop-time
+// updates all produce a record (the last two in applyTripUpdatesToRecord) and
+// keep the full delay on the departure. Absorption is left for a prior-stop
+// delay spread across two or more updates, and for a trip delay with no
+// stop-time updates at all.
+func dwellAbsorbsLateness(foundTarget bool, stuCount int, hasTripDelay bool) bool {
+	if foundTarget {
+		return false
+	}
+	if hasTripDelay {
+		return stuCount == 0
+	}
+	return stuCount >= 2
+}
+
 // getPredictedTimes computes predicted arrival/departure times from GTFS-RT TripUpdate data.
 // It implements a 3-tier fallback strategy matching the plural handler's behavior:
 //  1. Exact stop match — uses per-stop arrival/departure time or delay directly
@@ -736,10 +753,10 @@ func (api *RestAPI) getPredictedTimes(
 	// delay when one side of this stop is already known produces a negative
 	// dwell, so propagatedDelay is only used when both sides are nil.
 	//
-	// When the feed did not send a departure, Java's calculateDepartureDeviation
-	// then lets this stop's dwell absorb lateness. A 5-minute layover eats the
-	// first 5 minutes of delay, so the predicted departure is not as late as
-	// the arrival. A departure the feed actually sent is left alone.
+	// Dwell absorbs lateness only when Java would call calculateDepartureDeviation,
+	// which is when this stop has no timepoint record. A departure the feed
+	// sent, an arrival-only update, a single stop-time update, and a trip delay
+	// that sits next to any stop-time updates all keep the full delay.
 	if arrivalOffset == nil && departureOffset != nil {
 		arrivalOffset = departureOffset
 	} else if arrivalOffset == nil {
@@ -750,7 +767,7 @@ func (api *RestAPI) getPredictedTimes(
 	} else if departureOffset == nil {
 		departureOffset = &propagatedDelay
 	}
-	if !departureFromFeed {
+	if !departureFromFeed && dwellAbsorbsLateness(foundTarget, len(realTimeTrip.StopTimeUpdates), realTimeTrip.Delay != nil) {
 		adjusted := departureDeviationAfterDwell(*arrivalOffset, scheduledDepartureTime.Sub(scheduledArrivalTime))
 		departureOffset = &adjusted
 	}
