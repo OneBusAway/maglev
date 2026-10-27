@@ -19,6 +19,11 @@ type stopDirectionResult struct {
 	direction string
 }
 
+// precomputeShapeCachePoints is how many shape points the precomputer keeps
+// in memory, about 20 MB of rows. It holds roughly 500 shapes of average size
+// in a large bus feed such as NJ Transit's.
+const precomputeShapeCachePoints = 500_000
+
 // DirectionPrecomputer handles batch computation of stop directions
 type DirectionPrecomputer struct {
 	calculator *AdvancedDirectionCalculator
@@ -29,8 +34,10 @@ type DirectionPrecomputer struct {
 
 // NewDirectionPrecomputer creates a new direction precomputer
 func NewDirectionPrecomputer(queries *gtfsdb.Queries, db *sql.DB) *DirectionPrecomputer {
+	calculator := NewAdvancedDirectionCalculator(queries)
+	calculator.recentShapes = newRecentShapes(precomputeShapeCachePoints)
 	return &DirectionPrecomputer{
-		calculator: NewAdvancedDirectionCalculator(queries),
+		calculator: calculator,
 		queries:    queries,
 		db:         db,
 		logger:     slog.Default().With(slog.String("component", "direction_precomputer")),
@@ -52,35 +59,6 @@ func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) err
 	if len(stops) == 0 {
 		logging.LogOperation(dp.logger, "no_stops_found_skipping_precomputation")
 		return nil
-	}
-
-	// ===== PHASE 0: PRE-LOAD SHAPE DATA INTO CACHE =====
-	logging.LogOperation(dp.logger, "loading_shape_cache_started")
-	shapeCache, err := dp.loadShapeCache(ctx)
-	if err != nil {
-		logging.LogError(dp.logger, "Failed to load shape cache", err)
-		// Don't fail precomputation if cache loading fails - will fall back to DB queries
-	} else {
-		// Calculate total points across all shapes
-		totalPoints := 0
-		for _, points := range shapeCache {
-			totalPoints += len(points)
-		}
-
-		// Estimate memory usage (approximate):
-		// Each GetShapePointsWithDistanceRow: 2 float64 (lat/lon) + 1 int64 (sequence) + 1 sql.NullFloat64 (dist)
-		// = 16 + 16 + 8 + 24 = 64 bytes per point (conservative estimate)
-		// Plus map overhead and slice headers
-		estimatedMemoryMB := float64(totalPoints*64) / (1024 * 1024)
-
-		logging.LogOperation(dp.logger, "shape_cache_loaded",
-			slog.Int("shape_count", len(shapeCache)),
-			slog.Int("total_points", totalPoints),
-			slog.Float64("estimated_memory_mb", estimatedMemoryMB))
-		// Set the cache on the calculator for use during precomputation
-		if err := dp.calculator.SetShapeCache(shapeCache); err != nil {
-			return fmt.Errorf("failed to set shape cache: %w", err)
-		}
 	}
 
 	// ===== PHASE 1: PARALLEL DIRECTION CALCULATION (read-only) =====
@@ -236,39 +214,15 @@ func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) err
 	}
 
 	duration := time.Since(startTime)
+	shapeHits, shapeMisses := dp.calculator.recentShapes.stats()
 	logging.LogOperation(dp.logger, "precomputing_stop_directions_completed",
 		slog.Duration("duration_ms", duration),
 		slog.Int("total_stops", len(stops)),
 		slog.Int("successful", successCount),
 		slog.Int("skipped", skippedCount),
-		slog.Int("errors", errorCount))
+		slog.Int("errors", errorCount),
+		slog.Int("shape_cache_hits", shapeHits),
+		slog.Int("shape_reads", shapeMisses))
 
 	return nil
-}
-
-// loadShapeCache loads all shape data from the database and organizes it by shape_id
-// for efficient lookup during direction precomputation
-func (dp *DirectionPrecomputer) loadShapeCache(ctx context.Context) (map[string][]gtfsdb.GetShapePointsWithDistanceRow, error) {
-	// Get all shape points from the database
-	allShapes, err := dp.queries.GetAllShapes(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch all shapes: %w", err)
-	}
-
-	// Organize shapes by shape_id for O(1) lookup
-	shapeCache := make(map[string][]gtfsdb.GetShapePointsWithDistanceRow)
-
-	for _, shape := range allShapes {
-		// Convert Shape to GetShapePointsWithDistanceRow (excludes ShapeID as it's the map key)
-		shapePoint := gtfsdb.GetShapePointsWithDistanceRow{
-			Lat:               shape.Lat,
-			Lon:               shape.Lon,
-			ShapePtSequence:   shape.ShapePtSequence,
-			ShapeDistTraveled: shape.ShapeDistTraveled,
-		}
-
-		shapeCache[shape.ShapeID] = append(shapeCache[shape.ShapeID], shapePoint)
-	}
-
-	return shapeCache, nil
 }

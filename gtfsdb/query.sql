@@ -409,12 +409,6 @@ FROM
 WHERE
     stop_times.stop_id = ?;
 
--- name: GetAllShapes :many
-SELECT
-    *
-FROM
-    shapes;
-
 -- name: GetShapeByID :many
 SELECT
     *
