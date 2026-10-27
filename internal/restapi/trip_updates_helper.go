@@ -24,6 +24,18 @@ type StopDelayInfo struct {
 	DepartureDelay int64
 }
 
+// arrivalIsCanceled only applies cancellation to the requested trip. A vehicle
+// associated through the block may be reporting a different trip's cancellation.
+func arrivalIsCanceled(tripID string, vehicle *gtfs.Vehicle, tripUpdate *gtfs.Trip) bool {
+	if tripUpdate != nil && tripUpdate.ID.ID == tripID &&
+		tripUpdate.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
+		return true
+	}
+	return vehicle != nil && vehicle.Trip != nil &&
+		vehicle.Trip.ID.ID == tripID &&
+		vehicle.Trip.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED
+}
+
 // GetScheduleDeviationForBlock returns the schedule deviation in seconds
 // (positive = late) across every TripUpdate matching any tripID. Mirrors
 // Java's GtfsRealtimeTripLibrary.applyTripUpdatesToRecord (lines 932-1014):

@@ -15,6 +15,7 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/servicedate"
@@ -241,15 +242,27 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 	priorStopID := stopID + "-prior"
 	prior := gtfs.StopTimeUpdate{StopSequence: &first, Departure: &gtfs.StopTimeEvent{Delay: &delay}}
 	tests := []struct {
-		name         string
-		updates      []gtfs.StopTimeUpdate
-		tripDelay    *time.Duration
-		noTripUpdate bool
-		unrelated    bool
-		wantTimes    bool
+		name                string
+		updates             []gtfs.StopTimeUpdate
+		tripDelay           *time.Duration
+		noTripUpdate        bool
+		unrelated           bool
+		wantTimes           bool
+		vehicleRelationship gtfs.TripScheduleRelationship
+		tripRelationship    gtfs.TripScheduleRelationship
 	}{
 		{name: "no-trip-update", noTripUpdate: true},
 		{name: "unrelated-realtime", noTripUpdate: true, unrelated: true},
+		{name: "canceled-vehicle", noTripUpdate: true, vehicleRelationship: gtfsrt.TripDescriptor_CANCELED},
+		{name: "canceled-trip-update", tripRelationship: gtfsrt.TripDescriptor_CANCELED},
+		{name: "canceled-trip-update-with-delay", tripRelationship: gtfsrt.TripDescriptor_CANCELED, tripDelay: &delay},
+		{name: "canceled-trip-update-with-events", tripRelationship: gtfsrt.TripDescriptor_CANCELED, updates: []gtfs.StopTimeUpdate{
+			{StopSequence: &target, Arrival: &gtfs.StopTimeEvent{Delay: &delay}},
+		}},
+		{name: "canceled-vehicle-with-timing-update", vehicleRelationship: gtfsrt.TripDescriptor_CANCELED, wantTimes: true, updates: []gtfs.StopTimeUpdate{
+			{StopSequence: &target, Arrival: &gtfs.StopTimeEvent{Delay: &delay}},
+		}},
+		{name: "canceled-vehicle-and-trip-update", vehicleRelationship: gtfsrt.TripDescriptor_CANCELED, tripRelationship: gtfsrt.TripDescriptor_CANCELED},
 		{name: "empty-trip-update"},
 		{name: "unidentified-stop-update", updates: []gtfs.StopTimeUpdate{{}}},
 		{name: "later-only-update", updates: []gtfs.StopTimeUpdate{{StopSequence: &later, StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}}},
@@ -315,10 +328,16 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 				})
 				require.NoError(t, err)
 				if !tt.noTripUpdate {
-					api.GtfsManager.MockAddTripUpdate(trip, tt.tripDelay, tt.updates)
+					api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+						ID:    gtfs.TripID{ID: trip, ScheduleRelationship: tt.tripRelationship},
+						Delay: tt.tripDelay, StopTimeUpdates: tt.updates,
+					}})
 				}
 				if withVehicle {
-					api.GtfsManager.MockAddVehicle("tracking-vehicle", trip, "dp-route")
+					api.GtfsManager.MockAddVehicleWithOptions("tracking-vehicle", trip, "dp-route", internalgtfs.MockVehicleOptions{
+						ScheduleRelationship: tt.vehicleRelationship,
+						Timestamp:            &queryTime,
+					})
 				}
 				if tt.unrelated {
 					api.GtfsManager.MockAddVehicle("other-vehicle", "other-trip", "other-route")
@@ -372,8 +391,12 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 						assert.Equal(t, day.UnixMilli(), arrival.ServiceDate.UnixMilli())
 						assert.Equal(t, scheduledArrival, arrival.ScheduledArrivalTime.UnixMilli())
 						assert.Equal(t, scheduledArrival+(5*time.Minute).Milliseconds(), arrival.ScheduledDepartureTime.UnixMilli())
-						assert.Equal(t, withVehicle || !tt.noTripUpdate, arrival.Predicted)
-						if tt.wantTimes {
+						canceledVehicle := withVehicle && tt.vehicleRelationship == gtfsrt.TripDescriptor_CANCELED
+						canceledUpdate := !tt.noTripUpdate && tt.tripRelationship == gtfsrt.TripDescriptor_CANCELED
+						isCanceled := canceledVehicle || canceledUpdate
+						wantTracking := !isCanceled && (withVehicle || !tt.noTripUpdate)
+						assert.Equal(t, wantTracking, arrival.Predicted)
+						if tt.wantTimes && !isCanceled {
 							assert.Equal(t, scheduledArrival+delay.Milliseconds(), arrival.PredictedArrivalTime.UnixMilli())
 							assert.Equal(t, arrival.ScheduledDepartureTime.UnixMilli()+delay.Milliseconds(), arrival.PredictedDepartureTime.UnixMilli())
 						} else {
@@ -385,6 +408,15 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestArrivalIsCanceled_OtherBlockTrip keeps another trip's cancellation local.
+func TestArrivalIsCanceled_OtherBlockTrip(t *testing.T) {
+	vehicle := &gtfs.Vehicle{Trip: &gtfs.Trip{ID: gtfs.TripID{
+		ID: "other-block-trip", ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
+	}}}
+	tripUpdate := &gtfs.Trip{ID: gtfs.TripID{ID: "requested-trip"}}
+	assert.False(t, arrivalIsCanceled("requested-trip", vehicle, tripUpdate))
 }
 
 func TestGetPredictedTimes_PropagationRules(t *testing.T) {

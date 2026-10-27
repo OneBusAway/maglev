@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -219,33 +220,60 @@ func (db *trackingRefreshDB) QueryContext(ctx context.Context, query string, arg
 	return db.DBTX.QueryContext(ctx, query, args...)
 }
 
+// TestArrivalTrackingDuringRealtimeRefresh handles updates and cancellations
+// received while the singular handler is processing an arrival.
 func TestArrivalTrackingDuringRealtimeRefresh(t *testing.T) {
 	day := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	queryTime := day.Add(8*time.Hour + 2*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(queryTime))
-	defer api.Shutdown()
-	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-	_, combinedStop, trip, scheduledArrival := setupDelayPropTestData(t, api, 3)
-	rebuildStopAgencyIndex(t, api)
-
-	// Initially there is no vehicle or trip update. The update arrives after
-	// tracking is checked but before the handler calculates prediction times.
 	delay := 5 * time.Minute
-	db := &trackingRefreshDB{DBTX: api.GtfsManager.GtfsDB.DB, refresh: func() {
-		api.GtfsManager.MockAddTripUpdate(trip, &delay, nil)
-	}}
-	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(db)
+	for _, tt := range []struct {
+		name     string
+		canceled bool
+	}{
+		{name: "update-arrives"},
+		{name: "cancellation-arrives", canceled: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(queryTime))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, combinedStop, trip, scheduledArrival := setupDelayPropTestData(t, api, 3)
+			rebuildStopAgencyIndex(t, api)
+			if tt.canceled {
+				api.GtfsManager.MockAddTripUpdate(trip, &delay, nil)
+			}
 
-	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=dp-agency_%s&serviceDate=%d&time=%d",
-		combinedStop, trip, day.UnixMilli(), queryTime.UnixMilli())
-	resp, body := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, http.StatusOK, body.Code)
-	require.True(t, db.refreshed, "the feed must refresh during the request")
-	arrival := body.Data.Entry
-	assert.Equal(t, "dp-agency_"+trip, arrival.TripID)
-	assert.Equal(t, combinedStop, arrival.StopID)
-	require.Equal(t, scheduledArrival+delay.Milliseconds(), arrival.PredictedArrivalTime.UnixMilli())
-	require.Equal(t, scheduledArrival+(5*time.Minute+delay).Milliseconds(), arrival.PredictedDepartureTime.UnixMilli())
-	assert.True(t, arrival.Predicted, "prediction times derived from a matched trip update must retain tracking")
+			// Publish the new snapshot after the request starts, without sleeps.
+			db := &trackingRefreshDB{DBTX: api.GtfsManager.GtfsDB.DB, refresh: func() {
+				relationship := gtfsrt.TripDescriptor_SCHEDULED
+				if tt.canceled {
+					relationship = gtfsrt.TripDescriptor_CANCELED
+				}
+				api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+					ID: gtfs.TripID{ID: trip, ScheduleRelationship: relationship}, Delay: &delay,
+				}})
+			}}
+			api.GtfsManager.GtfsDB.Queries = gtfsdb.New(db)
+
+			endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=dp-agency_%s&serviceDate=%d&time=%d",
+				combinedStop, trip, day.UnixMilli(), queryTime.UnixMilli())
+			resp, body := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Equal(t, http.StatusOK, body.Code)
+			require.True(t, db.refreshed, "the feed must refresh during the request")
+			arrival := body.Data.Entry
+			assert.Equal(t, "dp-agency_"+trip, arrival.TripID)
+			assert.Equal(t, combinedStop, arrival.StopID)
+			assert.Equal(t, scheduledArrival, arrival.ScheduledArrivalTime.UnixMilli())
+			assert.Equal(t, scheduledArrival+(5*time.Minute).Milliseconds(), arrival.ScheduledDepartureTime.UnixMilli())
+			assert.Equal(t, !tt.canceled, arrival.Predicted)
+			if tt.canceled {
+				assert.True(t, arrival.PredictedArrivalTime.IsZero())
+				assert.True(t, arrival.PredictedDepartureTime.IsZero())
+				return
+			}
+			assert.Equal(t, scheduledArrival+delay.Milliseconds(), arrival.PredictedArrivalTime.UnixMilli())
+			assert.Equal(t, scheduledArrival+(5*time.Minute+delay).Milliseconds(), arrival.PredictedDepartureTime.UnixMilli())
+		})
+	}
 }

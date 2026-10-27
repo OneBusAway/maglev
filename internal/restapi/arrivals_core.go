@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
@@ -912,15 +913,20 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 		scheduledDepartureTime,
 		in.schedule,
 	)
-	if !hasPredictionTimes {
+	// Noncanceled trip updates establish tracking. Calculated times also prove
+	// a match if the feed refreshes between the prediction and tracking lookups.
+	tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(st.TripID)
+	hasVehicleTracking := vehicle != nil && vehicle.Trip != nil &&
+		vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED
+	hasTripUpdateTracking := tripUpdate != nil &&
+		tripUpdate.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED
+	isCanceled := arrivalIsCanceled(st.TripID, vehicle, tripUpdate)
+	hasRealtimeTracking := hasVehicleTracking || hasTripUpdateTracking || hasPredictionTimes
+	predicted := !isCanceled && hasRealtimeTracking
+	if !hasPredictionTimes || isCanceled {
 		predictedArrivalTime = time.Time{}
 		predictedDepartureTime = time.Time{}
 	}
-	// Any matched trip update establishes tracking. Calculated times also prove
-	// a match if the feed refreshes between the prediction and tracking lookups.
-	tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(st.TripID)
-	hasVehicleTracking := vehicle != nil && vehicle.Trip != nil
-	predicted := hasVehicleTracking || tripUpdate != nil || hasPredictionTimes
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 

@@ -330,11 +330,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		} else {
 			reqLogger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
 		}
-		predicted = true
+		predicted = vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED
 	}
-	// Tracking belongs to the trip, even when this stop has no usable timing.
-	tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(tripID)
-	predicted = predicted || tripUpdate != nil
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
 	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
@@ -381,6 +378,18 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 				numberOfStopsAway = n
 			}
 		}
+	}
+
+	// Check tracking after timing so a cancellation received during the request
+	// also overrides any times calculated from the previous realtime snapshot.
+	tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(tripID)
+	hasTripUpdateTracking := tripUpdate != nil &&
+		tripUpdate.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED
+	predicted = predicted || hasTripUpdateTracking
+	if arrivalIsCanceled(tripID, vehicle, tripUpdate) {
+		predicted = false
+		predictedArrivalTime = time.Time{}
+		predictedDepartureTime = time.Time{}
 	}
 
 	totalStopsInTrip := len(orderedStopTimes)
@@ -617,7 +626,7 @@ func (api *RestAPI) getPredictedTimes(
 	schedule tripSchedule,
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
-	if realTimeTrip == nil {
+	if realTimeTrip == nil || realTimeTrip.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
 		return time.Time{}, time.Time{}, false
 	}
 
