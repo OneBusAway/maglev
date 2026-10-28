@@ -970,24 +970,31 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.T) {
 	files := map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
-			"AGENCY_ONE,Agency One,http://agency1.org,America/Los_Angeles\n",
+			"AGENCY_ONE,Agency One,http://agency1.org,America/Los_Angeles\n" +
+			"AGENCY_TWO,Agency Two,http://agency2.org,America/Los_Angeles\n",
 		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
-			"ROUTE_100,AGENCY_ONE,100,Route 100,3\n",
+			"ROUTE_100,AGENCY_ONE,100,Route 100,3\n" +
+			"ROUTE_200,AGENCY_TWO,200,Route 200,3\n",
 		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
 			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
 		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
 			"s1a,Stop 1A,37.6000,-122.4000\n" +
 			"s1b,Stop 1B,37.6100,-122.4000\n" +
 			"s2,Stop 2,37.7749,-122.4194\n" +
-			"s2b,Stop 2B,37.7849,-122.4194\n",
+			"s2b,Stop 2B,37.7849,-122.4194\n" +
+			"s3,Stop 3,37.7750,-122.4195\n" +
+			"s3b,Stop 3B,37.7850,-122.4195\n",
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
 			"ROUTE_100,svc1,t1,Headsign 1,0,b1\n" +
-			"ROUTE_100,svc1,t2,Headsign 2,0,b1\n",
+			"ROUTE_100,svc1,t2,Headsign 2,0,b1\n" +
+			"ROUTE_200,svc1,t3,Headsign 3,0,b2\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"t1,07:50:00,07:50:00,s1a,1\n" +
 			"t1,08:05:00,08:05:00,s1b,2\n" +
 			"t2,08:10:00,08:10:00,s2,1\n" +
-			"t2,08:20:00,08:20:00,s2b,2\n",
+			"t2,08:20:00,08:20:00,s2b,2\n" +
+			"t3,08:12:00,08:12:00,s3,1\n" +
+			"t3,08:22:00,08:22:00,s3b,2\n",
 	}
 
 	testTime := time.Date(2024, 6, 15, 8, 0, 0, 0, time.FixedZone("PDT", -7*3600))
@@ -1018,14 +1025,25 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 
 	entry := model.Data.Entry
 	require.NotEmpty(t, entry.ArrivalsAndDepartures)
-	arrival := entry.ArrivalsAndDepartures[0]
 
-	assert.Equal(t, "AGENCY_ONE_s2", arrival.StopID)
-	assert.Equal(t, "AGENCY_ONE_t2", arrival.TripID)
-	require.NotNil(t, arrival.TripStatus)
-	assert.Equal(t, "AGENCY_ONE_t1", arrival.TripStatus.ActiveTripID)
+	arrivalsByTrip := make(map[string]models.ArrivalAndDeparture, len(entry.ArrivalsAndDepartures))
+	for _, a := range entry.ArrivalsAndDepartures {
+		arrivalsByTrip[a.TripID] = a
+	}
 
-	// Verify references.trips retains both the arrival trip and the active block trip
+	arrival1, ok1 := arrivalsByTrip["AGENCY_ONE_t2"]
+	require.True(t, ok1, "arrivals must contain AGENCY_ONE_t2")
+	assert.Equal(t, "AGENCY_ONE_s2", arrival1.StopID)
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", arrival1.RouteID)
+	require.NotNil(t, arrival1.TripStatus)
+	assert.Equal(t, "AGENCY_ONE_t1", arrival1.TripStatus.ActiveTripID)
+
+	arrival2, ok2 := arrivalsByTrip["AGENCY_TWO_t3"]
+	require.True(t, ok2, "arrivals must contain AGENCY_TWO_t3")
+	assert.Equal(t, "AGENCY_TWO_s3", arrival2.StopID)
+	assert.Equal(t, "AGENCY_TWO_ROUTE_200", arrival2.RouteID)
+
+	// Verify references.trips retains trips from both agencies, including the active block trip
 	require.NotEmpty(t, model.Data.References.Trips)
 	tripsByID := make(map[string]models.Trip, len(model.Data.References.Trips))
 	for _, tr := range model.Data.References.Trips {
@@ -1039,35 +1057,51 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 	require.True(t, ok, "references.trips must retain active block trip AGENCY_ONE_t1")
 	assert.Equal(t, "AGENCY_ONE_ROUTE_100", trip1Ref.RouteID)
 
-	// Verify references.stops retains the stop for the agency with an underscore
+	trip3Ref, ok := tripsByID["AGENCY_TWO_t3"]
+	require.True(t, ok, "references.trips must retain arrival trip AGENCY_TWO_t3")
+	assert.Equal(t, "AGENCY_TWO_ROUTE_200", trip3Ref.RouteID)
+
+	// Verify references.stops retains distinct stops using the producing agency
 	require.NotEmpty(t, model.Data.References.Stops)
 	stopsByID := make(map[string]models.Stop, len(model.Data.References.Stops))
 	for _, s := range model.Data.References.Stops {
 		stopsByID[s.ID] = s
 	}
-	stopRef, ok := stopsByID["AGENCY_ONE_s2"]
+	stop2Ref, ok := stopsByID["AGENCY_ONE_s2"]
 	require.True(t, ok, "references.stops must retain AGENCY_ONE_s2")
-	assert.Equal(t, "Stop 2", stopRef.Name)
+	assert.Equal(t, "Stop 2", stop2Ref.Name)
 
-	// Verify references.routes retains the route for the agency with an underscore
+	stop3Ref, ok := stopsByID["AGENCY_TWO_s3"]
+	require.True(t, ok, "references.stops must retain AGENCY_TWO_s3")
+	assert.Equal(t, "Stop 3", stop3Ref.Name)
+
+	// Verify references.routes retains routes for both agencies with underscores
 	require.NotEmpty(t, model.Data.References.Routes)
 	routesByID := make(map[string]models.Route, len(model.Data.References.Routes))
 	for _, r := range model.Data.References.Routes {
 		routesByID[r.ID] = r
 	}
-	routeRef, ok := routesByID["AGENCY_ONE_ROUTE_100"]
+	route1Ref, ok := routesByID["AGENCY_ONE_ROUTE_100"]
 	require.True(t, ok, "references.routes must retain AGENCY_ONE_ROUTE_100")
-	assert.Equal(t, "AGENCY_ONE", routeRef.AgencyID)
+	assert.Equal(t, "AGENCY_ONE", route1Ref.AgencyID)
 
-	// Verify references.agencies retains the agency with an underscore
+	route2Ref, ok := routesByID["AGENCY_TWO_ROUTE_200"]
+	require.True(t, ok, "references.routes must retain AGENCY_TWO_ROUTE_200")
+	assert.Equal(t, "AGENCY_TWO", route2Ref.AgencyID)
+
+	// Verify references.agencies retains both agencies with underscores
 	require.NotEmpty(t, model.Data.References.Agencies)
 	agenciesByID := make(map[string]models.AgencyReference, len(model.Data.References.Agencies))
 	for _, a := range model.Data.References.Agencies {
 		agenciesByID[a.ID] = a
 	}
-	agencyRef, ok := agenciesByID["AGENCY_ONE"]
+	agency1Ref, ok := agenciesByID["AGENCY_ONE"]
 	require.True(t, ok, "references.agencies must retain AGENCY_ONE")
-	assert.Equal(t, "Agency One", agencyRef.Name)
+	assert.Equal(t, "Agency One", agency1Ref.Name)
+
+	agency2Ref, ok := agenciesByID["AGENCY_TWO"]
+	require.True(t, ok, "references.agencies must retain AGENCY_TWO")
+	assert.Equal(t, "Agency Two", agency2Ref.Name)
 
 	// Verify route alerts for retained stops resolve when the agency has an underscore
 	assert.Contains(t, entry.SituationIDs, utils.FormCombinedID("AGENCY_ONE", "ALERT_1"))
