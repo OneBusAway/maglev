@@ -92,6 +92,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	params.Time = params.Time.In(loc)
 
 	acc := newArrivalsAccumulator(stopAgencyID)
+	acc.stopAgencies[stopCode] = stopAgencyID
 	references := models.NewEmptyReferences()
 	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
@@ -125,6 +126,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	references, err = api.buildArrivalsReferences(ctx, arrivalsReferencesInput{
 		fallbackAgencyID: stopAgencyID,
+		stopAgencies:     map[string]string{stopCode: stopAgencyID},
 		primaryAgency:    &agency,
 	}, acc)
 	if err != nil {

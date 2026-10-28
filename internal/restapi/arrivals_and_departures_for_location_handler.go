@@ -317,6 +317,11 @@ func retainedAccumulator(
 	refAcc.situations = newSituationCollector()
 	refAcc.situations.addRefs(entrySituations.refs)
 	refAcc.situations.addRefs(acc.situations.refs)
+	if acc != nil && acc.stopAgencies != nil {
+		for stopID, agency := range acc.stopAgencies {
+			refAcc.stopAgencies[stopID] = agency
+		}
+	}
 
 	stopIndex := buildCombinedStopIndex(acc, agencies)
 	tripIndex := buildCombinedTripIndex(acc, agencies)

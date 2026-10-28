@@ -39,10 +39,11 @@ type stopArrivalsInput struct {
 // stops reference, so a caller looping over several stops builds a single
 // deduplicated references block. Construct it with newArrivalsAccumulator.
 type arrivalsAccumulator struct {
-	trips      map[string]*gtfsdb.Trip
-	routes     map[string]*gtfsdb.Route
-	stopIDs    map[string]bool
-	situations *situationCollector
+	trips        map[string]*gtfsdb.Trip
+	routes       map[string]*gtfsdb.Route
+	stopIDs      map[string]bool
+	stopAgencies map[string]string
+	situations   *situationCollector
 
 	// alertAgencyID is the fallback agency the single-stop handler passes to
 	// situations.add for the stop-level alert lookup. It starts as that
@@ -58,6 +59,7 @@ func newArrivalsAccumulator(primaryAgencyID string) *arrivalsAccumulator {
 		trips:         make(map[string]*gtfsdb.Trip),
 		routes:        make(map[string]*gtfsdb.Route),
 		stopIDs:       make(map[string]bool),
+		stopAgencies:  make(map[string]string),
 		situations:    newSituationCollector(),
 		alertAgencyID: primaryAgencyID,
 	}
@@ -1061,19 +1063,43 @@ func (api *RestAPI) tripStatusForArrival(
 	return status, distanceFromStop, numberOfStopsAway, situations
 }
 
-// extractBareEntityID extracts the bare entity ID from a combined ID, prioritizing
-// stripping the known route agency prefix before falling back to ExtractAgencyIDAndCodeID.
-func extractBareEntityID(combinedID, agencyID string) string {
+// extractEntityAgencyAndBareID extracts the owning agency ID and bare ID from a combined ID,
+// prioritizing stripping the known route agency prefix before falling back to ExtractAgencyIDAndCodeID.
+func extractEntityAgencyAndBareID(combinedID, agencyID string) (string, string) {
 	if agencyID != "" {
 		prefix := agencyID + "_"
 		if strings.HasPrefix(combinedID, prefix) {
-			return strings.TrimPrefix(combinedID, prefix)
+			return agencyID, strings.TrimPrefix(combinedID, prefix)
 		}
 	}
-	if _, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID); err == nil {
-		return bareID
+	if parsedAgency, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID); err == nil {
+		return parsedAgency, bareID
 	}
-	return ""
+	return "", ""
+}
+
+// extractBareEntityID extracts the bare entity ID from a combined ID.
+func extractBareEntityID(combinedID, agencyID string) string {
+	_, bareID := extractEntityAgencyAndBareID(combinedID, agencyID)
+	return bareID
+}
+
+// recordStatusStop records a trip status stop ID in acc.stopIDs and associates its agency
+// in acc.stopAgencies without overwriting an existing mapping.
+func recordStatusStop(acc *arrivalsAccumulator, combinedStopID, agencyID string) {
+	if combinedStopID == "" {
+		return
+	}
+	stopAgency, bareID := extractEntityAgencyAndBareID(combinedStopID, agencyID)
+	if bareID == "" {
+		return
+	}
+	acc.stopIDs[bareID] = true
+	if acc.stopAgencies != nil && stopAgency != "" {
+		if _, exists := acc.stopAgencies[bareID]; !exists {
+			acc.stopAgencies[bareID] = stopAgency
+		}
+	}
 }
 
 // recordTripStatusReferences pulls the stops and the reassigned active trip that
@@ -1081,16 +1107,8 @@ func extractBareEntityID(combinedID, agencyID string) string {
 // arrival emits resolves in the response.
 func (api *RestAPI) recordTripStatusReferences(ctx context.Context, status *models.TripStatus, agencyID, scheduledTripID string, acc *arrivalsAccumulator) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
-	if status.NextStop != "" {
-		if nextStopID := extractBareEntityID(status.NextStop, agencyID); nextStopID != "" {
-			acc.stopIDs[nextStopID] = true
-		}
-	}
-	if status.ClosestStop != "" {
-		if closestStopID := extractBareEntityID(status.ClosestStop, agencyID); closestStopID != "" {
-			acc.stopIDs[closestStopID] = true
-		}
-	}
+	recordStatusStop(acc, status.NextStop, agencyID)
+	recordStatusStop(acc, status.ClosestStop, agencyID)
 
 	if status.ActiveTripID == "" {
 		return
@@ -1198,6 +1216,18 @@ func (api *RestAPI) appendTripReferences(ctx context.Context, references *models
 	}
 }
 
+func resolveStopAgency(stopID string, in arrivalsReferencesInput, acc *arrivalsAccumulator) string {
+	if agencyID, ok := in.stopAgencies[stopID]; ok && agencyID != "" {
+		return agencyID
+	}
+	if acc != nil && acc.stopAgencies != nil {
+		if agencyID, ok := acc.stopAgencies[stopID]; ok && agencyID != "" {
+			return agencyID
+		}
+	}
+	return in.fallbackAgencyID
+}
+
 func (api *RestAPI) appendStopReferences(ctx context.Context, references *models.ReferencesModel, in arrivalsReferencesInput, acc *arrivalsAccumulator) error {
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	stopsByID, routesByStop, err := api.loadStopReferenceData(ctx, slices.Collect(maps.Keys(acc.stopIDs)))
@@ -1217,11 +1247,7 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 		}
 
 		combinedRouteIDs := collectStopRoutes(routesByStop[stopID], acc)
-
-		stopAgencyID := in.fallbackAgencyID
-		if agencyID, ok := in.stopAgencies[stopID]; ok && agencyID != "" {
-			stopAgencyID = agencyID
-		}
+		stopAgencyID := resolveStopAgency(stopID, in, acc)
 
 		references.Stops = append(references.Stops, models.Stop{
 			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),

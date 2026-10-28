@@ -1075,6 +1075,17 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 	require.True(t, ok, "references.stops must retain AGENCY_TWO_s3")
 	assert.Equal(t, "Stop 3", stop3Ref.Name)
 
+	if arrival1.TripStatus != nil {
+		if arrival1.TripStatus.NextStop != "" {
+			_, ok := stopsByID[arrival1.TripStatus.NextStop]
+			assert.True(t, ok, "references.stops must contain next stop %s", arrival1.TripStatus.NextStop)
+		}
+		if arrival1.TripStatus.ClosestStop != "" {
+			_, ok := stopsByID[arrival1.TripStatus.ClosestStop]
+			assert.True(t, ok, "references.stops must contain closest stop %s", arrival1.TripStatus.ClosestStop)
+		}
+	}
+
 	// Verify references.routes retains routes for both agencies with underscores
 	require.NotEmpty(t, model.Data.References.Routes)
 	routesByID := make(map[string]models.Route, len(model.Data.References.Routes))
