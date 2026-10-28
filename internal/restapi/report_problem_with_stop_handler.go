@@ -16,7 +16,7 @@ import (
 // and persists it to the database.
 func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.Request) {
 	reqLogger := logging.ForComponent(r.Context(), "problem_reporting")
-	agencyID, stopCode, ok := api.extractAndValidateAgencyCodeID(w, r)
+	agencyID, stopCode, ok := api.extractAgencyCodeID(w, r, "stopId")
 	if !ok {
 		return
 	}
