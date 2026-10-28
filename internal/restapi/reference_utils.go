@@ -241,42 +241,45 @@ func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *m
 		present[route.ID] = true
 	}
 
+	expectedCombinedIDs := make(map[string]bool)
+	candidateSet := make(map[string]bool)
+	candidateIDs := make([]string, 0)
+
 	for _, trip := range references.Trips {
 		if trip.RouteID == "" || present[trip.RouteID] {
 			continue
 		}
-
-		candidates := candidateRouteIDs(trip.RouteID)
-		routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, candidates)
-		if err != nil {
-			return err
+		expectedCombinedIDs[trip.RouteID] = true
+		if !strings.Contains(trip.RouteID, "_") && requestAgencyID != "" {
+			expectedCombinedIDs[utils.FormCombinedID(requestAgencyID, trip.RouteID)] = true
 		}
-
-		var matchedRoute gtfsdb.Route
-		var found bool
-		for _, row := range routes {
-			targetAgency := row.AgencyID
-			if targetAgency == "" {
-				targetAgency = requestAgencyID
-			}
-			if utils.FormCombinedID(targetAgency, row.ID) == trip.RouteID {
-				matchedRoute = row
-				found = true
-				break
+		for _, cand := range candidateRouteIDs(trip.RouteID) {
+			if !candidateSet[cand] {
+				candidateSet[cand] = true
+				candidateIDs = append(candidateIDs, cand)
 			}
 		}
+	}
 
-		if !found {
+	if len(candidateIDs) == 0 {
+		return nil
+	}
+
+	routes, err := utils.QueryInBatches(ctx, candidateIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
+	if err != nil {
+		return err
+	}
+
+	filteredRoutes := filterRoutesByExpectedCombinedID(routes, expectedCombinedIDs, requestAgencyID)
+	routeModels, err := buildRouteModels(ctx, requestAgencyID, filteredRoutes)
+	if err != nil {
+		return err
+	}
+
+	for _, routeModel := range routeModels {
+		if present[routeModel.ID] {
 			continue
 		}
-
-		routeModels, err := buildRouteModels(ctx, matchedRoute.AgencyID, []gtfsdb.Route{matchedRoute})
-		if err != nil {
-			return err
-		}
-		routeModel := routeModels[0]
-
-		present[trip.RouteID] = true
 		present[routeModel.ID] = true
 		references.Routes = append(references.Routes, routeModel)
 		api.appendRouteAgencyReference(ctx, references, routeModel.AgencyID, requestAgencyID)
