@@ -903,6 +903,7 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 		int64(st.StopSequence),
 		scheduledArrivalTime,
 		scheduledDepartureTime,
+		in.queryTime,
 	)
 	if !predicted {
 		predictedArrivalTime = time.Time{}

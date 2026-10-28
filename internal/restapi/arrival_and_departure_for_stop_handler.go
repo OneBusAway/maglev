@@ -357,7 +357,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime, currentTime)
 
 		if isPredicted {
 			predictedArrivalTime = predictedArrival
@@ -599,12 +599,12 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 }
 
 // departureDeviationAfterDwell is the lateness half of Java's
-// calculateDepartureDeviation (ArrivalAndDepartureServiceImpl). Slack is this
-// stop's own dwell, floored at zero. A late bus spends that slack before the
-// departure moves; an early bus keeps its early departure. Java's
-// propagateScheduleDeviationForwardWithSlack also zeros an early departure
-// when slack remains, but that helper applies to the next stop after a known
-// prediction, not to the stop being predicted.
+// calculateDepartureDeviation (ArrivalAndDepartureServiceImpl) for a vehicle
+// that has not reached the stop. Slack is this stop's own dwell, floored at
+// zero. A late bus spends that slack before the departure moves; an early bus
+// keeps its early departure. Java's propagateScheduleDeviationForwardWithSlack
+// also zeros an early departure when slack remains, but that helper applies to
+// the next stop after a known prediction, not to the stop being predicted.
 func departureDeviationAfterDwell(deviation, slack time.Duration) time.Duration {
 	if slack < 0 {
 		slack = 0
@@ -618,19 +618,53 @@ func departureDeviationAfterDwell(deviation, slack time.Duration) time.Duration 
 	return deviation
 }
 
+// departureDeviationAtQuery applies the clock half of calculateDepartureDeviation.
+// Java's effectiveScheduleTime is the query time minus the deviation. Once that
+// instant is past the scheduled departure, the vehicle's next stop is past this
+// one and the full deviation is kept. While it falls inside the dwell, slack
+// shrinks by the time already spent there. A zero queryTime leaves the full
+// slack, which is a vehicle still upstream of the stop.
+func departureDeviationAtQuery(deviation, slack time.Duration, queryTime, scheduledArrival, scheduledDeparture time.Time) time.Duration {
+	if slack < 0 {
+		slack = 0
+	}
+	if deviation > 0 && !queryTime.IsZero() {
+		effective := queryTime.Add(-deviation)
+		if effective.After(scheduledDeparture) {
+			return deviation
+		}
+		if !effective.Before(scheduledArrival) {
+			spent := effective.Sub(scheduledArrival)
+			if spent > slack {
+				slack = 0
+			} else {
+				slack -= spent
+			}
+		}
+	}
+	return departureDeviationAfterDwell(deviation, slack)
+}
+
 // dwellAbsorbsLateness reports whether Java would run calculateDepartureDeviation
-// for this stop. That runs only when the stop has no timepoint record. A target
-// update, a single stop-time update, or a trip delay alongside any stop-time
-// updates all produce a record (the last two in applyTripUpdatesToRecord) and
-// keep the full delay on the departure. Absorption is left for a prior-stop
-// delay spread across two or more updates, and for a trip delay with no
-// stop-time updates at all.
-func dwellAbsorbsLateness(foundTarget bool, stuCount int, hasTripDelay bool) bool {
+// for this stop. That runs only when the stop has no timepoint record. An update
+// for the stop itself is a record. A single stop-time update is expanded to a
+// full-delay record for the other stops. A trip delay with two or more updates
+// only builds those records for stops before the earliest update
+// (predictedDepartureTime < tprStartTime in applyTripUpdatesToRecord), so a
+// later stop still absorbs. With no trip delay, a prior-stop delay absorbs once
+// the feed has two or more updates.
+func dwellAbsorbsLateness(foundTarget bool, stuCount int, hasTripDelay, targetPastEarliestSTU bool) bool {
 	if foundTarget {
 		return false
 	}
 	if hasTripDelay {
-		return stuCount == 0
+		if stuCount == 0 {
+			return true
+		}
+		if stuCount == 1 {
+			return false
+		}
+		return targetPastEarliestSTU
 	}
 	return stuCount >= 2
 }
@@ -648,7 +682,7 @@ func (api *RestAPI) getPredictedTimes(
 	tripID string,
 	stopCode string,
 	targetStopSequence int64,
-	scheduledArrivalTime, scheduledDepartureTime time.Time,
+	scheduledArrivalTime, scheduledDepartureTime, queryTime time.Time,
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
@@ -658,6 +692,7 @@ func (api *RestAPI) getPredictedTimes(
 	var arrivalOffset, departureOffset *time.Duration
 	var propagatedDelay time.Duration
 	var closestPriorSequence int64 = -1
+	var earliestSTUSequence int64 = -1
 	var foundTarget bool
 
 	// A stop_id can be visited more than once on a loop trip, so matching on
@@ -689,6 +724,9 @@ func (api *RestAPI) getPredictedTimes(
 			}
 		}
 
+		if seq != -1 && (earliestSTUSequence == -1 || seq < earliestSTUSequence) {
+			earliestSTUSequence = seq
+		}
 		if seq != -1 && seq < targetStopSequence && seq > closestPriorSequence {
 			closestPriorSequence = seq
 			propagatedDelay = 0
@@ -755,8 +793,11 @@ func (api *RestAPI) getPredictedTimes(
 	//
 	// Dwell absorbs lateness only when Java would call calculateDepartureDeviation,
 	// which is when this stop has no timepoint record. A departure the feed
-	// sent, an arrival-only update, a single stop-time update, and a trip delay
-	// that sits next to any stop-time updates all keep the full delay.
+	// sent, an arrival-only update, and a single stop-time update keep the full
+	// delay. A trip delay keeps it for stops before the earliest update, and
+	// absorbs it for stops after that update. Once the query time shows the
+	// vehicle has left the stop, or has already spent part of the dwell, the
+	// remaining slack shrinks to match calculateDepartureDeviation.
 	if arrivalOffset == nil && departureOffset != nil {
 		arrivalOffset = departureOffset
 	} else if arrivalOffset == nil {
@@ -767,8 +808,9 @@ func (api *RestAPI) getPredictedTimes(
 	} else if departureOffset == nil {
 		departureOffset = &propagatedDelay
 	}
-	if !departureFromFeed && dwellAbsorbsLateness(foundTarget, len(realTimeTrip.StopTimeUpdates), realTimeTrip.Delay != nil) {
-		adjusted := departureDeviationAfterDwell(*arrivalOffset, scheduledDepartureTime.Sub(scheduledArrivalTime))
+	targetPastEarliestSTU := earliestSTUSequence >= 0 && targetStopSequence > earliestSTUSequence
+	if !departureFromFeed && dwellAbsorbsLateness(foundTarget, len(realTimeTrip.StopTimeUpdates), realTimeTrip.Delay != nil, targetPastEarliestSTU) {
+		adjusted := departureDeviationAtQuery(*arrivalOffset, scheduledDepartureTime.Sub(scheduledArrivalTime), queryTime, scheduledArrivalTime, scheduledDepartureTime)
 		departureOffset = &adjusted
 	}
 
