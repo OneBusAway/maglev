@@ -976,11 +976,18 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
 			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
 		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
-			"s1,Stop 1,37.7749,-122.4194\n",
-		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
-			"ROUTE_100,svc1,t1,Headsign,0\n",
+			"s1a,Stop 1A,37.6000,-122.4000\n" +
+			"s1b,Stop 1B,37.6100,-122.4000\n" +
+			"s2,Stop 2,37.7749,-122.4194\n" +
+			"s2b,Stop 2B,37.7849,-122.4194\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			"ROUTE_100,svc1,t1,Headsign 1,0,b1\n" +
+			"ROUTE_100,svc1,t2,Headsign 2,0,b1\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			"t1,08:00:00,08:00:00,s1,1\n",
+			"t1,07:50:00,07:50:00,s1a,1\n" +
+			"t1,08:05:00,08:05:00,s1b,2\n" +
+			"t2,08:10:00,08:10:00,s2,1\n" +
+			"t2,08:20:00,08:20:00,s2b,2\n",
 	}
 
 	testTime := time.Date(2024, 6, 15, 8, 0, 0, 0, time.FixedZone("PDT", -7*3600))
@@ -1013,18 +1020,24 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 	require.NotEmpty(t, entry.ArrivalsAndDepartures)
 	arrival := entry.ArrivalsAndDepartures[0]
 
-	assert.Equal(t, "AGENCY_ONE_s1", arrival.StopID)
-	assert.Equal(t, "AGENCY_ONE_t1", arrival.TripID)
+	assert.Equal(t, "AGENCY_ONE_s2", arrival.StopID)
+	assert.Equal(t, "AGENCY_ONE_t2", arrival.TripID)
+	require.NotNil(t, arrival.TripStatus)
+	assert.Equal(t, "AGENCY_ONE_t1", arrival.TripStatus.ActiveTripID)
 
-	// Verify references.trips retains the trip for the agency with an underscore
+	// Verify references.trips retains both the arrival trip and the active block trip
 	require.NotEmpty(t, model.Data.References.Trips)
 	tripsByID := make(map[string]models.Trip, len(model.Data.References.Trips))
 	for _, tr := range model.Data.References.Trips {
 		tripsByID[tr.ID] = tr
 	}
-	tripRef, ok := tripsByID["AGENCY_ONE_t1"]
-	require.True(t, ok, "references.trips must retain AGENCY_ONE_t1")
-	assert.Equal(t, "AGENCY_ONE_ROUTE_100", tripRef.RouteID)
+	trip2Ref, ok := tripsByID["AGENCY_ONE_t2"]
+	require.True(t, ok, "references.trips must retain arrival trip AGENCY_ONE_t2")
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", trip2Ref.RouteID)
+
+	trip1Ref, ok := tripsByID["AGENCY_ONE_t1"]
+	require.True(t, ok, "references.trips must retain active block trip AGENCY_ONE_t1")
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", trip1Ref.RouteID)
 
 	// Verify references.stops retains the stop for the agency with an underscore
 	require.NotEmpty(t, model.Data.References.Stops)
@@ -1032,9 +1045,9 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 	for _, s := range model.Data.References.Stops {
 		stopsByID[s.ID] = s
 	}
-	stopRef, ok := stopsByID["AGENCY_ONE_s1"]
-	require.True(t, ok, "references.stops must retain AGENCY_ONE_s1")
-	assert.Equal(t, "Stop 1", stopRef.Name)
+	stopRef, ok := stopsByID["AGENCY_ONE_s2"]
+	require.True(t, ok, "references.stops must retain AGENCY_ONE_s2")
+	assert.Equal(t, "Stop 2", stopRef.Name)
 
 	// Verify references.routes retains the route for the agency with an underscore
 	require.NotEmpty(t, model.Data.References.Routes)

@@ -10,6 +10,7 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -1043,7 +1044,7 @@ func (api *RestAPI) tripStatusForArrival(
 	}
 	startTripStatusAtServiceStart(status, in.freqMap, st.TripID, in.serviceDate.Start(in.location), in.queryTime)
 
-	api.recordTripStatusReferences(ctx, status, st.TripID, acc)
+	api.recordTripStatusReferences(ctx, status, in.route.AgencyID, st.TripID, acc)
 
 	// Reuse the snapshot BuildTripStatus already computed for this trip.
 	// BuildTripStatus applies the same schedule-deviation shift internally,
@@ -1060,18 +1061,33 @@ func (api *RestAPI) tripStatusForArrival(
 	return status, distanceFromStop, numberOfStopsAway, situations
 }
 
+// extractBareEntityID extracts the bare entity ID from a combined ID, prioritizing
+// stripping the known route agency prefix before falling back to ExtractAgencyIDAndCodeID.
+func extractBareEntityID(combinedID, agencyID string) string {
+	if agencyID != "" {
+		prefix := agencyID + "_"
+		if strings.HasPrefix(combinedID, prefix) {
+			return strings.TrimPrefix(combinedID, prefix)
+		}
+	}
+	if _, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID); err == nil {
+		return bareID
+	}
+	return ""
+}
+
 // recordTripStatusReferences pulls the stops and the reassigned active trip that
 // a trip status points at into the references accumulator, so every ID the
 // arrival emits resolves in the response.
-func (api *RestAPI) recordTripStatusReferences(ctx context.Context, status *models.TripStatus, scheduledTripID string, acc *arrivalsAccumulator) {
+func (api *RestAPI) recordTripStatusReferences(ctx context.Context, status *models.TripStatus, agencyID, scheduledTripID string, acc *arrivalsAccumulator) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	if status.NextStop != "" {
-		if _, nextStopID, err := utils.ExtractAgencyIDAndCodeID(status.NextStop); err == nil {
+		if nextStopID := extractBareEntityID(status.NextStop, agencyID); nextStopID != "" {
 			acc.stopIDs[nextStopID] = true
 		}
 	}
 	if status.ClosestStop != "" {
-		if _, closestStopID, err := utils.ExtractAgencyIDAndCodeID(status.ClosestStop); err == nil {
+		if closestStopID := extractBareEntityID(status.ClosestStop, agencyID); closestStopID != "" {
 			acc.stopIDs[closestStopID] = true
 		}
 	}
@@ -1079,8 +1095,8 @@ func (api *RestAPI) recordTripStatusReferences(ctx context.Context, status *mode
 	if status.ActiveTripID == "" {
 		return
 	}
-	_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
-	if err != nil || activeTripID == scheduledTripID {
+	activeTripID := extractBareEntityID(status.ActiveTripID, agencyID)
+	if activeTripID == "" || activeTripID == scheduledTripID {
 		return
 	}
 	if _, exists := acc.trips[activeTripID]; exists {
