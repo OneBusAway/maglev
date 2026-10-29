@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -35,7 +36,7 @@ func TestSortArrivalsByBestTime(t *testing.T) {
 	onTime := models.ArrivalAndDeparture{
 		TripID:               "agency_ontime",
 		ScheduledArrivalTime: models.NewModelTime(base.Add(10 * time.Minute)),
-		Predicted:            false,
+		Predicted:            true,
 		StopSequence:         1,
 	}
 	sameTimeEarlierTrip := models.ArrivalAndDeparture{
@@ -952,8 +953,8 @@ func TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime(t *testing.T) {
 		baseline.NumberOfStopsAway, subject.NumberOfStopsAway)
 }
 
-// TestPluralArrivals_NoMatchingOrPriorStop verifies that a TripUpdate with a
-// StopTimeUpdate for a later stop does not mark the arrival as predicted.
+// TestPluralArrivals_NoMatchingOrPriorStop verifies that a later stop update
+// leaves this stop's times unavailable while preserving vehicle tracking.
 func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
@@ -979,9 +980,9 @@ func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 			continue
 		}
 		found = true
-		assert.False(t, a.Predicted, "update for a later stop should not predict current stop")
-		assert.True(t, a.PredictedArrivalTime.IsZero(), "predictedArrivalTime should be zero when not predicted")
-		assert.True(t, a.PredictedDepartureTime.IsZero(), "predictedDepartureTime should be zero when not predicted")
+		assert.True(t, a.Predicted, "the vehicle still tracks this trip")
+		assert.True(t, a.PredictedArrivalTime.IsZero(), "a later stop update cannot predict the current arrival")
+		assert.True(t, a.PredictedDepartureTime.IsZero(), "a later stop update cannot predict the current departure")
 		break
 	}
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
@@ -1022,9 +1023,9 @@ func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
 	t.Fatalf("expected to find arrival for trip %s", expectedTripID)
 }
 
-// TestPluralArrivals_VehiclePositionAloneDoesNotPredict verifies that a vehicle
-// position without any TripUpdate does NOT mark the arrival as predicted.
-func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
+// TestPluralArrivals_VehiclePositionAloneKeepsTracking verifies that a vehicle
+// tracks the trip without inventing times when no TripUpdate is available.
+func TestPluralArrivals_VehiclePositionAloneKeepsTracking(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
@@ -1043,7 +1044,7 @@ func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
 			continue
 		}
 		found = true
-		assert.False(t, a.Predicted, "vehicle position alone should not mark arrival as predicted")
+		assert.True(t, a.Predicted, "the vehicle still tracks this trip")
 		assert.True(t, a.PredictedArrivalTime.IsZero())
 		assert.True(t, a.PredictedDepartureTime.IsZero())
 		break
@@ -1092,9 +1093,9 @@ func TestPluralArrivals_AbsoluteTimeStopEvent(t *testing.T) {
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
 }
 
-// TestPluralArrivals_StalePropagatedDelayReset verifies that when the closest prior
-// stop has only absolute Time data (no Delay), propagatedDelayMs is reset to 0.
-func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
+// TestPluralArrivals_ClosestTimeOnlyPriorDelay verifies that the closest prior
+// stop's derived delay replaces an older stop's explicit delay.
+func TestPluralArrivals_ClosestTimeOnlyPriorDelay(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
@@ -1103,10 +1104,23 @@ func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 	// Stop being queried is sequence 3.
 	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 3)
 	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
+	q := api.GtfsManager.GtfsDB.Queries
+	priorStopID := "dp-time-only-prior"
+	_, err := q.CreateStop(t.Context(), gtfsdb.CreateStopParams{
+		ID: priorStopID, Name: nulls.String("Prior stop"), Lat: 47.0, Lon: -122.0,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStopTime(t.Context(), gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: priorStopID, StopSequence: 2,
+		ArrivalTime:   int64(7*time.Hour + 58*time.Minute),
+		DepartureTime: int64(7*time.Hour + 58*time.Minute),
+	})
+	require.NoError(t, err)
 
 	// Sequence 1: has a 90s delay.
 	// Sequence 2 (closer): has only an absolute Time, no Delay.
-	// Expected: propagatedDelayMs is reset to 0 when seq 2 becomes the closest prior.
+	// Sequence 2 is scheduled at 07:58 and predicted at 07:59, so its
+	// derived 60s delay supersedes sequence 1's 90s delay.
 	seq1 := uint32(1)
 	seq1Time := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
 	delay90s := 90 * time.Second
@@ -1132,11 +1146,81 @@ func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 		}
 		found = true
 		assert.True(t, a.Predicted, "should be predicted via prior stop propagation")
-		assert.Equal(t, scheduledArrivalMs, a.PredictedArrivalTime.UnixMilli(),
-			"propagatedDelayMs should be 0 when closest prior stop only has absolute Time data")
+		assert.Equal(t, scheduledArrivalMs+60000, a.PredictedArrivalTime.UnixMilli(),
+			"the closest prior timestamp should propagate its derived 60s delay")
 		break
 	}
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
+}
+
+func TestGetPredictedTimes_SkipsSkippedPriorStop(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopCode, _, tripID, _ := setupDelayPropTestData(t, api, 3)
+	seq1, seq2 := uint32(1), uint32(2)
+	delay := 5 * time.Minute
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{StopSequence: &seq1, Departure: &gtfs.StopTimeEvent{Delay: &delay}},
+		{StopSequence: &seq2, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED},
+	})
+
+	serviceDay := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	arrival, departure, predicted := api.getPredictedTimes(t.Context(), tripID, stopCode, 3,
+		serviceDay.Add(8*time.Hour), serviceDay.Add(8*time.Hour+5*time.Minute), loadPredictionSchedule(t, api, tripID))
+	assert.True(t, predicted, "a skipped stop must not hide the earlier valid delay")
+	assert.Equal(t, serviceDay.Add(8*time.Hour+5*time.Minute), arrival)
+	assert.Equal(t, serviceDay.Add(8*time.Hour+10*time.Minute), departure)
+}
+
+func TestGetPredictedTimes_NoDataStopsPropagation(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopCode, _, tripID, _ := setupDelayPropTestData(t, api, 3)
+	q := api.GtfsManager.GtfsDB.Queries
+	_, err := q.CreateStop(t.Context(), gtfsdb.CreateStopParams{
+		ID: "dp-no-data-prior", Name: nulls.String("Prior stop"), Lat: 47.0, Lon: -122.0,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStopTime(t.Context(), gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: "dp-no-data-prior", StopSequence: 1,
+		ArrivalTime: int64(7*time.Hour + 55*time.Minute), DepartureTime: int64(7*time.Hour + 55*time.Minute),
+	})
+	require.NoError(t, err)
+
+	seq1 := uint32(1)
+	priorTime := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+	delay := 5 * time.Minute
+	serviceDay := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name           string
+		noDataSequence uint32
+		priorEvent     *gtfs.StopTimeEvent
+		tripDelay      *time.Duration
+	}{
+		{"target-no-data", 3, &gtfs.StopTimeEvent{Time: &priorTime}, nil},
+		{"intermediate-no-data", 2, &gtfs.StopTimeEvent{Time: &priorTime}, nil},
+		{"intermediate-no-data-after-explicit-delay", 2, &gtfs.StopTimeEvent{Delay: &delay}, nil},
+		{"intermediate-no-data-with-trip-delay", 2, &gtfs.StopTimeEvent{Time: &priorTime}, &delay},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api.GtfsManager.MockAddTripUpdate(tripID, tt.tripDelay, []gtfs.StopTimeUpdate{
+				{StopSequence: &seq1, Departure: tt.priorEvent},
+				{StopSequence: &tt.noDataSequence,
+					ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA},
+			})
+
+			arrival, departure, predicted := api.getPredictedTimes(t.Context(), tripID, stopCode, 3,
+				serviceDay.Add(8*time.Hour), serviceDay.Add(8*time.Hour+5*time.Minute), loadPredictionSchedule(t, api, tripID))
+			assert.False(t, predicted, "NO_DATA must stop propagation of earlier delays")
+			assert.True(t, arrival.IsZero())
+			assert.True(t, departure.IsZero())
+		})
+	}
 }
 
 // findRABAStopWithNeighbour returns a RABA stop that has at least one other

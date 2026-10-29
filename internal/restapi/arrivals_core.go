@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
@@ -105,7 +106,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 
 	acc.stopIDs[in.StopCode] = true
 
-	routesLookup, tripsLookup, tripStopCountMap, freqMap, err := api.batchArrivalEntities(ctx, allActiveStopTimes)
+	routesLookup, tripsLookup, tripSchedules, freqMap, err := api.batchArrivalEntities(ctx, allActiveStopTimes)
 	if err != nil {
 		return result, err
 	}
@@ -150,7 +151,8 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 			queryTime:        in.QueryTime,
 			stopCode:         in.StopCode,
 			stopID:           stopID,
-			totalStopsInTrip: tripStopCountMap[st.TripID],
+			totalStopsInTrip: len(tripSchedules[st.TripID].stopTimes),
+			schedule:         tripSchedules[st.TripID],
 			freqMap:          freqMap,
 		}, acc)
 
@@ -424,7 +426,7 @@ type batchedActiveStopTime struct {
 type batchedArrivalLookups struct {
 	routes      map[string]gtfsdb.Route
 	trips       map[string]gtfsdb.Trip
-	stopCounts  map[string]int
+	schedules   map[string]tripSchedule
 	frequencies map[string][]gtfsdb.Frequency
 }
 
@@ -478,7 +480,7 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 		acc.stopIDs[b.StopCode] = true
 	}
 
-	routesLookup, tripsLookup, tripStopCountMap, freqMap, err := api.batchArrivalEntities(ctx, plain)
+	routesLookup, tripsLookup, tripSchedules, freqMap, err := api.batchArrivalEntities(ctx, plain)
 	if err != nil {
 		return result, err
 	}
@@ -486,7 +488,7 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 	result.Arrivals, err = api.buildArrivalsFromRows(ctx, allActive, in, acc, batchedArrivalLookups{
 		routes:      routesLookup,
 		trips:       tripsLookup,
-		stopCounts:  tripStopCountMap,
+		schedules:   tripSchedules,
 		frequencies: freqMap,
 	})
 	if err != nil {
@@ -704,7 +706,8 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 			queryTime:        b.QueryTime,
 			stopCode:         b.StopCode,
 			stopID:           utils.FormCombinedID(b.AgencyID, b.StopCode),
-			totalStopsInTrip: lookups.stopCounts[st.TripID],
+			totalStopsInTrip: len(lookups.schedules[st.TripID].stopTimes),
+			schedule:         lookups.schedules[st.TripID],
 			freqMap:          lookups.frequencies,
 		}
 		arrival, vehicle := api.buildScheduledArrival(ctx, row, acc)
@@ -735,14 +738,16 @@ func convertStopsInWindowRow(row gtfsdb.GetStopTimesForStopsInWindowRow) gtfsdb.
 	}
 }
 
-// batchArrivalEntities resolves every route, trip, per-trip stop count and
-// frequency row the matched stop_times need in four queries rather than per
-// row. A frequency fetch failure is fatal — unlike stop count, it cannot
-// silently degrade a field, since BuildTripStatus itself needs the map.
+// batchArrivalEntities resolves routes, trips, per-trip schedules and frequencies
+// for the matched stop_times in batches. Frequency fetch failures are fatal
+// because BuildTripStatus needs the frequency map. A schedule fetch failure is
+// logged and leaves stop counts at zero; it also prevents deriving propagated
+// delays from time-only updates. Prediction helpers reuse these schedules and
+// do not retry failed reads.
 func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes []activeStopTime) (
 	routesLookup map[string]gtfsdb.Route,
 	tripsLookup map[string]gtfsdb.Trip,
-	tripStopCountMap map[string]int,
+	tripSchedules map[string]tripSchedule,
 	freqMap map[string][]gtfsdb.Frequency,
 	err error,
 ) {
@@ -776,7 +781,7 @@ func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes
 		}
 	}
 
-	return routesLookup, tripsLookup, api.tripStopCounts(ctx, uniqueTripIDs), freqMap, nil
+	return routesLookup, tripsLookup, api.loadTripSchedules(ctx, uniqueTripIDs), freqMap, nil
 }
 
 // bestArrivalMillis is the instant Java's ArrivalAndDepartureComparator sorts
@@ -827,27 +832,30 @@ func uniqueRouteAndTripIDs(allActiveStopTimes []activeStopTime) (routeIDs, tripI
 	return slices.Collect(maps.Keys(routeIDSet)), slices.Collect(maps.Keys(tripIDSet))
 }
 
-// tripStopCounts returns how many stops each trip has, batched to avoid a
-// per-arrival query for totalStopsInTrip. A failure yields an empty map rather
-// than an error: a missing count degrades one response field, and the arrivals
-// themselves are still worth returning.
-func (api *RestAPI) tripStopCounts(ctx context.Context, tripIDs []string) map[string]int {
-	counts := make(map[string]int, len(tripIDs))
+// loadTripSchedules retains the batched stop times for both predictions and
+// totalStopsInTrip. As with the previous count-only lookup, a failure logs a
+// warning and leaves arrivals available with no static schedule.
+func (api *RestAPI) loadTripSchedules(ctx context.Context, tripIDs []string) map[string]tripSchedule {
+	schedules := make(map[string]tripSchedule, len(tripIDs))
 	if len(tripIDs) == 0 {
-		return counts
+		return schedules
 	}
-	reqLogger := logging.ForComponent(ctx, "http_server")
-
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
-		reqLogger.Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
-		return counts
+		logging.ForComponent(ctx, "http_server").Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
+		return schedules
 	}
-
-	for _, st := range stopTimes {
-		counts[st.TripID]++
+	// The query orders rows by trip_id and stop_sequence, so each trip can
+	// retain its portion of the batch without copying its stop-time rows.
+	for start := 0; start < len(stopTimes); {
+		end := start + 1
+		for end < len(stopTimes) && stopTimes[end].TripID == stopTimes[start].TripID {
+			end++
+		}
+		schedules[stopTimes[start].TripID] = newTripSchedule(stopTimes[start:end])
+		start = end
 	}
-	return counts
+	return schedules
 }
 
 // arrivalInput carries the per-row values buildArrival needs. Grouped into a
@@ -862,6 +870,7 @@ type arrivalInput struct {
 	stopCode         string
 	stopID           string
 	totalStopsInTrip int
+	schedule         tripSchedule
 	freqMap          map[string][]gtfsdb.Frequency
 }
 
@@ -896,15 +905,26 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
 	vehicleID := api.combinedVehicleID(ctx, vehicle, route.AgencyID, st.TripID)
 
-	predictedArrivalTime, predictedDepartureTime, predicted := api.getPredictedTimes(
+	predictedArrivalTime, predictedDepartureTime, hasPredictionTimes := api.getPredictedTimes(
 		ctx,
 		st.TripID,
 		in.stopCode,
 		int64(st.StopSequence),
 		scheduledArrivalTime,
 		scheduledDepartureTime,
+		in.schedule,
 	)
-	if !predicted {
+	// Noncanceled trip updates establish tracking. Calculated times also prove
+	// a match if the feed refreshes between the prediction and tracking lookups.
+	tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(st.TripID)
+	hasVehicleTracking := vehicle != nil && vehicle.Trip != nil &&
+		vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED
+	hasTripUpdateTracking := tripUpdate != nil &&
+		tripUpdate.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED
+	isCanceled := arrivalIsCanceled(st.TripID, vehicle, tripUpdate)
+	hasRealtimeTracking := hasVehicleTracking || hasTripUpdateTracking || hasPredictionTimes
+	predicted := !isCanceled && hasRealtimeTracking
+	if !hasPredictionTimes || isCanceled {
 		predictedArrivalTime = time.Time{}
 		predictedDepartureTime = time.Time{}
 	}
