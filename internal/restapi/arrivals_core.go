@@ -1063,17 +1063,14 @@ func (api *RestAPI) tripStatusForArrival(
 	return status, distanceFromStop, numberOfStopsAway, situations
 }
 
-// extractEntityAgencyAndBareID extracts the owning agency ID and bare ID from a combined ID,
-// prioritizing stripping the known route agency prefix before falling back to ExtractAgencyIDAndCodeID.
+// extractEntityAgencyAndBareID extracts the owning agency ID and bare ID from a combined ID
+// by stripping the known route agency prefix.
 func extractEntityAgencyAndBareID(combinedID, agencyID string) (string, string) {
 	if agencyID != "" {
 		prefix := agencyID + "_"
 		if strings.HasPrefix(combinedID, prefix) {
 			return agencyID, strings.TrimPrefix(combinedID, prefix)
 		}
-	}
-	if parsedAgency, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID); err == nil {
-		return parsedAgency, bareID
 	}
 	return "", ""
 }

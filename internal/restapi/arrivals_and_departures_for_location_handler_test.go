@@ -983,7 +983,8 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 			"s2,Stop 2,37.7749,-122.4194\n" +
 			"s2b,Stop 2B,37.7849,-122.4194\n" +
 			"s3,Stop 3,37.7750,-122.4195\n" +
-			"s3b,Stop 3B,37.7850,-122.4195\n",
+			"s3b,Stop 3B,37.7850,-122.4195\n" +
+			"s4,Stop 4,37.7748,-122.4194\n",
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
 			"ROUTE_100,svc1,t1,Headsign 1,0,b1\n" +
 			"ROUTE_100,svc1,t2,Headsign 2,0,b1\n" +
@@ -994,11 +995,13 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 			"t2,08:10:00,08:10:00,s2,1\n" +
 			"t2,08:20:00,08:20:00,s2b,2\n" +
 			"t3,08:12:00,08:12:00,s3,1\n" +
-			"t3,08:22:00,08:22:00,s3b,2\n",
+			"t3,08:14:00,08:14:00,s4,2\n" +
+			"t3,08:22:00,08:22:00,s3b,3\n",
 	}
 
-	testTime := time.Date(2024, 6, 15, 8, 0, 0, 0, time.FixedZone("PDT", -7*3600))
-	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(testTime), "underscore-agency-location.zip", files)
+	testTime0800 := time.Date(2024, 6, 15, 8, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	mockClock := clock.NewMockClock(testTime0800)
+	api := createTestApiWithGTFSFixture(t, mockClock, "underscore-agency-location.zip", files)
 	defer api.Shutdown()
 
 	bareRoute := "ROUTE_100"
@@ -1010,17 +1013,20 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 		Header: []gtfs.AlertText{{Text: "Alert on Route 100", Language: "en"}},
 	})
 
-	u := "/api/where/arrivals-and-departures-for-location.json?" + url.Values{
-		"key":           {"TEST"},
-		"lat":           {"37.7749"},
-		"lon":           {"-122.4194"},
-		"radius":        {"1000"},
-		"minutesBefore": {"15"},
-		"minutesAfter":  {"15"},
-		"time":          {strconv.FormatInt(testTime.UnixMilli(), 10)},
-	}.Encode()
+	locationURL := func(tm time.Time) string {
+		return "/api/where/arrivals-and-departures-for-location.json?" + url.Values{
+			"key":           {"TEST"},
+			"lat":           {"37.7749"},
+			"lon":           {"-122.4194"},
+			"radius":        {"1000"},
+			"minutesBefore": {"15"},
+			"minutesAfter":  {"15"},
+			"time":          {strconv.FormatInt(tm.UnixMilli(), 10)},
+		}.Encode()
+	}
 
-	resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api, u)
+	// 1. Query at 08:00 when active block trip t1 is running before t2:
+	resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api, locationURL(testTime0800))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	entry := model.Data.Entry
@@ -1071,20 +1077,14 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 	require.True(t, ok, "references.stops must retain AGENCY_ONE_s2")
 	assert.Equal(t, "Stop 2", stop2Ref.Name)
 
+	require.NotEmpty(t, arrival1.TripStatus.NextStop)
+	assert.Contains(t, stopsByID, arrival1.TripStatus.NextStop, "references.stops must retain status NextStop")
+	require.NotEmpty(t, arrival1.TripStatus.ClosestStop)
+	assert.Contains(t, stopsByID, arrival1.TripStatus.ClosestStop, "references.stops must retain status ClosestStop")
+
 	stop3Ref, ok := stopsByID["AGENCY_TWO_s3"]
 	require.True(t, ok, "references.stops must retain AGENCY_TWO_s3")
 	assert.Equal(t, "Stop 3", stop3Ref.Name)
-
-	if arrival1.TripStatus != nil {
-		if arrival1.TripStatus.NextStop != "" {
-			_, ok := stopsByID[arrival1.TripStatus.NextStop]
-			assert.True(t, ok, "references.stops must contain next stop %s", arrival1.TripStatus.NextStop)
-		}
-		if arrival1.TripStatus.ClosestStop != "" {
-			_, ok := stopsByID[arrival1.TripStatus.ClosestStop]
-			assert.True(t, ok, "references.stops must contain closest stop %s", arrival1.TripStatus.ClosestStop)
-		}
-	}
 
 	// Verify references.routes retains routes for both agencies with underscores
 	require.NotEmpty(t, model.Data.References.Routes)
@@ -1098,6 +1098,38 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 
 	route2Ref, ok := routesByID["AGENCY_TWO_ROUTE_200"]
 	require.True(t, ok, "references.routes must retain AGENCY_TWO_ROUTE_200")
+	assert.Equal(t, "AGENCY_TWO", route2Ref.AgencyID)
+
+	// Verify situations retained
+	require.NotEmpty(t, entry.SituationIDs)
+	assert.Equal(t, "AGENCY_ONE_ALERT_1", entry.SituationIDs[0])
+
+	// 2. Query at 08:15 when t2 is active and its next stop s2b is outside the search radius.
+	// Bounding box has 2 AGENCY_TWO stops (s3, s4) vs 1 AGENCY_ONE stop (s2), making AGENCY_TWO
+	// the fallback agency. acc.stopAgencies must attribute s2b to AGENCY_ONE instead of falling back.
+	testTime0815 := time.Date(2024, 6, 15, 8, 15, 0, 0, time.FixedZone("PDT", -7*3600))
+	mockClock.Set(testTime0815)
+	resp2, model2 := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api, locationURL(testTime0815))
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
+
+	arrivals2ByTrip := make(map[string]models.ArrivalAndDeparture, len(model2.Data.Entry.ArrivalsAndDepartures))
+	for _, a := range model2.Data.Entry.ArrivalsAndDepartures {
+		arrivals2ByTrip[a.TripID] = a
+	}
+	arrivalT2At0815, okT2 := arrivals2ByTrip["AGENCY_ONE_t2"]
+	require.True(t, okT2, "arrivals at 08:15 must contain AGENCY_ONE_t2")
+	require.NotNil(t, arrivalT2At0815.TripStatus)
+	assert.Equal(t, "AGENCY_ONE_s2b", arrivalT2At0815.TripStatus.NextStop)
+	assert.Equal(t, "AGENCY_ONE_s2", arrivalT2At0815.TripStatus.ClosestStop)
+
+	stops2ByID := make(map[string]models.Stop, len(model2.Data.References.Stops))
+	for _, s := range model2.Data.References.Stops {
+		stops2ByID[s.ID] = s
+	}
+	stop2bRef, ok2b := stops2ByID["AGENCY_ONE_s2b"]
+	require.True(t, ok2b, "references.stops must retain next stop AGENCY_ONE_s2b via acc.stopAgencies")
+	assert.Equal(t, "Stop 2B", stop2bRef.Name)
+	assert.NotContains(t, stops2ByID, "AGENCY_TWO_s2b", "must not fall back to dominant box agency AGENCY_TWO")
 	assert.Equal(t, "AGENCY_TWO", route2Ref.AgencyID)
 
 	// Verify references.agencies retains both agencies with underscores

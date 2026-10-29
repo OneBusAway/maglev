@@ -231,25 +231,23 @@ func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combined
 }
 
 // resolveRetainedStopID resolves a combined stop ID back to its bare ID.
-// It prioritises exact matches in stopIndex, falls back to stripping known
-// agency prefixes, and finally falls back to ExtractAgencyIDAndCodeID.
-func resolveRetainedStopID(combinedID string, stopIndex map[string]string, agencies []string) string {
+// It checks stopIndex first, strips fallbackAgencyID if present, and falls
+// back to ExtractAgencyIDAndCodeID when stopIndex is nil or does not match.
+func resolveRetainedStopID(combinedID string, stopIndex map[string]string, fallbackAgencyID string) string {
 	if stopIndex != nil {
 		if bareID, ok := stopIndex[combinedID]; ok {
 			return bareID
 		}
 	}
-	for _, agencyID := range agencies {
-		if agencyID != "" {
-			prefix := agencyID + "_"
-			if strings.HasPrefix(combinedID, prefix) {
-				if bareID := strings.TrimPrefix(combinedID, prefix); bareID != "" {
-					return bareID
-				}
+	if fallbackAgencyID != "" {
+		prefix := fallbackAgencyID + "_"
+		if strings.HasPrefix(combinedID, prefix) {
+			if bareID := strings.TrimPrefix(combinedID, prefix); bareID != "" {
+				return bareID
 			}
 		}
 	}
-	if _, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID); err == nil && bareID != "" {
+	if _, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID); err == nil {
 		return bareID
 	}
 	return ""
@@ -259,11 +257,14 @@ func resolveRetainedStopID(combinedID string, stopIndex map[string]string, agenc
 // A value that does not match a known stop is skipped.
 func retainedStopCodes(combinedIDs []string, agencies *stopAgencyIndex) []string {
 	stopIndex := buildCombinedStopIndex(nil, agencies)
-	agenciesList := knownAgencies(nil, agencies)
+	fallbackAgencyID := ""
+	if agencies != nil {
+		fallbackAgencyID = agencies.fallbackAgencyID
+	}
 	codes := make([]string, 0, len(combinedIDs))
 	seen := make(map[string]struct{}, len(combinedIDs))
 	for _, id := range combinedIDs {
-		bareID := resolveRetainedStopID(id, stopIndex, agenciesList)
+		bareID := resolveRetainedStopID(id, stopIndex, fallbackAgencyID)
 		if bareID == "" {
 			continue
 		}
@@ -326,20 +327,24 @@ func retainedAccumulator(
 	stopIndex := buildCombinedStopIndex(acc, agencies)
 	tripIndex := buildCombinedTripIndex(acc, agencies)
 	routeIndex := buildCombinedRouteIndex(acc, agencies)
-	agenciesList := knownAgencies(acc, agencies)
+
+	fallbackAgencyID := ""
+	if agencies != nil {
+		fallbackAgencyID = agencies.fallbackAgencyID
+	}
 
 	for _, id := range stopIDs {
-		retainStop(refAcc, id, stopIndex, agenciesList)
+		retainStop(refAcc, id, stopIndex, fallbackAgencyID)
 	}
 	for _, n := range nearby {
-		retainStop(refAcc, n.StopID, stopIndex, agenciesList)
+		retainStop(refAcc, n.StopID, stopIndex, fallbackAgencyID)
 	}
 
 	for _, a := range arrivals {
-		retainStop(refAcc, a.StopID, stopIndex, agenciesList)
+		retainStop(refAcc, a.StopID, stopIndex, fallbackAgencyID)
 		retainTrip(refAcc, acc, a.TripID, tripIndex)
 		retainRoute(refAcc, a.RouteID, routeIndex)
-		retainTripStatusEntities(refAcc, acc, a.TripStatus, stopIndex, tripIndex, agenciesList)
+		retainTripStatusEntities(refAcc, acc, a.TripStatus, stopIndex, tripIndex, fallbackAgencyID)
 	}
 
 	return refAcc
@@ -354,20 +359,20 @@ func retainTripStatusEntities(
 	status *models.TripStatus,
 	stopIndex map[string]string,
 	tripIndex map[string]*gtfsdb.Trip,
-	agenciesList []string,
+	fallbackAgencyID string,
 ) {
 	if status == nil {
 		return
 	}
-	retainStop(refAcc, status.NextStop, stopIndex, agenciesList)
-	retainStop(refAcc, status.ClosestStop, stopIndex, agenciesList)
+	retainStop(refAcc, status.NextStop, stopIndex, fallbackAgencyID)
+	retainStop(refAcc, status.ClosestStop, stopIndex, fallbackAgencyID)
 	retainTrip(refAcc, acc, status.ActiveTripID, tripIndex)
 }
 
 // retainStop records a combined stop ID under the bare ID appendStopReferences
 // looks it up by. A malformed or empty ID is skipped.
-func retainStop(refAcc *arrivalsAccumulator, combinedStopID string, stopIndex map[string]string, knownAgencies []string) {
-	if bareID := resolveRetainedStopID(combinedStopID, stopIndex, knownAgencies); bareID != "" {
+func retainStop(refAcc *arrivalsAccumulator, combinedStopID string, stopIndex map[string]string, fallbackAgencyID string) {
+	if bareID := resolveRetainedStopID(combinedStopID, stopIndex, fallbackAgencyID); bareID != "" {
 		refAcc.stopIDs[bareID] = true
 	}
 }
@@ -400,57 +405,21 @@ func retainRoute(refAcc *arrivalsAccumulator, combinedRouteID string, routeIndex
 	}
 }
 
-func addAgency(seen map[string]struct{}, agencyID string) {
-	if agencyID != "" {
-		seen[agencyID] = struct{}{}
-	}
-}
-
-func collectAgencies(seen map[string]struct{}, acc *arrivalsAccumulator, agencies *stopAgencyIndex) {
+func agencyForStop(bareID string, acc *arrivalsAccumulator, agencies *stopAgencyIndex) string {
 	if agencies != nil {
-		addAgency(seen, agencies.fallbackAgencyID)
-		for agencyID := range agencies.locations {
-			addAgency(seen, agencyID)
+		if agencyID, ok := agencies.byStopID[bareID]; ok && agencyID != "" {
+			return agencyID
 		}
 	}
-	if acc != nil {
-		for _, route := range acc.routes {
-			addAgency(seen, route.AgencyID)
+	if acc != nil && acc.stopAgencies != nil {
+		if agencyID, ok := acc.stopAgencies[bareID]; ok && agencyID != "" {
+			return agencyID
 		}
 	}
-}
-
-func sortAgenciesByLength(agencies []string) {
-	sort.Slice(agencies, func(i, j int) bool {
-		if len(agencies[i]) != len(agencies[j]) {
-			return len(agencies[i]) > len(agencies[j])
-		}
-		return agencies[i] < agencies[j]
-	})
-}
-
-// knownAgencies returns all distinct agency IDs involved in the request,
-// sorted by descending length so that longer agency prefixes match before
-// prefixes that are substrings.
-func knownAgencies(acc *arrivalsAccumulator, agencies *stopAgencyIndex) []string {
-	seen := make(map[string]struct{})
-	collectAgencies(seen, acc, agencies)
-	result := make([]string, 0, len(seen))
-	for id := range seen {
-		result = append(result, id)
+	if agencies != nil {
+		return agencies.fallbackAgencyID
 	}
-	sortAgenciesByLength(result)
-	return result
-}
-
-// addStopIndices adds combined IDs for bareIDs under agencyID to index.
-func addStopIndices(index map[string]string, bareIDs []string, agencyID string) {
-	for _, bareID := range bareIDs {
-		comb := utils.FormCombinedID(agencyID, bareID)
-		if _, exists := index[comb]; !exists {
-			index[comb] = bareID
-		}
-	}
+	return ""
 }
 
 // buildCombinedStopIndex maps each stop's combined ID to its bare ID.
@@ -477,14 +446,11 @@ func buildCombinedStopIndex(acc *arrivalsAccumulator, agencies *stopAgencyIndex)
 
 	index := make(map[string]string, len(bareIDs))
 	for _, bareID := range bareIDs {
-		agencyID := agencies.agencyIDFor(bareID)
+		agencyID := agencyForStop(bareID, acc, agencies)
 		comb := utils.FormCombinedID(agencyID, bareID)
 		if _, exists := index[comb]; !exists {
 			index[comb] = bareID
 		}
-	}
-	for _, agencyID := range knownAgencies(acc, agencies) {
-		addStopIndices(index, bareIDs, agencyID)
 	}
 	return index
 }
@@ -497,15 +463,6 @@ func agencyForTrip(trip *gtfsdb.Trip, acc *arrivalsAccumulator, agencies *stopAg
 		return agencies.fallbackAgencyID
 	}
 	return ""
-}
-
-func addTripIndices(index map[string]*gtfsdb.Trip, acc *arrivalsAccumulator, bareIDs []string, agencyID string) {
-	for _, bareID := range bareIDs {
-		comb := utils.FormCombinedID(agencyID, bareID)
-		if _, exists := index[comb]; !exists {
-			index[comb] = acc.trips[bareID]
-		}
-	}
 }
 
 // buildCombinedTripIndex maps each trip's combined ID to its *gtfsdb.Trip.
@@ -528,9 +485,6 @@ func buildCombinedTripIndex(acc *arrivalsAccumulator, agencies *stopAgencyIndex)
 			index[comb] = trip
 		}
 	}
-	for _, agencyID := range knownAgencies(acc, agencies) {
-		addTripIndices(index, acc, bareIDs, agencyID)
-	}
 	return index
 }
 
@@ -542,15 +496,6 @@ func agencyForRoute(route *gtfsdb.Route, agencies *stopAgencyIndex) string {
 		return agencies.fallbackAgencyID
 	}
 	return ""
-}
-
-func addRouteIndices(index map[string]*gtfsdb.Route, acc *arrivalsAccumulator, bareIDs []string, agencyID string) {
-	for _, bareID := range bareIDs {
-		comb := utils.FormCombinedID(agencyID, bareID)
-		if _, exists := index[comb]; !exists {
-			index[comb] = acc.routes[bareID]
-		}
-	}
 }
 
 // buildCombinedRouteIndex maps each route's combined ID to its *gtfsdb.Route.
@@ -572,9 +517,6 @@ func buildCombinedRouteIndex(acc *arrivalsAccumulator, agencies *stopAgencyIndex
 		if _, exists := index[comb]; !exists {
 			index[comb] = route
 		}
-	}
-	for _, agencyID := range knownAgencies(acc, agencies) {
-		addRouteIndices(index, acc, bareIDs, agencyID)
 	}
 	return index
 }
