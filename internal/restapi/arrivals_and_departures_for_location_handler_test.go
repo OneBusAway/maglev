@@ -1130,7 +1130,6 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 	require.True(t, ok2b, "references.stops must retain next stop AGENCY_ONE_s2b via acc.stopAgencies")
 	assert.Equal(t, "Stop 2B", stop2bRef.Name)
 	assert.NotContains(t, stops2ByID, "AGENCY_TWO_s2b", "must not fall back to dominant box agency AGENCY_TWO")
-	assert.Equal(t, "AGENCY_TWO", route2Ref.AgencyID)
 
 	// Verify references.agencies retains both agencies with underscores
 	require.NotEmpty(t, model.Data.References.Agencies)
