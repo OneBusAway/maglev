@@ -610,12 +610,13 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyStatusStopReferences(t *
 	queries := api.GtfsManager.GtfsDB.Queries
 
 	const (
-		agencyA   = "AgencyA"
-		stopID    = "MultiAgencyStop"
-		agencyB   = "AgencyB"
-		nextStopB = "StopBNext"
-		routeBID  = "RouteB"
-		tripBID   = "TripB"
+		agencyA   = "AgencyStatusA"
+		stopID    = "MultiAgencyStatusStop"
+		agencyB   = "AgencyStatusB"
+		nextStopB = "StopStatusBNext"
+		routeBID  = "RouteStatusB"
+		tripBID   = "TripStatusB"
+		serviceID = "serviceStatus1"
 	)
 	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
 		ID: agencyA, Name: "Transit Agency A", Url: "http://agency-a.com", Timezone: "America/Los_Angeles",
@@ -643,12 +644,12 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyStatusStopReferences(t *
 	})
 	require.NoError(t, err)
 	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
-		ID: "service1", Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		ID: serviceID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
 		StartDate: "20000101", EndDate: "20301231",
 	})
 	require.NoError(t, err)
 	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
-		ID: tripBID, RouteID: routeBID, ServiceID: "service1",
+		ID: tripBID, RouteID: routeBID, ServiceID: serviceID,
 		TripHeadsign: nulls.String("Downtown"),
 	})
 	require.NoError(t, err)
