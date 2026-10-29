@@ -826,13 +826,25 @@ func TestRetainedStopCodes(t *testing.T) {
 		"25_",
 		"40_4063",
 		"",
-	}))
-	assert.Empty(t, retainedStopCodes(nil))
+	}, nil))
+	assert.Empty(t, retainedStopCodes(nil, nil))
+
+	idx := &stopAgencyIndex{
+		byStopID: map[string]string{
+			"s1": "AGENCY_ONE",
+			"s2": "AGENCY_ONE",
+		},
+		fallbackAgencyID: "AGENCY_ONE",
+	}
+	assert.Equal(t, []string{"s1", "s2"}, retainedStopCodes([]string{
+		"AGENCY_ONE_s1",
+		"AGENCY_ONE_s2",
+	}, idx))
 }
 
 func TestAddRouteAlertsForRetainedStopsSkipsBadIDs(t *testing.T) {
 	api := createTestApi(t)
-	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{"not-combined"}, newSituationCollector()))
+	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{"not-combined"}, newSituationCollector(), nil))
 }
 
 func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
@@ -840,7 +852,7 @@ func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := api.addRouteAlertsForRetainedStops(ctx, []string{arrivalsTestStopID}, newSituationCollector())
+	err := api.addRouteAlertsForRetainedStops(ctx, []string{arrivalsTestStopID}, newSituationCollector(), nil)
 	require.Error(t, err)
 }
 
@@ -948,9 +960,191 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	})
 
 	situations := newSituationCollector()
-	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{arrivalsTestStopID}, situations))
+	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{arrivalsTestStopID}, situations, nil))
 
 	ids := situationIDsFromRefs(situations.refs)
 	assert.Contains(t, ids, utils.FormCombinedID(agencyID, alertID))
 	assert.NotContains(t, ids, utils.FormCombinedID("a", alertID))
+}
+
+func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"AGENCY_ONE,Agency One,http://agency1.org,America/Los_Angeles\n" +
+			"AGENCY_TWO,Agency Two,http://agency2.org,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"ROUTE_100,AGENCY_ONE,100,Route 100,3\n" +
+			"ROUTE_200,AGENCY_TWO,200,Route 200,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1a,Stop 1A,37.6000,-122.4000\n" +
+			"s1b,Stop 1B,37.6100,-122.4000\n" +
+			"s2,Stop 2,37.7749,-122.4194\n" +
+			"s2b,Stop 2B,37.7849,-122.4194\n" +
+			"s3,Stop 3,37.7750,-122.4195\n" +
+			"s3b,Stop 3B,37.7850,-122.4195\n" +
+			"s4,Stop 4,37.7748,-122.4194\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			"ROUTE_100,svc1,t1,Headsign 1,0,b1\n" +
+			"ROUTE_100,svc1,t2,Headsign 2,0,b1\n" +
+			"ROUTE_200,svc1,t3,Headsign 3,0,b2\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,07:50:00,07:50:00,s1a,1\n" +
+			"t1,08:05:00,08:05:00,s1b,2\n" +
+			"t2,08:10:00,08:10:00,s2,1\n" +
+			"t2,08:20:00,08:20:00,s2b,2\n" +
+			"t3,08:12:00,08:12:00,s3,1\n" +
+			"t3,08:14:00,08:14:00,s4,2\n" +
+			"t3,08:22:00,08:22:00,s3b,3\n",
+	}
+
+	testTime0800 := time.Date(2024, 6, 15, 8, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	mockClock := clock.NewMockClock(testTime0800)
+	api := createTestApiWithGTFSFixture(t, mockClock, "underscore-agency-location.zip", files)
+	defer api.Shutdown()
+
+	bareRoute := "ROUTE_100"
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID: "ALERT_1",
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			RouteID: &bareRoute,
+		}},
+		Header: []gtfs.AlertText{{Text: "Alert on Route 100", Language: "en"}},
+	})
+
+	locationURL := func(tm time.Time) string {
+		return "/api/where/arrivals-and-departures-for-location.json?" + url.Values{
+			"key":           {"TEST"},
+			"lat":           {"37.7749"},
+			"lon":           {"-122.4194"},
+			"radius":        {"1000"},
+			"minutesBefore": {"15"},
+			"minutesAfter":  {"15"},
+			"time":          {strconv.FormatInt(tm.UnixMilli(), 10)},
+		}.Encode()
+	}
+
+	// 1. Query at 08:00 when active block trip t1 is running before t2:
+	resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api, locationURL(testTime0800))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	require.NotEmpty(t, entry.ArrivalsAndDepartures)
+
+	arrivalsByTrip := make(map[string]models.ArrivalAndDeparture, len(entry.ArrivalsAndDepartures))
+	for _, a := range entry.ArrivalsAndDepartures {
+		arrivalsByTrip[a.TripID] = a
+	}
+
+	arrival1, ok1 := arrivalsByTrip["AGENCY_ONE_t2"]
+	require.True(t, ok1, "arrivals must contain AGENCY_ONE_t2")
+	assert.Equal(t, "AGENCY_ONE_s2", arrival1.StopID)
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", arrival1.RouteID)
+	require.NotNil(t, arrival1.TripStatus)
+	assert.Equal(t, "AGENCY_ONE_t1", arrival1.TripStatus.ActiveTripID)
+
+	arrival2, ok2 := arrivalsByTrip["AGENCY_TWO_t3"]
+	require.True(t, ok2, "arrivals must contain AGENCY_TWO_t3")
+	assert.Equal(t, "AGENCY_TWO_s3", arrival2.StopID)
+	assert.Equal(t, "AGENCY_TWO_ROUTE_200", arrival2.RouteID)
+
+	// Verify references.trips retains trips from both agencies, including the active block trip
+	require.NotEmpty(t, model.Data.References.Trips)
+	tripsByID := make(map[string]models.Trip, len(model.Data.References.Trips))
+	for _, tr := range model.Data.References.Trips {
+		tripsByID[tr.ID] = tr
+	}
+	trip2Ref, ok := tripsByID["AGENCY_ONE_t2"]
+	require.True(t, ok, "references.trips must retain arrival trip AGENCY_ONE_t2")
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", trip2Ref.RouteID)
+
+	trip1Ref, ok := tripsByID["AGENCY_ONE_t1"]
+	require.True(t, ok, "references.trips must retain active block trip AGENCY_ONE_t1")
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", trip1Ref.RouteID)
+
+	trip3Ref, ok := tripsByID["AGENCY_TWO_t3"]
+	require.True(t, ok, "references.trips must retain arrival trip AGENCY_TWO_t3")
+	assert.Equal(t, "AGENCY_TWO_ROUTE_200", trip3Ref.RouteID)
+
+	// Verify references.stops retains distinct stops using the producing agency
+	require.NotEmpty(t, model.Data.References.Stops)
+	stopsByID := make(map[string]models.Stop, len(model.Data.References.Stops))
+	for _, s := range model.Data.References.Stops {
+		stopsByID[s.ID] = s
+	}
+	stop2Ref, ok := stopsByID["AGENCY_ONE_s2"]
+	require.True(t, ok, "references.stops must retain AGENCY_ONE_s2")
+	assert.Equal(t, "Stop 2", stop2Ref.Name)
+
+	require.NotEmpty(t, arrival1.TripStatus.NextStop)
+	assert.Contains(t, stopsByID, arrival1.TripStatus.NextStop, "references.stops must retain status NextStop")
+	require.NotEmpty(t, arrival1.TripStatus.ClosestStop)
+	assert.Contains(t, stopsByID, arrival1.TripStatus.ClosestStop, "references.stops must retain status ClosestStop")
+
+	stop3Ref, ok := stopsByID["AGENCY_TWO_s3"]
+	require.True(t, ok, "references.stops must retain AGENCY_TWO_s3")
+	assert.Equal(t, "Stop 3", stop3Ref.Name)
+
+	// Verify references.routes retains routes for both agencies with underscores
+	require.NotEmpty(t, model.Data.References.Routes)
+	routesByID := make(map[string]models.Route, len(model.Data.References.Routes))
+	for _, r := range model.Data.References.Routes {
+		routesByID[r.ID] = r
+	}
+	route1Ref, ok := routesByID["AGENCY_ONE_ROUTE_100"]
+	require.True(t, ok, "references.routes must retain AGENCY_ONE_ROUTE_100")
+	assert.Equal(t, "AGENCY_ONE", route1Ref.AgencyID)
+
+	route2Ref, ok := routesByID["AGENCY_TWO_ROUTE_200"]
+	require.True(t, ok, "references.routes must retain AGENCY_TWO_ROUTE_200")
+	assert.Equal(t, "AGENCY_TWO", route2Ref.AgencyID)
+
+	// Verify situations retained
+	require.NotEmpty(t, entry.SituationIDs)
+	assert.Equal(t, "AGENCY_ONE_ALERT_1", entry.SituationIDs[0])
+
+	// 2. Query at 08:15 when t2 is active and its next stop s2b is outside the search radius.
+	// Bounding box has 2 AGENCY_TWO stops (s3, s4) vs 1 AGENCY_ONE stop (s2), making AGENCY_TWO
+	// the fallback agency. acc.stopAgencies must attribute s2b to AGENCY_ONE instead of falling back.
+	testTime0815 := time.Date(2024, 6, 15, 8, 15, 0, 0, time.FixedZone("PDT", -7*3600))
+	mockClock.Set(testTime0815)
+	resp2, model2 := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api, locationURL(testTime0815))
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
+
+	arrivals2ByTrip := make(map[string]models.ArrivalAndDeparture, len(model2.Data.Entry.ArrivalsAndDepartures))
+	for _, a := range model2.Data.Entry.ArrivalsAndDepartures {
+		arrivals2ByTrip[a.TripID] = a
+	}
+	arrivalT2At0815, okT2 := arrivals2ByTrip["AGENCY_ONE_t2"]
+	require.True(t, okT2, "arrivals at 08:15 must contain AGENCY_ONE_t2")
+	require.NotNil(t, arrivalT2At0815.TripStatus)
+	assert.Equal(t, "AGENCY_ONE_s2b", arrivalT2At0815.TripStatus.NextStop)
+	assert.Equal(t, "AGENCY_ONE_s2", arrivalT2At0815.TripStatus.ClosestStop)
+
+	stops2ByID := make(map[string]models.Stop, len(model2.Data.References.Stops))
+	for _, s := range model2.Data.References.Stops {
+		stops2ByID[s.ID] = s
+	}
+	stop2bRef, ok2b := stops2ByID["AGENCY_ONE_s2b"]
+	require.True(t, ok2b, "references.stops must retain next stop AGENCY_ONE_s2b via acc.stopAgencies")
+	assert.Equal(t, "Stop 2B", stop2bRef.Name)
+	assert.NotContains(t, stops2ByID, "AGENCY_TWO_s2b", "must not fall back to dominant box agency AGENCY_TWO")
+
+	// Verify references.agencies retains both agencies with underscores
+	require.NotEmpty(t, model.Data.References.Agencies)
+	agenciesByID := make(map[string]models.AgencyReference, len(model.Data.References.Agencies))
+	for _, a := range model.Data.References.Agencies {
+		agenciesByID[a.ID] = a
+	}
+	agency1Ref, ok := agenciesByID["AGENCY_ONE"]
+	require.True(t, ok, "references.agencies must retain AGENCY_ONE")
+	assert.Equal(t, "Agency One", agency1Ref.Name)
+
+	agency2Ref, ok := agenciesByID["AGENCY_TWO"]
+	require.True(t, ok, "references.agencies must retain AGENCY_TWO")
+	assert.Equal(t, "Agency Two", agency2Ref.Name)
+
+	// Verify route alerts for retained stops resolve when the agency has an underscore
+	assert.Contains(t, entry.SituationIDs, utils.FormCombinedID("AGENCY_ONE", "ALERT_1"))
 }

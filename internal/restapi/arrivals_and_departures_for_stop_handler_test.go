@@ -599,6 +599,92 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 	assert.True(t, foundRoute, "references.routes should contain the correctly prefixed route")
 }
 
+func TestArrivalsAndDeparturesForStopHandler_MultiAgencyStatusStopReferences(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, loc))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyA   = "AgencyStatusA"
+		stopID    = "MultiAgencyStatusStop"
+		agencyB   = "AgencyStatusB"
+		nextStopB = "StopStatusBNext"
+		routeBID  = "RouteStatusB"
+		tripBID   = "TripStatusB"
+		serviceID = "serviceStatus1"
+	)
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyA, Name: "Transit Agency A", Url: "http://agency-a.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: stopID, Name: nulls.String("Shared Transit Center"),
+		Lat: 47.6062, Lon: -122.3321,
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: nextStopB, Name: nulls.String("Agency B Next Stop"),
+		Lat: 47.6162, Lon: -122.3321,
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyB, Name: "Transit Agency B", Url: "http://agency-b.com", Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeBID, AgencyID: agencyB,
+		ShortName: nulls.String("B-Line"),
+		LongName:  nulls.String("Agency B Express"),
+		Type:      3,
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: serviceID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20000101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripBID, RouteID: routeBID, ServiceID: serviceID,
+		TripHeadsign: nulls.String("Downtown"),
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripBID, StopID: stopID, StopSequence: 1,
+		ArrivalTime:   int64(8 * time.Hour),
+		DepartureTime: int64(8*time.Hour + 1*time.Minute),
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripBID, StopID: nextStopB, StopSequence: 2,
+		ArrivalTime:   int64(8*time.Hour + 15*time.Minute),
+		DepartureTime: int64(8*time.Hour + 15*time.Minute),
+	})
+	require.NoError(t, err)
+
+	combinedStopID := utils.FormCombinedID(agencyA, stopID)
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	require.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures)
+
+	stopsByID := make(map[string]models.Stop, len(model.Data.References.Stops))
+	for _, s := range model.Data.References.Stops {
+		stopsByID[s.ID] = s
+	}
+
+	expectedQueriedStopID := utils.FormCombinedID(agencyA, stopID)
+	assert.Contains(t, stopsByID, expectedQueriedStopID, "queried stop reference must retain AgencyA")
+
+	expectedNextStopID := utils.FormCombinedID(agencyB, nextStopB)
+	assert.Contains(t, stopsByID, expectedNextStopID, "status next stop reference must retain AgencyB")
+}
+
 func TestArrivalsAndDeparturesReturnsResultsNearMidnight(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2025, 6, 13, 11, 0, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
