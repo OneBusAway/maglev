@@ -304,9 +304,9 @@ The manager keeps two kinds of static state in memory:
 
 - `regionBounds` (`map[agencyID]*RegionBounds`, guarded by `staticMutex`),
   recomputed after each reload and read through `GetRegionBounds()`.
-- The caches of its `DirectionCalculator` (`AdvancedDirectionCalculator`):
-  shape points (`shapeCache`), and per-reload stop directions and trip
-  stop-distance checks (`directionCache`). See Direction Calculator below.
+- The per-reload cache of its `DirectionCalculator` (`AdvancedDirectionCalculator`):
+  stop directions and trip stop-distance checks (`directionCache`). See
+  Direction Calculator below.
 
 **Real-Time Data** (protected by `realTimeMutex`):
 

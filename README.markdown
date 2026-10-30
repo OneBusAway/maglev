@@ -474,7 +474,7 @@ and the first real-time fetch has been attempted, then `ok`.
 | -------------------------- | -------------------------------------------------------------------- | ------- |
 | `TZ`                       | Timezone for the container                                           | `UTC`   |
 | `GTFS_API_KEYS`            | Comma-separated API keys; replaces `api-keys` from the config file   | —       |
-| `GTFS_PROTECTED_API_KEYS`  | Comma-separated keys for protected endpoints; replaces `protected-api-keys` | — |
+| `GTFS_PROTECTED_API_KEYS`  | Comma-separated keys for protected endpoints; replaces `protected-api-keys` from the config file. In a flag-based start the `-protected-api-keys` flag takes precedence | — |
 | `GTFS_STATIC_AUTH_NAME`    | Auth header name for the static GTFS feed                            | —       |
 | `GTFS_STATIC_AUTH_VALUE`   | Auth header value for the static GTFS feed                           | —       |
 | `GTFS_REALTIME_AUTH_NAME`  | Auth header name for the first GTFS-RT feed only                     | —       |
