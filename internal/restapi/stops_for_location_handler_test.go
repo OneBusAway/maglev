@@ -812,13 +812,14 @@ func TestStopsForLocationUsesAgencyDateForCurrentTime(t *testing.T) {
 		return stopIDs
 	}
 
-	// Both routes to the fallback have to land on the agency's date.
+	// Each route to the fallback has to land on the agency's date.
 	tests := []struct {
 		name      string
 		timeParam string
 	}{
 		{name: "absent", timeParam: ""},
 		{name: "malformed", timeParam: "garbage"},
+		{name: "zero epoch", timeParam: "0"},
 		{name: "negative epoch", timeParam: "-5"},
 	}
 
