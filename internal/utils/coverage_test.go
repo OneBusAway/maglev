@@ -12,11 +12,6 @@ func TestTimeAndContextCoverage(t *testing.T) {
 	svcDate := CalculateServiceDate(now)
 	assert.Equal(t, time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC), svcDate)
 
-	explicit := time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC)
-	d, m := ServiceDateMidnight(&explicit, now)
-	assert.Equal(t, explicit, d)
-	assert.Equal(t, explicit, m)
-
 	sec := CalculateSecondsSinceServiceDate(now, svcDate)
 	assert.Equal(t, int64(12*3600), sec)
 

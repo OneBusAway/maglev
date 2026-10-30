@@ -75,7 +75,7 @@ func TestMergedRealtimeBeforeFirstPublish(t *testing.T) {
 	assert.Empty(t, manager.GetRealTimeVehicles())
 	assert.Empty(t, manager.GetAllTripUpdates())
 	assert.Empty(t, manager.GetDuplicatedVehiclesForRoute("route-1"))
-	assert.Empty(t, manager.GetAlertsForStop("stop-1"))
+	assert.Empty(t, manager.GetAlertsForStop("stop-1", ""))
 	assert.Empty(t, manager.GetTripUpdatesForTrip("trip-1"))
 
 	_, err := manager.GetVehicleByID("veh-1")

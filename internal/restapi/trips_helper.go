@@ -503,7 +503,8 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 		return nil, freqErr
 	}
 	if len(freqRows) > 0 {
-		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceDate, serviceDate), serviceDate)
+		serviceStart := servicedate.Of(serviceDate).Start(loc)
+		converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqRows, serviceStart, serviceStart), serviceStart)
 		scheduleFrequency = &converted
 	}
 

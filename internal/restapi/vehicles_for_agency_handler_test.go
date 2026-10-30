@@ -750,6 +750,15 @@ func TestVehiclesForAgencyHandler_TimeParameterAbsentUsesClock(t *testing.T) {
 	expectedMidnight := time.Date(ref.Year(), ref.Month(), ref.Day(), 0, 0, 0, 0, loc)
 	assert.Equal(t, expectedMidnight.UnixMilli(), vehicle.TripStatus.ServiceDate.UnixMilli(),
 		"tripStatus.serviceDate must be midnight of the server clock in the agency timezone when time is absent")
+
+	params := url.Values{"time": {"0"}}
+	zeroResp, zeroModel := callAPIHandler[VehiclesForAgencyResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+	assert.Equal(t, http.StatusOK, zeroResp.StatusCode)
+	zeroVehicle := findVehicleInList(zeroModel.Data.List, vehicleID)
+	require.NotNil(t, zeroVehicle, "mock vehicle must also be returned when time=0")
+	require.NotNil(t, zeroVehicle.TripStatus, "tripStatus must be present when time=0")
+	assert.Equal(t, vehicle.TripStatus.ServiceDate.UnixMilli(), zeroVehicle.TripStatus.ServiceDate.UnixMilli(),
+		"time=0 must use the same reference time as an absent time parameter")
 }
 
 // TestVehiclesForAgencyHandler_TimeParameterInvalid verifies that an unparseable

@@ -13,9 +13,11 @@ import (
 
 // Define params structure for the plural handler
 type ArrivalsStopParams struct {
-	After  time.Duration
-	Before time.Duration
-	Time   time.Time
+	After           time.Duration
+	Before          time.Duration
+	FrequencyBefore time.Duration
+	FrequencyAfter  time.Duration
+	Time            time.Time
 }
 
 // parseArrivalsAndDeparturesParams parses and validates parameters.
@@ -26,9 +28,11 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 	const maxAfter = 24 * time.Hour
 
 	params := ArrivalsStopParams{
-		After:  35 * time.Minute, // Default
-		Before: 5 * time.Minute,  // Default
-		Time:   api.Clock.Now(),  // Default to current time
+		After:           35 * time.Minute, // Default
+		Before:          5 * time.Minute,  // Default
+		FrequencyBefore: defaultFrequencyBefore,
+		FrequencyAfter:  defaultFrequencyAfter,
+		Time:            api.Clock.Now(), // Default to current time
 	}
 
 	var fieldErrors map[string][]string
@@ -44,6 +48,8 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 
 	params.After = parseMinutesValue(query, "minutesAfter", params.After, maxAfter, addError)
 	params.Before = parseMinutesValue(query, "minutesBefore", params.Before, maxBefore, addError)
+	params.FrequencyBefore = parseMinutesValue(query, "frequencyMinutesBefore", params.FrequencyBefore, maxArrivalWindow, addError)
+	params.FrequencyAfter = parseMinutesValue(query, "frequencyMinutesAfter", params.FrequencyAfter, maxArrivalWindow, addError)
 	params.Time = parseEpochMillisValue(query, "time", params.Time, addError)
 
 	return params, fieldErrors
@@ -96,12 +102,14 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
 	result, err := api.arrivalsForStop(ctx, stopArrivalsInput{
-		StopCode:  stopCode,
-		AgencyID:  stopAgencyID,
-		Location:  loc,
-		QueryTime: params.Time,
-		Before:    params.Before,
-		After:     params.After,
+		StopCode:        stopCode,
+		AgencyID:        stopAgencyID,
+		Location:        loc,
+		QueryTime:       params.Time,
+		Before:          params.Before,
+		After:           params.After,
+		FrequencyBefore: params.FrequencyBefore,
+		FrequencyAfter:  params.FrequencyAfter,
 	}, acc)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -115,10 +123,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// Sort after buildArrival so predicted times are already filled in.
 	sortArrivalsByBestTime(result.Arrivals)
 
-	// Nothing scheduled in the window: emit the bare envelope without paying
-	// for reference, alert or nearby-stop lookups.
+	// Nothing scheduled in the window: skip the reference and nearby-stop
+	// lookups, but keep the stop's alerts, which don't depend on arrivals.
 	if !result.Matched {
-		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, []string{}, []string{}, stopID, api.Clock)
+		situationIDs := api.addStopSituations(ctx, references, acc, stopCode, stopAgencyID)
+		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, []string{}, situationIDs, stopID, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -136,16 +145,21 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	acc.situations.add(api.GtfsManager.GetAlertsForStop(stopCode), acc.alertAgencyID)
-	references.Situations = append(references.Situations, api.situationReferences(ctx, acc.situations.refs)...)
-
-	// The top-level list covers every alert reachable from this stop, whether it
-	// was matched through an arrival's trip or through the stop itself.
-	topLevelSituationIDs := situationIDsFromRefs(acc.situations.refs)
+	topLevelSituationIDs := api.addStopSituations(ctx, references, acc, stopCode, stopAgencyID)
 
 	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
 	response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nearbyStopIDs, topLevelSituationIDs, stopID, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// addStopSituations records the stop's own and agency-wide alerts, adds every
+// collected situation to references, and returns their IDs for the entry.
+// The list covers every alert reachable from this stop, whether it was matched
+// through an arrival's trip or through the stop itself.
+func (api *RestAPI) addStopSituations(ctx context.Context, references *models.ReferencesModel, acc *arrivalsAccumulator, stopCode, stopAgencyID string) []string {
+	acc.situations.add(api.GtfsManager.GetAlertsForStop(stopCode, stopAgencyID), acc.alertAgencyID)
+	references.Situations = append(references.Situations, api.situationReferences(ctx, acc.situations.refs)...)
+	return situationIDsFromRefs(acc.situations.refs)
 }
 
 func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) []string {

@@ -710,17 +710,24 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 // whose routes do not resolve still gets a reference, with an empty route list,
 // so every stop ID an entry emits resolves in the block.
 //
+// stopRoute pairs a route with the agency that owns it.
+type stopRoute struct {
+	agencyID string
+	routeID  string
+}
+
 // The routes each stop serves are returned alongside the references, for callers
 // that collect route references from them. idsByBareId is a map of a bare stop id
 // to combined agencyId_stopId
-func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, idsByBareID map[string][]string) ([]models.Stop, map[string][]string) {
-	routeIDsByStop := api.routeIDsForStops(ctx, stops)
+func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, idsByBareID map[string][]string) ([]models.Stop, map[string][]stopRoute) {
+	routesByStop := api.routeIDsForStops(ctx, stops)
 
 	stopList := make([]models.Stop, 0, len(stops))
 	for _, stop := range stops {
-		routeIDs := routeIDsByStop[stop.ID]
-		if routeIDs == nil {
-			routeIDs = []string{}
+		routes := routesByStop[stop.ID]
+		routeIDs := make([]string, 0, len(routes))
+		for _, r := range routes {
+			routeIDs = append(routeIDs, utils.FormCombinedID(r.agencyID, r.routeID))
 		}
 
 		// Build the stop-specific fields once through buildStopModel so direction
@@ -744,38 +751,33 @@ func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, ids
 		}
 	}
 
-	added, err := api.appendResolvedParents(ctx, stopList, routeIDsByStop)
+	added, err := api.appendResolvedParents(ctx, stopList, routesByStop)
 	if err != nil {
 		logging.ForComponent(ctx, "http_server").Error("failed to resolve parent stop references", "error", err)
-		return stopList, routeIDsByStop
+		return stopList, routesByStop
 	}
-	return append(stopList, added...), routeIDsByStop
+	return append(stopList, added...), routesByStop
 }
 
 // appendResolvedParents adds parent-station records that stopList names but does
 // not already contain, and records their route IDs for reference collection.
-func (api *RestAPI) appendResolvedParents(ctx context.Context, stopList []models.Stop, routeIDsByStop map[string][]string) ([]models.Stop, error) {
-	added, _, err := api.missingParentStops(ctx, stopList)
+func (api *RestAPI) appendResolvedParents(ctx context.Context, stopList []models.Stop, routeIDsByStop map[string][]stopRoute) ([]models.Stop, error) {
+	added, parentRoutes, err := api.missingParentStops(ctx, stopList)
 	if err != nil {
 		return nil, err
 	}
-	for _, stop := range added {
-		rawID, err := utils.ExtractCodeID(stop.ID)
-		if err != nil {
-			continue
-		}
-		routeIDs := stop.StaticRouteIDs
-		if routeIDs == nil {
-			routeIDs = []string{}
-		}
-		routeIDsByStop[rawID] = routeIDs
+	for _, r := range parentRoutes {
+		routeIDsByStop[r.StopID] = append(routeIDsByStop[r.StopID], stopRoute{
+			agencyID: r.AgencyID,
+			routeID:  r.ID,
+		})
 	}
 	return added, nil
 }
 
-// routeIDsForStops maps each stop to the combined IDs of the routes serving it.
-func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) map[string][]string {
-	routeIDsByStop := make(map[string][]string)
+// routeIDsForStops maps each stop to the routes serving it.
+func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) map[string][]stopRoute {
+	routeIDsByStop := make(map[string][]stopRoute)
 	if len(stops) == 0 {
 		return routeIDsByStop
 	}
@@ -792,9 +794,10 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 		return routeIDsByStop
 	}
 	for _, row := range rows {
-		if routeID, ok := row.RouteID.(string); ok {
-			routeIDsByStop[row.StopID] = append(routeIDsByStop[row.StopID], routeID)
-		}
+		routeIDsByStop[row.StopID] = append(routeIDsByStop[row.StopID], stopRoute{
+			agencyID: row.AgencyID,
+			routeID:  row.RouteID,
+		})
 	}
 	return routeIDsByStop
 }

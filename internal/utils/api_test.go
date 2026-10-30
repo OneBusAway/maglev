@@ -633,6 +633,46 @@ func TestParseTimeParameter(t *testing.T) {
 	}
 }
 
+func TestParseTimeParameterOrNow_ZeroEpochMeansNow(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	now := time.Date(2025, 6, 12, 12, 0, 0, 0, loc)
+	testClock := clock.NewMockClock(now)
+
+	for _, raw := range []string{"0", "00"} {
+		t.Run(raw, func(t *testing.T) {
+			dateStr, parsedTime, fieldErrors, valid := ParseTimeParameterOrNow(raw, loc, testClock)
+
+			assert.True(t, valid)
+			assert.Nil(t, fieldErrors)
+			assert.Equal(t, now.Format("20060102"), dateStr)
+			assert.True(t, now.Equal(parsedTime), "expected %v, got %v", now, parsedTime)
+		})
+	}
+}
+
+func TestParseTimeParameterOrNow_OtherValuesUnchanged(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	testClock := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, loc))
+
+	t.Run("Epoch 1 is still 1970", func(t *testing.T) {
+		_, parsedTime, _, valid := ParseTimeParameterOrNow("1", loc, testClock)
+
+		assert.True(t, valid)
+		assert.Equal(t, int64(1), parsedTime.UnixMilli())
+	})
+
+	t.Run("Garbage is still rejected", func(t *testing.T) {
+		_, _, fieldErrors, valid := ParseTimeParameterOrNow("garbage", loc, testClock)
+
+		assert.False(t, valid)
+		assert.Contains(t, fieldErrors, "time")
+	})
+}
+
 func TestParseTimeParameter_EdgeCases(t *testing.T) {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
@@ -1021,6 +1061,46 @@ func TestPaginateSlice(t *testing.T) {
 			name:          "Nil slice",
 			items:         nil,
 			offset:        0,
+			limit:         5,
+			expected:      []int{},
+			limitExceeded: false,
+		},
+		{
+			name:          "Negative offset with no limit",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        -1,
+			limit:         -1,
+			expected:      []int{1, 2, 3, 4, 5},
+			limitExceeded: false,
+		},
+		{
+			name:          "Negative offset with limit",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        -2,
+			limit:         2,
+			expected:      []int{1, 2},
+			limitExceeded: true,
+		},
+		{
+			name:          "Negative limit less than -1",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        0,
+			limit:         -2,
+			expected:      []int{},
+			limitExceeded: true,
+		},
+		{
+			name:          "Negative limit less than -1 with offset",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        1,
+			limit:         -5,
+			expected:      []int{},
+			limitExceeded: true,
+		},
+		{
+			name:          "Negative offset on empty slice",
+			items:         []int{},
+			offset:        -1,
 			limit:         5,
 			expected:      []int{},
 			limitExceeded: false,

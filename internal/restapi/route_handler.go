@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -35,13 +36,13 @@ func (api *RestAPI) routeHandler(w http.ResponseWriter, r *http.Request) {
 	routeData := models.NewRoute(
 		utils.FormCombinedID(agencyID, route.ID),
 		agencyID,
-		route.ShortName.String,
-		route.LongName.String,
-		route.Desc.String,
+		nulls.StringOrEmpty(route.ShortName),
+		nulls.StringOrEmpty(route.LongName),
+		nulls.StringOrEmpty(route.Desc),
 		models.RouteType(route.Type),
-		route.Url.String,
-		route.Color.String,
-		route.TextColor.String)
+		nulls.StringOrEmpty(route.Url),
+		nulls.StringOrEmpty(route.Color),
+		nulls.StringOrEmpty(route.TextColor))
 
 	// This response has no situationIds, so situation references remain empty.
 	references := models.NewEmptyReferences()
