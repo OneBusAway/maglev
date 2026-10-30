@@ -40,36 +40,44 @@ type StopDelayInfo struct {
 // tripIDs MUST be in block-trip-start order; caller sorts via
 // blockTripIDsSortedByStartTime.
 func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []string, serviceDate time.Time, currentTime time.Time) (int, bool) {
+	deviation, hasUpdate, _ := api.scheduleDeviationForTrips(ctx, tripIDs, serviceDate, currentTime)
+	return deviation, hasUpdate
+}
+
+// scheduleDeviationForTrips is GetScheduleDeviationForBlock with Java's
+// blockNotActive outcome kept separate from "no TripUpdate". A discarded
+// record must not be treated as a fresh vehicle position.
+func (api *RestAPI) scheduleDeviationForTrips(ctx context.Context, tripIDs []string, serviceDate time.Time, currentTime time.Time) (deviation int, hasUpdate, discarded bool) {
 	if len(tripIDs) == 0 {
-		return 0, false
+		return 0, false, false
 	}
 	tripUpdates := api.collectBlockTripUpdates(tripIDs)
 	if len(tripUpdates) == 0 {
-		return 0, false
+		return 0, false, false
 	}
 	dev, ok, discard := pickTripLevelDeviation(tripUpdates)
 	if discard {
 		// Java's blockNotActive guard fired: the entire VehicleLocationRecord
 		// would be discarded. We must NOT fall through to STU/per-stop paths —
 		// that would silently recover RT data Java treats as poisoned.
-		return 0, false
+		return 0, false, true
 	}
 	if ok {
-		return dev, true
+		return dev, true, false
 	}
 	if dev, ok := api.pickClosestSTUDeviation(ctx, tripUpdates, serviceDate, currentTime); ok {
 		if exceedsBlockNotActiveThreshold(dev) {
-			return 0, false
+			return 0, false, true
 		}
-		return dev, true
+		return dev, true, false
 	}
 	if dev, ok := pickFirstAvailableSTUDelay(tripUpdates); ok {
 		if exceedsBlockNotActiveThreshold(dev) {
-			return 0, false
+			return 0, false, true
 		}
-		return dev, true
+		return dev, true, false
 	}
-	return 0, false
+	return 0, false, false
 }
 
 // blockNotActiveThresholdSeconds mirrors Java's blockNotActive filter

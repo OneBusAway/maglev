@@ -1017,6 +1017,12 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 // from its trip status's schedule deviation when getPredictedTimes found no
 // per-stop prediction.
 func (api *RestAPI) applyTripStatusPrediction(ctx context.Context, arrival *models.ArrivalAndDeparture, tripStatus *models.TripStatus, statusExtras *tripStatusExtras, in arrivalInput, sampleCache deviationSampleCache) {
+	if statusExtras != nil && statusExtras.recordDiscarded {
+		arrival.Predicted = false
+		arrival.PredictedArrivalTime = models.ModelTime{}
+		arrival.PredictedDepartureTime = models.ModelTime{}
+		return
+	}
 	if arrival.Predicted {
 		return
 	}

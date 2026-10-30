@@ -1010,6 +1010,11 @@ func TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime(t *testing.T) {
 	require.NotNil(t, subject, "subject arrival missing for trip %s", expectedTripID)
 	require.NotNil(t, subject.TripStatus, "tripStatus must still be emitted even when RT is discarded")
 
+	assert.False(t, subject.Predicted, "a deviation beyond one hour drops the record, so the arrival is not predicted")
+	assert.False(t, subject.TripStatus.Predicted)
+	assert.True(t, subject.PredictedArrivalTime.IsZero())
+	assert.True(t, subject.PredictedDepartureTime.IsZero())
+
 	// Java's blockNotActive: deviation surfaces as 0.
 	assert.Equal(t, 0, subject.TripStatus.ScheduleDeviation,
 		"|delay| > 1h must be discarded; tripStatus.scheduleDeviation should be 0, not %d", subject.TripStatus.ScheduleDeviation)
@@ -1083,10 +1088,11 @@ func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
 	t.Fatalf("expected to find arrival for trip %s", expectedTripID)
 }
 
-// TestPluralArrivals_VehiclePositionAloneDoesNotPredict verifies that a fresh
-// vehicle position without any TripUpdate does NOT mark the arrival as
-// predicted: there is no resolved schedule deviation to apply.
-func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
+// TestPluralArrivals_VehiclePositionAloneIsPredicted verifies that a fresh
+// vehicle position without any TripUpdate marks the arrival predicted and
+// leaves the predicted times at zero, matching Java's BlockLocation built
+// from the position alone.
+func TestPluralArrivals_VehiclePositionAloneIsPredicted(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
@@ -1101,7 +1107,9 @@ func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
 	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
 
 	a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
-	assert.False(t, a.Predicted, "vehicle position alone should not mark arrival as predicted")
+	require.NotNil(t, a.TripStatus)
+	assert.True(t, a.Predicted, "a fresh vehicle position is predicted even without a trip update")
+	assert.True(t, a.TripStatus.Predicted, "arrival.predicted should agree with tripStatus.predicted")
 	assert.True(t, a.PredictedArrivalTime.IsZero())
 	assert.True(t, a.PredictedDepartureTime.IsZero())
 }

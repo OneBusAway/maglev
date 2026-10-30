@@ -359,7 +359,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		// and includes trip-level Delay fallback for consistency with the plural handler
 		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
 
-		if isPredicted {
+		discarded := statusExtras != nil && statusExtras.recordDiscarded
+		if isPredicted && !discarded {
 			predictedArrivalTime = predictedArrival
 			predictedDepartureTime = predictedDeparture
 			predicted = true
