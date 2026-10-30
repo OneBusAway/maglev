@@ -634,6 +634,24 @@ func TestTripsForLocationHandler_TimeParameter(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 		assert.Equal(t, http.StatusBadRequest, model.Code)
 	})
+
+	t.Run("Zero Time Means Now", func(t *testing.T) {
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		// Pin the clock to a date with service so the comparison cannot pass on two empty lists.
+		mockAPI, cleanupMock := createTestApiWithRealTimeData(t, clock.NewMockClock(time.Date(2025, 6, 15, 14, 30, 0, 0, loc)))
+		defer cleanupMock()
+
+		_, omittedModel := callAPIHandler[TripsForLocationResponse](t, mockAPI, tripsForLocationURL(1.0, 1.0, "includeStatus=true"))
+		require.NotEmpty(t, omittedModel.Data.List, "the fixture date must have trips in range")
+		resp, zeroModel := callAPIHandler[TripsForLocationResponse](t, mockAPI, tripsForLocationURL(1.0, 1.0, "includeStatus=true&time=0"))
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Len(t, zeroModel.Data.List, len(omittedModel.Data.List), "time=0 must return the same entries as an omitted time")
+		for i, entry := range zeroModel.Data.List {
+			assert.Equal(t, omittedModel.Data.List[i].ServiceDate, entry.ServiceDate, "entry %d ServiceDate must match the omitted-time request", i)
+		}
+	})
 }
 
 func TestTripsForLocationHandler_RadiusAndPrecedence(t *testing.T) {
