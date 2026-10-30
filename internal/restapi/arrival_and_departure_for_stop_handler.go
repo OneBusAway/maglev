@@ -357,7 +357,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime, currentTime)
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime, currentTime, serviceMidnight)
 
 		if isPredicted {
 			predictedArrivalTime = predictedArrival
@@ -615,7 +615,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 // is past the scheduled departure, the full deviation is kept. While that
 // instant falls inside the dwell, the remaining slack shrinks by the time
 // already spent there. A zero queryTime leaves the full slack. An early bus
-// keeps its early departure. Slack from earlier stops on the block is #1875.
+// keeps its early departure. Slack from earlier stops is applied separately,
+// by deviationsAfterAccumulatedSlack, when the block snapshot is available.
 func departureDeviationAtQuery(deviation time.Duration, queryTime, scheduledArrival, scheduledDeparture time.Time) time.Duration {
 	slack := scheduledDeparture.Sub(scheduledArrival)
 	if slack < 0 {
@@ -637,6 +638,41 @@ func departureDeviationAtQuery(deviation time.Duration, queryTime, scheduledArri
 		return deviation - slack
 	}
 	return deviation
+}
+
+// deviationsAfterAccumulatedSlack applies Java's calculateArrivalDeviation
+// and calculateDepartureDeviation when the block snapshot can be built.
+// Slack accumulated at earlier stops, including layovers, comes off both the
+// arrival and the departure. The stop's own dwell comes off the departure.
+// ok is false when that snapshot is unavailable, and the caller then uses
+// this stop's dwell alone.
+func (api *RestAPI) deviationsAfterAccumulatedSlack(
+	ctx context.Context,
+	tripID string,
+	targetStopSequence int64,
+	deviation time.Duration,
+	queryTime, serviceDate time.Time,
+) (arrivalDeviation, departureDeviation time.Duration, ok bool) {
+	if serviceDate.IsZero() || queryTime.IsZero() || deviation <= 0 {
+		return 0, 0, false
+	}
+	snap := api.computeScheduledBlockSnapshot(ctx, tripID, queryTime, serviceDate)
+	if snap == nil {
+		return 0, 0, false
+	}
+	target := scheduledStopKey{TripID: tripID, StopSequenceInTrip: int(targetStopSequence)}
+	if _, found := snap.StopIndex[target]; !found {
+		return 0, 0, false
+	}
+	deviationSeconds := int(deviation / time.Second)
+	currentSeconds := utils.CalculateSecondsSinceServiceDate(queryTime, serviceDate)
+	scheduleSeconds := currentSeconds - int64(deviationSeconds)
+	arrivalSeconds, departureSeconds := absorbSlack(snap, slackPosition{
+		target:                   target,
+		blockScheduleSeconds:     scheduleSeconds,
+		effectiveScheduleSeconds: scheduleSeconds,
+	}, deviationSeconds)
+	return time.Duration(arrivalSeconds) * time.Second, time.Duration(departureSeconds) * time.Second, true
 }
 
 // dwellAbsorbsLateness reports whether Java would run calculateDepartureDeviation
@@ -676,7 +712,7 @@ func (api *RestAPI) getPredictedTimes(
 	tripID string,
 	stopCode string,
 	targetStopSequence int64,
-	scheduledArrivalTime, scheduledDepartureTime, queryTime time.Time,
+	scheduledArrivalTime, scheduledDepartureTime, queryTime, serviceDate time.Time,
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
@@ -804,8 +840,13 @@ func (api *RestAPI) getPredictedTimes(
 	}
 	targetPastEarliestSTU := earliestSTUSequence >= 0 && targetStopSequence > earliestSTUSequence
 	if !departureFromFeed && dwellAbsorbsLateness(foundTarget, len(realTimeTrip.StopTimeUpdates), realTimeTrip.Delay != nil, targetPastEarliestSTU) {
-		adjusted := departureDeviationAtQuery(*arrivalOffset, queryTime, scheduledArrivalTime, scheduledDepartureTime)
-		departureOffset = &adjusted
+		if arrivalDeviation, departureDeviation, ok := api.deviationsAfterAccumulatedSlack(ctx, tripID, targetStopSequence, *arrivalOffset, queryTime, serviceDate); ok {
+			arrivalOffset = &arrivalDeviation
+			departureOffset = &departureDeviation
+		} else {
+			adjusted := departureDeviationAtQuery(*arrivalOffset, queryTime, scheduledArrivalTime, scheduledDepartureTime)
+			departureOffset = &adjusted
+		}
 	}
 
 	// Java's ±1h blockNotActive filter (GtfsRealtimeSource.java:711-752)

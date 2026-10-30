@@ -1215,6 +1215,55 @@ func TestPluralArrivals_LayoverAbsorbsEarlierTripDelay(t *testing.T) {
 	assert.Equal(t, a.ScheduledDepartureTime.UnixMilli(), a.PredictedDepartureTime.UnixMilli())
 }
 
+// TestPluralArrivals_UpstreamDwellAbsorbedOnArrival verifies that dwell at an
+// earlier stop on the block comes off the arrival as well as the departure.
+func TestPluralArrivals_UpstreamDwellAbsorbedOnArrival(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 7, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 2)
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+	earlyStopID := "dp-early-" + t.Name()
+	_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: earlyStopID, Name: nulls.String("Early Stop"), Lat: 47.0, Lon: -122.0,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: earlyStopID, StopSequence: 1,
+		ArrivalTime:   int64(7 * time.Hour),
+		DepartureTime: int64(7*time.Hour + 10*time.Minute),
+	})
+	require.NoError(t, err)
+
+	delay := 12 * time.Minute
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, _, ok := api.deviationsAfterAccumulatedSlack(ctx, tripID, 99, delay, mockClock.Now(), serviceMidnight)
+	assert.False(t, ok, "a stop sequence missing from the snapshot leaves slack to this stop's dwell")
+	_, _, ok = api.deviationsAfterAccumulatedSlack(ctx, "missing-trip", 1, delay, mockClock.Now(), serviceMidnight)
+	assert.False(t, ok, "a trip with no block snapshot leaves slack to this stop's dwell")
+	_, _, ok = api.deviationsAfterAccumulatedSlack(ctx, tripID, 2, delay, mockClock.Now(), time.Time{})
+	assert.False(t, ok)
+	_, _, ok = api.deviationsAfterAccumulatedSlack(ctx, tripID, 2, delay, time.Time{}, serviceMidnight)
+	assert.False(t, ok)
+	_, _, ok = api.deviationsAfterAccumulatedSlack(ctx, tripID, 2, -time.Minute, mockClock.Now(), serviceMidnight)
+	assert.False(t, ok)
+
+	api.GtfsManager.MockAddTripUpdate(tripID, &delay, nil)
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(combinedStopID, url.Values{"minutesAfter": {"90"}}))
+
+	a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	assert.True(t, a.Predicted)
+	assert.Equal(t, scheduledArrivalMs+int64((2*time.Minute).Milliseconds()), a.PredictedArrivalTime.UnixMilli(),
+		"ten minutes of earlier dwell leaves two minutes of the twelve-minute delay on the arrival")
+	assert.Equal(t, scheduledArrivalMs+int64((5*time.Minute).Milliseconds()), a.PredictedDepartureTime.UnixMilli(),
+		"earlier dwell plus this stop's dwell covers the whole delay")
+}
+
 // addEarlierBlockTrip adds a trip that runs earlier in the same block as the
 // trip created by setupDelayPropTestData, and returns its ID.
 func addEarlierBlockTrip(t *testing.T, api *RestAPI) string {
