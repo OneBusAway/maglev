@@ -216,6 +216,38 @@ func TestArrivalsAndDeparturesForLocationIncludesStopAlertsWithoutArrivals(t *te
 	assert.True(t, referenced, "the stop alert must resolve in references.situations")
 }
 
+func TestArrivalsAndDeparturesForLocationIncludesAgencyAlertsWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencyID := testdata.Raba.ID
+	const alertID = "location-no-arrivals-agency-alert"
+	api.GtfsManager.AddAlertForTest(gtfs.Alert{
+		ID:               alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agencyID}},
+		Header:           []gtfs.AlertText{{Text: "Agency alert without arrivals", Language: "en"}},
+	})
+
+	quietTime := time.Date(2025, 6, 13, 3, 0, 0, 0, arrivalsTestClock.Location())
+	resp, model := callArrivalsForLocation(t, api, url.Values{
+		"time":          {strconv.FormatInt(quietTime.UnixMilli(), 10)},
+		"minutesBefore": {"0"},
+		"minutesAfter":  {"0"},
+	})
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the quiet-time query must have no arrivals")
+
+	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+	assert.Contains(t, model.Data.Entry.SituationIDs, wantSituationID)
+	referenced := slices.ContainsFunc(model.Data.References.Situations, func(situation models.Situation) bool {
+		return situation.ID == wantSituationID
+	})
+	assert.True(t, referenced, "the agency alert must resolve in references.situations")
+}
+
 // stopIds come nearest first so maxCount truncation drops the farthest
 // stops; arrivals group by stop in the same order with best-arrival-time
 // order inside each stop.
@@ -365,10 +397,10 @@ func TestArrivalsAndDeparturesForLocationMaxCount(t *testing.T) {
 	assert.Equal(t, first.SituationIDs, kept.SituationIDs)
 }
 
-// A trip alert on an arrival that maxCount drops must still appear in the
-// entry situationIds. The retained arrival does not serve that trip, so the
-// id can only have been collected before the trim.
-func TestArrivalsAndDeparturesForLocationKeepsTrimmedTripAlerts(t *testing.T) {
+// Java puts only stop alerts and route alerts on the entry's situationIds. An
+// arrival's own alerts ride on that arrival and in the references, and an
+// arrival maxCount drops contributes nothing at all.
+func TestArrivalsAndDeparturesForLocationKeepsTripAlertsOffTheEntry(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
@@ -390,22 +422,46 @@ func TestArrivalsAndDeparturesForLocationKeepsTrimmedTripAlerts(t *testing.T) {
 	}
 	require.True(t, found, "nearest stop needs a second arrival so maxCount can drop it")
 
-	agencyID, tripID, err := utils.ExtractAgencyIDAndCodeID(dropped.TripID)
+	keptAgencyID, keptTripID, err := utils.ExtractAgencyIDAndCodeID(keptTrip)
+	require.NoError(t, err)
+	droppedAgencyID, droppedTripID, err := utils.ExtractAgencyIDAndCodeID(dropped.TripID)
 	require.NoError(t, err)
 
-	const alertID = "trimmed-trip-alert"
 	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
-		ID:               alertID,
-		InformedEntities: []gtfs.AlertInformedEntity{{TripID: &gtfs.TripID{ID: tripID}}},
+		ID:               "kept-trip-alert",
+		InformedEntities: []gtfs.AlertInformedEntity{{TripID: &gtfs.TripID{ID: keptTripID}}},
+		Header:           []gtfs.AlertText{{Text: "Kept trip alert", Language: "en"}},
+	})
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID:               "trimmed-trip-alert",
+		InformedEntities: []gtfs.AlertInformedEntity{{TripID: &gtfs.TripID{ID: droppedTripID}}},
 		Header:           []gtfs.AlertText{{Text: "Trimmed trip alert", Language: "en"}},
 	})
-	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+	keptSituationID := utils.FormCombinedID(keptAgencyID, "kept-trip-alert")
+	trimmedSituationID := utils.FormCombinedID(droppedAgencyID, "trimmed-trip-alert")
 
 	_, limited := callArrivalsForLocation(t, api, url.Values{"maxCount": {"1"}})
 	require.Len(t, limited.Data.Entry.ArrivalsAndDepartures, 1)
 	assert.Equal(t, full.Data.Entry.ArrivalsAndDepartures[0].TripID, limited.Data.Entry.ArrivalsAndDepartures[0].TripID)
-	assert.NotContains(t, limited.Data.Entry.ArrivalsAndDepartures[0].SituationIDs, wantSituationID)
-	assert.Contains(t, limited.Data.Entry.SituationIDs, wantSituationID)
+
+	// The retained arrival's own alert rides on the arrival and in the
+	// references, never on the entry.
+	assert.Contains(t, limited.Data.Entry.ArrivalsAndDepartures[0].SituationIDs, keptSituationID)
+	assert.NotContains(t, limited.Data.Entry.SituationIDs, keptSituationID)
+	assert.Contains(t, situationIDsFromReferences(limited.Data.References.Situations), keptSituationID)
+
+	// The trimmed arrival is not in the response, so nothing it referenced is.
+	assert.NotContains(t, limited.Data.Entry.SituationIDs, trimmedSituationID)
+	assert.NotContains(t, situationIDsFromReferences(limited.Data.References.Situations), trimmedSituationID)
+}
+
+// situationIDsFromReferences returns the IDs of the situation references.
+func situationIDsFromReferences(situations []models.Situation) []string {
+	ids := make([]string, 0, len(situations))
+	for _, s := range situations {
+		ids = append(ids, s.ID)
+	}
+	return ids
 }
 
 // arrivalStopIDs returns every stop ID one arrival names: its own stop plus the

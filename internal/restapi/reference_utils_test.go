@@ -187,7 +187,11 @@ func TestStopReferences(t *testing.T) {
 
 	assert.Equal(t, referringIDs[servedStopID][0], refs[0].ID, "the referring entry's ID labels the reference")
 	assert.NotEmpty(t, refs[0].RouteIDs)
-	assert.Equal(t, routeIDsByStop[servedStopID], refs[0].RouteIDs)
+	expectedRouteIDs := make([]string, len(routeIDsByStop[servedStopID]))
+	for i, r := range routeIDsByStop[servedStopID] {
+		expectedRouteIDs[i] = utils.FormCombinedID(r.agencyID, r.routeID)
+	}
+	assert.Equal(t, expectedRouteIDs, refs[0].RouteIDs)
 
 	assert.Equal(t, referringIDs[routelessStop.ID][0], refs[1].ID)
 	assert.Equal(t, 1, refs[1].LocationType)
@@ -502,4 +506,42 @@ func TestBuildReferencedTrips_CrossAgencyRouteID(t *testing.T) {
 	require.NoError(t, api.appendTripRouteReferences(ctx, refs, "A1"))
 	require.Len(t, refs.Routes, 1)
 	assert.Equal(t, trips[0].RouteID, refs.Routes[0].ID)
+}
+
+func TestStopReferences_AgencyWithUnderscore(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"AGENCY_ONE,Agency One,http://agency1.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"ROUTE_100,AGENCY_ONE,100,Route 100,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1,Stop 1,37.7749,-122.4194\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"ROUTE_100,svc1,t1,Headsign,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,08:00:00,08:00:00,s1,1\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "agency-with-underscore-stop-refs.zip", files)
+	ctx := context.Background()
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, []string{"s1"})
+	require.NoError(t, err)
+	require.Len(t, stops, 1)
+
+	referringIDs := map[string][]string{
+		"s1": {"AGENCY_ONE_s1"},
+	}
+
+	refs, routesByStop := api.stopReferences(ctx, stops, referringIDs)
+	require.Len(t, refs, 1)
+	assert.Equal(t, []string{"AGENCY_ONE_ROUTE_100"}, refs[0].RouteIDs)
+
+	routes, ok := routesByStop["s1"]
+	require.True(t, ok)
+	require.Len(t, routes, 1)
+	assert.Equal(t, "AGENCY_ONE", routes[0].agencyID)
+	assert.Equal(t, "ROUTE_100", routes[0].routeID)
 }

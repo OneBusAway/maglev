@@ -294,6 +294,36 @@ func TestArrivalsAndDeparturesForStopHandler_RouteAlertReferences(t *testing.T) 
 		"arrival situationId %q must resolve in references.situations", wantSituationID)
 }
 
+func TestArrivalsAndDeparturesForStopHandler_AgencyAlertWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencyID := testdata.Raba.ID
+	const alertID = "agency-wide-alert"
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID:               alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agencyID}},
+		Header:           []gtfs.AlertText{{Text: "Agency-wide alert", Language: "en"}},
+	})
+
+	requestURL := arrivalsAndDeparturesURL(arrivalsTestStopID,
+		url.Values{"minutesBefore": {"0"}, "minutesAfter": {"0"}})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the empty window must leave no arrival to carry the alert")
+
+	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+	assert.Contains(t, model.Data.Entry.SituationIDs, wantSituationID,
+		"a stop must show its agency's agency-wide alerts")
+	var referencedIDs []string
+	for _, situation := range model.Data.References.Situations {
+		referencedIDs = append(referencedIDs, situation.ID)
+	}
+	assert.Contains(t, referencedIDs, wantSituationID)
+}
+
 func TestArrivalsAndDeparturesForStopHandlerTimeParams(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
