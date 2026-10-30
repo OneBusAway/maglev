@@ -1833,3 +1833,17 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 	require.Len(t, model.Data.Entry.ArrivalsAndDepartures, 1)
 	assert.Equal(t, utils.FormCombinedID(agencyPrimary, tripPrimary), model.Data.Entry.ArrivalsAndDepartures[0].TripID)
 }
+
+func TestArrivalsAndDeparturesForStopHandler_MultiDayWindow(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	endpoint := arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{
+		"minutesBefore": {"60"},
+		"minutesAfter":  {"2000"},
+	})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures, "multi-day window should return scheduled arrivals")
+}
