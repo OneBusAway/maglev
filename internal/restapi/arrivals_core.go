@@ -103,10 +103,11 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 	if len(allActiveStopTimes) == 0 {
 		return result, nil
 	}
-	routesLookup, tripsLookup, tripStops, freqMap, err := api.batchArrivalEntities(ctx, allActiveStopTimes)
+	routes, trips, tripStops, frequencies, err := api.batchArrivalEntities(ctx, allActiveStopTimes)
 	if err != nil {
 		return result, err
 	}
+	lookups := batchedArrivalLookups{routes: routes, trips: trips, tripStops: tripStops, frequencies: frequencies}
 
 	for _, ast := range allActiveStopTimes {
 		if ctx.Err() != nil {
@@ -116,7 +117,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 		st := ast.GetStopTimesForStopInWindowRow
 
 		before, after := in.Before, in.After
-		if len(freqMap[st.TripID]) > 0 {
+		if len(lookups.frequencies[st.TripID]) > 0 {
 			before, after = in.FrequencyBefore, in.FrequencyAfter
 		}
 		if !api.stopTimeInArrivalWindow(ctx, ast, ast.Location, in.QueryTime, before, after) {
@@ -126,23 +127,8 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 		result.Matched = true
 		acc.stopIDs[in.StopCode] = true
 
-		route, routeExists := routesLookup[st.RouteID]
-		if !routeExists {
-			reqLogger.Debug("skipping stop time: route not found in batch fetch",
-				slog.String("routeID", st.RouteID),
-				slog.String("tripID", st.TripID))
-			continue
-		}
-
-		trip, tripExists := tripsLookup[st.TripID]
-		if !tripExists {
-			reqLogger.Debug("skipping stop time: trip not found in batch fetch",
-				slog.String("tripID", st.TripID),
-				slog.String("routeID", st.RouteID))
-			continue
-		}
-
-		if !isRouteTypeAllowed(route.Type, in.RouteTypes) {
+		route, trip, reportable := lookups.resolveRouteAndTrip(st, in.RouteTypes, reqLogger)
+		if !reportable {
 			continue
 		}
 
@@ -159,9 +145,9 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 			queryTime:        in.QueryTime,
 			stopCode:         in.StopCode,
 			stopID:           stopID,
-			totalStopsInTrip: tripStops.stopCounts[st.TripID],
-			stopPosition:     tripStops.stopPosition(st.TripID, st.StopSequence),
-			freqMap:          freqMap,
+			totalStopsInTrip: lookups.tripStops.stopCounts[st.TripID],
+			stopPosition:     lookups.tripStops.stopPosition(st.TripID, st.StopSequence),
+			freqMap:          lookups.frequencies,
 		}, acc)
 
 		result.Arrivals = append(result.Arrivals, *arrival)
@@ -441,6 +427,34 @@ type batchedArrivalLookups struct {
 	frequencies map[string][]gtfsdb.Frequency
 }
 
+// resolveRouteAndTrip returns the route and trip a stop_time belongs to, and
+// whether the row is reportable at all. A row is dropped when either entity
+// missed the batch fetch — which is a data gap worth logging, not an error —
+// or when the request's route-type filter excludes its route.
+func (lookups batchedArrivalLookups) resolveRouteAndTrip(st gtfsdb.GetStopTimesForStopInWindowRow, routeTypes []int, reqLogger *slog.Logger) (gtfsdb.Route, gtfsdb.Trip, bool) {
+	route, routeExists := lookups.routes[st.RouteID]
+	if !routeExists {
+		reqLogger.Debug("skipping stop time: route not found in batch fetch",
+			slog.String("routeID", st.RouteID),
+			slog.String("tripID", st.TripID))
+		return gtfsdb.Route{}, gtfsdb.Trip{}, false
+	}
+
+	trip, tripExists := lookups.trips[st.TripID]
+	if !tripExists {
+		reqLogger.Debug("skipping stop time: trip not found in batch fetch",
+			slog.String("tripID", st.TripID),
+			slog.String("routeID", st.RouteID))
+		return gtfsdb.Route{}, gtfsdb.Trip{}, false
+	}
+
+	if !isRouteTypeAllowed(route.Type, routeTypes) {
+		return gtfsdb.Route{}, gtfsdb.Trip{}, false
+	}
+
+	return route, trip, true
+}
+
 // multiStopArrivalsResult is the batched multi-stop arrivals pipeline before
 // trip status is attached. Arrivals carry schedule and prediction only.
 // Stop-level alerts are not collected here. The caller adds them after
@@ -685,23 +699,8 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 
 		st := b.GetStopTimesForStopInWindowRow
 
-		route, routeExists := lookups.routes[st.RouteID]
-		if !routeExists {
-			reqLogger.Debug("skipping stop time: route not found in batch fetch",
-				slog.String("routeID", st.RouteID),
-				slog.String("tripID", st.TripID))
-			continue
-		}
-
-		trip, tripExists := lookups.trips[st.TripID]
-		if !tripExists {
-			reqLogger.Debug("skipping stop time: trip not found in batch fetch",
-				slog.String("tripID", st.TripID),
-				slog.String("routeID", st.RouteID))
-			continue
-		}
-
-		if !isRouteTypeAllowed(route.Type, in.RouteTypes) {
+		route, trip, reportable := lookups.resolveRouteAndTrip(st, in.RouteTypes, reqLogger)
+		if !reportable {
 			continue
 		}
 
