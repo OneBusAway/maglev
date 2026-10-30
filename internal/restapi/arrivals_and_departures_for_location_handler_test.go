@@ -854,21 +854,9 @@ func TestArrivalsAndDeparturesForLocationKeepsAlertsWithoutArrivals(t *testing.T
 	assert.True(t, sawStop, "references must include the stop alert")
 }
 
-func TestRetainedStopCodes(t *testing.T) {
-	assert.Equal(t, []string{"4062", "4063"}, retainedStopCodes([]string{
-		"25_4062",
-		"not-a-combined-id",
-		"25_4062",
-		"25_",
-		"40_4063",
-		"",
-	}))
-	assert.Empty(t, retainedStopCodes(nil))
-}
-
-func TestAddRouteAlertsForRetainedStopsSkipsBadIDs(t *testing.T) {
+func TestAddRouteAlertsForRetainedStopsEmpty(t *testing.T) {
 	api := createTestApi(t)
-	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{"not-combined"}, newSituationCollector()))
+	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), nil, newSituationCollector()))
 }
 
 func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
@@ -876,7 +864,7 @@ func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := api.addRouteAlertsForRetainedStops(ctx, []string{arrivalsTestStopID}, newSituationCollector())
+	err := api.addRouteAlertsForRetainedStops(ctx, []gtfsdb.Stop{{ID: testdata.Stop4062.Code}}, newSituationCollector())
 	require.Error(t, err)
 }
 
@@ -938,9 +926,9 @@ func TestBuildNearbyResultsDropsStopsInactiveOnDate(t *testing.T) {
 	assert.Equal(t, "25_active", results[0].StopID)
 }
 
-// An agency id that contains an underscore must stay intact. Splitting the
-// combined agency_code route id would treat the first segment as the agency
-// and look up alerts under the wrong route.
+// An agency id that contains an underscore must stay intact when namespacing
+// the alert. Agency and route ids are separate columns, so the alert is keyed
+// under the full agency id rather than the first underscore segment.
 func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	api := createTestApi(t)
 	db := api.GtfsManager.GtfsDB.DB
@@ -984,9 +972,71 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	})
 
 	situations := newSituationCollector()
-	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{arrivalsTestStopID}, situations))
+	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []gtfsdb.Stop{{ID: testdata.Stop4062.Code}}, situations))
 
 	ids := situationIDsFromRefs(situations.refs)
 	assert.Contains(t, ids, utils.FormCombinedID(agencyID, alertID))
 	assert.NotContains(t, ids, utils.FormCombinedID("a", alertID))
+}
+
+// A route alert for a stop whose agency id contains an underscore must still
+// appear in situationIds. Splitting the combined stop id at the first "_"
+// (agency a_b, stop 123 → a_b_123 → "b_123") would miss the stop entirely.
+func TestArrivalsAndDeparturesForLocationRouteAlertUnderscoreAgency(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	db := api.GtfsManager.GtfsDB.DB
+
+	const (
+		agencyID = "a_b"
+		stopID   = "123"
+		routeID  = "r_stop_under"
+		tripID   = "t_stop_under"
+		service  = "svc_stop_under"
+		alertID  = "stop-under-alert"
+	)
+	t.Cleanup(func() {
+		api.GtfsManager.MockResetRealTimeData()
+		_, _ = db.Exec(`DELETE FROM stop_times WHERE trip_id = ?`, tripID)
+		_, _ = db.Exec(`DELETE FROM trips WHERE id = ?`, tripID)
+		_, _ = db.Exec(`DELETE FROM routes WHERE id = ?`, routeID)
+		_, _ = db.Exec(`DELETE FROM calendar WHERE id = ?`, service)
+		_, _ = db.Exec(`DELETE FROM stops WHERE id = ?`, stopID)
+		_, _ = db.Exec(`DELETE FROM agencies WHERE id = ?`, agencyID)
+	})
+
+	_, err := db.Exec(`INSERT INTO agencies (id, name, url, timezone) VALUES (?, 'Underscore Agency', 'http://example.com', 'America/Los_Angeles')`, agencyID)
+	require.NoError(t, err)
+	// Same coordinates as the query centre so the stop is retained under maxCount.
+	_, err = db.Exec(`INSERT INTO stops (id, code, name, lat, lon, location_type, wheelchair_boarding) VALUES (?, ?, 'Underscore Stop', 40.539367, -122.34952, 0, 0)`, stopID, stopID)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO routes (id, agency_id, short_name, type) VALUES (?, ?, 'Under', 3)`, routeID, agencyID)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+		VALUES (?, 1, 1, 1, 1, 1, 1, 1, '20200101', '20991231')`, service)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO trips (id, route_id, service_id) VALUES (?, ?, ?)`, tripID, routeID, service)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence) VALUES (?, 0, 0, ?, 1)`, tripID, stopID)
+	require.NoError(t, err)
+
+	bareRoute := routeID
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID: alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			RouteID: &bareRoute,
+		}},
+		Header: []gtfs.AlertText{{Text: "underscore agency stop", Language: "en"}},
+	})
+
+	// Far-future window: no arrivals, so the route alert can only come from
+	// addRouteAlertsForRetainedStops on the retained stop list.
+	far := strconv.FormatInt(arrivalsTestClock.AddDate(10, 0, 0).UnixMilli(), 10)
+	resp, model := callArrivalsForLocation(t, api, url.Values{"time": {far}})
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	combinedStop := utils.FormCombinedID(agencyID, stopID)
+	require.Contains(t, model.Data.Entry.StopIDs, combinedStop)
+	assert.Empty(t, model.Data.Entry.ArrivalsAndDepartures)
+	assert.Contains(t, model.Data.Entry.SituationIDs, utils.FormCombinedID(agencyID, alertID))
 }
