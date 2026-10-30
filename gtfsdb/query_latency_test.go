@@ -370,12 +370,10 @@ SELECT st.trip_id, st.arrival_time, st.departure_time,
 FROM stop_times st
 JOIN trips t ON st.trip_id = t.id
 WHERE st.stop_id = ?
-  AND (
-      (st.arrival_time   BETWEEN ? AND ?)
-   OR (st.departure_time BETWEEN ? AND ?)
-  )
+  AND st.departure_time >= ?
+  AND st.arrival_time <= ?
 ORDER BY st.arrival_time`,
-			args: []any{stopID, windowStart, windowEnd, windowStart, windowEnd},
+			args: []any{stopID, windowStart, windowEnd},
 		},
 		{
 			name: "GetScheduleForStopOnDate",

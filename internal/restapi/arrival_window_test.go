@@ -284,3 +284,28 @@ func TestArrivalFrequencyWindowsSharedStopTimezones(t *testing.T) {
 		}
 	}
 }
+
+// TestArrivalWindow_StopTimeSpanningQueryWindow tests that stop and location arrival
+// endpoints return trips whose scheduled stop time interval spans the entire query window.
+func TestArrivalWindow_StopTimeSpanningQueryWindow(t *testing.T) {
+	files := frequencyFixtureFiles()
+	const spanningTripID = "spanning-trip"
+	files["trips.txt"] += freqRouteID + "," + freqServiceID + "," + spanningTripID + ",Spanning Trip,0,span-block\n"
+	files["stop_times.txt"] += spanningTripID + ",10:00:00,10:30:00," + freqStopAID + ",1\n"
+	files["stop_times.txt"] += spanningTripID + ",10:45:00,10:45:00," + freqStopBID + ",2\n"
+
+	queryTime := time.Date(2025, 6, 12, 10, 15, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(queryTime), "spanning-window.zip", files)
+	defer api.Shutdown()
+
+	for _, endpoint := range []string{"stop", "location"} {
+		t.Run(endpoint, func(t *testing.T) {
+			arrivals := frequencyWindowArrivals(t, api, endpoint, url.Values{
+				"time":          {fmt.Sprint(queryTime.UnixMilli())},
+				"minutesBefore": {"5"},
+				"minutesAfter":  {"5"},
+			})
+			assertFrequencyWindowTrips(t, arrivals, []string{spanningTripID})
+		})
+	}
+}
