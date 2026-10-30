@@ -20,20 +20,6 @@ func CalculateServiceDate(currentTime time.Time) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, currentTime.Location())
 }
 
-func ServiceDateMidnight(explicitServiceDate *time.Time, currentTime time.Time) (time.Time, time.Time) {
-	var serviceDate time.Time
-	if explicitServiceDate != nil {
-		serviceDate = *explicitServiceDate
-	} else {
-		serviceDate = CalculateServiceDate(currentTime)
-	}
-	// Always return midnight of the service date in the date's own timezone.
-	// This ensures all endpoints return a consistent serviceDate millis value.
-	midnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
-		0, 0, 0, 0, serviceDate.Location())
-	return serviceDate, midnight
-}
-
 // CalculateSecondsSinceServiceDate returns the number of wall-clock seconds elapsed
 // since the start of the service date (midnight in the agency's timezone).
 //
