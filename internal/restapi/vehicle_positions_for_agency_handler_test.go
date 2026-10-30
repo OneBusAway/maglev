@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,7 @@ func TestVehiclePositionsForAgencyHandler_ConditionalRequests(t *testing.T) {
 	first, _ := getRaw(t, api, vehiclePositionsURL(testdata.Raba.ID), nil)
 	etag := first.Header.Get("ETag")
 	require.NotEmpty(t, etag)
+	require.True(t, strings.HasPrefix(etag, `W/"`), "feed must provide a weak ETag")
 
 	t.Run("same snapshot, same ETag", func(t *testing.T) {
 		again, _ := getRaw(t, api, vehiclePositionsURL(testdata.Raba.ID), nil)
@@ -111,6 +113,28 @@ func TestVehiclePositionsForAgencyHandler_ConditionalRequests(t *testing.T) {
 		assert.Equal(t, etag, resp.Header.Get("ETag"))
 		assert.Equal(t, "public, max-age=30", resp.Header.Get("Cache-Control"))
 	})
+
+	for _, tt := range []struct {
+		name         string
+		headerValues []string
+	}{
+		{
+			name:         "equivalent strong validator gets 304",
+			headerValues: []string{strings.TrimPrefix(etag, "W/")},
+		},
+		{
+			name:         "matching second header line gets 304",
+			headerValues: []string{`"different-tag"`, etag},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, body := getRaw(t, api, vehiclePositionsURL(testdata.Raba.ID), http.Header{"If-None-Match": tt.headerValues})
+			assert.Equal(t, http.StatusNotModified, resp.StatusCode)
+			assert.Empty(t, body)
+			assert.Equal(t, etag, resp.Header.Get("ETag"))
+			assert.Equal(t, "public, max-age=30", resp.Header.Get("Cache-Control"))
+		})
+	}
 
 	t.Run("new data, new ETag", func(t *testing.T) {
 		api.GtfsManager.MockSetAgencyVehicles("_test", testdata.Raba.ID, []gtfs.Vehicle{positionedVehicle("V1", 47.9)})

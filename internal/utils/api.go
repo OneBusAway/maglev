@@ -229,6 +229,22 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location, c cloc
 	return parsedTime.Format("20060102"), parsedTime, nil, true
 }
 
+// ParseTimeParameterOrNow is ParseTimeParameter for endpoints where Java treats
+// time=0 as "not supplied" (`if (_time != 0)`), so an epoch of 0 resolves to the
+// clock's current time instead of 1970-01-01.
+func ParseTimeParameterOrNow(timeParam string, currentLocation *time.Location, c clock.Clock) (string, time.Time, map[string][]string, bool) {
+	if isZeroEpoch(timeParam) {
+		timeParam = ""
+	}
+	return ParseTimeParameter(timeParam, currentLocation, c)
+}
+
+// isZeroEpoch reports whether value is an epoch timestamp equal to 0.
+func isZeroEpoch(value string) bool {
+	epochMillis, ok := ParseEpochMillis(value)
+	return ok && epochMillis == 0
+}
+
 // maxCountOverflow selects how values above models.MaxAllowedCount are handled.
 type maxCountOverflow int
 
@@ -323,6 +339,9 @@ func ParsePaginationParams(r *http.Request) (offset int, limit int) {
 // PaginateSlice slices a slice based on offset and limit.
 // Returns the sliced items and a boolean indicating if the limit was exceeded (more items exist).
 func PaginateSlice[T any](items []T, offset, limit int) ([]T, bool) {
+	if offset < 0 {
+		offset = 0
+	}
 	if offset >= len(items) {
 		return []T{}, false
 	}
@@ -330,6 +349,9 @@ func PaginateSlice[T any](items []T, offset, limit int) ([]T, bool) {
 	// If limit is -1, return everything from offset
 	if limit == -1 {
 		return items[offset:], false
+	}
+	if limit < 0 {
+		limit = 0
 	}
 
 	end := offset + limit
