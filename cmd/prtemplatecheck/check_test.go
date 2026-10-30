@@ -220,6 +220,75 @@ func TestCheckBody(t *testing.T) {
 			},
 		},
 		{
+			name: "stray_paragraph_after_empty_field",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\nAn unrelated paragraph in the section.")
+			},
+			wantRules:    []string{ruleField},
+			wantMentions: []string{"Manual check"},
+		},
+		{
+			name: "filled_field_followed_by_stray_paragraph",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", " ran unit tests\n\nAn unrelated paragraph in the section.")
+			},
+		},
+		{
+			name: "field_value_unindented_code_fence_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n```\ncurl localhost:4000\n```")
+			},
+		},
+		{
+			name: "field_value_unindented_tilde_fence_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n~~~\ncurl localhost:4000\n~~~")
+			},
+		},
+		{
+			name: "field_value_details_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n<details>\nmanual check\n</details>")
+			},
+		},
+		{
+			name: "field_value_details_open_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n<details open>\nmanual check\n</details>")
+			},
+		},
+		{
+			name: "field_value_markdown_image_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Maglev before", "\n\n![screenshot](https://example.com/before.png)")
+			},
+		},
+		{
+			name: "field_value_html_image_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Maglev before", "\n\n<img width=\"600\" src=\"https://example.com/before.png\">")
+			},
+		},
+		{
+			name: "optional_section_empty_fields_with_stray_prose_reports_fields",
+			body: func(t *testing.T) string {
+				body := replaceOnce(t, filled, "## Response comparison (delete if no Java-served response changed)\n\nWritten by the author.", "## Response comparison (delete if no Java-served response changed)")
+				for _, label := range []string{
+					"Request URL(s)",
+					"Java server, feeds and date checked",
+					"Maglev before",
+					"Maglev after",
+					"Java",
+					"If Maglev intentionally differs from Java",
+				} {
+					body = setField(t, body, label, "")
+				}
+				return setField(t, body, "If Maglev intentionally differs from Java", "\n\nAn unrelated paragraph in the section.")
+			},
+			wantRules:    []string{ruleField, ruleField, ruleField, ruleField, ruleField},
+			wantMentions: []string{"Request URL(s)", "Java server, feeds and date checked", "Maglev before", "Maglev after", "Java"},
+		},
+		{
 			name: "checkbox_in_comment",
 			body: func(t *testing.T) string {
 				return replaceOnce(t, filled, "- [x] This PR addresses one issue.",
