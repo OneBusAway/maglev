@@ -598,33 +598,16 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	api.sendResponse(w, r, response)
 }
 
-// departureDeviationAfterDwell is the lateness half of Java's
-// calculateDepartureDeviation (ArrivalAndDepartureServiceImpl) for a vehicle
-// that has not reached the stop. Slack is this stop's own dwell, floored at
-// zero. A late bus spends that slack before the departure moves; an early bus
-// keeps its early departure. Java's propagateScheduleDeviationForwardWithSlack
-// also zeros an early departure when slack remains, but that helper applies to
-// the next stop after a known prediction, not to the stop being predicted.
-func departureDeviationAfterDwell(deviation, slack time.Duration) time.Duration {
-	if slack < 0 {
-		slack = 0
-	}
-	if slack > 0 && deviation > 0 {
-		if deviation <= slack {
-			return 0
-		}
-		return deviation - slack
-	}
-	return deviation
-}
-
-// departureDeviationAtQuery applies the clock half of calculateDepartureDeviation.
-// Java's effectiveScheduleTime is the query time minus the deviation. Once that
-// instant is past the scheduled departure, the vehicle's next stop is past this
-// one and the full deviation is kept. While it falls inside the dwell, slack
-// shrinks by the time already spent there. A zero queryTime leaves the full
-// slack, which is a vehicle still upstream of the stop.
-func departureDeviationAtQuery(deviation, slack time.Duration, queryTime, scheduledArrival, scheduledDeparture time.Time) time.Duration {
+// departureDeviationAtQuery is Java's calculateDepartureDeviation
+// (ArrivalAndDepartureServiceImpl) for a vehicle that has not reached the
+// stop. Slack is the scheduled dwell, floored at zero. A late bus spends that
+// slack before the departure moves. Once the query time minus the deviation
+// is past the scheduled departure, the full deviation is kept. While that
+// instant falls inside the dwell, the remaining slack shrinks by the time
+// already spent there. A zero queryTime leaves the full slack. An early bus
+// keeps its early departure. Slack from earlier stops on the block is #1875.
+func departureDeviationAtQuery(deviation time.Duration, queryTime, scheduledArrival, scheduledDeparture time.Time) time.Duration {
+	slack := scheduledDeparture.Sub(scheduledArrival)
 	if slack < 0 {
 		slack = 0
 	}
@@ -634,15 +617,16 @@ func departureDeviationAtQuery(deviation, slack time.Duration, queryTime, schedu
 			return deviation
 		}
 		if !effective.Before(scheduledArrival) {
-			spent := effective.Sub(scheduledArrival)
-			if spent > slack {
-				slack = 0
-			} else {
-				slack -= spent
-			}
+			slack -= effective.Sub(scheduledArrival)
 		}
 	}
-	return departureDeviationAfterDwell(deviation, slack)
+	if slack > 0 && deviation > 0 {
+		if deviation <= slack {
+			return 0
+		}
+		return deviation - slack
+	}
+	return deviation
 }
 
 // dwellAbsorbsLateness reports whether Java would run calculateDepartureDeviation
@@ -810,7 +794,7 @@ func (api *RestAPI) getPredictedTimes(
 	}
 	targetPastEarliestSTU := earliestSTUSequence >= 0 && targetStopSequence > earliestSTUSequence
 	if !departureFromFeed && dwellAbsorbsLateness(foundTarget, len(realTimeTrip.StopTimeUpdates), realTimeTrip.Delay != nil, targetPastEarliestSTU) {
-		adjusted := departureDeviationAtQuery(*arrivalOffset, scheduledDepartureTime.Sub(scheduledArrivalTime), queryTime, scheduledArrivalTime, scheduledDepartureTime)
+		adjusted := departureDeviationAtQuery(*arrivalOffset, queryTime, scheduledArrivalTime, scheduledDepartureTime)
 		departureOffset = &adjusted
 	}
 
