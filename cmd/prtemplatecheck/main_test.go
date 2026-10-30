@@ -83,6 +83,34 @@ func TestRun(t *testing.T) {
 			wantExitCode: 0,
 		},
 		{
+			name: "empty_response_comparison_suggests_deletion",
+			args: func(t *testing.T) []string {
+				body := replaceOnce(t, filled, "## Response comparison (delete if no Java-served response changed)\n\nWritten by the author.", "## Response comparison (delete if no Java-served response changed)")
+				for _, label := range []string{
+					"Request URL(s)",
+					"Java server, feeds and date checked",
+					"Maglev before",
+					"Maglev after",
+					"Java",
+					"If Maglev intentionally differs from Java",
+				} {
+					body = setField(t, body, label, "")
+				}
+				return []string{"-template", templatePath, "-body", writeBody(t, body)}
+			},
+			wantExitCode: 1,
+			wantStdout: []string{
+				"Section **Response comparison** is empty. Delete it if no Java-served response changed, or fill it in.",
+			},
+			rejectStdout: []string{
+				"\"Request URL(s):\" is empty",
+				"\"Java server, feeds and date checked:\" is empty",
+				"\"Maglev before:\" is empty",
+				"\"Maglev after:\" is empty",
+				"\"Java:\" is empty",
+			},
+		},
+		{
 			name: "missing_template_file",
 			args: func(t *testing.T) []string {
 				return []string{"-template", filepath.Join(t.TempDir(), "missing.md"), "-body", writeBody(t, filled)}

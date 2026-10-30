@@ -161,7 +161,7 @@ func BenchmarkGetAlertsForStop(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = manager.GetAlertsForStop(fmt.Sprintf("stop_%d", i%1000))
+		_ = manager.GetAlertsForStop(fmt.Sprintf("stop_%d", i%1000), "")
 	}
 }
 

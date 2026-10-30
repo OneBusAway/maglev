@@ -16,7 +16,7 @@ import (
 // and persists it to the database.
 func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.Request) {
 	reqLogger := logging.ForComponent(r.Context(), "problem_reporting")
-	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	agencyID, tripID, ok := api.extractAgencyCodeID(w, r, "tripId")
 	if !ok {
 		return
 	}

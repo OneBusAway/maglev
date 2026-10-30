@@ -12,6 +12,11 @@ import (
 // day to bound the per-request stop_time scan.
 const maxArrivalWindow = 24 * time.Hour
 
+const (
+	defaultFrequencyBefore = 2 * time.Minute
+	defaultFrequencyAfter  = 30 * time.Minute
+)
+
 // parseMinutesValue reads a minute-valued window parameter, bounding it at
 // maxWindow. The bound is applied before the time.Duration conversion so huge
 // values cannot overflow into a negative duration.
