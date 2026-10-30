@@ -357,7 +357,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime, currentTime, serviceMidnight)
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime, predictionClock{queryTime: currentTime, serviceDate: serviceMidnight})
 
 		if isPredicted {
 			predictedArrivalTime = predictedArrival
@@ -699,6 +699,14 @@ func dwellAbsorbsLateness(foundTarget bool, stuCount int, hasTripDelay, targetPa
 	return stuCount >= 2
 }
 
+// predictionClock is the query instant and the service-date midnight used to
+// place that instant on the block. Grouped so getPredictedTimes stays within
+// SonarCloud's parameter limit.
+type predictionClock struct {
+	queryTime   time.Time
+	serviceDate time.Time
+}
+
 // getPredictedTimes computes predicted arrival/departure times from GTFS-RT TripUpdate data.
 // It implements a 3-tier fallback strategy matching the plural handler's behavior:
 //  1. Exact stop match — uses per-stop arrival/departure time or delay directly
@@ -712,7 +720,8 @@ func (api *RestAPI) getPredictedTimes(
 	tripID string,
 	stopCode string,
 	targetStopSequence int64,
-	scheduledArrivalTime, scheduledDepartureTime, queryTime, serviceDate time.Time,
+	scheduledArrivalTime, scheduledDepartureTime time.Time,
+	clock predictionClock,
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
@@ -840,11 +849,11 @@ func (api *RestAPI) getPredictedTimes(
 	}
 	targetPastEarliestSTU := earliestSTUSequence >= 0 && targetStopSequence > earliestSTUSequence
 	if !departureFromFeed && dwellAbsorbsLateness(foundTarget, len(realTimeTrip.StopTimeUpdates), realTimeTrip.Delay != nil, targetPastEarliestSTU) {
-		if arrivalDeviation, departureDeviation, ok := api.deviationsAfterAccumulatedSlack(ctx, tripID, targetStopSequence, *arrivalOffset, queryTime, serviceDate); ok {
+		if arrivalDeviation, departureDeviation, ok := api.deviationsAfterAccumulatedSlack(ctx, tripID, targetStopSequence, *arrivalOffset, clock.queryTime, clock.serviceDate); ok {
 			arrivalOffset = &arrivalDeviation
 			departureOffset = &departureDeviation
 		} else {
-			adjusted := departureDeviationAtQuery(*arrivalOffset, queryTime, scheduledArrivalTime, scheduledDepartureTime)
+			adjusted := departureDeviationAtQuery(*arrivalOffset, clock.queryTime, scheduledArrivalTime, scheduledDepartureTime)
 			departureOffset = &adjusted
 		}
 	}
