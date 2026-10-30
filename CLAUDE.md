@@ -577,8 +577,10 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
 
 **The [maglev.wiki](https://github.com/OneBusAway/maglev/wiki) spec is the source of truth for endpoint behavior**: request parameters, defaults, response fields and status codes. Each endpoint page describes the Java OneBusAway server's behavior, which Maglev matches unless the page's Implementation Decisions section records a deliberate difference.
 
+If an endpoint has no wiki page yet (for example `block` or the report-problem endpoints), follow the Java implementation, not openapi.yml, and flag it in the PR description.
+
 The OpenAPI spec (`testdata/openapi.yml`, synced from [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/stainless/openapi.yml)) comes second. It generates the client SDKs and has known errors. For example, it gives trips-for-route's `includeStatus` and `includeSchedule` a default of `false`, where Java and the wiki use `true`.
 
-When the wiki and openapi.yml disagree, follow the wiki and raise the discrepancy on OneBusAway/sdk-config. Don't change Maglev's behavior to match openapi.yml. An endpoint outside the SDK (such as `/api/ondemand`) needs no openapi.yml entry, but the PR description must say why.
+When the wiki and openapi.yml disagree, follow the wiki and raise the discrepancy on OneBusAway/sdk-config. Don't change Maglev's behavior to match openapi.yml. An endpoint outside the SDK (such as `/api/where/metrics.json`) needs no openapi.yml entry, but the PR description must say why.
 
 The legacy API documentation is at https://developer.onebusaway.org/api/where/methods.
