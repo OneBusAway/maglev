@@ -4,8 +4,8 @@ PURE_TAGS := purego
 # Make exports CGO_ENABLED to these recipes itself, so it takes effect in any
 # shell (sh, Git Bash, cmd.exe) without shell-specific syntax in the recipe.
 build build-debug gtfstidy coverage-report coverage lint test test-latency \
-bench-sqlite-all bench-sqlite-perftest: export CGO_ENABLED := 1
-build-pure test-pure: export CGO_ENABLED := 0
+bench-sqlite-all bench-sqlite-perftest: override export CGO_ENABLED := 1
+build-pure test-pure: override export CGO_ENABLED := 0
 
 DOCKER_IMAGE := opentransitsoftwarefoundation/maglev
 
