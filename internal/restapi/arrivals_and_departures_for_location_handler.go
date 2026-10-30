@@ -22,13 +22,20 @@ import (
 type arrivalsForLocationParams struct {
 	Location             *internalgtfs.LocationParams
 	QueryTime            time.Time
+	TimeParam            string
 	Before               time.Duration
 	After                time.Duration
+	FrequencyBefore      time.Duration
+	FrequencyAfter       time.Duration
 	MaxCount             int
 	RouteTypes           []int
 	EmptyReturnsNotFound bool
 	IncludeReferences    bool
 }
+
+// locationDateTimeLayout is the only datetime format the time parameter
+// accepts besides epoch millis.
+const locationDateTimeLayout = "2006-01-02_15-04-05"
 
 // maxRouteTypeValues bounds how many routeType values one request may send, so
 // a pathological query string cannot expand the per-route filter unboundedly.
@@ -41,9 +48,8 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
-	// One snapshot cache for the whole request: BuildTripStatus runs once per
-	// arrival row across every stop in the box, and without sharing the cache
-	// the block computation is repeated for each of them.
+	// One snapshot cache for the whole request. Trip status runs only for the
+	// arrivals that survive maxCount, and those rows still share block snapshots.
 	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
 
 	// Uncapped and clamped: Java computes arrivals for every stop in the box and
@@ -65,25 +71,39 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		return
 	}
 
+	// The service date is a local calendar date, so datetime values resolve in
+	// the fallback agency's timezone. The format was validated during parsing,
+	// so this resolution cannot fail.
+	params.QueryTime = resolveLocationQueryTime(params, agencies, api.Clock.Now())
+
 	// Nearest stop first: truncation below drops entries from the end, so the
 	// farthest stops must sort last.
 	sortStopsByDistance(stops, params.Location)
 
 	acc := newArrivalsAccumulator("")
-	arrivals, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
-		Stops:      stops,
-		Agencies:   agencies,
-		QueryTime:  params.QueryTime,
-		Before:     params.Before,
-		After:      params.After,
-		RouteTypes: params.RouteTypes,
+	pending, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
+		Stops:           stops,
+		Agencies:        agencies,
+		QueryTime:       params.QueryTime,
+		Before:          params.Before,
+		After:           params.After,
+		FrequencyBefore: params.FrequencyBefore,
+		FrequencyAfter:  params.FrequencyAfter,
+		RouteTypes:      params.RouteTypes,
 	}, acc)
 	if err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
 		return
 	}
 
-	sortArrivalsByStopDistance(arrivals, stopDistances(stops, agencies, params.Location))
+	// Nearest stop first, then the shared best-arrival comparison. Neither needs
+	// trip status.
+	distances := stopDistances(stops, agencies, params.Location)
+	sortStatusPendingArrivals(pending.Arrivals, distances)
+	arrivals := make([]models.ArrivalAndDeparture, len(pending.Arrivals))
+	for i := range pending.Arrivals {
+		arrivals[i] = pending.Arrivals[i].arrival
+	}
 
 	nearby, err := api.nearbyStopsForLocation(ctx, stops, agencies, params)
 	if err != nil {
@@ -97,8 +117,25 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		nearby:   nearby,
 	}, params.MaxCount)
 
-	if len(lists.arrivals) == 0 && len(lists.stopIDs) == 0 {
-		api.sendEmptyArrivalsForLocation(w, r, params)
+	// Entry situations are the ones Java puts on the entry: stop alerts for
+	// every found stop and route alerts for the stops that survive maxCount.
+	// An arrival's own alerts never belong here — they ride on that arrival
+	// and in the references.
+	entrySituations := newSituationCollector()
+
+	if err := api.finishRetainedLocationArrivals(ctx, lists, pending, stops, agencies, acc, entrySituations); err != nil {
+		api.sendArrivalsForLocationError(w, r, ctx, err)
+		return
+	}
+
+	// Note: no empty check here. stops is non-empty (empty searches return
+	// earlier) and maxCount is at least 1, so stopIDs is never empty and a
+	// stop list with zero arrivals is a normal response, not an empty one.
+
+	// A route can serve a retained stop and still have every arrival fall
+	// outside the window. Those route alerts belong on the entry anyway.
+	if err := api.addRouteAlertsForRetainedStops(ctx, lists.stopIDs, entrySituations); err != nil {
+		api.sendArrivalsForLocationError(w, r, ctx, err)
 		return
 	}
 
@@ -114,7 +151,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// References cover only the retained entry results, not the stops and
 	// arrivals maxCount trimmed away.
-	refAcc := retainedAccumulator(lists.arrivals, lists.stopIDs, lists.nearby, acc)
+	refAcc := retainedAccumulator(lists.arrivals, lists.stopIDs, lists.nearby, acc, entrySituations)
 
 	references, err := api.locationReferences(ctx, params.IncludeReferences, agencies, refAcc)
 	if err != nil {
@@ -127,10 +164,29 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		*references,
 		lists.stopIDs,
 		lists.nearby,
-		situationIDsFromRefs(refAcc.situations.refs),
+		situationIDsFromRefs(entrySituations.refs),
 		lists.limitExceeded,
 		api.Clock,
 	))
+}
+
+// finishRetainedLocationArrivals builds trip status for the arrivals that
+// survived maxCount, then records stop-level alerts for every searched stop.
+// A window that matched no stop_time still carries those stop alerts. Dropped
+// rows never reach BuildTripStatus, so their trip alerts are not collected.
+func (api *RestAPI) finishRetainedLocationArrivals(
+	ctx context.Context,
+	lists locationLists,
+	pending multiStopArrivalsResult,
+	stops []gtfsdb.Stop,
+	agencies *stopAgencyIndex,
+	acc *arrivalsAccumulator,
+	entrySituations *situationCollector,
+) error {
+	if err := api.finishArrivalTripStatus(ctx, lists.arrivals, pending.Arrivals[:len(lists.arrivals)], acc); err != nil {
+		return err
+	}
+	return api.addStopLevelArrivalAlerts(ctx, stops, agencies, entrySituations)
 }
 
 // sendArrivalsForLocationError distinguishes the client hanging up from a
@@ -161,6 +217,59 @@ func truncateLocationLists(lists locationLists, maxCount int) locationLists {
 	return lists
 }
 
+// addRouteAlertsForRetainedStops records alerts for every route that serves a
+// retained stop. Agency and route ids stay in separate columns: an agency id
+// can contain an underscore, so the combined agency_code form is not split
+// back apart. Alerts are indexed by the bare route id.
+func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combinedStopIDs []string, situations *situationCollector) error {
+	stopIDs := retainedStopCodes(combinedStopIDs)
+	if len(stopIDs) == 0 {
+		return nil
+	}
+
+	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesForStops)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[routeAlertKey]struct{})
+	for _, row := range rows {
+		key := routeAlertKey{agencyID: row.AgencyID, routeID: row.ID}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), row.AgencyID)
+	}
+	return nil
+}
+
+// retainedStopCodes returns each bare stop id in combinedIDs once, in order.
+// A value that is not an agency_code id is skipped.
+func retainedStopCodes(combinedIDs []string) []string {
+	codes := make([]string, 0, len(combinedIDs))
+	seen := make(map[string]struct{}, len(combinedIDs))
+	for _, id := range combinedIDs {
+		_, code, err := utils.ExtractAgencyIDAndCodeID(id)
+		if err != nil || code == "" {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+	return codes
+}
+
+// routeAlertKey is one route serving a retained stop. The same route is
+// returned once per stop it serves, and only the first copy is recorded.
+type routeAlertKey struct {
+	agencyID string
+	routeID  string
+}
+
 // combinedStopIDs renders the searched stops as {agency}_{code} IDs.
 func combinedStopIDs(stops []gtfsdb.Stop, agencies *stopAgencyIndex) []string {
 	stopIDs := make([]string, 0, len(stops))
@@ -172,8 +281,11 @@ func combinedStopIDs(stops []gtfsdb.Stop, agencies *stopAgencyIndex) []string {
 
 // retainedAccumulator rebuilds an accumulator holding only what the truncated
 // entry lists reference, so references do not serialize the stops, trips and
-// routes maxCount trimmed away. Situation references stay global: alerts are
-// few, and tracking them per trip would require invasive accumulator changes.
+// routes maxCount trimmed away.
+//
+// The situations are the entry's own plus the retained arrivals' own: an
+// arrival that maxCount dropped is not in the response, so nothing it
+// referenced belongs in the references either.
 //
 // The retained arrivals are a reference source in their own right, not just a
 // filter over the stop lists: maxCount trims stopIDs and arrivals
@@ -185,9 +297,12 @@ func retainedAccumulator(
 	stopIDs []string,
 	nearby []models.StopWithDistance,
 	acc *arrivalsAccumulator,
+	entrySituations *situationCollector,
 ) *arrivalsAccumulator {
 	refAcc := newArrivalsAccumulator("")
-	refAcc.situations = acc.situations
+	refAcc.situations = newSituationCollector()
+	refAcc.situations.addRefs(entrySituations.refs)
+	refAcc.situations.addRefs(acc.situations.refs)
 
 	for _, id := range stopIDs {
 		retainStop(refAcc, id)
@@ -515,7 +630,7 @@ func (api *RestAPI) collectActiveRoutesForGroup(ctx context.Context, loc *time.L
 		return err
 	}
 	for _, row := range rows {
-		recordActiveRoute(active, row.StopID, row.RouteID)
+		recordActiveRoute(active, row.StopID, row.AgencyID, row.RouteID)
 	}
 	return nil
 }
@@ -527,16 +642,9 @@ func (api *RestAPI) activeServiceIDsForLocation(ctx context.Context, loc *time.L
 	return api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
 }
 
-// recordActiveRoute keeps one agency-prefixed route ID for a stop,
-// ignoring rows that do not carry a well-formed combined ID.
-func recordActiveRoute(active map[string]map[string]bool, stopID string, routeID interface{}) {
-	combinedID, ok := routeID.(string)
-	if !ok {
-		return
-	}
-	if _, _, err := utils.ExtractAgencyIDAndCodeID(combinedID); err != nil {
-		return
-	}
+// recordActiveRoute keeps one agency-prefixed route ID for a stop.
+func recordActiveRoute(active map[string]map[string]bool, stopID, agencyID, routeID string) {
+	combinedID := utils.FormCombinedID(agencyID, routeID)
 	routes, ok := active[stopID]
 	if !ok {
 		routes = make(map[string]bool)
@@ -596,6 +704,19 @@ func sortStopsByDistance(stops []gtfsdb.Stop, loc *internalgtfs.LocationParams) 
 	})
 }
 
+// sortStatusPendingArrivals orders arrivals before trip status is built.
+// Nearest stop first, then compareBestArrival within a stop. The pending
+// slice and the copied arrivals must stay aligned so finishArrivalTripStatus
+// attaches status to the right row.
+func sortStatusPendingArrivals(arrivals []statusPendingArrival, distances map[string]float64) {
+	slices.SortStableFunc(arrivals, func(a, b statusPendingArrival) int {
+		if d := distances[a.arrival.StopID] - distances[b.arrival.StopID]; d != 0 {
+			return cmp.Compare(d, 0)
+		}
+		return compareBestArrival(a.arrival, b.arrival)
+	})
+}
+
 // stopDistances maps each matched stop's combined ID to its distance from the
 // search centre, so arrivals sort by how near their stop is.
 func stopDistances(stops []gtfsdb.Stop, agencies *stopAgencyIndex, loc *internalgtfs.LocationParams) map[string]float64 {
@@ -605,17 +726,6 @@ func stopDistances(stops []gtfsdb.Stop, agencies *stopAgencyIndex, loc *internal
 		distances[combined] = utils.Distance(loc.Lat, loc.Lon, stop.Lat, stop.Lon)
 	}
 	return distances
-}
-
-// sortArrivalsByStopDistance orders arrivals by stop distance from the search
-// centre, then by compareBestArrival within each stop.
-func sortArrivalsByStopDistance(arrivals []models.ArrivalAndDeparture, distances map[string]float64) {
-	slices.SortStableFunc(arrivals, func(a, b models.ArrivalAndDeparture) int {
-		if d := distances[a.StopID] - distances[b.StopID]; d != 0 {
-			return cmp.Compare(d, 0)
-		}
-		return compareBestArrival(a, b)
-	})
 }
 
 // truncateSlice trims items to maxCount, reporting whether anything was dropped
@@ -723,6 +833,8 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 		QueryTime:         api.Clock.Now(),
 		Before:            5 * time.Minute,
 		After:             35 * time.Minute,
+		FrequencyBefore:   defaultFrequencyBefore,
+		FrequencyAfter:    defaultFrequencyAfter,
 		MaxCount:          models.DefaultMaxCountForArrivalsForLocation,
 		IncludeReferences: true,
 	}
@@ -753,13 +865,40 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 
 	params.Before = parseMinutesValue(queryParams, "minutesBefore", params.Before, maxArrivalWindow, addError)
 	params.After = parseMinutesValue(queryParams, "minutesAfter", params.After, maxArrivalWindow, addError)
-	params.QueryTime = parseEpochMillisValue(queryParams, "time", params.QueryTime, addError)
+	params.FrequencyBefore = parseMinutesValue(queryParams, "frequencyMinutesBefore", params.FrequencyBefore, maxArrivalWindow, addError)
+	params.FrequencyAfter = parseMinutesValue(queryParams, "frequencyMinutesAfter", params.FrequencyAfter, maxArrivalWindow, addError)
+	// Only epoch millis and yyyy-MM-dd_HH-mm-ss are accepted. In particular
+	// signed values and date-only values fail here, at parse time, so a bad
+	// time reports 400 even when the stop search finds nothing. The datetime
+	// itself resolves after agencies are known; see the handler.
+	params.TimeParam = queryParams.Get("time")
+	if params.TimeParam != "" {
+		if _, ok := utils.ParseEpochMillis(params.TimeParam); !ok {
+			if _, err := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, time.UTC); err != nil {
+				addError("time", `Invalid field value for field "time".`)
+			}
+		}
+	}
 	params.MaxCount = parseArrivalsForLocationMaxCount(queryParams, addError)
 	params.RouteTypes = parseRouteTypesParam(queryParams, addError)
 	params.EmptyReturnsNotFound, fieldErrors = utils.ParseBoolParam(queryParams, "emptyReturnsNotFound", false, fieldErrors)
 	params.IncludeReferences, fieldErrors = ShouldIncludeReferences(r, fieldErrors)
 
 	return params, fieldErrors
+}
+
+// resolveLocationQueryTime turns the validated time parameter into the query
+// instant. Epoch millis are absolute; datetime values read in the fallback
+// agency's timezone. An empty value falls back to now.
+func resolveLocationQueryTime(params arrivalsForLocationParams, agencies *stopAgencyIndex, now time.Time) time.Time {
+	if params.TimeParam == "" {
+		return now
+	}
+	if ms, ok := utils.ParseEpochMillis(params.TimeParam); ok {
+		return time.UnixMilli(ms)
+	}
+	parsed, _ := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, agencies.fallbackLocation)
+	return parsed
 }
 
 func parseArrivalsForLocationMaxCount(queryParams map[string][]string, addError func(string, string)) int {

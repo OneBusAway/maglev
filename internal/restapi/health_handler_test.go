@@ -101,6 +101,25 @@ func TestHealthHandlerReturnsExpired(t *testing.T) {
 	assert.True(t, healthResp.DataExpired)
 }
 
+func TestHealthHandlerFeedExpiryUsesUTC(t *testing.T) {
+	// Do not parallelize: time.Local is process-wide.
+	originalLocal := time.Local
+	time.Local = time.FixedZone("host", -8*60*60)
+	t.Cleanup(func() { time.Local = originalLocal })
+
+	manager := newTestManagerNoData(t)
+	manager.MarkReady()
+	expiresAt := time.Date(2027, time.March, 14, 4, 59, 59, 0, time.UTC)
+	manager.SetFeedExpiresAtForTest(t.Context(), expiresAt)
+	api := NewRestAPI(&app.Application{GtfsManager: manager})
+	w := httptest.NewRecorder()
+	api.healthHandler(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var response HealthResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	assert.Equal(t, "2027-03-14T04:59:59Z", response.FeedExpiresAt)
+}
+
 func TestHealthHandlerStarting(t *testing.T) {
 	// Create a minimal manager but DON'T mark as ready to simulate startup phase
 	manager := newTestManagerNoData(t)
@@ -175,4 +194,30 @@ func TestHealthHandlerVerboseMode(t *testing.T) {
 	require.NotNil(t, healthRespVerbose.DataFreshness)
 	assert.NotNil(t, healthRespVerbose.DataFreshness.StaticGtfsLastUpdated)
 	assert.Contains(t, healthRespVerbose.DataFreshness.RealtimeFeeds, "feed-1")
+}
+
+func TestHealthHandler_VerboseIncludesHash(t *testing.T) {
+	api := createTestApi(t)
+
+	resp, health := callAPIHandler[HealthResponse](t, api, "/healthz?verbose=true")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotNil(t, health.DataFreshness)
+	assert.Equal(t, rabaZipSha256(t), health.DataFreshness.StaticGtfsHash)
+}
+
+func TestHealthHandler_VerboseImportMetadataQueryFails(t *testing.T) {
+	manager := newTestManagerWithoutImportMetadata(t)
+	manager.MarkReady()
+	api := NewRestAPI(&app.Application{GtfsManager: manager})
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz?verbose=true", nil)
+	rr := httptest.NewRecorder()
+	api.healthHandler(rr, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+	var health HealthResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &health))
+	assert.Equal(t, "unavailable", health.Status)
+	assert.Nil(t, health.DataFreshness)
 }

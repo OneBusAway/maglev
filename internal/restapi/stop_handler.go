@@ -1,8 +1,6 @@
 package restapi
 
 import (
-	"database/sql"
-	"errors"
 	"net/http"
 	"sort"
 
@@ -27,7 +25,11 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-	if err != nil || stop.ID == "" {
+	if err != nil {
+		api.dbErrorResponse(w, r, err)
+		return
+	}
+	if stop.ID == "" {
 		api.sendNotFound(w, r)
 		return
 	}
@@ -159,13 +161,8 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 
 		for _, aid := range agencyIDs {
 			agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, aid)
-
 			if err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					api.sendNotFound(w, r)
-					return
-				}
-				api.serverErrorResponse(w, r, err)
+				api.dbErrorResponse(w, r, err)
 				return
 			}
 

@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -25,7 +26,7 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, id)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -52,10 +53,8 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var blockID, shapeID string
-	if trip.BlockID.Valid {
-		blockID = utils.FormCombinedID(agencyID, trip.BlockID.String)
-	}
+	blockID := utils.FormBlockID(agencyID, trip.BlockID.String, trip.ID)
+	var shapeID string
 	if trip.ShapeID.Valid {
 		shapeID = utils.FormCombinedID(agencyID, trip.ShapeID.String)
 	}
@@ -67,8 +66,8 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		DirectionID:   strconv.FormatInt(trip.DirectionID.Int64, 10),
 		BlockID:       blockID,
 		ShapeID:       shapeID,
-		TripHeadsign:  trip.TripHeadsign.String,
-		TripShortName: trip.TripShortName.String,
+		TripHeadsign:  nulls.StringOrEmpty(trip.TripHeadsign),
+		TripShortName: nulls.StringOrEmpty(trip.TripShortName),
 		// RouteShortName is the trip's own per-trip route short name (the GTFS
 		// trips.txt route_short_name extension), not the route's short name.
 		// Maglev does not store that column, so it is always empty — matching the
@@ -90,13 +89,13 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		references.Routes = append(references.Routes, models.NewRoute(
 			utils.FormCombinedID(route.AgencyID, trip.RouteID),
 			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String))
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor)))
 
 		references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 	}

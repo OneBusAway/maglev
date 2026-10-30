@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"database/sql"
+	"errors"
 	"net/http"
 
 	"maglev.onebusaway.org/gtfsdb"
@@ -15,7 +16,7 @@ import (
 // and persists it to the database.
 func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.Request) {
 	reqLogger := logging.ForComponent(r.Context(), "problem_reporting")
-	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	agencyID, tripID, ok := api.extractAgencyCodeID(w, r, "tripId")
 	if !ok {
 		return
 	}
@@ -25,7 +26,7 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	// Safety check: Ensure DB is initialized
 	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil || api.GtfsManager.GtfsDB.Queries == nil {
 		reqLogger.Error("report problem with trip failed: GTFS DB not initialized")
-		http.Error(w, `{"code":500, "text":"internal server error"}`, http.StatusInternalServerError)
+		api.serverErrorResponse(w, r, errors.New("GTFS DB not initialized"))
 		return
 	}
 
@@ -65,16 +66,16 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	now := api.Clock.Now().UnixMilli()
 	params := gtfsdb.CreateProblemReportTripParams{
 		TripID:               tripID,
-		ServiceDate:          nulls.String(serviceDate),
-		VehicleID:            nulls.String(vehicleID),
-		StopID:               nulls.String(stopID),
-		Code:                 nulls.String(code),
-		UserComment:          nulls.String(userComment),
+		ServiceDate:          nulls.NonEmptyString(serviceDate),
+		VehicleID:            nulls.NonEmptyString(vehicleID),
+		StopID:               nulls.NonEmptyString(stopID),
+		Code:                 nulls.NonEmptyString(code),
+		UserComment:          nulls.NonEmptyString(userComment),
 		UserLat:              nullableReportFloat(userLat, query.Get("userLat")),
 		UserLon:              nullableReportFloat(userLon, query.Get("userLon")),
 		UserLocationAccuracy: nullableReportFloat(userLocationAccuracy, query.Get("userLocationAccuracy")),
 		UserOnVehicle:        sql.NullInt64{Int64: onVehicleValue, Valid: query.Get("userOnVehicle") != ""},
-		UserVehicleNumber:    nulls.String(userVehicleNumber),
+		UserVehicleNumber:    nulls.NonEmptyString(userVehicleNumber),
 		CreatedAt:            now,
 		SubmittedAt:          now,
 	}
@@ -83,7 +84,7 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	if err != nil {
 		reqLogger.Error("failed to store problem report", "error", err,
 			"trip_id", tripID)
-		http.Error(w, `{"code":500, "text":"failed to store problem report"}`, http.StatusInternalServerError)
+		api.serverErrorResponse(w, r, err)
 		return
 	}
 

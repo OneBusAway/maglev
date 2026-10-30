@@ -157,6 +157,7 @@ func setupTestClientWithRoutes(t *testing.T) (*gtfsdb.Client, func()) {
 	return client, cleanup
 }
 
+// TestFilterRoutes tests filtering GTFS routes by a map of present route IDs.
 func TestFilterRoutes(t *testing.T) {
 	client, cleanup := setupTestClientWithRoutes(t)
 	defer cleanup()
@@ -209,7 +210,8 @@ func TestFilterRoutes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FilterRoutes(client.Queries, ctx, tt.present)
+			result, err := FilterRoutes(client.Queries, ctx, tt.present)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, len(result))
 
 			// Verify that returned routes are correct
@@ -221,6 +223,7 @@ func TestFilterRoutes(t *testing.T) {
 	}
 }
 
+// TestFilterRoutes_VerifyFields tests that all route fields are populated correctly during filtering.
 func TestFilterRoutes_VerifyFields(t *testing.T) {
 	client, cleanup := setupTestClientWithRoutes(t)
 	defer cleanup()
@@ -228,7 +231,8 @@ func TestFilterRoutes_VerifyFields(t *testing.T) {
 	ctx := context.Background()
 	present := map[string]bool{"agency1_route1": true}
 
-	result := FilterRoutes(client.Queries, ctx, present)
+	result, err := FilterRoutes(client.Queries, ctx, present)
+	require.NoError(t, err)
 
 	require.Len(t, result, 1)
 	route := result[0]
@@ -244,6 +248,7 @@ func TestFilterRoutes_VerifyFields(t *testing.T) {
 	assert.Equal(t, "FFFFFF", route.TextColor)
 }
 
+// TestFilterRoutes_DatabaseError verifies that FilterRoutes returns an error when the database query fails.
 func TestFilterRoutes_DatabaseError(t *testing.T) {
 	// Create client but close it immediately to trigger error
 	config := gtfsdb.Config{
@@ -260,105 +265,8 @@ func TestFilterRoutes_DatabaseError(t *testing.T) {
 	ctx := context.Background()
 	present := map[string]bool{"route1": true}
 
-	result := FilterRoutes(client.Queries, ctx, present)
+	result, err := FilterRoutes(client.Queries, ctx, present)
 
+	require.Error(t, err)
 	assert.Nil(t, result, "Should return nil on database error")
-}
-
-func TestGetAllRoutesRefs(t *testing.T) {
-	client, cleanup := setupTestClientWithRoutes(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	t.Run("Get all routes", func(t *testing.T) {
-		result := GetAllRoutesRefs(client.Queries, ctx)
-
-		assert.Equal(t, 3, len(result))
-
-		// Verify that all routes are returned
-		routeIDs := make(map[string]bool)
-		for _, route := range result {
-			routeIDs[route.ID] = true
-		}
-
-		assert.True(t, routeIDs["agency1_route1"])
-		assert.True(t, routeIDs["agency1_route2"])
-		assert.True(t, routeIDs["agency2_route3"])
-	})
-
-	t.Run("Verify combined IDs format", func(t *testing.T) {
-		result := GetAllRoutesRefs(client.Queries, ctx)
-
-		require.NotEmpty(t, result)
-
-		// Check first route has combined ID
-		route := result[0]
-		assert.Contains(t, route.ID, "_", "Route ID should be in combined format agency_route")
-	})
-}
-
-func TestGetAllRoutesRefs_VerifyFields(t *testing.T) {
-	client, cleanup := setupTestClientWithRoutes(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	result := GetAllRoutesRefs(client.Queries, ctx)
-	require.Len(t, result, 3)
-
-	// Find route1 in results
-	var route1 models.Route
-	for _, route := range result {
-		if route.AgencyID == "agency1" && route.ShortName == "R1" {
-			route1 = route
-			break
-		}
-	}
-
-	assert.Equal(t, "agency1_route1", route1.ID)
-	assert.Equal(t, "agency1", route1.AgencyID)
-	assert.Equal(t, "R1", route1.ShortName)
-	assert.Equal(t, "Route One", route1.LongName)
-	assert.Equal(t, "Description 1", route1.Description)
-	assert.Equal(t, models.RouteType(3), route1.Type)
-	assert.Equal(t, "http://route1.com", route1.URL)
-	assert.Equal(t, "FF0000", route1.Color)
-	assert.Equal(t, "FFFFFF", route1.TextColor)
-}
-
-func TestGetAllRoutesRefs_DatabaseError(t *testing.T) {
-	// Create client but close it immediately to trigger error
-	config := gtfsdb.Config{
-		DBPath: ":memory:",
-		Env:    appconf.Test,
-	}
-	client, err := gtfsdb.NewClient(config)
-	require.NoError(t, err)
-
-	// Close the database to cause an error
-	err = client.Close()
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	result := GetAllRoutesRefs(client.Queries, ctx)
-
-	assert.Nil(t, result, "Should return nil on database error")
-}
-
-func TestGetAllRoutesRefs_EmptyDatabase(t *testing.T) {
-	config := gtfsdb.Config{
-		DBPath: ":memory:",
-		Env:    appconf.Test,
-	}
-	client, err := gtfsdb.NewClient(config)
-	require.NoError(t, err)
-	defer func() { _ = client.Close() }()
-
-	ctx := context.Background()
-
-	result := GetAllRoutesRefs(client.Queries, ctx)
-
-	assert.Empty(t, result, "Should return empty slice when no routes in database")
 }

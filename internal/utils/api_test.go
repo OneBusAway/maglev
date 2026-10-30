@@ -292,6 +292,27 @@ func TestFormCombinedID(t *testing.T) {
 	}
 }
 
+func TestFormBlockID(t *testing.T) {
+	tests := []struct {
+		name     string
+		agencyID string
+		blockID  string
+		tripID   string
+		expected string
+	}{
+		{"Trip with a block", "agency", "block_1", "trip_1", "agency_block_1"},
+		{"Blockless trip uses its trip ID", "agency", "", "trip_1", "agency_trip_1"},
+		{"Empty agency ID", "", "block_1", "trip_1", ""},
+		{"Blockless trip with empty trip ID", "agency", "", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, FormBlockID(tt.agencyID, tt.blockID, tt.tripID))
+		})
+	}
+}
+
 func TestMapWheelchairBoarding(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -612,6 +633,46 @@ func TestParseTimeParameter(t *testing.T) {
 	}
 }
 
+func TestParseTimeParameterOrNow_ZeroEpochMeansNow(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	now := time.Date(2025, 6, 12, 12, 0, 0, 0, loc)
+	testClock := clock.NewMockClock(now)
+
+	for _, raw := range []string{"0", "00"} {
+		t.Run(raw, func(t *testing.T) {
+			dateStr, parsedTime, fieldErrors, valid := ParseTimeParameterOrNow(raw, loc, testClock)
+
+			assert.True(t, valid)
+			assert.Nil(t, fieldErrors)
+			assert.Equal(t, now.Format("20060102"), dateStr)
+			assert.True(t, now.Equal(parsedTime), "expected %v, got %v", now, parsedTime)
+		})
+	}
+}
+
+func TestParseTimeParameterOrNow_OtherValuesUnchanged(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	testClock := clock.NewMockClock(time.Date(2025, 6, 12, 12, 0, 0, 0, loc))
+
+	t.Run("Epoch 1 is still 1970", func(t *testing.T) {
+		_, parsedTime, _, valid := ParseTimeParameterOrNow("1", loc, testClock)
+
+		assert.True(t, valid)
+		assert.Equal(t, int64(1), parsedTime.UnixMilli())
+	})
+
+	t.Run("Garbage is still rejected", func(t *testing.T) {
+		_, _, fieldErrors, valid := ParseTimeParameterOrNow("garbage", loc, testClock)
+
+		assert.False(t, valid)
+		assert.Contains(t, fieldErrors, "time")
+	})
+}
+
 func TestParseTimeParameter_EdgeCases(t *testing.T) {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
@@ -646,6 +707,38 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 		assert.False(t, valid)
 		assert.NotNil(t, fieldErrors)
 		assert.Contains(t, fieldErrors, "time")
+	})
+
+	t.Run("Negative epoch timestamp rejects", func(t *testing.T) {
+		for _, raw := range []string{"-1", "-5", "-1000", "-9223372036854775808"} {
+			_, _, fieldErrors, valid := ParseTimeParameter(raw, loc, clock.RealClock{})
+			assert.False(t, valid, "negative epoch %s must be invalid", raw)
+			assert.NotNil(t, fieldErrors)
+			assert.Contains(t, fieldErrors, "time")
+		}
+	})
+
+	t.Run("Leading plus epoch timestamp rejects", func(t *testing.T) {
+		_, _, fieldErrors, valid := ParseTimeParameter("+1000", loc, clock.RealClock{})
+		assert.False(t, valid)
+		assert.NotNil(t, fieldErrors)
+		assert.Contains(t, fieldErrors, "time")
+	})
+
+	t.Run("Preserves sub-second millisecond precision", func(t *testing.T) {
+		dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter("1710979086123", loc, clock.RealClock{})
+		require.True(t, valid)
+		require.Nil(t, fieldErrors)
+		assert.Equal(t, "20240320", dateStr)
+		assert.Equal(t, int64(1710979086123), parsedTime.UnixMilli())
+		assert.Equal(t, 123_000_000, parsedTime.Nanosecond())
+	})
+
+	t.Run("Far future epoch timestamp is accepted matching Java", func(t *testing.T) {
+		_, parsedTime, fieldErrors, valid := ParseTimeParameter("32503680000001", loc, clock.RealClock{})
+		require.True(t, valid)
+		require.Nil(t, fieldErrors)
+		assert.Equal(t, int64(32503680000001), parsedTime.UnixMilli())
 	})
 }
 
@@ -968,6 +1061,46 @@ func TestPaginateSlice(t *testing.T) {
 			name:          "Nil slice",
 			items:         nil,
 			offset:        0,
+			limit:         5,
+			expected:      []int{},
+			limitExceeded: false,
+		},
+		{
+			name:          "Negative offset with no limit",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        -1,
+			limit:         -1,
+			expected:      []int{1, 2, 3, 4, 5},
+			limitExceeded: false,
+		},
+		{
+			name:          "Negative offset with limit",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        -2,
+			limit:         2,
+			expected:      []int{1, 2},
+			limitExceeded: true,
+		},
+		{
+			name:          "Negative limit less than -1",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        0,
+			limit:         -2,
+			expected:      []int{},
+			limitExceeded: true,
+		},
+		{
+			name:          "Negative limit less than -1 with offset",
+			items:         []int{1, 2, 3, 4, 5},
+			offset:        1,
+			limit:         -5,
+			expected:      []int{},
+			limitExceeded: true,
+		},
+		{
+			name:          "Negative offset on empty slice",
+			items:         []int{},
+			offset:        -1,
 			limit:         5,
 			expected:      []int{},
 			limitExceeded: false,

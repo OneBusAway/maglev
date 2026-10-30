@@ -27,6 +27,9 @@ type alertIndex struct {
 	byRoute  map[string][]gtfs.Alert
 	byAgency map[string][]gtfs.Alert
 	byStop   map[string][]gtfs.Alert
+	// all keeps every indexed alert, including two feeds that publish the same
+	// raw alert id. The by* maps collapse those by id on lookup.
+	all []gtfs.Alert
 }
 
 // mergedRealtime is the merged view of every realtime feed, published as a
@@ -44,7 +47,9 @@ type mergedRealtime struct {
 	vehicleLookupByVehicle   map[string]int
 	duplicatedVehicleByRoute map[string][]gtfs.Vehicle
 	vehiclesByRoute          map[string][]gtfs.Vehicle
+	vehiclePositionsByAgency map[string]AgencyVehiclePositions
 	alerts                   alertIndex
+	builtAt                  time.Time
 }
 
 // emptyMergedRealtime is returned before the first publish so a zero-value
@@ -55,6 +60,7 @@ var emptyMergedRealtime = &mergedRealtime{
 	vehicleLookupByVehicle:   map[string]int{},
 	duplicatedVehicleByRoute: map[string][]gtfs.Vehicle{},
 	vehiclesByRoute:          map[string][]gtfs.Vehicle{},
+	vehiclePositionsByAgency: map[string]AgencyVehiclePositions{},
 	alerts: alertIndex{
 		byTrip:   map[string][]gtfs.Alert{},
 		byRoute:  map[string][]gtfs.Alert{},
@@ -84,12 +90,15 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 		vehicleLookupByVehicle:   maps.Clone(m.vehicleLookupByVehicle),
 		duplicatedVehicleByRoute: maps.Clone(m.duplicatedVehicleByRoute),
 		vehiclesByRoute:          maps.Clone(m.vehiclesByRoute),
+		vehiclePositionsByAgency: maps.Clone(m.vehiclePositionsByAgency),
 		alerts: alertIndex{
 			byTrip:   maps.Clone(m.alerts.byTrip),
 			byRoute:  maps.Clone(m.alerts.byRoute),
 			byAgency: maps.Clone(m.alerts.byAgency),
 			byStop:   maps.Clone(m.alerts.byStop),
+			all:      slices.Clone(m.alerts.all),
 		},
+		builtAt: m.builtAt,
 	}
 	if out.tripLookup == nil {
 		out.tripLookup = map[string]int{}
@@ -105,6 +114,9 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 	}
 	if out.vehiclesByRoute == nil {
 		out.vehiclesByRoute = map[string][]gtfs.Vehicle{}
+	}
+	if out.vehiclePositionsByAgency == nil {
+		out.vehiclePositionsByAgency = map[string]AgencyVehiclePositions{}
 	}
 	return out
 }
@@ -216,6 +228,7 @@ func (manager *Manager) cleanupExpiredVehicles(feedID string) {
 	for vid, lastSeen := range lastSeenMap {
 		if now.Sub(lastSeen) > staleVehicleTimeout {
 			delete(lastSeenMap, vid)
+			delete(manager.feedVehicleAgency[feedID], vid)
 		}
 	}
 
@@ -246,6 +259,12 @@ func (manager *Manager) GetRealTimeTrips() []gtfs.Trip {
 // read-only contract as GetRealTimeTrips.
 func (manager *Manager) GetRealTimeVehicles() []gtfs.Vehicle {
 	return manager.mergedRealtime().vehicles
+}
+
+// Alerts returns every indexed alert in feed-id order. Two feeds that reuse
+// one raw alert id both appear. Callers must not mutate the slice or its alerts.
+func (manager *Manager) Alerts() []gtfs.Alert {
+	return manager.mergedRealtime().alerts.all
 }
 
 func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.Alert {
@@ -307,11 +326,18 @@ func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []g
 	return manager.GetAlertsByIDs(tripID, routeID, agencyID)
 }
 
-// GetAlertsForStop returns deduplicated alerts for the given stopID.
+// GetAlertsForStop returns the alerts that apply at a stop: the stop's own
+// alerts followed by the agency-wide alerts of agencyID, the stop's agency.
+// Java's getServiceAlertsForStopId merges the same two sets, so an agency-wide
+// alert reaches a stop even when no arrival there carries it.
 // Deduplication by alert ID is done internally so callers never receive
 // duplicate entries even when the same alert ID appears in multiple feeds.
-func (manager *Manager) GetAlertsForStop(stopID string) []gtfs.Alert {
-	src := manager.mergedRealtime().alerts.byStop[stopID]
+func (manager *Manager) GetAlertsForStop(stopID, agencyID string) []gtfs.Alert {
+	idx := manager.mergedRealtime().alerts
+	src := idx.byStop[stopID]
+	if agencyID != "" {
+		src = slices.Concat(src, idx.byAgency[agencyID])
+	}
 	if len(src) == 0 {
 		return nil
 	}
@@ -426,7 +452,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	agencyFilter := manager.feedAgencyFilter[feedID]
 	var unattributedTrips []gtfs.Trip
 	if len(agencyFilter) > 0 {
-		routeIDs := collectRealtimeRouteIDs(tripData, tripErr, vehicleData, vehicleErr, alertData, alertErr)
+		routeIDs := collectRealtimeRouteIDs(tripData, tripErr, alertData, alertErr)
 		routeAgencyMap, err := manager.buildRouteAgencyMap(ctx, routeIDs)
 		if err != nil {
 			logging.LogError(logger, "Error resolving route agencies for realtime filter", err,
@@ -442,11 +468,17 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			}
 			tripData.Trips, unattributedTrips = filterTripsByAgency(tripData.Trips, agencyFilter, agencyByTripID)
 		}
-		if vehicleData != nil && vehicleErr == nil {
-			vehicleData.Vehicles = filterVehiclesByAgency(vehicleData.Vehicles, agencyFilter, routeAgencyMap)
-		}
 		if alertData != nil && alertErr == nil {
 			alertData.Alerts = filterAlertsByAgency(alertData.Alerts, agencyFilter, routeAgencyMap)
+		}
+	}
+
+	var vehicleAgencies map[vehicleKey]string
+	if vehicleData != nil && vehicleErr == nil {
+		var ok bool
+		vehicleData.Vehicles, vehicleAgencies, ok = manager.attributeFeedVehicles(ctx, logger, feedCfg, vehicleData.Vehicles)
+		if !ok {
+			return false
 		}
 	}
 
@@ -497,6 +529,15 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				}
 			}
 
+			prevAgencies := manager.feedVehicleAgency[feedID]
+			agencies := make(map[vehicleKey]string, len(vehicleData.Vehicles))
+			// vehicleAgencies is nil only when the attribution lookup failed.
+			// Each vehicle then keeps its last known agency until a lookup succeeds.
+			incomingAgencies := vehicleAgencies
+			if incomingAgencies == nil {
+				incomingAgencies = prevAgencies
+			}
+
 			validVehicles := make([]gtfs.Vehicle, 0, len(vehicleData.Vehicles))
 			for _, v := range vehicleData.Vehicles {
 				if v.ID == nil {
@@ -514,11 +555,13 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 							slog.Time("incoming_timestamp", *v.Timestamp),
 						)
 						validVehicles = append(validVehicles, prev)
+						copyVehicleAgency(agencies, prevAgencies, newVehicleKey(v.ID))
 						continue
 					}
 				}
 
 				validVehicles = append(validVehicles, v)
+				copyVehicleAgency(agencies, incomingAgencies, newVehicleKey(v.ID))
 			}
 
 			now := time.Now()
@@ -554,11 +597,17 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				if _, current := currentVehicleIDs[key]; !current {
 					if lastSeen, ok := lastSeenMap[key]; ok && now.Sub(lastSeen) <= staleVehicleTimeout {
 						validVehicles = append(validVehicles, releaseTakenTrip(pv, liveTripIDs))
+						copyVehicleAgency(agencies, prevAgencies, key)
 					}
 				}
 			}
 
 			manager.feedVehicles[feedID] = validVehicles
+			if manager.feedVehicleAgency == nil {
+				manager.feedVehicleAgency = make(map[string]map[vehicleKey]string)
+			}
+			manager.feedVehicleAgency[feedID] = agencies
+			manager.recordVehicleDataTime(feedID, vehicleData.CreatedAt)
 		} else {
 			// Even when skipping the vehicle update due to staleness, still clean up
 			// expired vehicles based on the last-seen timeout windows
@@ -657,19 +706,16 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	return hasNewData
 }
 
-// collectRealtimeRouteIDs gathers unique route IDs from the sub-feeds that
-// decoded successfully so the agency filter can resolve them in one lookup.
+// collectRealtimeRouteIDs gathers unique route IDs from the trip and alert
+// sub-feeds that decoded successfully so the agency filter can resolve them
+// in one lookup. Vehicles are resolved by attributeVehicles.
 func collectRealtimeRouteIDs(
 	tripData *gtfs.Realtime, tripErr error,
-	vehicleData *gtfs.Realtime, vehicleErr error,
 	alertData *gtfs.Realtime, alertErr error,
 ) map[string]struct{} {
 	routeIDSet := make(map[string]struct{})
 	if tripData != nil && tripErr == nil {
 		collectTripRouteIDs(routeIDSet, tripData.Trips)
-	}
-	if vehicleData != nil && vehicleErr == nil {
-		collectVehicleRouteIDs(routeIDSet, vehicleData.Vehicles)
 	}
 	if alertData != nil && alertErr == nil {
 		collectAlertRouteIDs(routeIDSet, alertData.Alerts)
@@ -750,14 +796,35 @@ func (manager *Manager) tripAgencyIDs(ctx context.Context, trips []gtfs.Trip, ro
 			unresolvedTripIDs = append(unresolvedTripIDs, trip.ID.ID)
 		}
 	}
-	if len(unresolvedTripIDs) == 0 {
-		return agencyByTripID, nil
+
+	routesByTripID, err := manager.staticTripRoutes(ctx, unresolvedTripIDs)
+	if err != nil {
+		return nil, err
+	}
+	for tripID, route := range routesByTripID {
+		agencyByTripID[tripID] = route.agencyID
+	}
+	return agencyByTripID, nil
+}
+
+// staticTripRoute is the route a static trip runs on, with that route's agency.
+type staticTripRoute struct {
+	routeID  string
+	agencyID string
+}
+
+// staticTripRoutes looks up the route and agency of each static trip, keyed
+// by trip ID. Trips missing from static data are left out.
+func (manager *Manager) staticTripRoutes(ctx context.Context, tripIDs []string) (map[string]staticTripRoute, error) {
+	routesByTripID := make(map[string]staticTripRoute, len(tripIDs))
+	if len(tripIDs) == 0 {
+		return routesByTripID, nil
 	}
 	if manager.GtfsDB == nil {
 		return nil, errors.New("gtfs database is not initialized")
 	}
 
-	staticTrips, err := utils.QueryInBatches(ctx, unresolvedTripIDs, manager.GtfsDB.Queries.GetTripsByIDs)
+	staticTrips, err := utils.QueryInBatches(ctx, tripIDs, manager.GtfsDB.Queries.GetTripsByIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -771,10 +838,133 @@ func (manager *Manager) tripAgencyIDs(ctx context.Context, trips []gtfs.Trip, ro
 	}
 	for _, staticTrip := range staticTrips {
 		if agencyID, ok := staticRouteAgencies[staticTrip.RouteID]; ok {
-			agencyByTripID[staticTrip.ID] = agencyID
+			routesByTripID[staticTrip.ID] = staticTripRoute{routeID: staticTrip.RouteID, agencyID: agencyID}
 		}
 	}
-	return agencyByTripID, nil
+	return routesByTripID, nil
+}
+
+// attributeVehicles gives each vehicle of a feed update one agency: the
+// agency of its trip's route, else the feed's first configured agency.
+// Vehicles that resolve to neither are kept without one. A missing route_id
+// is filled from the static trip. Vehicles without an ID are dropped, because
+// retention can't key them. In a feed with agency-ids, vehicles on another
+// agency's route are dropped too.
+func (manager *Manager) attributeVehicles(ctx context.Context, vehicles []gtfs.Vehicle, feedCfg RTFeedConfig) ([]gtfs.Vehicle, map[vehicleKey]string, error) {
+	routeIDs := make(map[string]struct{})
+	collectVehicleRouteIDs(routeIDs, vehicles)
+	routeAgencies, err := manager.buildRouteAgencyMap(ctx, routeIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	routesByTripID, err := manager.staticTripRoutes(ctx, unresolvedVehicleTripIDs(vehicles, routeAgencies))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	fallbackAgencyID := ""
+	if len(feedCfg.AgencyIDs) > 0 {
+		fallbackAgencyID = feedCfg.AgencyIDs[0]
+	}
+	allowed := manager.feedAgencyFilter[feedCfg.ID]
+
+	kept := make([]gtfs.Vehicle, 0, len(vehicles))
+	agencies := make(map[vehicleKey]string, len(vehicles))
+	for _, vehicle := range vehicles {
+		if vehicle.ID == nil {
+			continue
+		}
+		vehicle, agencyID := withRouteAgency(vehicle, routeAgencies, routesByTripID)
+		if len(allowed) > 0 && belongsToOtherAgency(agencyID, allowed) {
+			continue
+		}
+		if agencyID == "" {
+			agencyID = fallbackAgencyID
+		}
+		kept = append(kept, vehicle)
+		if agencyID != "" {
+			agencies[newVehicleKey(vehicle.ID)] = agencyID
+		}
+	}
+	return kept, agencies, nil
+}
+
+// attributeFeedVehicles runs attributeVehicles for a feed update. When the
+// lookup fails, a feed with agency-ids skips the update, as its agency filter
+// does; a feed without them keeps its vehicles with nil agencies, so they
+// keep their previous attribution. ok is false when the update must be
+// skipped.
+func (manager *Manager) attributeFeedVehicles(ctx context.Context, logger *slog.Logger, feedCfg RTFeedConfig, vehicles []gtfs.Vehicle) (kept []gtfs.Vehicle, agencies map[vehicleKey]string, ok bool) {
+	kept, agencies, err := manager.attributeVehicles(ctx, vehicles, feedCfg)
+	if err == nil {
+		return kept, agencies, true
+	}
+	logging.LogError(logger, "Error resolving vehicle agencies", err,
+		slog.String("feed", feedCfg.ID))
+	keepUnattributed := len(manager.feedAgencyFilter[feedCfg.ID]) == 0
+	return vehicles, nil, keepUnattributed
+}
+
+// recordVehicleDataTime stores when a feed's vehicle data was produced: its
+// header timestamp, else now, the fetch time.
+func (manager *Manager) recordVehicleDataTime(feedID string, headerTime time.Time) {
+	if manager.feedVehicleDataTime == nil {
+		manager.feedVehicleDataTime = make(map[string]time.Time)
+	}
+	if headerTime.IsZero() {
+		headerTime = time.Now()
+	}
+	manager.feedVehicleDataTime[feedID] = headerTime
+}
+
+// copyVehicleAgency carries a vehicle's agency, if it has one, from src to dst.
+func copyVehicleAgency(dst, src map[vehicleKey]string, key vehicleKey) {
+	if agencyID, ok := src[key]; ok {
+		dst[key] = agencyID
+	}
+}
+
+// belongsToOtherAgency reports whether a vehicle in a feed with agency-ids
+// runs for an agency outside allowed. A vehicle whose route resolves to no
+// agency doesn't, so it falls back to the feed's first agency.
+func belongsToOtherAgency(agencyID string, allowed map[string]bool) bool {
+	return agencyID != "" && !allowed[agencyID]
+}
+
+// unresolvedVehicleTripIDs lists the trip IDs of vehicles whose route_id is
+// missing or unknown, for the static trip lookup.
+func unresolvedVehicleTripIDs(vehicles []gtfs.Vehicle, routeAgencies map[string]string) []string {
+	var tripIDs []string
+	for _, vehicle := range vehicles {
+		if vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
+			continue
+		}
+		if _, ok := routeAgencies[vehicle.Trip.ID.RouteID]; !ok {
+			tripIDs = append(tripIDs, vehicle.Trip.ID.ID)
+		}
+	}
+	return tripIDs
+}
+
+// withRouteAgency returns the agency of the vehicle's trip route, or "" when
+// it has none, and the vehicle with a missing or unknown route_id replaced by
+// the static trip's route. The trip is copied first, because the parsed feed
+// may share it.
+func withRouteAgency(vehicle gtfs.Vehicle, routeAgencies map[string]string, routesByTripID map[string]staticTripRoute) (gtfs.Vehicle, string) {
+	if vehicle.Trip == nil {
+		return vehicle, ""
+	}
+	if agencyID, ok := routeAgencies[vehicle.Trip.ID.RouteID]; ok {
+		return vehicle, agencyID
+	}
+	staticRoute, ok := routesByTripID[vehicle.Trip.ID.ID]
+	if !ok {
+		return vehicle, ""
+	}
+	trip := *vehicle.Trip
+	trip.ID.RouteID = staticRoute.routeID
+	vehicle.Trip = &trip
+	return vehicle, staticRoute.agencyID
 }
 
 // filterTripsByAgency returns the trips that belong to one of the allowed
@@ -794,21 +984,6 @@ func filterTripsByAgency(trips []gtfs.Trip, allowed map[string]bool, agencyByTri
 		}
 	}
 	return filtered, unattributed
-}
-
-// filterVehiclesByAgency returns only the vehicles whose trip's route belongs to
-// one of the allowed agencies. Vehicles without a trip or unresolvable route are dropped.
-func filterVehiclesByAgency(vehicles []gtfs.Vehicle, allowed map[string]bool, routeAgencyMap map[string]string) []gtfs.Vehicle {
-	filtered := make([]gtfs.Vehicle, 0, len(vehicles))
-	for _, v := range vehicles {
-		if v.Trip == nil || v.Trip.ID.RouteID == "" {
-			continue
-		}
-		if agencyID, ok := routeAgencyMap[v.Trip.ID.RouteID]; ok && allowed[agencyID] {
-			filtered = append(filtered, v)
-		}
-	}
-	return filtered
 }
 
 // filterAlertsByAgency returns only alerts referencing an allowed agency.
@@ -855,6 +1030,7 @@ func routeBelongsToAllowedAgency(routeID string, allowed map[string]bool, routeA
 }
 
 func (manager *Manager) rebuildMergedRealtimeLocked() {
+	builtAt := time.Now()
 	feedIDs := make([]string, 0, len(manager.feedTrips))
 	totalTrips := 0
 	for id, trips := range manager.feedTrips {
@@ -934,6 +1110,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 			if alert.InformedEntities == nil || alert.ID == "" {
 				continue
 			}
+			idx.all = append(idx.all, alert)
 			// Per-alert per-bucket dedup: prevents the same alert from being appended
 			// to the same bucket more than once when it has multiple InformedEntities
 			// referencing the same key (e.g. two entities both pointing to stop "S1").
@@ -955,8 +1132,14 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 					seenRoute[*entity.RouteID] = true
 					idx.byRoute[*entity.RouteID] = append(idx.byRoute[*entity.RouteID], alert)
 				}
-				// Only match agency-wide alerts: entity has agencyId but no route or trip restriction.
-				if entity.AgencyID != nil && entity.RouteID == nil && entity.TripID == nil && !seenAgency[*entity.AgencyID] {
+				// Only match agency-wide alerts: entity has agencyId but no route, trip
+				// or stop restriction. Entities with {agencyId + stopId} are stop-specific
+				// and are filed in byStop only, matching Java's AffectsAgencyKeyFactory.
+				isAgencyWide := entity.AgencyID != nil &&
+					entity.RouteID == nil &&
+					entity.TripID == nil &&
+					entity.StopID == nil
+				if isAgencyWide && !seenAgency[*entity.AgencyID] {
 					seenAgency[*entity.AgencyID] = true
 					idx.byAgency[*entity.AgencyID] = append(idx.byAgency[*entity.AgencyID], alert)
 				}
@@ -976,7 +1159,9 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		vehicleLookupByVehicle:   vehicleLookupByVehicle,
 		duplicatedVehicleByRoute: duplicatedVehicleByRoute,
 		vehiclesByRoute:          vehiclesByRoute,
+		vehiclePositionsByAgency: manager.buildVehiclePositionsByAgency(vehicleFeedIDs, builtAt),
 		alerts:                   idx,
+		builtAt:                  builtAt,
 	})
 }
 

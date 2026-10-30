@@ -65,7 +65,7 @@ func TestGetAlertsForStop(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	alerts := manager.GetAlertsForStop("stop123")
+	alerts := manager.GetAlertsForStop("stop123", "")
 
 	assert.Len(t, alerts, 1)
 	assert.Equal(t, "alert1", alerts[0].ID)
@@ -1022,7 +1022,7 @@ func TestAlertIndex_RouteTripEntityIndexedUnderByTrip(t *testing.T) {
 }
 
 // TestGetAlertsByIDs_AgencyScoping verifies that agency-wide matching only fires
-// for entities that have agencyId with no route or trip restriction.
+// for entities that have agencyId with no route, trip or stop restriction.
 func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
 	agencyID := "agency40"
 	routeID := "route123"
@@ -1049,11 +1049,11 @@ func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
 			expectMatch: false,
 		},
 		{
-			// {agencyID+stopID} has no route/trip restriction, so it is filed in byAgency
-			// AND byStop. An agency-only lookup should therefore still match.
-			name:        "agency+stop entity matches agency-only query",
+			// {agencyID+stopID} is stop-specific: it is filed in byStop only, so an
+			// agency-only lookup must not match it (as in Java's AffectsAgencyKeyFactory).
+			name:        "agency+stop entity does not match agency-only query",
 			entities:    []gtfs.AlertInformedEntity{{AgencyID: &agencyID, StopID: func() *string { s := "stop99"; return &s }()}},
-			expectMatch: true,
+			expectMatch: false,
 		},
 	}
 
@@ -1154,7 +1154,7 @@ func TestAlertIndex_ByStopID(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	alerts := manager.GetAlertsForStop("stop1")
+	alerts := manager.GetAlertsForStop("stop1", "")
 
 	require.Len(t, alerts, 1)
 	assert.Equal(t, "alert1", alerts[0].ID)
@@ -1194,7 +1194,7 @@ func TestAlertIndex_EmptyAlerts(t *testing.T) {
 	manager.rebuildMergedRealtimeLocked()
 
 	assert.Empty(t, manager.GetAlertsByIDs("trip1", "route1", "agency1"))
-	assert.Empty(t, manager.GetAlertsForStop("stop1"))
+	assert.Empty(t, manager.GetAlertsForStop("stop1", ""))
 }
 
 func TestAlertIndex_NoDuplicatesFromRepeatedEntityKeys(t *testing.T) {
@@ -1225,7 +1225,7 @@ func TestAlertIndex_NoDuplicatesFromRepeatedEntityKeys(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	assert.Len(t, manager.GetAlertsForStop("stop1"), 1)
+	assert.Len(t, manager.GetAlertsForStop("stop1", ""), 1)
 	assert.Len(t, manager.GetAlertsByIDs("trip1", "route1", "agency1"), 1)
 }
 
@@ -1250,7 +1250,7 @@ func TestAlertIndex_EmptyIDAlertExcluded(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	stopAlerts := manager.GetAlertsForStop("stop1")
+	stopAlerts := manager.GetAlertsForStop("stop1", "")
 	require.Len(t, stopAlerts, 1)
 	assert.Equal(t, "alert-valid", stopAlerts[0].ID)
 
@@ -1258,10 +1258,11 @@ func TestAlertIndex_EmptyIDAlertExcluded(t *testing.T) {
 	assert.Empty(t, tripAlerts)
 }
 
-// TestAlertIndex_AgencyStopEntityAlsoIndexedByStop verifies the symmetric half
-// of the agency+stop scoping rule: an entity with both agencyID and stopID is
-// filed in byStop (so stop-scoped lookups find it) in addition to byAgency.
-func TestAlertIndex_AgencyStopEntityAlsoIndexedByStop(t *testing.T) {
+// TestAlertIndex_AgencyStopEntityIndexedByStopOnly verifies the agency+stop
+// scoping rule: an entity with both agencyID and stopID is filed in byStop (so
+// stop-scoped lookups find it) but not in byAgency, so it doesn't reach every
+// trip of the agency.
+func TestAlertIndex_AgencyStopEntityIndexedByStopOnly(t *testing.T) {
 	agencyID := "agency40"
 	stopID := "stop99"
 
@@ -1278,13 +1279,54 @@ func TestAlertIndex_AgencyStopEntityAlsoIndexedByStop(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	stopAlerts := manager.GetAlertsForStop(stopID)
+	stopAlerts := manager.GetAlertsForStop(stopID, "")
 	assert.Len(t, stopAlerts, 1, "agency+stop entity should appear in byStop")
 	assert.Equal(t, "alert1", stopAlerts[0].ID)
 
-	agencyAlerts := manager.GetAlertsByIDs("", "", agencyID)
-	assert.Len(t, agencyAlerts, 1, "agency+stop entity should also appear in byAgency")
-	assert.Equal(t, "alert1", agencyAlerts[0].ID)
+	agencyAlerts := manager.GetAlertsByIDs("unrelated-trip", "unrelated-route", agencyID)
+	assert.Empty(t, agencyAlerts, "agency+stop entity should not reach other trips of the agency")
+}
+
+func TestGetAlertsForStop_IncludesStopAgencyAlerts(t *testing.T) {
+	agencyID := "agency40"
+	otherAgencyID := "agency41"
+	stopID := "stop99"
+
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{ID: "stop-alert", InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}}},
+				{ID: "agency-alert", InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agencyID}}},
+				{ID: "other-agency-alert", InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &otherAgencyID}}},
+				{ID: "stop-and-agency-alert", InformedEntities: []gtfs.AlertInformedEntity{
+					{StopID: &stopID},
+					{AgencyID: &agencyID},
+				}},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	tests := []struct {
+		name     string
+		stopID   string
+		agencyID string
+		wantIDs  []string
+	}{
+		{"stop and its agency", stopID, agencyID, []string{"stop-alert", "stop-and-agency-alert", "agency-alert"}},
+		{"stop without an agency", stopID, "", []string{"stop-alert", "stop-and-agency-alert"}},
+		{"stop with no alerts of its own", "quiet-stop", agencyID, []string{"agency-alert", "stop-and-agency-alert"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotIDs []string
+			for _, alert := range manager.GetAlertsForStop(tt.stopID, tt.agencyID) {
+				gotIDs = append(gotIDs, alert.ID)
+			}
+			assert.Equal(t, tt.wantIDs, gotIDs)
+		})
+	}
 }
 
 // TestAlertIndex_RouteStopEntityAlsoIndexedByStop verifies the positive half
@@ -1308,7 +1350,7 @@ func TestAlertIndex_RouteStopEntityAlsoIndexedByStop(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	stopAlerts := manager.GetAlertsForStop(stopID)
+	stopAlerts := manager.GetAlertsForStop(stopID, "")
 	assert.Len(t, stopAlerts, 1, "route+stop entity should appear in byStop")
 	assert.Equal(t, "alert1", stopAlerts[0].ID)
 
@@ -1352,7 +1394,7 @@ func TestMockAddAlert_IndexIsImmediatelySynced(t *testing.T) {
 	})
 
 	t.Run("byStop bucket is populated", func(t *testing.T) {
-		alerts := manager.GetAlertsForStop(stopID)
+		alerts := manager.GetAlertsForStop(stopID, "")
 		require.Len(t, alerts, 1)
 		assert.Equal(t, "alert-synced", alerts[0].ID)
 	})
@@ -1392,7 +1434,7 @@ func TestAlertIndex_NilInformedEntitiesExcludedFromAllBuckets(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	assert.Empty(t, manager.GetAlertsForStop("any-stop"))
+	assert.Empty(t, manager.GetAlertsForStop("any-stop", ""))
 	assert.Empty(t, manager.GetAlertsByIDs("any-trip", "any-route", "any-agency"))
 }
 
@@ -1410,7 +1452,7 @@ func TestAlertIndex_CrossFeedDeduplication(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	stopAlerts := manager.GetAlertsForStop(stopID)
+	stopAlerts := manager.GetAlertsForStop(stopID, "")
 	assert.Len(t, stopAlerts, 1, "GetAlertsForStop deduplicates by alert ID across feeds")
 	assert.Equal(t, "alert1", stopAlerts[0].ID)
 }

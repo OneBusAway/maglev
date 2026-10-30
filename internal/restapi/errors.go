@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -70,6 +71,16 @@ func (api *RestAPI) serverErrorResponse(w http.ResponseWriter, r *http.Request, 
 	if encoderErr != nil {
 		logging.LogError(reqLogger, "failed to encode server error response", encoderErr)
 	}
+}
+
+// dbErrorResponse handles a database query error by returning a 404 Not Found
+// if err is sql.ErrNoRows, or delegating to serverErrorResponse (500) otherwise.
+func (api *RestAPI) dbErrorResponse(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		api.sendNotFound(w, r)
+		return
+	}
+	api.serverErrorResponse(w, r, err)
 }
 
 // validationErrorResponse sends a 400 Bad Request response with field-specific validation errors

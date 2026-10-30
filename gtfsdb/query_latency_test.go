@@ -397,7 +397,8 @@ SELECT * FROM stop_times WHERE trip_id = ? ORDER BY stop_sequence`,
 		{
 			name: "GetActiveRouteIDsForStopsOnDate (stops-for-location batch)",
 			sql: `EXPLAIN QUERY PLAN
-SELECT DISTINCT routes.agency_id || '_' || routes.id AS route_id,
+SELECT DISTINCT routes.id AS route_id,
+                routes.agency_id,
                 stop_times.stop_id
 FROM stop_times
 JOIN trips  ON stop_times.trip_id  = trips.id
@@ -508,8 +509,7 @@ func TestConnectionPoolTuning(t *testing.T) {
 		t.Skip("testdata/raba.zip not found")
 	}
 
-	tmpDir := filepath.Join(os.TempDir(), "maglev_pool_tuning")
-	require.NoError(t, os.MkdirAll(tmpDir, 0755))
+	tmpDir := t.TempDir()
 
 	const (
 		concurrency = 25
@@ -529,7 +529,6 @@ func TestConnectionPoolTuning(t *testing.T) {
 
 	for _, maxConns := range []int{5, 10, 25, 50} {
 		dbPath := filepath.Join(tmpDir, fmt.Sprintf("raba_pool_%d.db", maxConns))
-		_ = os.Remove(dbPath)
 
 		cfg := Config{DBPath: dbPath, Env: appconf.Development}
 		client, err := NewClient(cfg)
@@ -588,7 +587,6 @@ func TestConnectionPoolTuning(t *testing.T) {
 
 		poolStats := client.DB.Stats()
 		_ = client.Close()
-		_ = os.Remove(dbPath)
 
 		if len(samples) == 0 {
 			continue

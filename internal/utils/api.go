@@ -100,6 +100,14 @@ func FormCombinedID(agencyID, codeID string) string {
 	return fmt.Sprintf("%s_%s", agencyID, codeID)
 }
 
+// FormBlockID forms a trip's combined block ID; a trip with no block_id is its own block, as in Java.
+func FormBlockID(agencyID, blockID, tripID string) string {
+	if blockID == "" {
+		blockID = tripID
+	}
+	return FormCombinedID(agencyID, blockID)
+}
+
 // MapWheelchairBoarding converts GTFS wheelchair boarding values to our API format
 func MapWheelchairBoarding(wheelchairBoarding gtfs.WheelchairBoarding) string {
 	switch wheelchairBoarding {
@@ -176,9 +184,9 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location, c cloc
 	validFormat := false
 
 	// Check if it's epoch timestamp
-	if epochTime, err := strconv.ParseInt(timeParam, 10, 64); err == nil {
-		// Convert epoch to time
-		parsedTime = time.Unix(epochTime/1000, 0).In(currentLocation)
+	if epochTime, ok := ParseEpochMillis(timeParam); ok {
+		// Convert epoch to time preserving milliseconds
+		parsedTime = time.UnixMilli(epochTime).In(currentLocation)
 		validFormat = true
 	} else if strings.Contains(timeParam, "-") {
 		// Try yyyy-MM-dd_HH-mm-ss first (e.g. "2024-03-15_12-00-00")
@@ -205,6 +213,22 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location, c cloc
 
 	// Valid date, use it
 	return parsedTime.Format("20060102"), parsedTime, nil, true
+}
+
+// ParseTimeParameterOrNow is ParseTimeParameter for endpoints where Java treats
+// time=0 as "not supplied" (`if (_time != 0)`), so an epoch of 0 resolves to the
+// clock's current time instead of 1970-01-01.
+func ParseTimeParameterOrNow(timeParam string, currentLocation *time.Location, c clock.Clock) (string, time.Time, map[string][]string, bool) {
+	if isZeroEpoch(timeParam) {
+		timeParam = ""
+	}
+	return ParseTimeParameter(timeParam, currentLocation, c)
+}
+
+// isZeroEpoch reports whether value is an epoch timestamp equal to 0.
+func isZeroEpoch(value string) bool {
+	epochMillis, ok := ParseEpochMillis(value)
+	return ok && epochMillis == 0
 }
 
 // maxCountOverflow selects how values above models.MaxAllowedCount are handled.
@@ -301,6 +325,9 @@ func ParsePaginationParams(r *http.Request) (offset int, limit int) {
 // PaginateSlice slices a slice based on offset and limit.
 // Returns the sliced items and a boolean indicating if the limit was exceeded (more items exist).
 func PaginateSlice[T any](items []T, offset, limit int) ([]T, bool) {
+	if offset < 0 {
+		offset = 0
+	}
 	if offset >= len(items) {
 		return []T{}, false
 	}
@@ -308,6 +335,9 @@ func PaginateSlice[T any](items []T, offset, limit int) ([]T, bool) {
 	// If limit is -1, return everything from offset
 	if limit == -1 {
 		return items[offset:], false
+	}
+	if limit < 0 {
+		limit = 0
 	}
 
 	end := offset + limit

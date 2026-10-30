@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
@@ -281,14 +282,18 @@ func TestTrimQuery(t *testing.T) {
 		"trimQuery must collapse whitespace")
 }
 
-func TestUpdateFeedExpiresAtFromCalendar(t *testing.T) {
-	ctx := context.Background()
-
+func newFeedExpiryTestDB(t *testing.T) (*sql.DB, *Queries) {
+	t.Helper()
 	db, err := sql.Open(DriverName, ":memory:")
 	require.NoError(t, err)
-	defer func() { assert.NoError(t, db.Close()) }()
+	t.Cleanup(func() { assert.NoError(t, db.Close()) })
 
 	_, err = db.Exec(`
+		CREATE TABLE agencies (
+			id TEXT PRIMARY KEY, name TEXT, url TEXT, timezone TEXT,
+			lang TEXT, phone TEXT, fare_url TEXT, email TEXT
+		);
+		INSERT INTO agencies (id, name, url, timezone) VALUES ('1', 'Test', 'https://example.com', 'UTC');
 		CREATE TABLE calendar (end_date TEXT);
 		CREATE TABLE calendar_dates (date TEXT, exception_type INTEGER);
 		CREATE TABLE import_metadata (
@@ -301,8 +306,12 @@ func TestUpdateFeedExpiresAtFromCalendar(t *testing.T) {
 		INSERT INTO import_metadata (id, file_hash, import_time, file_source) VALUES (1, '', 0, '');
 	`)
 	require.NoError(t, err)
+	return db, New(db)
+}
 
-	q := New(db)
+func TestUpdateFeedExpiresAtFromCalendar(t *testing.T) {
+	ctx := context.Background()
+	db, q := newFeedExpiryTestDB(t)
 	readExpiresAt := func(t *testing.T) sql.NullInt64 {
 		t.Helper()
 		md, err := q.GetImportMetadata(ctx)
@@ -315,7 +324,7 @@ func TestUpdateFeedExpiresAtFromCalendar(t *testing.T) {
 	assert.False(t, readExpiresAt(t).Valid, "Should be NULL when no calendar dates exist")
 
 	// 2. Valid calendar end date → parse and persist.
-	_, err = db.Exec("INSERT INTO calendar (end_date) VALUES ('20260401')")
+	_, err := db.Exec("INSERT INTO calendar (end_date) VALUES ('20260401')")
 	require.NoError(t, err)
 	require.NoError(t, updateFeedExpiresAtFromCalendar(ctx, q))
 	expected, _ := time.Parse("20060102150405", "20260401235959")
@@ -343,4 +352,217 @@ func TestUpdateFeedExpiresAtFromCalendar(t *testing.T) {
 	got = readExpiresAt(t)
 	require.True(t, got.Valid)
 	assert.Equal(t, expected2.Unix(), got.Int64)
+}
+
+func TestUpdateFeedExpiresAtFromCalendar_Timezones(t *testing.T) {
+	tests := []struct {
+		name      string
+		date      string
+		timezones []string
+		want      string
+	}{
+		{"New York winter", "20270313", []string{"America/New_York"}, "2027-03-14T04:59:59Z"},
+		{"Seattle summer", "20270701", []string{"America/Los_Angeles"}, "2027-07-02T06:59:59Z"},
+		{"east of UTC", "20270313", []string{"Asia/Tokyo"}, "2027-03-13T14:59:59Z"},
+		{"fractional offset", "20270313", []string{"Asia/Kolkata"}, "2027-03-13T18:29:59Z"},
+		{"spring forward", "20270314", []string{"America/New_York"}, "2027-03-15T03:59:59Z"},
+		{"fall back", "20271107", []string{"America/New_York"}, "2027-11-08T04:59:59Z"},
+		{"multiple zones", "20270313", []string{"Asia/Tokyo", "America/Los_Angeles", "America/New_York", "America/Los_Angeles"}, "2027-03-14T07:59:59Z"},
+		{"trimmed timezone", "20270313", []string{" America/New_York "}, "2027-03-14T04:59:59Z"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, q := newFeedExpiryTestDB(t)
+			_, err := db.Exec("DELETE FROM agencies")
+			require.NoError(t, err)
+			for i, tz := range tt.timezones {
+				_, err = db.Exec("INSERT INTO agencies (id, name, url, timezone) VALUES (?, 'Test', 'https://example.com', ?)", i, tz)
+				require.NoError(t, err)
+			}
+			_, err = db.Exec("INSERT INTO calendar (end_date) VALUES (?)", tt.date)
+			require.NoError(t, err)
+			require.NoError(t, updateFeedExpiresAtFromCalendar(t.Context(), q))
+			metadata, err := q.GetImportMetadata(t.Context())
+			require.NoError(t, err)
+			require.True(t, metadata.FeedExpiresAt.Valid)
+			assert.Equal(t, tt.want, time.Unix(metadata.FeedExpiresAt.Int64, 0).UTC().Format(time.RFC3339))
+		})
+	}
+}
+
+func TestUpdateFeedExpiresAtFromCalendar_InvalidTimezonePreservesExpiry(t *testing.T) {
+	for _, tz := range []string{"", "Invalid/Timezone"} {
+		t.Run(tz, func(t *testing.T) {
+			db, q := newFeedExpiryTestDB(t)
+			_, err := db.Exec("INSERT INTO calendar (end_date) VALUES ('20270313')")
+			require.NoError(t, err)
+			require.NoError(t, updateFeedExpiresAtFromCalendar(t.Context(), q))
+			before, err := q.GetImportMetadata(t.Context())
+			require.NoError(t, err)
+			_, err = db.Exec("UPDATE agencies SET timezone = ?", tz)
+			require.NoError(t, err)
+			require.ErrorContains(t, updateFeedExpiresAtFromCalendar(t.Context(), q), "timezone")
+			after, err := q.GetImportMetadata(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, before.FeedExpiresAt, after.FeedExpiresAt)
+		})
+	}
+}
+
+func TestStoreGtfsData_UnchangedFeedRefreshesExpiry(t *testing.T) {
+	db, q := newFeedExpiryTestDB(t)
+	_, err := db.Exec(`
+		UPDATE agencies SET timezone = 'America/New_York';
+		INSERT INTO calendar (end_date) VALUES ('20270313');
+		UPDATE import_metadata SET file_hash = 'unchanged-hash', file_source = 'test',
+			import_time = 123;
+	`)
+	require.NoError(t, err)
+	oldExpiry := time.Date(2027, time.March, 13, 23, 59, 59, 0, time.UTC)
+	require.NoError(t, q.UpdateFeedExpiresAt(t.Context(), sql.NullInt64{Int64: oldExpiry.Unix(), Valid: true}))
+	before, err := q.GetImportMetadata(t.Context())
+	require.NoError(t, err)
+	client := &Client{DB: db, Queries: q}
+	changed, err := client.StoreGtfsData(t.Context(), &GtfsData{Hash: before.FileHash, Source: before.FileSource})
+	require.NoError(t, err)
+	assert.False(t, changed, "Expiry refresh should not trigger a full reimport")
+	after, err := q.GetImportMetadata(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, "2027-03-14T04:59:59Z", time.Unix(after.FeedExpiresAt.Int64, 0).UTC().Format(time.RFC3339))
+	after.FeedExpiresAt = before.FeedExpiresAt
+	assert.Equal(t, before, after, "Other import metadata should be preserved")
+}
+
+func TestUpdateFeedExpiresAtFromCalendar_MissingAgency(t *testing.T) {
+	db, q := newFeedExpiryTestDB(t)
+	_, err := db.Exec("DELETE FROM agencies; INSERT INTO calendar (end_date) VALUES ('20270313')")
+	require.NoError(t, err)
+	require.ErrorContains(t, updateFeedExpiresAtFromCalendar(t.Context(), q), "without an agency timezone")
+}
+
+func TestStoreGtfsData_UnchangedFeedExpiryFailure(t *testing.T) {
+	db, q := newFeedExpiryTestDB(t)
+	_, err := db.Exec(`
+		UPDATE import_metadata SET file_hash = 'unchanged-hash', file_source = 'test';
+		UPDATE agencies SET timezone = 'Invalid/Timezone';
+		INSERT INTO calendar (end_date) VALUES ('20270313');
+	`)
+	require.NoError(t, err)
+	client := &Client{DB: db, Queries: q}
+	changed, err := client.StoreGtfsData(t.Context(), &GtfsData{Hash: "unchanged-hash", Source: "test"})
+	require.ErrorContains(t, err, "failed to refresh feed expiry")
+	assert.False(t, changed)
+	metadata, err := q.GetImportMetadata(t.Context())
+	require.NoError(t, err)
+	assert.False(t, metadata.FeedExpiresAt.Valid)
+}
+
+func TestGtfsDirectionIDToDB(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    gtfs.DirectionID
+		expected sql.NullInt64
+	}{
+		{
+			name:     "DirectionID_True maps to 1",
+			input:    gtfs.DirectionID_True,
+			expected: sql.NullInt64{Int64: 1, Valid: true},
+		},
+		{
+			name:     "DirectionID_False maps to 0",
+			input:    gtfs.DirectionID_False,
+			expected: sql.NullInt64{Int64: 0, Valid: true},
+		},
+		{
+			name:     "DirectionID_Empty/unknown maps to invalid",
+			input:    gtfs.DirectionID(0),
+			expected: sql.NullInt64{Valid: false},
+		},
+		{
+			name:     "arbitrary invalid enum maps to invalid",
+			input:    gtfs.DirectionID(99),
+			expected: sql.NullInt64{Valid: false},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := gtfsDirectionIDToDB(tt.input)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestBoolToInt(t *testing.T) {
+	assert.Equal(t, int64(1), boolToInt(true))
+	assert.Equal(t, int64(0), boolToInt(false))
+}
+
+func TestToNullInt64(t *testing.T) {
+	assert.Equal(t, sql.NullInt64{Valid: false}, toNullInt64(0))
+	assert.Equal(t, sql.NullInt64{Int64: 42, Valid: true}, toNullInt64(42))
+	assert.Equal(t, sql.NullInt64{Int64: -1, Valid: true}, toNullInt64(-1))
+}
+
+func TestPickFirstAvailable(t *testing.T) {
+	assert.Equal(t, "primary", pickFirstAvailable("primary", "fallback"))
+	assert.Equal(t, "fallback", pickFirstAvailable("", "fallback"))
+	assert.Equal(t, "", pickFirstAvailable("", ""))
+}
+
+func TestLatestAgencyExpiry(t *testing.T) {
+	serviceDate := time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC)
+
+	t.Run("empty agencies returns error", func(t *testing.T) {
+		_, err := latestAgencyExpiry(serviceDate, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot calculate feed expiry without an agency timezone")
+	})
+
+	t.Run("empty timezone returns error", func(t *testing.T) {
+		agencies := []Agency{
+			{ID: "agency_1", Timezone: "   "},
+		}
+		_, err := latestAgencyExpiry(serviceDate, agencies)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `agency "agency_1" has empty timezone`)
+	})
+
+	t.Run("invalid timezone returns error", func(t *testing.T) {
+		agencies := []Agency{
+			{ID: "agency_1", Timezone: "Invalid/Not_A_Timezone"},
+		}
+		_, err := latestAgencyExpiry(serviceDate, agencies)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `agency "agency_1" has invalid timezone`)
+	})
+
+	t.Run("single agency calculates end of day in its timezone", func(t *testing.T) {
+		agencies := []Agency{
+			{ID: "agency_1", Timezone: "America/Los_Angeles"},
+		}
+		expiry, err := latestAgencyExpiry(serviceDate, agencies)
+		require.NoError(t, err)
+
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		expected := time.Date(2025, 6, 15, 23, 59, 59, 0, loc)
+		assert.Equal(t, expected, expiry)
+	})
+
+	t.Run("multiple agencies picks latest UTC expiry", func(t *testing.T) {
+		// America/Los_Angeles (UTC-7 in summer) ends later in UTC than America/New_York (UTC-4 in summer)
+		agencies := []Agency{
+			{ID: "ny_agency", Timezone: "America/New_York"},
+			{ID: "la_agency", Timezone: "America/Los_Angeles"},
+			{ID: "ny_agency_dup", Timezone: "America/New_York"},
+		}
+		expiry, err := latestAgencyExpiry(serviceDate, agencies)
+		require.NoError(t, err)
+
+		locLA, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		expected := time.Date(2025, 6, 15, 23, 59, 59, 0, locLA)
+		assert.Equal(t, expected, expiry)
+	})
 }
