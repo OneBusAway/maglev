@@ -29,6 +29,13 @@ import (
 type tripStatusExtras struct {
 	snapshot   *scheduledBlockSnapshot
 	situations []situationRef
+	// deviationResolved reports that status.ScheduleDeviation came from a
+	// TripUpdate inside Java's blockNotActive window, rather than defaulting
+	// to 0.
+	deviationResolved bool
+	// blockTripIDs are the block's trips in start order, from which Java
+	// builds its per-stop deviation samples.
+	blockTripIDs []string
 }
 
 // BuildTripStatus builds a TripStatus for the given trip.
@@ -157,6 +164,8 @@ func (api *RestAPI) BuildTripStatus(
 	if hasRealtimeTripUpdate {
 		status.ScheduleDeviation = scheduleDeviation
 	}
+	extras.deviationResolved = hasRealtimeTripUpdate
+	extras.blockTripIDs = blockTripIDs
 
 	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
 	status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
@@ -167,7 +176,6 @@ func (api *RestAPI) BuildTripStatus(
 			slog.String("trip_id", dbTripID),
 			slog.String("error", err.Error()))
 	}
-
 	if err == nil && len(stopTimes) > 0 {
 		stopTimesPtrs := make([]*gtfsdb.StopTime, len(stopTimes))
 		for i := range stopTimes {
@@ -495,7 +503,8 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 		return nil, freqErr
 	}
 	if len(freqRows) > 0 {
-		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceDate, serviceDate), serviceDate)
+		serviceStart := servicedate.Of(serviceDate).Start(loc)
+		converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqRows, serviceStart, serviceStart), serviceStart)
 		scheduleFrequency = &converted
 	}
 
@@ -626,6 +635,128 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 		arrivalTime := utils.EffectiveStopTimeSeconds(lastStop.ArrivalTime, lastStop.DepartureTime)
 		status.ClosestStopTimeOffset = int(arrivalTime + schedDev - currentSeconds)
 	}
+}
+
+// scheduleDeviationFallback carries what predictedTimesFromScheduleDeviation
+// needs for one arrival. Grouped because several fields share a type.
+type scheduleDeviationFallback struct {
+	status       *models.TripStatus
+	extras       *tripStatusExtras
+	tripID       string
+	stopSequence int64
+	// sampleCache shares deviation samples between arrivals on the same
+	// block. It may be nil.
+	sampleCache deviationSampleCache
+	// stopArrivalSeconds is the stop's GTFS arrival_time, in seconds since
+	// the service date: the key Java looks the stop up by among the block's
+	// deviation samples.
+	stopArrivalSeconds int64
+	serviceMidnight    time.Time
+	currentTime        time.Time
+	scheduledArrival   time.Time
+	scheduledDeparture time.Time
+}
+
+// predictedTimesFromScheduleDeviation is the arrival-level fallback for when
+// getPredictedTimes finds no per-stop prediction. It mirrors Java's
+// applyBlockLocationToInstance (ArrivalAndDepartureServiceImpl.java:585-608)
+// and applyBlockLocationToBean:
+//
+//   - Canceled trips are never predicted.
+//   - Without a resolved deviation there is nothing to apply: either no
+//     TripUpdate exists, or Java's blockNotActive guard discarded it.
+//   - When the block's StopTimeUpdates yield deviation samples,
+//     getBestScheduleDeviation takes the last sample at or before the stop
+//     and refuses to propagate upstream, so a stop before every sample is
+//     predicted but gets no predicted times.
+//   - Without samples, the block-level deviation is used.
+//   - The deviation is applied less any scheduled slack the vehicle can
+//     absorb before reaching the stop.
+func (api *RestAPI) predictedTimesFromScheduleDeviation(ctx context.Context, in scheduleDeviationFallback) (predictedArrival, predictedDeparture time.Time, predicted bool) {
+	hasUsableDeviation := in.status != nil &&
+		in.extras != nil &&
+		in.status.Status != "CANCELED" &&
+		in.extras.deviationResolved
+	if !hasUsableDeviation {
+		return time.Time{}, time.Time{}, false
+	}
+	deviation, propagates := api.deviationForStop(ctx, in)
+	if !propagates {
+		return time.Time{}, time.Time{}, true
+	}
+
+	currentSeconds := utils.CalculateSecondsSinceServiceDate(in.currentTime, in.serviceMidnight)
+	arrivalDeviation, departureDeviation := absorbSlack(in.extras.snapshot, slackPosition{
+		target:                   scheduledStopKey{TripID: in.tripID, StopSequenceInTrip: int(in.stopSequence)},
+		blockScheduleSeconds:     currentSeconds - int64(in.status.ScheduleDeviation),
+		effectiveScheduleSeconds: currentSeconds - int64(deviation),
+	}, deviation)
+	return in.scheduledArrival.Add(time.Duration(arrivalDeviation) * time.Second),
+		in.scheduledDeparture.Add(time.Duration(departureDeviation) * time.Second),
+		true
+}
+
+// deviationForStop resolves the deviation Java applies at the fallback's
+// stop. It reports false when the stop is upstream of every deviation
+// sample.
+func (api *RestAPI) deviationForStop(ctx context.Context, in scheduleDeviationFallback) (int, bool) {
+	samples := in.sampleCache.samplesFor(in.extras.blockTripIDs, in.serviceMidnight, func() []deviationSample {
+		return api.blockDeviationSamples(ctx, in.extras.blockTripIDs, in.serviceMidnight, in.currentTime)
+	})
+	if len(samples) == 0 {
+		return in.status.ScheduleDeviation, true
+	}
+	return deviationAtScheduledArrival(samples, in.stopArrivalSeconds)
+}
+
+// slackPosition locates the vehicle and the target stop on the block for
+// absorbSlack. Grouped because the two schedule times share a type.
+type slackPosition struct {
+	target scheduledStopKey
+	// blockScheduleSeconds is the vehicle's schedule time from the
+	// block-level deviation: Java's BlockLocation, which picks the next stop.
+	blockScheduleSeconds int64
+	// effectiveScheduleSeconds is the schedule time from the deviation being
+	// applied at the target stop.
+	effectiveScheduleSeconds int64
+}
+
+// absorbSlack mirrors Java's calculateArrivalDeviation and
+// calculateDepartureDeviation (ArrivalAndDepartureServiceImpl.java:852-910).
+// A late vehicle can make up time by cutting the block's scheduled slack
+// between its next stop and the target stop, including layovers between
+// trips, and before departing it can also cut the target stop's own dwell.
+// Early vehicles are left alone.
+func absorbSlack(snap *scheduledBlockSnapshot, position slackPosition, deviation int) (arrivalDeviation, departureDeviation int) {
+	if deviation <= 0 || snap == nil {
+		return deviation, deviation
+	}
+	targetIndex, found := snap.StopIndex[position.target]
+	nextIndex := slices.IndexFunc(snap.Stops, func(stop blockStopMetric) bool {
+		return stop.DepartureSeconds >= position.blockScheduleSeconds
+	})
+	// Java applies the raw deviation when the vehicle is past the block's
+	// last stop or its next stop is past the target stop.
+	if !found || nextIndex == -1 || nextIndex > targetIndex {
+		return deviation, deviation
+	}
+
+	next, target := snap.Stops[nextIndex], snap.Stops[targetIndex]
+	slack := target.AccumulatedSlack - next.AccumulatedSlack
+	// Dwell already spent at the next stop can no longer be cut.
+	effective := position.effectiveScheduleSeconds
+	if next.ArrivalSeconds <= effective && effective <= next.DepartureSeconds {
+		slack -= effective - next.ArrivalSeconds
+	}
+	departureSlack := slack + target.dwellSeconds()
+	return reduceBySlack(deviation, slack), reduceBySlack(deviation, departureSlack)
+}
+
+func reduceBySlack(deviation int, slack int64) int {
+	if slack <= 0 {
+		return deviation
+	}
+	return deviation - int(min(int64(deviation), slack))
 }
 
 // delayedStopTimeSeconds returns the scheduled stop-time in seconds since

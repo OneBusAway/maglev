@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -211,14 +212,33 @@ func TestValidateLatitude(t *testing.T) {
 			wantErr: true,
 			errMsg:  "latitude must be between -90 and 90",
 		},
+		{
+			name:    "NaN latitude",
+			lat:     math.NaN(),
+			wantErr: true,
+			errMsg:  "latitude must be between -90 and 90",
+		},
+		{
+			name:    "positive infinity latitude",
+			lat:     math.Inf(1),
+			wantErr: true,
+			errMsg:  "latitude must be between -90 and 90",
+		},
+		{
+			name:    "negative infinity latitude",
+			lat:     math.Inf(-1),
+			wantErr: true,
+			errMsg:  "latitude must be between -90 and 90",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateLatitude(tt.lat)
 			if tt.wantErr {
-				assert.Error(t, err, "ValidateLatitude should return error for invalid latitude")
-				assert.Contains(t, err.Error(), tt.errMsg, "Error message should contain expected text")
+				if assert.Error(t, err, "ValidateLatitude should return error for invalid latitude") {
+					assert.Contains(t, err.Error(), tt.errMsg, "Error message should contain expected text")
+				}
 			} else {
 				assert.NoError(t, err, "ValidateLatitude should not return error for valid latitude")
 			}
@@ -271,14 +291,33 @@ func TestValidateLongitude(t *testing.T) {
 			wantErr: true,
 			errMsg:  "longitude must be between -180 and 180",
 		},
+		{
+			name:    "NaN longitude",
+			lon:     math.NaN(),
+			wantErr: true,
+			errMsg:  "longitude must be between -180 and 180",
+		},
+		{
+			name:    "positive infinity longitude",
+			lon:     math.Inf(1),
+			wantErr: true,
+			errMsg:  "longitude must be between -180 and 180",
+		},
+		{
+			name:    "negative infinity longitude",
+			lon:     math.Inf(-1),
+			wantErr: true,
+			errMsg:  "longitude must be between -180 and 180",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateLongitude(tt.lon)
 			if tt.wantErr {
-				assert.Error(t, err, "ValidateLongitude should return error for invalid longitude")
-				assert.Contains(t, err.Error(), tt.errMsg, "Error message should contain expected text")
+				if assert.Error(t, err, "ValidateLongitude should return error for invalid longitude") {
+					assert.Contains(t, err.Error(), tt.errMsg, "Error message should contain expected text")
+				}
 			} else {
 				assert.NoError(t, err, "ValidateLongitude should not return error for valid longitude")
 			}
@@ -324,14 +363,33 @@ func TestValidateRadius(t *testing.T) {
 			radius:  25000.0,
 			wantErr: false,
 		},
+		{
+			name:    "NaN radius",
+			radius:  math.NaN(),
+			wantErr: true,
+			errMsg:  "radius must be non-negative",
+		},
+		{
+			name:    "positive infinity radius",
+			radius:  math.Inf(1),
+			wantErr: true,
+			errMsg:  "radius must be non-negative",
+		},
+		{
+			name:    "negative infinity radius",
+			radius:  math.Inf(-1),
+			wantErr: true,
+			errMsg:  "radius must be non-negative",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateRadius(tt.radius)
 			if tt.wantErr {
-				assert.Error(t, err, "ValidateRadius should return error for invalid radius")
-				assert.Contains(t, err.Error(), tt.errMsg, "Error message should contain expected text")
+				if assert.Error(t, err, "ValidateRadius should return error for invalid radius") {
+					assert.Contains(t, err.Error(), tt.errMsg, "Error message should contain expected text")
+				}
 			} else {
 				assert.NoError(t, err, "ValidateRadius should not return error for valid radius")
 			}
@@ -372,14 +430,33 @@ func TestValidateSpan(t *testing.T) {
 			span:    10.0,
 			wantErr: false,
 		},
+		{
+			name:    "NaN span",
+			span:    math.NaN(),
+			wantErr: true,
+			errMsg:  "span must be non-negative",
+		},
+		{
+			name:    "positive infinity span",
+			span:    math.Inf(1),
+			wantErr: true,
+			errMsg:  "span must be non-negative",
+		},
+		{
+			name:    "negative infinity span",
+			span:    math.Inf(-1),
+			wantErr: true,
+			errMsg:  "span must be non-negative",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateSpan(tt.span)
 			if tt.wantErr {
-				assert.Error(t, err, "ValidateSpan should return error for invalid span")
-				assert.Contains(t, err.Error(), tt.errMsg, "Error message should contain expected text")
+				if assert.Error(t, err, "ValidateSpan should return error for invalid span") {
+					assert.Contains(t, err.Error(), tt.errMsg, "Error message should contain expected text")
+				}
 			} else {
 				assert.NoError(t, err, "ValidateSpan should not return error for valid span")
 			}

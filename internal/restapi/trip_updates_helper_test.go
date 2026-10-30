@@ -2,13 +2,16 @@ package restapi
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // devDate is a placeholder service date for tests that don't exercise the
@@ -597,4 +600,438 @@ func TestGetStopDelaysFromTripUpdates_SequenceMustAgreeWithStopID(t *testing.T) 
 
 func delayEvent(d time.Duration) *gtfs.StopTimeEvent {
 	return &gtfs.StopTimeEvent{Delay: &d}
+}
+
+func TestDeviationAtScheduledArrival(t *testing.T) {
+	samples := []deviationSample{
+		{scheduledArrival: 100, deviation: 10},
+		{scheduledArrival: 200, deviation: 20},
+	}
+
+	tests := []struct {
+		name             string
+		scheduledArrival int64
+		wantDeviation    int
+		wantPropagates   bool
+	}{
+		{name: "upstream of every sample", scheduledArrival: 50, wantPropagates: false},
+		{name: "exact sample", scheduledArrival: 100, wantDeviation: 10, wantPropagates: true},
+		{name: "between samples takes the previous one", scheduledArrival: 150, wantDeviation: 10, wantPropagates: true},
+		{name: "downstream of every sample takes the last one", scheduledArrival: 300, wantDeviation: 20, wantPropagates: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deviation, propagates := deviationAtScheduledArrival(samples, tt.scheduledArrival)
+			assert.Equal(t, tt.wantPropagates, propagates)
+			assert.Equal(t, tt.wantDeviation, deviation)
+		})
+	}
+}
+
+func TestBlockDeviationSamples(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+
+	trip := mustGetTrip(t, api)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	require.NoError(t, err)
+	// Samples are keyed by scheduled arrival, so use stops whose arrivals
+	// differ; consecutive stops can share one.
+	stopTimes = slices.CompactFunc(stopTimes, func(a, b gtfsdb.StopTime) bool { return a.ArrivalTime == b.ArrivalTime })
+	require.GreaterOrEqual(t, len(stopTimes), 3, "need a trip with at least 3 distinct stop arrival times")
+
+	stuFor := func(st gtfsdb.StopTime, arrivalDelay, departureDelay *time.Duration) gtfs.StopTimeUpdate {
+		seq := uint32(st.StopSequence)
+		stu := gtfs.StopTimeUpdate{StopID: &st.StopID, StopSequence: &seq}
+		if arrivalDelay != nil {
+			stu.Arrival = &gtfs.StopTimeEvent{Delay: arrivalDelay}
+		}
+		if departureDelay != nil {
+			stu.Departure = &gtfs.StopTimeEvent{Delay: departureDelay}
+		}
+		return stu
+	}
+	arrivalOnly, arrivalDelay, departureDelay, skippedDelay := 60*time.Second, 30*time.Second, 90*time.Second, 500*time.Second
+	skipped := stuFor(stopTimes[2], &skippedDelay, nil)
+	skipped.ScheduleRelationship = gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED
+	api.GtfsManager.MockAddTripUpdate(trip.ID, nil, []gtfs.StopTimeUpdate{
+		stuFor(stopTimes[0], &arrivalOnly, nil),
+		stuFor(stopTimes[1], &arrivalDelay, &departureDelay),
+		skipped,
+	})
+
+	samples := api.blockDeviationSamples(ctx, []string{trip.ID}, devDate, devNow)
+
+	assert.Equal(t, []deviationSample{
+		{scheduledArrival: utils.NanosToSeconds(stopTimes[0].ArrivalTime), deviation: 60},
+		{scheduledArrival: utils.NanosToSeconds(stopTimes[1].ArrivalTime), deviation: 90},
+	}, samples, "a departure prediction wins over an arrival one, and skipped stops contribute no sample")
+}
+
+func TestDeviationSampleCache(t *testing.T) {
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	nextServiceMidnight := serviceMidnight.AddDate(0, 0, 1)
+	countingCompute := func(calls *int) func() []deviationSample {
+		return func() []deviationSample {
+			*calls++
+			return []deviationSample{{scheduledArrival: 100, deviation: 60}}
+		}
+	}
+
+	tests := []struct {
+		name      string
+		cache     deviationSampleCache
+		lookups   [][]string
+		midnights []time.Time
+		wantCalls int
+	}{
+		{
+			name:      "same block and service date computes once",
+			cache:     deviationSampleCache{},
+			lookups:   [][]string{{"A", "B"}, {"A", "B"}},
+			midnights: []time.Time{serviceMidnight, serviceMidnight},
+			wantCalls: 1,
+		},
+		{
+			name:      "different blocks compute separately",
+			cache:     deviationSampleCache{},
+			lookups:   [][]string{{"A", "B"}, {"C"}},
+			midnights: []time.Time{serviceMidnight, serviceMidnight},
+			wantCalls: 2,
+		},
+		{
+			name:      "different service dates compute separately",
+			cache:     deviationSampleCache{},
+			lookups:   [][]string{{"A", "B"}, {"A", "B"}},
+			midnights: []time.Time{serviceMidnight, nextServiceMidnight},
+			wantCalls: 2,
+		},
+		{
+			name:      "nil cache always computes",
+			cache:     nil,
+			lookups:   [][]string{{"A", "B"}, {"A", "B"}},
+			midnights: []time.Time{serviceMidnight, serviceMidnight},
+			wantCalls: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			for i, blockTripIDs := range tt.lookups {
+				samples := tt.cache.samplesFor(blockTripIDs, tt.midnights[i], countingCompute(&calls))
+				assert.Equal(t, []deviationSample{{scheduledArrival: 100, deviation: 60}}, samples)
+			}
+			assert.Equal(t, tt.wantCalls, calls)
+		})
+	}
+}
+
+func TestMatchScheduleEntry(t *testing.T) {
+	seq1, seq2, seq99 := uint32(1), uint32(2), uint32(99)
+	entry1 := schedEntry{seq: 1, arr: 1000, dep: 1060}
+	entry2 := schedEntry{seq: 2, arr: 5000, dep: 5060}
+	entry3 := schedEntry{seq: 3, arr: 9000, dep: 9060}
+
+	// Fixtures where arrival delta and departure delta disagree on which entry is closest.
+	arrDisagreesEntry1 := schedEntry{seq: 1, arr: 1000, dep: 1060}
+	arrDisagreesEntry5 := schedEntry{seq: 5, arr: 3000, dep: 5000}
+
+	depDisagreesEntry1 := schedEntry{seq: 1, arr: 3000, dep: 3060}
+	depDisagreesEntry5 := schedEntry{seq: 5, arr: 1000, dep: 3950}
+
+	// Tiebreak fixture where two entries have identical minimum absolute delta.
+	tieEntry1 := schedEntry{seq: 1, arr: 1000, dep: 1060}
+	tieEntry2 := schedEntry{seq: 2, arr: 2000, dep: 2060}
+
+	tests := []struct {
+		name          string
+		entries       []schedEntry
+		stuSeq        *uint32
+		stuRefSeconds int64
+		wantArr       int64
+		wantDep       int64
+	}{
+		{
+			name:    "empty entries returns zeroes",
+			entries: nil,
+			wantArr: 0,
+			wantDep: 0,
+		},
+		{
+			name:    "sequence match prefers matching sequence",
+			entries: []schedEntry{entry1, entry2, entry3},
+			stuSeq:  &seq2,
+			wantArr: entry2.arr,
+			wantDep: entry2.dep,
+		},
+		{
+			name:          "single entry falls back to that entry",
+			entries:       []schedEntry{entry1},
+			stuRefSeconds: 8000,
+			wantArr:       entry1.arr,
+			wantDep:       entry1.dep,
+		},
+		{
+			name:          "zero ref seconds falls back to first entry even when later entry is closer to zero",
+			entries:       []schedEntry{entry3, entry2, entry1},
+			stuRefSeconds: 0,
+			wantArr:       entry3.arr,
+			wantDep:       entry3.dep,
+		},
+		{
+			name:          "negative ref seconds falls back to first entry even when later entry is closer to zero",
+			entries:       []schedEntry{entry3, entry2, entry1},
+			stuRefSeconds: -100,
+			wantArr:       entry3.arr,
+			wantDep:       entry3.dep,
+		},
+		{
+			name:          "loop trip matches closest entry by arrival when departure delta disagrees",
+			entries:       []schedEntry{arrDisagreesEntry1, arrDisagreesEntry5},
+			stuRefSeconds: 3010,
+			wantArr:       arrDisagreesEntry5.arr,
+			wantDep:       arrDisagreesEntry5.dep,
+		},
+		{
+			name:          "loop trip matches closest entry by departure when arrival delta disagrees",
+			entries:       []schedEntry{depDisagreesEntry1, depDisagreesEntry5},
+			stuRefSeconds: 3940,
+			wantArr:       depDisagreesEntry5.arr,
+			wantDep:       depDisagreesEntry5.dep,
+		},
+		{
+			name:          "tie in closest proximity keeps first entry",
+			entries:       []schedEntry{tieEntry1, tieEntry2},
+			stuRefSeconds: 1530, // tieEntry1 dep delta 470, tieEntry2 arr delta 470
+			wantArr:       tieEntry1.arr,
+			wantDep:       tieEntry1.dep,
+		},
+		{
+			name:          "sequence provided but missing falls back to closest reference time",
+			entries:       []schedEntry{entry1, entry2, entry3},
+			stuSeq:        &seq99,
+			stuRefSeconds: 8900, // closest to entry3
+			wantArr:       entry3.arr,
+			wantDep:       entry3.dep,
+		},
+		{
+			name:    "sequence match on first entry",
+			entries: []schedEntry{entry1, entry2, entry3},
+			stuSeq:  &seq1,
+			wantArr: entry1.arr,
+			wantDep: entry1.dep,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotArr, gotDep := matchScheduleEntry(tt.entries, tt.stuSeq, tt.stuRefSeconds)
+			assert.Equal(t, tt.wantArr, gotArr)
+			assert.Equal(t, tt.wantDep, gotDep)
+		})
+	}
+}
+
+func TestMatchScheduleEntryBySequence(t *testing.T) {
+	entryMap := map[string][]schedEntry{
+		"stop-1": {{seq: 1, arr: 100, dep: 120}},
+		"stop-2": {{seq: 2, arr: 200, dep: 220}, {seq: 4, arr: 400, dep: 420}},
+	}
+
+	tests := []struct {
+		name    string
+		entries map[string][]schedEntry
+		stuSeq  uint32
+		wantArr int64
+		wantDep int64
+	}{
+		{
+			name:    "empty map returns zeroes",
+			entries: nil,
+			stuSeq:  1,
+			wantArr: 0,
+			wantDep: 0,
+		},
+		{
+			name:    "missing sequence returns zeroes",
+			entries: entryMap,
+			stuSeq:  99,
+			wantArr: 0,
+			wantDep: 0,
+		},
+		{
+			name:    "matching sequence returns arrival and departure",
+			entries: entryMap,
+			stuSeq:  4,
+			wantArr: 400,
+			wantDep: 420,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotArr, gotDep := matchScheduleEntryBySequence(tt.entries, tt.stuSeq)
+			assert.Equal(t, tt.wantArr, gotArr)
+			assert.Equal(t, tt.wantDep, gotDep)
+		})
+	}
+}
+
+func TestMinAbs(t *testing.T) {
+	tests := []struct {
+		name string
+		a    int64
+		b    int64
+		want int64
+	}{
+		{
+			name: "negative and positive picks smaller absolute value",
+			a:    -10,
+			b:    20,
+			want: 10,
+		},
+		{
+			name: "positive and negative picks smaller absolute value",
+			a:    50,
+			b:    -5,
+			want: 5,
+		},
+		{
+			name: "both negative picks smaller absolute value",
+			a:    -30,
+			b:    -40,
+			want: 30,
+		},
+		{
+			name: "zero and negative",
+			a:    0,
+			b:    -15,
+			want: 0,
+		},
+		{
+			name: "equal absolute values with opposing signs",
+			a:    -25,
+			b:    25,
+			want: 25,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, minAbs(tt.a, tt.b))
+		})
+	}
+}
+
+func TestStuReferenceTime(t *testing.T) {
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := serviceDate.Add(3600 * time.Second) // 1:00 AM (3600 seconds)
+	arrTime := serviceDate.Add(4000 * time.Second)
+	depTime := serviceDate.Add(4200 * time.Second)
+	delay60 := 60 * time.Second
+	delay120 := 120 * time.Second
+
+	tests := []struct {
+		name string
+		stu  gtfs.StopTimeUpdate
+		want int64
+	}{
+		{
+			name: "arrival time preferred over everything",
+			stu: gtfs.StopTimeUpdate{
+				Arrival:   &gtfs.StopTimeEvent{Time: &arrTime, Delay: &delay60},
+				Departure: &gtfs.StopTimeEvent{Time: &depTime, Delay: &delay120},
+			},
+			want: 4000,
+		},
+		{
+			name: "arrival delay used when arrival time nil",
+			stu: gtfs.StopTimeUpdate{
+				Arrival:   &gtfs.StopTimeEvent{Delay: &delay60},
+				Departure: &gtfs.StopTimeEvent{Time: &depTime},
+			},
+			want: 3600 - 60, // 3540
+		},
+		{
+			name: "departure time used when arrival nil",
+			stu: gtfs.StopTimeUpdate{
+				Departure: &gtfs.StopTimeEvent{Time: &depTime},
+			},
+			want: 4200,
+		},
+		{
+			name: "departure delay used when arrival nil and departure time nil",
+			stu: gtfs.StopTimeUpdate{
+				Departure: &gtfs.StopTimeEvent{Delay: &delay120},
+			},
+			want: 3600 - 120, // 3480
+		},
+		{
+			name: "empty update returns -1",
+			stu:  gtfs.StopTimeUpdate{},
+			want: -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stuReferenceTime(tt.stu, serviceDate, currentTime)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestStuPredictedFromEvent(t *testing.T) {
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	eventTime := serviceDate.Add(5000 * time.Second)
+	delay := 150 * time.Second
+
+	tests := []struct {
+		name  string
+		event *gtfs.StopTimeEvent
+		sched int64
+		want  int64
+	}{
+		{
+			name:  "nil event returns 0",
+			event: nil,
+			sched: 1000,
+			want:  0,
+		},
+		{
+			name:  "event with time returns seconds since service date",
+			event: &gtfs.StopTimeEvent{Time: &eventTime},
+			sched: 1000,
+			want:  5000,
+		},
+		{
+			name:  "event with delay and positive sched adds delay to sched",
+			event: &gtfs.StopTimeEvent{Delay: &delay},
+			sched: 4000,
+			want:  4150,
+		},
+		{
+			name:  "event with delay and zero sched returns 0",
+			event: &gtfs.StopTimeEvent{Delay: &delay},
+			sched: 0,
+			want:  0,
+		},
+		{
+			name:  "event without time or delay returns 0",
+			event: &gtfs.StopTimeEvent{},
+			sched: 1000,
+			want:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stuPredictedFromEvent(tt.event, tt.sched, serviceDate)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
