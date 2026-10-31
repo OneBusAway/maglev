@@ -188,7 +188,7 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config, logger *slog.Log
 	// leaves web UI and other endpoints untouched.
 	// Order (innermost to outermost): expiry -> version.
 	var apiHandler http.Handler = mux
-	apiHandler = restapi.GtfsExpiryMiddleware(api.GtfsManager)(apiHandler)
+	apiHandler = restapi.GtfsExpiryMiddleware(api.GtfsManager, nil)(apiHandler)
 	apiHandler = api.VersionValidationMiddleware(apiHandler)
 
 	// Apply compression around apiHandler (the mux plus API-specific middleware)

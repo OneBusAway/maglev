@@ -14,7 +14,7 @@ func (api *RestAPI) SetupAPIRoutes() http.Handler {
 
 	// Apply global middleware chain: freshness -> compression -> version -> expiry -> base routes
 	var handler http.Handler = mux
-	handler = GtfsExpiryMiddleware(api.GtfsManager)(handler)
+	handler = GtfsExpiryMiddleware(api.GtfsManager, nil)(handler)
 	handler = api.VersionValidationMiddleware(handler)
 	handler = CompressionMiddleware(handler)
 	handler = api.FreshnessMiddleware(handler)
