@@ -985,7 +985,7 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Warn("blockTripSequence: failed to get block trip sequence",
 				slog.String("trip_id", tripID),
-				slog.String("block_id", trip.BlockID.String),
+				slog.String("block_id", nulls.StringOrEmpty(trip.BlockID)),
 				slog.String("error", err.Error()))
 		}
 		return 0, false
@@ -1336,7 +1336,7 @@ func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTr
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Warn("getFirstStopOfNextTripInBlock: query failed",
 				slog.String("trip_id", currentTripID),
-				slog.String("block_id", trip.BlockID.String),
+				slog.String("block_id", nulls.StringOrEmpty(trip.BlockID)),
 				slog.String("error", err.Error()))
 		}
 		return nil

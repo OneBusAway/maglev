@@ -121,8 +121,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// Extract unique block IDs directly from the scheduled rows
 	uniqueBlockIDsMap := make(map[string]bool)
 	for _, row := range scheduleRows {
-		if row.BlockID.Valid && row.BlockID.String != "" {
-			uniqueBlockIDsMap[row.BlockID.String] = true
+		if row.BlockID.Valid && nulls.StringOrEmpty(row.BlockID) != "" {
+			uniqueBlockIDsMap[nulls.StringOrEmpty(row.BlockID)] = true
 		}
 	}
 
@@ -151,7 +151,7 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			}
 			// Group trips by block ID. The underlying query inherently sorts by min_arrival_time ASC.
 			for _, bt := range blockTrips {
-				activeServiceBlockTripsMap[bt.BlockID.String] = append(activeServiceBlockTripsMap[bt.BlockID.String], bt)
+				activeServiceBlockTripsMap[nulls.StringOrEmpty(bt.BlockID)] = append(activeServiceBlockTripsMap[nulls.StringOrEmpty(bt.BlockID)], bt)
 			}
 		}
 	}
@@ -487,7 +487,7 @@ func newScheduleStopTime(row gtfsdb.GetScheduleForStopOnDateRow, rowCtx schedule
 		arrivalMs,
 		departureMs,
 		utils.FormCombinedID(rowCtx.agencyID, row.ServiceID),
-		row.StopHeadsign.String,
+		nulls.StringOrEmpty(row.StopHeadsign),
 		utils.FormCombinedID(rowCtx.agencyID, row.TripID),
 	)
 
@@ -526,12 +526,12 @@ func blockBoundaries(
 	isFirstInTrip := row.MinArrivalTime.Valid && row.ArrivalTime == row.MinArrivalTime.Int64
 	isLastInTrip := row.MaxDepartureTime.Valid && row.DepartureTime == row.MaxDepartureTime.Int64
 
-	if !row.BlockID.Valid || row.BlockID.String == "" {
+	if !row.BlockID.Valid || nulls.StringOrEmpty(row.BlockID) == "" {
 		return isFirstInTrip, isLastInTrip
 	}
 
 	// If the trip belongs to a block, refine the boundaries to the block level.
-	bTrips, exists := activeServiceBlockTripsMap[row.BlockID.String]
+	bTrips, exists := activeServiceBlockTripsMap[nulls.StringOrEmpty(row.BlockID)]
 	if !exists || len(bTrips) == 0 {
 		return isFirstInTrip, isLastInTrip
 	}

@@ -340,7 +340,7 @@ func (api *RestAPI) blocklessScheduledTripIDsInBounds(
 
 		position := api.scheduledPositionAtTime(
 			stopTimesByTrip[trip.ID],
-			shapesByID[trip.ShapeID.String],
+			shapesByID[nulls.StringOrEmpty(trip.ShapeID)],
 			stopsByID,
 			currentTime,
 			serviceDates.Resolve(trip),
@@ -483,7 +483,7 @@ func selectAnchorInGroup(group []gtfsdb.GetTripSpansForBlocksRow, windowStart, w
 	if spanStart > windowEnd || spanEnd < windowStart {
 		return blockAnchor{}, false
 	}
-	return blockAnchor{blockID: anchor.BlockID.String, tripID: anchor.ID}, true
+	return blockAnchor{blockID: nulls.StringOrEmpty(anchor.BlockID), tripID: anchor.ID}, true
 }
 
 // blockedScheduledTripIDsInBounds returns, per service day, the in-bounds
@@ -658,11 +658,11 @@ func (api *RestAPI) shapePointsForTrips(ctx context.Context, trips []gtfsdb.Trip
 		if !trip.ShapeID.Valid {
 			continue
 		}
-		if _, ok := seen[trip.ShapeID.String]; ok {
+		if _, ok := seen[nulls.StringOrEmpty(trip.ShapeID)]; ok {
 			continue
 		}
-		seen[trip.ShapeID.String] = struct{}{}
-		shapeIDs = append(shapeIDs, trip.ShapeID.String)
+		seen[nulls.StringOrEmpty(trip.ShapeID)] = struct{}{}
+		shapeIDs = append(shapeIDs, nulls.StringOrEmpty(trip.ShapeID))
 	}
 
 	byID := make(map[string][]gtfs.ShapePoint, len(shapeIDs))
@@ -758,7 +758,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				agencyBlockIDs = make(map[string]struct{})
 				blockIDsByAgency[agencyID] = agencyBlockIDs
 			}
-			agencyBlockIDs[trip.BlockID.String] = struct{}{}
+			agencyBlockIDs[nulls.StringOrEmpty(trip.BlockID)] = struct{}{}
 		}
 	}
 
@@ -833,7 +833,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 				}
 				for _, bt := range blockTripsRaw {
 					if bt.BlockID.Valid && routeAgencyMap[bt.RouteID] == agencyID {
-						key := blockTripsKey{agencyID: agencyID, blockID: bt.BlockID.String}
+						key := blockTripsKey{agencyID: agencyID, blockID: nulls.StringOrEmpty(bt.BlockID)}
 						blockTripsMap[key] = append(blockTripsMap[key], bt)
 					}
 				}
@@ -898,12 +898,12 @@ func (api *RestAPI) buildTripsForLocationEntries(
 		if request.IncludeSchedule {
 			var shapePoints []gtfs.ShapePoint
 			if tripData.ShapeID.Valid {
-				shapePoints = shapesMap[tripData.ShapeID.String]
+				shapePoints = shapesMap[nulls.StringOrEmpty(tripData.ShapeID)]
 			}
 
 			var blockTrips []gtfsdb.GetTripsByBlockIDsRow
 			if tripData.BlockID.Valid {
-				blockTrips = blockTripsMap[blockTripsKey{agencyID: agencyID, blockID: tripData.BlockID.String}]
+				blockTrips = blockTripsMap[blockTripsKey{agencyID: agencyID, blockID: nulls.StringOrEmpty(tripData.BlockID)}]
 			}
 
 			schedule = api.buildScheduleFromMemory(scheduleData{
@@ -1208,11 +1208,11 @@ func (rb *referenceBuilder) createTrip(trip gtfsdb.Trip) models.Trip {
 		ID:            trip.ID,
 		RouteID:       trip.RouteID,
 		ServiceID:     trip.ServiceID,
-		TripHeadsign:  trip.TripHeadsign.String,
-		TripShortName: trip.TripShortName.String,
+		TripHeadsign:  nulls.StringOrEmpty(trip.TripHeadsign),
+		TripShortName: nulls.StringOrEmpty(trip.TripShortName),
 		DirectionID:   strconv.FormatInt(trip.DirectionID.Int64, 10),
-		BlockID:       trip.BlockID.String,
-		ShapeID:       trip.ShapeID.String,
+		BlockID:       nulls.StringOrEmpty(trip.BlockID),
+		ShapeID:       nulls.StringOrEmpty(trip.ShapeID),
 		PeakOffPeak:   0,
 		TimeZone:      "",
 	}
@@ -1261,13 +1261,13 @@ func (rb *referenceBuilder) createRoute(route gtfsdb.Route) models.Route {
 	return models.NewRoute(
 		utils.FormCombinedID(route.AgencyID, route.ID),
 		route.AgencyID,
-		route.ShortName.String,
-		route.LongName.String,
-		route.Desc.String,
+		nulls.StringOrEmpty(route.ShortName),
+		nulls.StringOrEmpty(route.LongName),
+		nulls.StringOrEmpty(route.Desc),
 		models.RouteType(route.Type),
-		route.Url.String,
-		route.Color.String,
-		route.TextColor.String)
+		nulls.StringOrEmpty(route.Url),
+		nulls.StringOrEmpty(route.Color),
+		nulls.StringOrEmpty(route.TextColor))
 
 }
 
