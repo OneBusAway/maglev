@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
 )
 
 func TestHealthHandlerWithNilApplication(t *testing.T) {
@@ -118,6 +119,44 @@ func TestHealthHandlerFeedExpiryUsesUTC(t *testing.T) {
 	var response HealthResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
 	assert.Equal(t, "2027-03-14T04:59:59Z", response.FeedExpiresAt)
+}
+
+func TestHealthHandlerFeedExpiryUsesClock(t *testing.T) {
+	manager := newTestManagerNoData(t)
+	manager.MarkReady()
+
+	expiresAt := time.Date(2025, time.June, 15, 0, 0, 0, 0, time.UTC)
+	manager.SetFeedExpiresAtForTest(t.Context(), expiresAt)
+
+	// Set clock before expiresAt -> DataExpired must be false.
+	beforeClock := clock.NewMockClock(time.Date(2025, time.June, 10, 0, 0, 0, 0, time.UTC))
+	apiBefore := NewRestAPI(&app.Application{
+		GtfsManager: manager,
+		Clock:       beforeClock,
+	})
+
+	wBefore := httptest.NewRecorder()
+	apiBefore.healthHandler(wBefore, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	require.Equal(t, http.StatusOK, wBefore.Code)
+
+	var respBefore HealthResponse
+	require.NoError(t, json.NewDecoder(wBefore.Body).Decode(&respBefore))
+	assert.False(t, respBefore.DataExpired, "feed should not be expired before expiry timestamp")
+
+	// Set clock after expiresAt -> DataExpired must be true.
+	afterClock := clock.NewMockClock(time.Date(2025, time.June, 20, 0, 0, 0, 0, time.UTC))
+	apiAfter := NewRestAPI(&app.Application{
+		GtfsManager: manager,
+		Clock:       afterClock,
+	})
+
+	wAfter := httptest.NewRecorder()
+	apiAfter.healthHandler(wAfter, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	require.Equal(t, http.StatusOK, wAfter.Code)
+
+	var respAfter HealthResponse
+	require.NoError(t, json.NewDecoder(wAfter.Body).Decode(&respAfter))
+	assert.True(t, respAfter.DataExpired, "feed should be expired after expiry timestamp")
 }
 
 func TestHealthHandlerStarting(t *testing.T) {
