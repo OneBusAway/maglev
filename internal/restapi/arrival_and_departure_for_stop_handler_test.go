@@ -181,6 +181,25 @@ func TestArrivalAndDepartureForStopHandlerWithTimeParameter(t *testing.T) {
 	assert.Equal(t, tripID, model.Data.Entry.TripID)
 }
 
+func TestArrivalAndDepartureForStopHandlerWithDateTimeFormat(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	stopID := utils.FormCombinedID("25", "5004")
+	tripID := utils.FormCombinedID("25", "9e7be5e4-3de9-456d-a174-d79bbbe40f80")
+	specificTime := time.Now().Add(time.Hour)
+	serviceDate := utils.CalculateServiceDate(specificTime)
+	timeFormatted := specificTime.Format("2006-01-02_15-04-05")
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&time=%s",
+		stopID, tripID, serviceDate.UnixMilli(), timeFormatted)
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, stopID, model.Data.Entry.StopID)
+	assert.Equal(t, tripID, model.Data.Entry.TripID)
+}
+
 func TestArrivalAndDepartureForStopHandlerRequiresTripId(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -626,6 +645,7 @@ func TestParseArrivalAndDepartureParams_InvalidValues(t *testing.T) {
 	assert.Contains(t, errs, "stopSequence")
 
 	assert.Equal(t, "must be a valid integer", errs["minutesAfter"][0])
+	assert.Equal(t, `Invalid field value for field "time".`, errs["time"][0])
 	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["serviceDate"][0])
 }
 
