@@ -483,8 +483,9 @@ func TestArrivalAndDepartureForStop_VehiclePositionAloneIsPredicted(t *testing.T
 	require.NotNil(t, entry.TripStatus)
 	assert.True(t, entry.Predicted, "a fresh vehicle position is predicted even without a trip update")
 	assert.True(t, entry.TripStatus.Predicted)
-	assert.True(t, entry.PredictedArrivalTime.IsZero())
-	assert.True(t, entry.PredictedDepartureTime.IsZero())
+	assert.Equal(t, 0, entry.TripStatus.ScheduleDeviation)
+	assert.Equal(t, entry.ScheduledArrivalTime.UnixMilli(), entry.PredictedArrivalTime.UnixMilli())
+	assert.Equal(t, entry.ScheduledDepartureTime.UnixMilli(), entry.PredictedDepartureTime.UnixMilli())
 }
 
 // TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictedWithoutTimes

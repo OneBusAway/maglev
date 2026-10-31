@@ -29,9 +29,10 @@ import (
 type tripStatusExtras struct {
 	snapshot   *scheduledBlockSnapshot
 	situations []situationRef
-	// deviationResolved reports that status.ScheduleDeviation came from a
-	// TripUpdate inside Java's blockNotActive window, rather than defaulting
-	// to 0.
+	// deviationResolved reports that a deviation was resolved for this
+	// arrival. A TripUpdate inside Java's blockNotActive window sets
+	// status.ScheduleDeviation. A fresh vehicle with no TripUpdate resolves
+	// it to 0, which is BestScheduleDeviation's default.
 	deviationResolved bool
 	// recordDiscarded reports that the TripUpdate's deviation exceeded one
 	// hour, so Java drops the VehicleLocationRecord and predicted stays false.
@@ -173,12 +174,15 @@ func (api *RestAPI) BuildTripStatus(
 
 	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
 	// A discarded record is not a live vehicle. A fresh position with no
-	// TripUpdate still is: Java builds the BlockLocation from the position
-	// alone and sets predicted from it.
+	// TripUpdate still is: Java's applyTripUpdatesToRecord sets the
+	// deviation to 0, and the predicted times are the scheduled times.
 	if discarded {
 		status.SetPredicted(false)
 	} else {
 		status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
+		if hasVehicleRealtimeData && !hasRealtimeTripUpdate {
+			extras.deviationResolved = true
+		}
 	}
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, dbTripID)
@@ -676,8 +680,8 @@ type scheduleDeviationFallback struct {
 //   - Canceled trips are never predicted.
 //   - A TripUpdate whose deviation exceeds one hour is discarded, so
 //     predicted stays false.
-//   - A fresh vehicle position with no TripUpdate is predicted, and the
-//     predicted times stay zero because there is no deviation to apply.
+//   - A fresh vehicle position with no TripUpdate resolves its deviation
+//     to 0, so both predicted times equal the scheduled times.
 //   - When the block's StopTimeUpdates yield deviation samples,
 //     getBestScheduleDeviation takes the last sample at or before the stop
 //     and refuses to propagate upstream, so a stop before every sample is
@@ -694,9 +698,6 @@ func (api *RestAPI) predictedTimesFromScheduleDeviation(ctx context.Context, in 
 	}
 	hasUsableDeviation := in.status != nil && in.extras != nil && in.extras.deviationResolved
 	if !hasUsableDeviation {
-		if in.status != nil && in.status.Predicted {
-			return time.Time{}, time.Time{}, true
-		}
 		return time.Time{}, time.Time{}, false
 	}
 	deviation, propagates := api.deviationForStop(ctx, in)

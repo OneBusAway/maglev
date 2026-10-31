@@ -1011,6 +1011,7 @@ func TestArrivalsAndDeparturesForLocation_VehiclePositionAloneIsPredicted(t *tes
 	require.NotNil(t, a.TripStatus)
 	assert.True(t, a.Predicted, "a fresh vehicle position is predicted even without a trip update")
 	assert.True(t, a.TripStatus.Predicted)
-	assert.True(t, a.PredictedArrivalTime.IsZero())
-	assert.True(t, a.PredictedDepartureTime.IsZero())
+	assert.Equal(t, 0, a.TripStatus.ScheduleDeviation)
+	assert.Equal(t, a.ScheduledArrivalTime.UnixMilli(), a.PredictedArrivalTime.UnixMilli())
+	assert.Equal(t, a.ScheduledDepartureTime.UnixMilli(), a.PredictedDepartureTime.UnixMilli())
 }

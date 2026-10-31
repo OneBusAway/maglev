@@ -1089,9 +1089,9 @@ func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
 }
 
 // TestPluralArrivals_VehiclePositionAloneIsPredicted verifies that a fresh
-// vehicle position without any TripUpdate marks the arrival predicted and
-// leaves the predicted times at zero, matching Java's BlockLocation built
-// from the position alone.
+// vehicle position without any TripUpdate marks the arrival predicted at
+// its scheduled times. Java's BestScheduleDeviation defaults to 0, and
+// applyTripUpdatesToRecord sets that deviation even with an empty update list.
 func TestPluralArrivals_VehiclePositionAloneIsPredicted(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
@@ -1110,8 +1110,9 @@ func TestPluralArrivals_VehiclePositionAloneIsPredicted(t *testing.T) {
 	require.NotNil(t, a.TripStatus)
 	assert.True(t, a.Predicted, "a fresh vehicle position is predicted even without a trip update")
 	assert.True(t, a.TripStatus.Predicted, "arrival.predicted should agree with tripStatus.predicted")
-	assert.True(t, a.PredictedArrivalTime.IsZero())
-	assert.True(t, a.PredictedDepartureTime.IsZero())
+	assert.Equal(t, 0, a.TripStatus.ScheduleDeviation)
+	assert.Equal(t, a.ScheduledArrivalTime.UnixMilli(), a.PredictedArrivalTime.UnixMilli())
+	assert.Equal(t, a.ScheduledDepartureTime.UnixMilli(), a.PredictedDepartureTime.UnixMilli())
 }
 
 // TestPluralArrivals_ScheduleDeviationFallback covers the fallback that runs
