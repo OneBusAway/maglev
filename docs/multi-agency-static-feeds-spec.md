@@ -1,789 +1,671 @@
-# Multi-Agency Static GTFS Feeds and Stop Consolidation
+# Multi-Feed Static GTFS Loading and Stop Consolidation
 
-## 1. What the Java feature is, in one paragraph
+Status: draft for review, 2026-10-24.
 
-The Java OBA bundle builder can load **N per-agency GTFS zips** instead of one
-pre-merged zip. Each zip gets a `defaultAgencyId` stamped onto its agency-less
-entities (most importantly stops, since `stops.txt` has no `agency_id`
-column), so every stop is owned by exactly one agency. A second mechanism —
-`EntityReplacementStrategy`, driven by a plain-text mapping file — merges
-physically shared stops across agencies ("absorb stop `UCSD_gtsg-1` into
-canonical stop `MTS_60123`"), rewriting all `stop_times` references to the
-canonical stop at load time. Together these give a multi-agency deployment
-per-agency identity *plus* one map pin per physical curb.
+This document replaces the 2026-08 version. The old version described a
+merge of feeds in memory, a collision policy, and a "v2 proposal". This
+version replaces all three with one design. It also replaces the pull
+request stack #1791 to #1810. The rules from that stack are now part of §4.
 
-This spec defines the Maglev equivalent: **multiple static feeds in
-`config.json`, merged in memory at import time, with an optional
-stop-consolidation file in the same format the Java tooling uses.** The
-feed list and the consolidation config key are specified in §3.1; the
-consolidation mechanism itself — file format, matching, rewrite semantics,
-and error rules — is §5.
-
-Review the spec describing the Java feature at https://github.com/OneBusAway/onebusaway-application-modules/blob/main/docs/oba-multi-agency-bundle-spec.md
+This document is mirrored to the wiki page
+`Multi-Agency-Static-Feeds-Stop-Consolidation` (see `docs/AGENTS.md`). Edit
+this file first. Then copy it to the wiki.
 
 ---
 
-## 2. How the two servers behave today
+## 1. Goal
 
-### 2.1 Maglev today (verified against `main`)
+Maglev loads one static GTFS zip file. Java OneBusAway loads many zip
+files, one for each source agency. Java names each entity after the zip
+file that it came from. Maglev must do the same. The result is:
 
-- **Exactly one static GTFS source.** Config is a single object
-  (`gtfs-static-feed` in `internal/appconf/json_config.go:13-18,42`; CLI flag
-  `-gtfs-url` in `cmd/api/main.go:69`; `Config.GtfsURL` in
-  `internal/gtfs/config.go:24-34`). The load path is
-  `loadGTFSData` → `gtfsdb.ParseGtfsData` → `Client.StoreGtfsData`
-  (`internal/gtfs/static.go:127-143`, `gtfsdb/helpers.go:39,204`). There is no
-  way to point Maglev at two zips.
-- **Entity IDs are stored raw.** `stops.id`, `trips.id`, `routes.id`, etc.
-  are the unprefixed GTFS values (`gtfsdb/helpers.go:265-475`). The
-  `{agencyId}_{rawId}` combined form exists only at the API layer
-  (`utils.FormCombinedID`).
-- **Stop→agency association is transitive, not stored.** The `stops` table
-  has no `agency_id` column (`gtfsdb/schema.sql` — only `routes` carries one).
-  Queries like `GetStopIDsForAgency` and `GetStopForAgency` join
-  `stops → stop_times → trips → routes` and filter on `routes.agency_id`
-  (`gtfsdb/query.sql:265-274,315-339`).
-- **The agency prefix on a stop's public ID is computed per response.**
-  Handlers batch-fetch the agencies serving each stop via
-  `GetAgenciesForStops` (`gtfsdb/query.sql:676-693`) and take the first row
-  per stop (`internal/restapi/stops_for_location_handler.go:180-186`). Note
-  that query has no `ORDER BY`, so for a stop served by multiple agencies the
-  chosen prefix is whatever SQLite returns first. (`GetAgencyForStop`,
-  `gtfsdb/query.sql:237-257`, does order by agency id, but no handler
-  currently calls it.)
-- **Routes with an omitted `agency_id` are only defaulted when the whole
-  feed has exactly one agency** — the `singleAgencyID` fallback in
-  `StoreGtfsData` (`gtfsdb/helpers.go:283-291,733-738`).
-- **Import is atomic and hash-gated.** One `import_metadata` row stores
-  `(file_hash, file_source)`; a matching hash skips reimport, a changed hash
-  clears every table and reimports inside one transaction
-  (`gtfsdb/helpers.go:218-259`).
-- **GTFS-RT is already multi-feed.** `gtfs-rt-feeds` is a list with per-feed
-  `agency-ids` filtering (`internal/gtfs/config.go:12-21`). Only static
-  loading is single-feed.
-- **No stop consolidation mechanism of any kind.**
+- A deployment such as Puget Sound can be served from the agencies' own
+  feeds. No upstream merge step is necessary. Puget Sound has King County
+  Metro, Sound Transit, Community Transit, Pierce Transit, Kitsap Transit,
+  Everett Transit, Intercity Transit and more.
+- Each stop, route, trip, service, shape and block has one public ID. The
+  ID is the same ID that Java gives it. Clients that were built for Java
+  servers continue to work with Maglev.
+- Stop consolidation can merge stops from different feeds. Stop
+  consolidation shows one map pin for one curb that two agencies serve.
 
-### 2.2 Behavioral differences, side by side
+The measure of success is Java parity. Give Maglev the same zip files, the
+same `defaultAgencyId` for each zip file, and the same consolidation file.
+Maglev must then return the same IDs as application-modules 2.7.1. Where
+this document departs from Java on purpose, §12 lists the difference and the
+reason.
 
-The Java spec's motivating bug (§2 there: `stop-ids-for-agency` returns 0 for
-three of four agencies when fed a pre-merged zip) is live in production
-today — as of 2026-08, `realtime.sdmts.com` returns 6,110 stop IDs for MTS
-and 0 for NCTD, SAN, and UCSD. It **does not reproduce in Maglev**. Because Maglev derives stop ownership transitively through routes,
-feeding it the same pre-merged 4-agency zip already yields correct non-zero
-per-agency stop lists. The differences that remain:
+### 1.1 Why the stop-ID work stopped
 
-| Behavior | Java OBA (with the bundle spec applied) | Maglev today |
+Pull requests #1791 to #1810 gave Maglev the Java rule for stop names in a
+single feed: each stop belongs to the first agency in `agency.txt`. That
+rule is a special case of the full rule: each stop belongs to the default
+agency of its feed. When Maglev applies the special case to one merged zip
+file, it shows the known Java problem: all stops of a region belong to one
+agency. We do not land the special case and then change it. This document
+defines the full rule. The stop-ID rules are §4.
+
+---
+
+## 2. What Java does
+
+Sources: `onebusaway-transit-data-federation-builder` (`FB:`) and
+`onebusaway-transit-data-federation` (`TDF:`) in application-modules 2.7.1,
+and `onebusaway-gtfs` 1.4.17 (`GM:`), the GTFS reader that application-modules
+uses. The document `onebusaway-application-modules/docs/oba-multi-agency-bundle-spec.md`
+describes the same feature for the bundle operator.
+
+### 2.1 Bundles
+
+A bundle is a list of `GtfsBundle` objects (`FB:bundle/model/GtfsBundle.java`).
+Each object has these fields:
+
+| Field | Meaning |
+|---|---|
+| `path` | The zip file or directory. |
+| `defaultAgencyId` | The agency for entities that have no agency of their own. When not set, the first agency that the reader has seen. |
+| `agencyIdMappings` | Rewrites of `agency_id` from an old value to a new value. Java applies them to `agency.txt` and `routes.txt` only. |
+
+Java creates one `GtfsReader` for each bundle, with `overwriteDuplicates=true`.
+`GtfsMultiReaderImpl.run()` reads one entity class at a time. For each
+class, it reads each feed in order into one store
+(`FB:bundle/tasks/GtfsMultiReaderImpl.java:115-135`).
+
+### 2.2 How each ID gets its agency
+
+Each ID in the Java graph is an `AgencyAndId`. Java writes it as
+`{agencyId}_{rawId}`. Java parses it at the **first** underscore.
+
+| Entity | Agency part of the ID | Source |
 |---|---|---|
-| Static inputs | N per-agency zips, one `GtfsBundle` each | Exactly one zip |
-| Stop ownership | Exactly one agency — the feed's `defaultAgencyId` | Every agency whose routes serve the stop; a stop served by MTS and UCSD routes appears in **both** agencies' `stop-ids-for-agency` lists |
-| Stops served by no trip | Owned by the feed's default agency | Owned by no agency (transitive joins find nothing); still returned by location/search endpoints |
-| Public stop ID prefix | The owning agency, fixed at build time | Endpoint-dependent: per-agency/per-route endpoints stamp the *requested* agency; location/search endpoints use the first agency returned by `GetAgenciesForStops` (unordered) — see §3.3 |
-| Absorbed-stop lookups | 404 (entity never stored) | n/a — no consolidation |
-| Cross-feed ID collisions | Impossible — every ID is an `AgencyAndId` pair | n/a today (single feed); would be primary-key violations if feeds were naively concatenated |
-| Shared physical stops | Consolidated via mapping file | Two stops, two map pins, arrivals split across them |
+| Agency | `agency_id`, after `agencyIdMappings`. When the column is empty: `defaultAgencyId` if set, else `agency_name`. | `GM:serialization/GtfsReader.java:311-323` |
+| Stop | The default agency of the feed. | `GM:model/Stop.java:42` |
+| Stop `parent_station` | The agency of the child stop. | `FB:bundle/tasks/transit_graph/StopEntriesFactory.java:72-74` |
+| Route | The agency of the route (`agency_id` after mappings). When the column is absent and the reader knows one agency, that agency. | `GM:serialization/mappings/RouteAgencyFieldMappingFactory.java:66-87` |
+| Trip | **The agency of the route.** | `GM:serialization/mappings/TripAgencyIdFieldMappingFactory.java:22` |
+| Service (`calendar`, `calendar_dates`, `trips.service_id`) | The default agency of the feed. | `GM:model/ServiceCalendar.java:39`, `Trip.java:35-36` |
+| Shape (`shapes.txt`, `trips.shape_id`) | The default agency of the feed. | `GM:model/ShapePoint.java:34`, `Trip.java:53-54` |
+| Fare attribute | The default agency of the feed. | `GM:model/FareAttribute.java:29` |
+| Block | `AgencyAndId(trip agency, block_id)`. A trip with no `block_id` is its own block. The block ID is the trip ID. | `FB:bundle/tasks/transit_graph/BlockEntriesFactory.java:90-97` |
+| Stop time `stop_id` | Java looks up `(default agency, raw)`. The result is null when not found. | `GM:serialization/mappings/StopLocationFieldMappingImpl.java:50-62` |
 
-Two consequences worth internalizing before implementing:
+The default agency is `_defaultAgencyId` when set. Otherwise it is the first
+agency in the list of the reader (`GM:serialization/GtfsReader.java:150-156`).
+The multi-reader gives each reader all agencies that it has read so far.
+When a second bundle has no `defaultAgencyId`, it gets the first agency of
+the first bundle. Production configurations set `defaultAgencyId` for each
+bundle.
 
-1. Maglev does **not** need the Java `defaultAgencyId` mechanism to fix
-   per-agency stop lists — they already work. What Maglev gains from this
-   project is (a) no upstream pre-merge step, and (b) stop consolidation,
-   which is the user-visible win (one pin per curb, arrivals from both
-   agencies on one stop).
-2. Maglev's raw-ID storage means cross-feed ID collisions are a real hazard
-   the Java system never had. §4.3 defines how we handle them.
+### 2.3 Collisions and duplicates
+
+- Two feeds can make the same `AgencyAndId`. This is possible only when
+  they have the same default agency or the same route agency. For stops,
+  routes and trips, the entity from the later feed replaces the entity from
+  the earlier feed. Java writes a warning only
+  (`GM:impl/GenericDaoImpl.java:100-109`). A duplicate `calendar.txt`
+  service ID stops the build (`MultipleCalendarsForServiceIdException`).
+- Two feeds can have the same `agency_id`. Java drops the second agency
+  row. The first row wins (`GtfsReader.java:318-323`). The routes of the
+  second feed then use the agency object of the first feed, with its name
+  and time zone. `agencyIdMappings` is the solution.
+- Two feeds can use the same raw stop ID under different default agencies.
+  These are different entities. This is the normal case. No configuration
+  is necessary.
+
+### 2.4 Realtime
+
+A `GtfsRealtimeSource` has `agencyIds`
+(`TDF:impl/realtime/gtfs_realtime/GtfsRealtimeSource.java:404-409`). When
+not set, it is each agency in the bundle. `GtfsRealtimeEntitySource`
+resolves a raw ID in this order (`:197-214`, `:115-135`, `:220-269`):
+
+1. For each agency in `agencyIds`, in order, try `AgencyAndId(agency, raw)`.
+2. Parse the raw value as a combined `agency_id`.
+3. For trips only, use fuzzy matching when it is enabled.
+
+Java parses a vehicle ID as a combined ID when possible. Otherwise the
+vehicle gets the agency of the matched block. Alerts and unmatched entities
+get `agencyIds[0]`.
+
+### 2.5 Coverage and time zones
+
+- `agencies-with-coverage` computes the bounds of an agency from the stops
+  that the trips of that agency visit (`TDF:impl/AgencyServiceImpl.java:111-134`).
+  The agency in the stop ID is not used. A stop with no trips is not
+  counted. An agency with no service is listed with empty bounds.
+- Trip time math uses the time zone of the **route agency**
+  (`FB:bundle/tasks/transit_graph/TripEntriesFactory.java:222-224`).
+  Service dates use the time zone of the agency in the service ID. That is
+  the default agency of the feed
+  (`GM:impl/calendar/CalendarServiceDataFactoryImpl.java:129-161`).
+
+### 2.6 Stop consolidation
+
+`EntityReplacementStrategyFactory` (`FB:bundle/tasks/EntityReplacementStrategyFactory.java:84-101`)
+reads a text file. Each line is `keptId absorbedId…`. Each ID is in
+`agency_id` form. Lines that start with `#`, `{{{` or `}}}` are skipped. The
+strategy works inside the store of the multi-reader
+(`GtfsMultiReaderImpl.StoreImpl`), so it works across bundles. An absorbed
+stop goes to a rejection store. A lookup of its ID (from `stop_times` or
+`parent_station`) returns the kept stop. At runtime,
+`ConsolidatedStopsServiceImpl` reads the same file. It translates absorbed
+IDs that arrive in GTFS-RT and on the `stop` endpoint.
 
 ---
 
-## 3. New state in Maglev
+## 3. Maglev today
 
-### 3.1 Configuration
+Checked against `main` at 2401ee38 and against the streaming-import stack
+(#1662 to #1677, tip `ab/1659-connection-pragmas`).
 
-`gtfs-static-feeds` (plural) replaces `gtfs-static-feed` as the preferred
-form. The legacy singular key keeps working and is normalized internally into
-a one-element list; specifying both is a validation error.
+- **One static source.** `gtfs-static-feed` is one object
+  (`internal/appconf/json_config.go:13-18,43`). `ReloadStatic`
+  (`internal/gtfs/static.go:196-249`) downloads one zip file and parses it.
+  `StoreGtfsData` (`gtfsdb/helpers.go:205-571`) replaces each table in one
+  transaction. One `import_metadata` row holds the hash of the zip file. An
+  unchanged hash skips the import.
+- **Raw IDs in the database.** Each ID column holds the GTFS value without
+  a prefix. Each primary key is on that raw value (`gtfsdb/schema.sql`).
+  The `{agency}_{id}` form exists only in the API layer
+  (`internal/utils/api.go:83-123`). A handler splits the request ID,
+  queries with the raw part, and adds a prefix to the result. The handler
+  code has about 130 `FormCombinedID` calls and 37
+  `ExtractCodeID`/`ExtractAgencyIDAndCodeID` calls.
+- **Stops have no agency.** `stop_agencies` is a derived table. It has one
+  row for each (stop, agency) pair where routes of the agency serve the
+  stop. The agency in the public ID of a stop depends on the endpoint. The
+  stopped stack #1791 to #1810 changed the table to one row for each stop,
+  under the first agency of the feed.
+- **Realtime matches raw IDs.** `rebuildMergedRealtimeLocked`
+  (`internal/gtfs/realtime.go:1015-1149`) keys trips, vehicles, routes and
+  alert targets by the raw ID in the feed. The `gtfs-rt-feeds[].agency-ids`
+  list filters entities by the agency of their route and attributes
+  vehicles.
+- **The streaming stack changes the shape of the import.** On that branch,
+  Maglev writes the feed to a temporary file and computes the hash during
+  the download. It checks the hash before it parses. `go-gtfs` v1.4.0
+  `ParseStaticStream` returns stop times and shapes as iterators. Rows are
+  inserted in batches (`internal/gtfs/feed_file.go`,
+  `gtfsdb/stream_import.go`, `gtfsdb/batch_insert.go`). The old design in
+  this document joined `gtfs.Static` structs in memory. That design no
+  longer fits: stop times and shapes never exist as slices. **This document
+  is written for the streaming stack. The streaming stack must land first.**
+
+---
+
+## 4. Identity model
+
+### 4.1 One rule: store the public ID
+
+Maglev adopts the Java identity model. Each stop, route, trip, service,
+shape and block is an (agency, raw ID) pair. The database stores the pair
+as `{agencyId}_{rawId}`, the form that the API already serves. The import
+rewrites IDs when it inserts rows. Handlers read IDs as stored. They do not
+split or re-prefix IDs. Realtime ingest resolves raw IDs into stored IDs
+once, at the feed boundary.
+
+| Entity | Stored ID | Agency part |
+|---|---|---|
+| `agencies.id` | `agency_id` after `agency-id-mappings`. When empty: `default-agency-id` if set, else `agency_name`. | None. Agencies have no prefix. |
+| `stops.id`, `stops.parent_station` | `{default}_{stop_id}` | The default agency of the feed. Also stored in `stops.agency_id`. |
+| `routes.id` | `{route agency}_{route_id}` | `routes.agency_id` after mappings. When the column is absent and the feed has one agency, that agency. |
+| `trips.id` | `{route agency}_{trip_id}` | The agency of the route of the trip. |
+| `trips.service_id`, `calendar.id`, `calendar_dates.service_id` | `{default}_{service_id}` | The default agency of the feed. |
+| `trips.shape_id`, `shapes.shape_id` | `{default}_{shape_id}` | The default agency of the feed. |
+| `trips.block_id` | `{trip agency}_{block_id}`. Empty stays empty. | The agency of the trip. |
+| `stop_times.trip_id`, `stop_times.stop_id`, `frequencies.trip_id` | The stored trip ID and stop ID. | Resolved in the same feed. |
+
+A reference inside one feed resolves to the entity **of that feed**. A stop
+time `stop_id` and a trip `route_id` are references. This is the Java
+per-reader lookup. A reference to an ID that the feed does not define is a
+validation error for that row. Maglev drops the row with a warning, as
+today.
+
+The separator rule is the Java rule: split at the **first** underscore. An
+agency ID with `_` makes `A_B_C` ambiguous. A `default-agency-id` value and
+an `agency_id` value (after mapping) must not contain `_`. The import rejects
+a feed that breaks this rule (§5.4).
+
+### 4.2 Default agency
+
+The default agency of a feed is, in this order:
+
+1. `default-agency-id` from the configuration, or `defaultAgencyId` from the
+   bundle-inputs manifest (§5.2).
+2. Otherwise, the first row of `agency.txt` in that feed.
+
+The fallback never uses the agencies of another feed. This differs from
+Java (§12). The default agency is normally one of the agencies of the feed.
+When it is not, the import writes a warning. The time zone of that agency
+is then not available for service-date math. Maglev uses the route agency
+instead (§4.4).
+
+### 4.3 What changes for a single-feed deployment
+
+Public IDs do not change. A single-agency feed already serves its stops as
+`{agency}_{stop}`. That agency is the first and only agency of the feed.
+The database content changes. This causes one reimport on upgrade and a new
+ETag. The behaviors below change. They match Java, and they were the subject
+of #1791 to #1810:
+
+- A stop has one public ID on each endpoint.
+- A stop that no trip visits belongs to the default agency of the feed.
+  `stop-ids-for-agency` lists it.
+- A stop requested under another agency prefix returns 404. This is true
+  also for an agency whose routes serve the stop.
+- A trip ID has the agency of its route. A service ID has the default
+  agency.
+- For a merged multi-agency zip file, each stop and each service belongs to
+  the first agency. `stop-ids-for-agency` is empty for the other agencies.
+  Java does the same with the same input. This is the reason to load one
+  feed for each agency.
+
+### 4.4 Time zones
+
+Each agency keeps its `agency_timezone`. Trip and stop-time math uses the
+route agency of the trip, as today and as in Java. Service-date activation
+uses the agency in the service ID, the default agency of the feed. When that
+agency is not in the feed, Maglev uses the route agency and writes one
+warning for each import. Java uses the JVM default time zone in that case.
+The JVM default is wrong more often than the route agency.
+
+---
+
+## 5. Configuration
+
+### 5.1 Feed list
+
+`gtfs-static-feeds` is a list. The singular `gtfs-static-feed` continues to
+work as a list with one element. Setting both keys is a validation error.
+An empty list is a validation error. The CLI flag `-gtfs-url` stays
+single-feed.
 
 ```json
 {
   "gtfs-static-feeds": [
-    { "url": "https://…/mts.zip",  "default-agency-id": "MTS" },
-    { "url": "https://…/nctd.zip", "default-agency-id": "NCTD" },
-    { "url": "https://…/san.zip",  "default-agency-id": "SAN" },
-    { "url": "https://…/ucsd.zip", "default-agency-id": "UCSD",
-      "auth-header-name": "Authorization", "auth-header-value": "Bearer …" }
+    { "id": "metro", "url": "https://…/metro.zip", "default-agency-id": "1" },
+    { "id": "sound-transit", "url": "https://…/st.zip", "default-agency-id": "40",
+      "agency-id-mappings": { "ST": "40" } },
+    { "id": "community-transit", "url": "https://…/ct.zip", "default-agency-id": "29",
+      "headers": { "Authorization": "Bearer …" } }
   ],
-  "stop-consolidation-file": "./config/sdmts-stop-consolidation.txt"
+  "stop-consolidation-url": "https://…/stop-consolidation.txt"
 }
 ```
 
-Per-feed fields: `url` (required), `default-agency-id` (optional),
-`auth-header-name`/`auth-header-value` (optional, paired),
-`enable-gtfs-tidy` (optional) — i.e. today's `GtfsStaticFeed` struct plus
-`default-agency-id`. Validation rules:
+Each feed has these keys:
 
-- Each feed's URL gets the same checks the single feed gets today
-  (`json_config.go:184-201`).
-- A present `gtfs-static-feeds` key must contain at least one feed — an
-  explicitly empty list is a validation error, not "no feeds" (the staged
-  implementation reads `staticFeeds()[0]`, and an empty list would
-  otherwise panic, or silently fall through to a legacy default).
-- Specifying both `gtfs-static-feed` and `gtfs-static-feeds` is an error.
-  Detecting this requires knowing the singular key was *present*, which
-  the current value-struct config can't tell apart from an omitted key —
-  an empty `gtfs-static-feed: {}` and no key at all produce the same zero
-  value. PR 1 either makes the legacy field a pointer or checks presence
-  against the raw JSON before defaults run.
-  **Defaulting interaction:** `setDefaults()` currently injects a Sound
-  Transit URL when the singular key is empty (`json_config.go:71-73`); that
-  defaulting must be skipped whenever the plural list is non-empty,
-  otherwise every plural-only config either trips the both-keys error or
-  silently gains a phantom feed.
-- Explicit `default-agency-id` values must be unique across feeds, and must
-  not contain `_` (the combined-ID separator — see §9.1). Enforced at
-  config time. Feed-derived defaults get the same two checks at import
-  time, once `agency.txt` is available.
-- At import time, a configured `default-agency-id` must name an agency
-  present in that feed's `agency.txt` — §4.2's route stamping needs the
-  agency row, and `routes.agency_id` carries an FK to `agencies(id)`
-  (`gtfsdb/schema.sql:42`). Fail with a config-shaped error message, not a
-  mid-transaction FK violation.
-
-`default-agency-id` defaults to the first agency in that feed's `agency.txt`
-— the same fallback the Java `GtfsReader` uses. It exists for exactly two
-purposes:
-
-1. Resolving `MTS_60123`-style tokens in the consolidation file to a stop in
-   a specific feed (§5.2).
-2. Stamping `agency_id` onto routes that omit it, per feed, before merging
-   (§4.2) — the existing `singleAgencyID` fallback in `StoreGtfsData` sees
-   the *merged* agency list and goes inert once there is more than one agency.
-
-It is **not** stamped onto stops and does not change stop ownership — that
-stays transitive (§2.1). For single-agency feeds (the normal case) you can
-omit it entirely.
-
-`stop-consolidation-file` is optional; a local path or `https://` URL.
-Format and semantics are §5. When omitted, no consolidation runs and shared
-physical stops remain one stop per feed, exactly as today.
-
-CLI flags stay single-feed. Multi-feed and consolidation require the JSON
-config file.
-
-### 3.2 Import pipeline
-
-Current: download one zip → parse → validate → store.
-
-New (all inside the existing `ReloadStatic` / `staticUpdateMutex` envelope,
-`internal/gtfs/static.go:196`):
-
-1. Download and parse each configured feed independently (reusing
-   `rawGtfsData` + `gtfsdb.ParseGtfsData`, which also gives per-feed gtfstidy
-   and per-feed sha256 hashes). Any feed failing to download or parse fails
-   the whole import — a partial multi-agency dataset silently drops agencies,
-   which is worse than keeping yesterday's data (Java spec §8.9 reaches the
-   same conclusion).
-2. Per feed: resolve `default-agency-id` (config value or first agency), and
-   stamp it onto any route with a nil/empty `Agency`.
-3. **Consolidate** stops if a consolidation file is configured (§5) —
-   applied to the **per-feed** structs, per §4.1's pointer-aliasing rule,
-   through a provenance index built over the per-feed data. Absorbed
-   stops are removed from their owning feed's slices here, so they never
-   exist anywhere downstream.
-4. **Collision-check** (§4.3) — scans the per-feed ID sets, which
-   consolidation has already purged of absorbed stops, so declared shared
-   stops don't trip it, and which-feed-owns-which-ID provenance is
-   inherent for every entity type in the error message.
-5. **Merge** the N parsed `gtfs.Static` structs into one (§4) — pure
-   concatenation, assembled only after all per-feed mutations (§4.1).
-6. Compute the combined hash (§4.4) and hand the merged result to the
-   existing `importStaticIntoDB` / `StoreGtfsData` unchanged.
-
-With one configured feed, no explicit `default-agency-id`, and no
-consolidation file, steps 2–5 are no-ops and behavior is byte-for-byte
-today's (§4.2's stamping condition is what keeps step 2 inert here).
-
-### 3.3 Resulting API behavior (what to assert in tests)
-
-Given MTS + UCSD feeds and a consolidation line `MTS_60123 UCSD_gtsg-1`:
-
-A prefix rule to internalize first, because the assertions below depend on
-it: **different endpoint families spell a stop's combined ID differently.**
-Per-agency and per-route endpoints stamp the *requested* agency onto every
-raw stop ID (`stop_ids_for_agency_handler.go:44`,
-`stops_for_route_handler.go:174,276,502` — `FormCombinedID(requestedAgency,
-rawID)`), while location/search endpoints derive the prefix from the first
-row of `GetAgenciesForStops` (§2.1). The canonical stop is one row in the
-DB, but its spelling varies by endpoint. v1 makes no handler changes, so the
-tests must assert these spellings as-is:
-
-- `stop-ids-for-agency/MTS` and `.../UCSD` are both non-empty; the canonical
-  stop appears in **both** lists — the UCSD trips' stop_times now reference
-  it, so the transitive query picks it up for UCSD automatically. It is
-  spelled `MTS_60123` in the MTS list and `UCSD_60123` in the UCSD list
-  (requested-agency stamping, above). Both spellings resolve via
-  `stop/{id}` because `GetStopForAgency` validates through serving routes.
-  (Java parity for the UCSD list existing at all; two deliberate
-  divergences — multi-owner listing and request-dependent spelling — see
-  §2.2. Flag both in the PR description per CONTRIBUTING.)
-- `arrivals-and-departures-for-stop/MTS_60123.json` returns arrivals from
-  both agencies' routes, with both agencies in `references.agencies`.
-- `stops-for-route/UCSD_<route>.json` includes the canonical stop, spelled
-  `UCSD_60123` (requested-agency stamping again).
-- Any lookup of the absorbed ID (`UCSD_gtsg-1`) returns 404 — the entity was
-  removed before import, matching the Java runtime behavior.
-- One pin per physical curb in map/location queries.
-- `agencies-with-coverage` lists all agencies with correct bounds — no code
-  change needed; `computeRegionBounds` already works per agency off the DB
-  (`internal/gtfs/shapes.go:16`).
-- GTFS-RT keeps working unchanged: RT trip IDs are matched raw against
-  `trips.id`, and the merge stores raw IDs. Configure one `gtfs-rt-feeds`
-  entry per RT **source** (not per agency), with these rules:
-  - **Omit `agency-ids` for a source that only carries one agency's data.**
-    The filter is stricter than it looks: `filterTripsByAgency` /
-    `filterVehiclesByAgency` drop any entity whose TripDescriptor lacks a
-    `route_id` (`internal/gtfs/realtime.go:520-522,539-541`), and stop-only
-    alerts are dropped whenever filtering is active (`realtime.go:564-566`).
-    For a single-agency source the constraint is already satisfied
-    structurally, so setting `agency-ids` only adds a way to silently lose
-    data. Reserve it for genuinely mixed-agency RT feeds. (Follow-up worth
-    filing, not part of this spec: fall back to a static trip lookup when
-    `route_id` is absent from the descriptor.)
-  - **Multiple RT sources for one agency are supported.** Each feed entry
-    gets a unique `id` (duplicates rejected,
-    `internal/appconf/json_config.go:293-296`); per-feed sub-maps merge by
-    concatenation (`realtime.go:589-706`) and stale-vehicle expiry is
-    tracked per feed (`feedVehicleLastSeen`; `realtime.go:30-31,77-95,
-    381-408`). The one assumption: the sources must be
-    **disjoint** (e.g. bus vs. rail). A vehicle or trip present in two
-    sources appears twice in `vehicles-for-agency`, and by-ID lookups
-    resolve to whichever feed sorts last.
-  - Partial sets are fine — a feed entry needs at least one URL
-    (trip-updates, vehicle-positions, or alerts) to activate
-    (`internal/gtfs/config.go:37-45`); it doesn't need all three.
-  - Independent of filtering, `VehiclesForAgencyID` attributes vehicles via
-    the `route_id` in the vehicle's TripDescriptor
-    (`internal/gtfs/gtfs_manager.go:526-538`) — an RT source that omits
-    `route_id` yields an empty `vehicles-for-agency` even today. Verify each
-    vendor feed carries `route_id` before blaming this change.
-
----
-
-## 4. The merge step
-
-New file `internal/gtfs/merge.go`.
-
-```go
-// parsedFeed pairs one feed's parsed GTFS data with its resolved agency
-// identity and content hash.
-type parsedFeed struct {
-    static          *gtfs.Static
-    defaultAgencyID string // config override or first agency in the feed
-    hash            string // sha256 of the zip bytes (from gtfsdb.ParseGtfsData)
-    source          string // URL or path, for error messages
-}
-
-// buildStopIndex indexes every feed's stops by (defaultAgencyID, stopID)
-// for consolidation-token resolution (§5.2). Built over the per-feed
-// structs, so mutations through it satisfy §4.1's pointer-aliasing rule.
-func buildStopIndex(feeds []parsedFeed) map[stopKey]*gtfs.Stop
-
-// checkCrossFeedCollisions fails if any two feeds share a raw
-// stop/trip/route/service/shape/block/agency ID. It scans the per-feed
-// data — from which consolidation has already removed absorbed stops —
-// so both source feeds are known for every collision, for every entity
-// type, without a separate provenance structure.
-func checkCrossFeedCollisions(feeds []parsedFeed) error
-
-// mergeFeeds concatenates per-agency feeds into a single gtfs.Static.
-// Called only after all per-feed mutations (route stamping,
-// consolidation) are complete — see the §4.1 pointer-aliasing rule.
-func mergeFeeds(feeds []parsedFeed) (*gtfs.Static, error)
-```
-
-### 4.1 Concatenation
-
-`gtfs.Static` (from `github.com/OneBusAway/go-gtfs`) is plain slices:
-`Agencies`, `Routes`, `Stops`, `Transfers`, `Services`, `Trips`, `Shapes`.
-Merging is slice concatenation. Cross-entity references inside each feed are
-already pointers resolved at parse time, so concatenation cannot dangle them.
-(Maglev does not persist `Transfers`; concatenate them anyway for
-completeness, they're dropped by `StoreGtfsData` as they are today.)
-
-**Pointer-aliasing rule — this ordering is load-bearing.** The slices hold
-entities *by value* (`Stops []Stop`) while cross-references point into the
-per-feed backing arrays (`StopTime.Stop *Stop`, `Stop.Parent *Stop`).
-`append` copies the structs into a new backing array, so after
-concatenation `&merged.Stops[i]` is a **different struct** from the one the
-feed's `StopTime.Stop` points at. Therefore: every mutation — route-agency
-stamping (§4.2), consolidation rewrites (§5.3), and §9's ID rewriting —
-must operate on the **per-feed** structs (or match by ID value, never by
-pointer identity against merged copies), and the merged slices must be
-assembled **after** all mutations. `StoreGtfsData` reads stop_times through
-the pointers (`t.StopTimes[].Stop.Id`, `gtfsdb/helpers.go:419`), so
-mutating only the merged copies silently imports stale data, and comparing
-pointers against merged copies silently rewrites nothing.
-
-### 4.2 Route agency stamping (before merge, per feed)
-
-For each feed, for each route where `route.Agency == nil` or
-`route.Agency.Id == ""`, set it to the feed's default agency — but **only
-when the feed ships exactly one agency in its `agency.txt`, or the
-operator configured an explicit `default-agency-id`.** A multi-agency
-feed with agency-less routes (invalid GTFS — `agency_id` is required when
-multiple agencies exist) keeps today's behavior: the route stays
-unstamped, exactly as the inert `singleAgencyID` fallback leaves it.
-Stamping the first agency there would silently guess an owner and change
-single-feed behavior, breaking §3.2's byte-for-byte claim.
-
-The stamping must happen per feed because after merging, `StoreGtfsData`'s
-`len(Agencies) == 1` fallback (`gtfsdb/helpers.go:283-286`) no longer fires.
-Leave the existing fallback in place — it still covers the single-feed path.
-
-### 4.3 Cross-feed ID collisions: detect and fail
-
-Two feeds shipping the same `stop_id`, `trip_id`, `route_id`, `service_id`,
-`shape_id`, or `block_id` would collide on Maglev's raw primary keys —
-either a constraint violation mid-import or, worse, silent cross-agency data
-corruption (e.g. two feeds' `service_id=WEEKDAY` calendars merging into one).
-The Java system never faces this because every ID there is an
-`(agency, id)` pair — the Java spec's §8.4 explicitly *blesses* cross-feed
-stop_id reuse, which Maglev's raw-ID storage cannot tolerate.
-
-Block IDs are on the list even though block *layovers* are keyed by
-`(block_id, service_id)` (`gtfsdb/helpers.go:1374-1390`): `GetTripsByBlockID`
-backing `GetVehicleForTrip` (`internal/gtfs/gtfs_manager.go:593`) and
-`GetBlockDetails` backing `/block/{id}`
-(`internal/restapi/block_handler.go:38`) both filter on `block_id` alone —
-a cross-feed block_id collision silently cross-links two agencies' blocks.
-
-**Empirical reality check (external observation, 2026-08 — not a code
-citation; re-verify against current feeds): the published SDMTS-area feeds
-do collide.** Intersecting the real MTS and NCTD zips: trip, block, service,
-shape, and route IDs are disjoint, but **38 raw `stop_id` values appear in
-both** (e.g. `10034`, `10374`, `11151`). Any collision policy has to survive
-that fact. When the §9.4 decision-gate audit runs, check the full 38-ID list
-into this repo next to this spec so the decision is reproducible.
-
-**v1 policy: consolidation first, then any remaining cross-feed collision
-fails the import**, with one error listing every collision: entity type, ID,
-and the two source feeds.
-
-- **Ordering matters:** stop consolidation (§5) is applied *before* the
-  collision check. A colliding stop_id that refers to the *same physical
-  stop* in both feeds is handled by declaring it in the consolidation file
-  (`MTS_10034 NCTD_10034`) — the absorbed copy is removed before the check
-  runs. Audit the 38 known collisions first: any that are genuinely shared
-  curbs belong in the consolidation file, not in a renaming pipeline.
-- Collisions between *physically distinct* stops (coincidental numeric
-  overlap) cannot be consolidated — that would merge two different curbs.
-  For those, the operator must rename upstream when producing the per-agency
-  zips. Silent alternatives (first-wins, automatic prefixing) either corrupt
-  data or change public IDs and break GTFS-RT matching for the renamed feed,
-  so v1 refuses instead.
-- This whole policy is a v1 compromise. §9 proposes the v2 architecture —
-  namespaced entity storage — that makes cross-feed collisions structurally
-  impossible and deletes this section outright.
-
-Check agencies too: the same `agency.txt` ID appearing in two feeds is a
-collision and fails. (Future work, not v1: per-feed `agency-id-mappings`
-mirroring the Java `GtfsBundle` field, for feeds that both ship
-`agency_id=1`.)
-
-### 4.4 Change detection across N feeds
-
-Replace the single-zip hash with a combined fingerprint, computed in the new
-load path and passed through the existing `GtfsData.Hash`/`Source` fields:
-
-- `Hash` = sha256 over, in config order: each feed's URL, resolved
-  `default-agency-id`, and content hash, plus the consolidation file's
-  content hash (or a fixed marker when absent) — with each field
-  length-prefixed (or delimiter-escaped) so adjacent values can't collide
-  ambiguously. Including URLs means reordering or re-pointing feeds
-  triggers reimport; including the consolidation file means editing it
-  triggers reimport; including the resolved `default-agency-id` means a
-  config change that alters route stamping or consolidation-token
-  resolution (§4.2, §5.2) triggers reimport even though no zip's bytes
-  changed — all three required for correctness.
-- `Source` = the feed URLs joined with `,` (it's a TEXT column used only for
-  logging and the skip-check).
-- **Single-feed compatibility:** with exactly one feed, no explicit
-  `default-agency-id`, and no consolidation file, `Hash` degenerates to
-  the raw zip-bytes sha256 exactly as today
-  (`gtfsdb/helpers.go:40-41`) and `Source` to the single URL — otherwise
-  every existing deployment would see a spurious hash mismatch and a forced
-  full reimport on upgrade, violating the §3.2/§7 "identical behavior"
-  guarantee.
-
-No schema change; `import_metadata` semantics are untouched.
-
----
-
-## 5. Stop consolidation
-
-New file `internal/gtfs/consolidation.go`.
-
-### 5.1 File format — identical to the Java tooling
-
-Keep byte-level compatibility with the format in the Java spec §5.2 so
-existing files (and files produced by existing candidate-scan tooling) work
-unmodified.
-
-The file is line-oriented. Each line is exactly one of:
-
-- **Skipped:** a blank line (empty or only spaces/tabs), or a line whose
-  first non-whitespace characters are `#`, `{{{`, or `}}}` (the latter two
-  are artifacts of the original Trac-wiki-hosted Puget Sound file; skip them
-  for compatibility).
-- **A mapping rule:** two or more stop-ID tokens separated by runs of one or
-  more spaces and/or tabs. The **first** token is the canonical stop — the
-  entity that survives. **Every** subsequent token (one or more) is an
-  absorbed stop: it is deleted and all references to it are rewritten to the
-  canonical (§5.3).
-- **Anything else is a parse error** that fails the import (§5.4): a line
-  with only one token, or a token that isn't a well-formed stop ID.
-
-Token rules:
-
-- Each token is a combined stop ID, `{agencyId}_{stopId}`, split on the
-  **first** `_` — stop IDs may themselves contain underscores.
-  `utils.ExtractAgencyIDAndCodeID` (`internal/utils/api.go:99-105`) already
-  implements exactly this split; reuse it. A token with no `_` is a parse
-  error.
-- Compatibility quirk: a line containing `"` splits on quote characters
-  instead of whitespace, to allow IDs containing spaces (the Java factory
-  does this). Support it — it's a few lines — but don't advertise it.
-- There is no inline-comment syntax: `#` only starts a comment at the
-  beginning of a line. A trailing `# note` on a rule line would parse as
-  absorbed-stop tokens and fail as malformed IDs — which is the desired
-  loud failure.
-
-A worked example (SDMTS-flavored, matching the Java spec's Annex A):
-
-```text
-# SDMTS stop consolidation
-# Format: <canonical>  <absorbed> [<absorbed> ...]
-# Canonical's lat/lon and name survive; absorbed stops are deleted and
-# every stop_times/parent_station reference to them is rewritten.
-
-# UCSD shuttle stops sharing MTS curbs on Gilman Dr
-MTS_60123   UCSD_gtsg-1
-MTS_60125   UCSD_gtsg-3
-
-# Same physical stop shipped by both MTS and NCTD under a colliding raw id
-# (one of the 38 known collisions — see §4.3)
-MTS_10034   NCTD_10034
-
-# One canonical absorbing two stops (transit center bays)
-MTS_70114   NCTD_OSTC_bay1  NCTD_OSTC_bay2
-```
-
-```go
-// stopKey addresses a stop as an (agencyID, rawStopID) pair.
-type stopKey struct{ AgencyID, StopID string }
-
-// consolidationRule is one parsed mapping line. Line and RawText survive
-// into apply-time errors: §5.4 requires canonical-not-found to name the
-// offending line, and that condition is only detectable during
-// application — a bare map would have discarded the metadata by then.
-type consolidationRule struct {
-    Canonical stopKey
-    Absorbed  []stopKey
-    Line      int
-    RawText   string
-}
-
-func parseConsolidationFile(r io.Reader) ([]consolidationRule, error)
-
-// applyStopConsolidation removes absorbed stops from their owning feed's
-// data and rewrites every reference to point at the canonical stop.
-// Operates on the per-feed structs via the §5.2 index — never on merged
-// copies (§4.1) — and runs before mergeFeeds (§3.2).
-func applyStopConsolidation(feeds []parsedFeed,
-    index map[stopKey]*gtfs.Stop, rules []consolidationRule) error
-```
-
-### 5.2 Matching tokens to stops
-
-A token's agency ID selects the feed whose resolved `default-agency-id`
-matches; the stop ID then selects the stop within that feed's `Stops`. This
-mirrors the Java semantics exactly: there, stops are addressable as
-`(defaultAgencyId, stopId)` because the loader stamped them; here we keep the
-per-feed provenance around through the merge instead of stamping anything.
-The lookup (`map[stopKey]*gtfs.Stop`) is built over the per-feed data by
-`buildStopIndex` before consolidation runs (§3.2, §4).
-
-One inherited limitation: a feed containing multiple agencies (the real MTS
-zip carries both MTS and SAN in `agency.txt`) has **one** default agency, so
-all its stops are addressable in the consolidation file only under that
-agency's prefix (`MTS_*`, never `SAN_*`). Java has the identical limitation —
-`defaultAgencyId` stamps every stop in the feed. API behavior is unaffected;
-this only constrains how consolidation tokens are written.
-
-### 5.3 Applying a mapping
-
-For each `absorbed → canonical` pair, on the **per-feed** data — never
-the merged slices, which don't exist yet (§3.2) and whose value-copies
-the per-feed pointers wouldn't reference anyway (§4.1):
-
-1. Remove the absorbed `gtfs.Stop` from its owning feed's `Stops` — it
-   must never reach the DB (the Java `_rejectionStore` equivalent, minus
-   the side-store: Maglev has no consumer for rejected entities), and its
-   absence from the per-feed data is what keeps it out of the §4.3
-   collision check.
-2. Rewrite every `StopTime.Stop` pointer that references the absorbed stop
-   to the canonical stop (walk every feed's `Trips[i].StopTimes` — the
-   absorbed agency's feed is the usual referrer, but don't assume it's
-   the only one).
-3. Rewrite every `Stop.Parent` pointer referencing the absorbed stop to the
-   canonical stop, in every feed.
-4. Rewrite `Transfers` to/from pointers the same way (harmless today, correct
-   if transfers are ever persisted).
-
-The canonical stop's lat/lon, name, and code win; the absorbed stop's are
-discarded — same as Java (§5.5 there). Choose canonicals accordingly when
-authoring the file (curb owner's coordinates are usually the trustworthy
-ones).
-
-### 5.4 Error rules
-
-| Condition | Behavior | Why |
+| Key | Required | Meaning |
 |---|---|---|
-| Canonical ID not found in any feed | **Import fails**, error names the line | Equivalent of the Java pipeline's `GtfsStopReplacementVerificationMain` CI gate (Java spec §7.4). At runtime "fail the import" means: at startup, the process exits; on the 24h refresh, the reload errors and yesterday's data keeps serving — both safe. |
-| Absorbed ID not found | **Warn and skip** that token | Absorbed stops legitimately vanish from upstream feeds (Java spec §8.11); a consolidation line becoming a no-op must not take the server down. |
-| Same absorbed ID on two lines | **Import fails** | The Java parser silently lets the last line win (Java spec §8.8 calls this out as a footgun); we can do better than order-dependent silence. |
-| Absorbed ID also used as a canonical | **Import fails** | Chained absorption (`A←B`, `B←C`) is ambiguous; the file must say `A B C` instead. |
-| Malformed line: only one token, or any token without `_` | **Import fails**, error shows the line | Typos in this file silently un-merge stops otherwise. |
-| Agency prefix matches no configured feed | **Import fails** | Almost certainly a stale or misspelled agency ID. |
+| `id` | No | A stable name for logs, metrics and `import_feeds`. Default: `feed-{n}`. |
+| `url` | Yes | An `https://` URL or a local path. Same checks as today. |
+| `default-agency-id` | Recommended | See §4.2. Must not contain `_`. Must be unique across feeds. |
+| `agency-id-mappings` | No | Old value to new value, for `agency.txt` and `routes.txt` `agency_id`. Same as Java. |
+| `auth-header-name`, `auth-header-value`, `headers` | No | Same as the single feed today. `headers` is new, for parity with `gtfs-rt-feeds`. |
+| `enable-gtfs-tidy` | No | Same as today, for each feed. |
 
-### 5.5 What consolidation does *not* do in Maglev
+Feed order is load order. The order sets the order of `agencies` in list
+responses. It also sets which feed a collision error names first.
 
-No replacement audit CSV (`gtfs_stop_replacements.csv` in Java): log one
-`slog` info line per applied consolidation instead — that lands in the
-structured logs, which is Maglev's audit channel. No suggestion/candidate
-tool: candidate detection stays upstream pipeline tooling, exactly where the
-Java spec §7.2 puts it (`utils.Haversine` is available if anyone wants a
-maglev-adjacent script later).
+### 5.2 Manifest mode
 
-**Known limitation — GTFS-RT StopTimeUpdates referencing absorbed stop
-IDs.** Consolidation rewrites *static* references only. The absorbed
-agency's RT feed will keep emitting the absorbed ID (`gtsg-1`) in
-`StopTimeUpdate.stop_id`, but the schedule rows now carry the canonical ID —
-and Maglev matches StopTimeUpdates against schedule stop IDs
-(`internal/restapi/trip_updates_helper.go:278,504`). Real-time predictions
-from the absorbed agency at a consolidated stop can therefore fail to
-match, partially masked by the stop-sequence fallback where present. v1
-accepts this: for SDMTS, the canonical is chosen as the curb-owning agency,
-whose RT feed uses the canonical ID, so the common case works. Rewriting
-absorbed IDs at RT ingest (the consolidation map applied to incoming
-StopTimeUpdates) is the fix if this bites — file it as follow-up work, and
-verify the behavior via the §7 checklist row on absorbed-agency RT. If
-that measurement shows material prediction loss for a deployment, the
-RT-ingest rewrite stops being optional follow-up and becomes a
-prerequisite for enabling consolidation there — record the decision
-alongside the measurement.
+Production deployments get their inputs from obacloud. obacloud publishes a
+`bundle-inputs.json` file (version 1). `gtfs-merge-service` writes the file.
+obacloud promotes it and adds `stopConsolidationUrl`.
+
+```json
+{
+  "version": 1,
+  "feeds": [
+    { "id": "metro", "name": "King County Metro", "defaultAgencyId": "1",
+      "url": "https://…/metro.zip", "byteSize": 1234567, "sha256": "…" }
+  ],
+  "stopConsolidationUrl": "https://…/stop-consolidation.txt"
+}
+```
+
+`gtfs-bundle-inputs-url` points Maglev at the manifest. Each `feeds` entry
+maps to one `gtfs-static-feeds` item: `id`, `url` and `default-agency-id`.
+`stopConsolidationUrl` maps to `stop-consolidation-url`. Maglev checks the
+`sha256` value after the download. Setting `gtfs-bundle-inputs-url` together
+with a static-feed key is a validation error. Maglev reads the manifest
+again on each scheduled reload. A new published build is loaded without a
+configuration change. The manifest does not carry `agency-id-mappings`,
+headers or the tidy flag. These are not available in manifest mode. obacloud
+renames agencies upstream with transform rules.
+
+### 5.3 Realtime feeds
+
+`gtfs-rt-feeds[].agency-ids` keeps its meaning. It also gets the Java
+meaning: the ordered list of namespaces that Maglev tries when it resolves a
+raw trip, route or stop ID (§8). The key stays optional. When it is not set,
+Maglev tries each agency, in `agencies` order, as Java does. Some feeds
+have stops under one agency and routes under another agency. Example: Sound
+Transit stops are under `40`, and a route is under `ST` before mapping. Such
+a feed lists both agencies.
+
+### 5.4 Validation
+
+At configuration time:
+
+- The feed list is not empty. The `id` values are unique.
+- The `default-agency-id` values are unique and contain no `_`.
+- The `agency-id-mappings` target values contain no `_`.
+
+At import time, each condition below stops the import. The error names the
+feed and the bad value:
+
+- An agency ID (after mapping) contains `_`.
+- Two feeds produce the same agency ID. Java drops the second agency
+  silently (§12).
+- Two feeds produce the same stored entity ID. This is possible only when
+  two feeds share a default agency or a route agency.
+
+A `default-agency-id` in the manifest or configuration that is not in
+`agency.txt` of the feed is a **warning**, not an error (§4.2).
 
 ---
 
-## 6. Exact changes, by file
+## 6. Import pipeline
 
-Per CONTRIBUTING, this is 3 PRs, each independently reviewable and under
-~200 lines of non-test code.
+All steps run inside the `ReloadStatic` envelope and the
+`storeConfiguredFeed` function of the streaming stack.
 
-### PR 1 — Config plumbing (no behavior change)
+1. **Resolve the inputs.** Read the manifest when it is configured. Make the
+   ordered feed list.
+2. **Download and hash each feed** to a temporary file. The streaming stack
+   does this for one feed. Check `sha256` against the manifest when the
+   manifest is present. Download the consolidation file. A failed download
+   stops the reload. The current data continues to serve. At startup, the
+   process exits. Java §8.9 makes the same decision.
+3. **Detect changes.** The new table `import_feeds` holds one row for each
+   feed: `position`, `feed_id`, `source`, `hash`, `default_agency_id`. The
+   dataset fingerprint is a sha256 over the ordered rows plus the hash of the
+   consolidation file. Maglev stores the fingerprint in
+   `import_metadata.file_hash`. That column is already the system ETag. When
+   the fingerprint is unchanged, Maglev refreshes `feed_expires_at` only and
+   skips the import. A change to any feed, to the order, to a default agency
+   or to the consolidation file reimports everything. Incremental reimport
+   of one feed is out of scope (§11).
+4. **Parse and insert each feed, in one transaction.** Clear all tables
+   once. For each feed: open its stream, resolve the default agency and the
+   mappings, then insert agencies, routes, stops, calendar, trips, stop
+   times, frequencies and shapes. Rewrite IDs in the row builders according
+   to §4.1 (`stopTimeParams`, `shapePointParams` and the related functions
+   on the streaming branch). Apply stop consolidation (§9) here, for each
+   row.
+5. **Check collisions.** A primary-key violation is caught and reported as
+   a §5.4 error that names both feeds. An explicit check before insert
+   covers agency IDs, so that the message is about agencies and not about a
+   constraint.
+6. **Build derived tables** once, after all feeds: block indexes, trip time
+   bounds, R-tree and FTS (through triggers), direction precompute. Delete
+   `stop_agencies`. `stops.agency_id` replaces it.
+7. **Set the expiry.** `feed_expires_at` is the **earliest** expiry across
+   feeds. The warning fires when the calendar of the first agency ends.
+   `/metadata` and the health endpoint list the expiry of each feed.
+8. **Publish** the region bounds, the default-agency map (`feed_id` to
+   agency), the ETag and the statistics, as today.
 
-| File | Change |
+With one feed and no consolidation file, this is the import of today with
+IDs rewritten. The RABA parity golden files on the streaming branch
+(`testdata/parity/raba/**`) are the regression baseline for that case. They
+must be regenerated once, because each stored ID changes spelling.
+
+---
+
+## 7. API behavior
+
+Tests must assert the rules below. They are the Java rules. They were
+checked against production Puget Sound on 2026-10-24 and against OBA 2.7.1
+in Docker on a synthetic two-agency feed (`testdata/java_parity`).
+
+- **Lookup by ID is exact.** `stop/{id}`, `trip/{id}`, `route/{id}`,
+  `block/{id}`, `shape/{id}` and the `-for-stop`, `-for-trip` and
+  `-for-route` endpoints find the row whose stored ID equals the request
+  ID. Otherwise they return 404. `stop/29_16140` returns 404 when the stop
+  is `1_16140`, also when a Community Transit route serves it. Maglev
+  returns 404 where Java returns 200 with a null body (§12).
+- **Per-agency lists.** `stop-ids-for-agency/{a}` and `stops-for-agency/{a}`
+  list the stops with `agency_id` equal to `a`, with or without service.
+  `route-ids-for-agency` and `routes-for-agency` list the routes with
+  `agency_id` equal to `a`.
+- **References.** A stop appears once in `references.stops`, under its
+  stored ID. `references.agencies` holds the agency of the stop and each
+  agency whose routes are referenced. A route reference has the agency of
+  the route.
+- **Trip and service IDs.** A trip ID and a block ID have the agency of the
+  route. `serviceId`, `serviceIds` and `activeServiceIds` have the default
+  agency of the feed. A Sound Transit trip in the King County Metro feed has
+  a trip ID `40_…` and a service ID `1_…`. Production shows this.
+- **schedule-for-stop** names routes and trips with the agency of the route.
+- **Nearby stops** (`arrivals-and-departures-for-stop`): each stop within
+  100 m is listed and referenced. This includes stations and stops without
+  service. This is true also when the time window has no arrivals.
+- **agencies-with-coverage.** The bounds come from the stops that the trips
+  of the agency visit (today's `GetStopBoundsPerAgency`). There is one entry
+  for each agency, also for an agency without service.
+- **Search.** `search-stop` and `search-route` return stored IDs. The sort
+  keys use stored IDs.
+- **Realtime.** `vehicles-for-agency/{a}` lists the vehicles whose resolved
+  trip has a route of agency `a`. `trip-for-vehicle/{a}_{v}` resolves the
+  vehicle ID in the namespace of `a`.
+
+The stopped stack found and fixed three behaviors that are not ID rules.
+They are Java parity items in the same area. They stay as follow-ups (§10,
+phase F): the closest stop and next stop from the scheduled block position
+with the Java dwell and tie rules, shapeless trips placed between their
+stops, and raw-degree orientation.
+
+---
+
+## 8. Realtime
+
+Realtime feeds carry raw IDs. Maglev resolves each entity once, at ingest,
+in `updateFeedRealtime`, before the entity reaches the merged snapshot:
+
+1. **Trips.** For each agency in `agency-ids` of the feed (or each agency),
+   try the stored ID `{agency}_{raw}` against the `trips` table. Then accept
+   the raw value when it is already a stored ID. An unresolved ADDED trip
+   keeps its raw ID. Another unresolved trip is dropped and counted.
+2. **Routes and stops.** Same order. This includes the informed entities of
+   alerts.
+3. **Vehicles.** The public vehicle ID is `{agency}_{raw}`. The agency is
+   the agency of the resolved trip. Otherwise it is `agency-ids[0]`.
+   Otherwise it is the first agency. A raw vehicle ID that already parses as
+   a combined ID of a stored agency is kept.
+4. **Consolidated stops.** An absorbed stop ID in a stop time update or an
+   alert is translated to its kept stop (§9). `ConsolidatedStopsServiceImpl`
+   does the same.
+
+The maps in the merged snapshot (`tripLookup`, `vehicleLookupByVehicle`,
+`vehiclesByRoute`, the alert index) are then keyed by stored IDs. Two feeds
+can no longer overwrite each other's entries by accident. The `agency-ids`
+filter keeps its filter role. Maglev applies it after resolution.
+
+---
+
+## 9. Stop consolidation
+
+The semantics are the Java semantics. The decisions below were made on
+2026-10-23.
+
+### 9.1 File
+
+The format and the parser are the same as Java
+(`EntityReplacementStrategyFactory`). Each line is one rule:
+`kept absorbed…`. Each token is a stored stop ID. Lines that start with
+`#`, `{{{` or `}}}` are skipped. A line with a quote character splits at the
+quotes. The only fatal parse error is a token without `_`. The parser and
+the validator from #1771 and #1772 are reused without change.
+
+| Condition | Behavior |
 |---|---|
-| `internal/appconf/json_config.go` | Add `GtfsStaticFeeds []GtfsStaticFeed` (`json:"gtfs-static-feeds"`) and `StopConsolidationFile string` (`json:"stop-consolidation-file"`) to `JSONConfig`; add `DefaultAgencyID string` (`json:"default-agency-id"`) to `GtfsStaticFeed`. Validation: error if both singular and plural keys are set; run the existing URL/auth-pair checks over every feed; validate the consolidation path with `validatePath`. `ToGtfsConfigData` emits a normalized `[]StaticFeedConfigData` (legacy singular becomes a one-element list). |
-| `internal/gtfs/config.go` | Add `StaticFeedConfig{URL, DefaultAgencyID, AuthHeaderKey, AuthHeaderValue, EnableGTFSTidy}` and `Config.StaticFeeds []StaticFeedConfig` + `Config.StopConsolidationFile`. Add a `staticFeeds()` accessor that falls back to a one-element list built from the legacy `GtfsURL`/auth fields so `cmd/api` flag users are unaffected. Move `isLocalFile` to the per-feed struct. |
-| `cmd/api/main.go` | Populate the new fields from `GtfsConfigData`; CLI flags untouched. |
-| `config.schema.json`, `config.example.json` | Document the new keys. |
+| Two rules claim one absorbed ID | The last rule wins. Warning. The real Puget Sound file has one such case. |
+| Duplicate line | Ignored. Warning. |
+| The kept stop is in no feed | The absorbed stops are dropped. Warning. Java drops them too: the stop of the stop time resolves to nothing. |
+| An absorbed stop is in no feed | No effect. Warning. |
+| Chain (`A B`, `B C`) or self-absorption | Same as Java. Warning. |
 
-Everything still reads `staticFeeds()[0]` at this point; tests assert
-normalization and validation only.
+### 9.2 Application
 
-### PR 2 — Multi-feed load and merge
+Maglev applies the rules at insert time, for each row. A stop whose stored
+ID is absorbed is not inserted. A stop time, a parent station or a transfer
+that names an absorbed ID gets the kept ID. A trip with fewer than two stop
+times after the rewrite is dropped. `TripEntriesFactory` does the same
+(#1777, #1808).
 
-| File | Change |
-|---|---|
-| `internal/gtfs/static.go` | `loadGTFSData` becomes: loop `staticFeeds()`, call `rawGtfsData`+`ParseGtfsData` per feed (thread per-feed auth/tidy through — `rawGtfsData`'s config params become per-feed), resolve default agency, stamp route agencies, `mergeFeeds`, compute combined hash/source (§4.4), validate timezones on the merged result. `updateStaticGTFS`/`ReloadStatic` log the feed count instead of the single URL. |
-| `internal/gtfs/merge.go` (new) | `parsedFeed`, `buildStopIndex`, `mergeFeeds`, `checkCrossFeedCollisions` (§4.3) — the check scans per-feed data. In this PR (no consolidation yet) it runs immediately after route stamping; PR 3 inserts consolidation ahead of it (§3.2). |
-| `internal/gtfs/merge_test.go` (new) | Table-driven: 2-feed happy path; every collision class errors with both feed sources named (including `block_id` and `agency_id`); route-agency stamping; single-feed passthrough produces identical output to today. |
+### 9.3 Runtime
 
-### PR 3 — Stop consolidation
-
-| File | Change |
-|---|---|
-| `internal/gtfs/consolidation.go` (new) | Parser + `applyStopConsolidation` (§5), fetching the file via the same local-path-or-URL logic as `rawGtfsData`. Include the consolidation file bytes in the combined hash from PR 2. Reorder the load pipeline so `checkCrossFeedCollisions` runs after consolidation (§3.2), with a test proving a declared shared stop no longer trips the check. |
-| `internal/gtfs/consolidation_test.go` (new) | Parser cases (comments, `{{{`, quotes, multi-absorb lines, every §5.4 error); application cases (stop removed, stop_times rewritten, parent_station rewritten, canonical-missing fails, absorbed-missing warns). |
-| `internal/restapi/...` | No handler changes. Add one integration test: two small fixture feeds + a consolidation file → assert the §3.3 behaviors through `serveApiAndRetrieveEndpoint`. |
-
-### Test fixtures
-
-`testdata/raba.zip` is the only static fixture. Add a second, tiny,
-hand-authored zip (`testdata/consolidation-second-agency.zip` or similar): one
-agency, one route, one trip, two stops — one placed at the exact coordinates
-of a RABA stop to consolidate against, one distinct. Keep it minimal enough
-to read in a zipinfo listing. The RT-mismatch warning in CLAUDE.md ("Test
-Data Matching Requirements") doesn't apply — these tests are static-only.
+The `stop/{id}` endpoint resolves an absorbed ID to the kept stop. In
+production, `stop/29_40` returns `1_16140`. Other endpoints return 404 for
+the absorbed ID. Realtime translates absorbed stop IDs (§8). The loaded file
+is part of the dataset fingerprint (§6).
 
 ---
 
-## 7. Acceptance checklist
+## 10. Implementation plan
 
-Adapt the Java spec's §7.6 smoke table to Maglev; run against a real
-multi-feed config before calling the feature done:
+Prerequisite: the streaming-import stack #1662 to #1677 lands first. Each
+phase below is a stack of pull requests. Each pull request is under about
+200 lines and has a test that fails on its base. CONTRIBUTING.md applies.
+Phases B and C are most of the work. They deliver Java parity.
 
-- [ ] Single-feed config (legacy key and CLI flags): identical API responses
-      and identical `import_metadata` skip behavior to `main`.
-- [ ] N feeds: `agencies-with-coverage` lists all agencies with sane bounds.
-- [ ] `route-ids-for-agency/{X}` counts match each agency's route count in
-      its source feed (per-agency, not per-zip — a multi-agency zip like
-      MTS+SAN contributes to two counts).
-- [ ] `stop-ids-for-agency/{X}` is non-empty for every agency; the sum over
-      agencies ≥ (stops served by at least one trip − absorbed count)
-      (≥, not =, because multi-agency stops are counted once per serving
-      agency; trip-less stops are excluded from the right side because
-      they belong to no agency's list — §2.2).
-- [ ] Consolidated stop: absorbed ID 404s; canonical returns arrivals from
-      both agencies; both agencies appear in `references.agencies`.
-- [ ] Editing the consolidation file (or any feed) triggers reimport on the
-      next refresh; touching nothing skips it.
-- [ ] A deliberately broken canonical ID fails startup with an error naming
-      the file line; the same error on a periodic reload leaves the old data
-      serving.
-- [ ] GTFS-RT vehicles/trip updates still attach for a feed with realtime
-      configured.
-- [ ] Absorbed-agency realtime at a consolidated stop: check whether
-      predictions from the absorbed agency's RT feed appear on the canonical
-      stop, and record the result — §5.5 documents this as a known
-      limitation, so the checklist's job is to measure how much it bites for
-      this deployment, not to pass/fail.
+### Phase A: configuration (no behavior change)
+
+1. Add the `gtfs-static-feeds` list with `id`, `default-agency-id`,
+   `agency-id-mappings` and `headers`. Normalize the singular key. Validate
+   according to the configuration-time rules of §5.4. Update
+   `config.schema.json` and the example files.
+2. Add `gtfs-bundle-inputs-url`. Download the manifest and translate it into
+   the feed list. Record `sha256` for the check.
+3. Document `gtfs-rt-feeds[].agency-ids` as the namespace list. No code
+   change yet.
+
+The importer still reads `feeds[0]`.
+
+### Phase B: namespaced storage for one feed
+
+The handler layer moves to "IDs as stored" while there is one namespace.
+Each pull request can be checked against the responses of today. Public IDs
+do not change for a single-agency feed.
+
+1. Schema: add `stops.agency_id` (NOT NULL, foreign key) and `import_feeds`.
+   Drop `stop_agencies` and its backfill. Rewrite IDs in the stream row
+   builders according to §4.1. Compute the dataset fingerprint according to
+   §6 step 3. Regenerate the RABA parity golden files.
+2. Make the shared stop builders (`stopModelsByIDs` and related functions)
+   read stored IDs. Remove the agency parameter. This is the equivalent of
+   #1793, #1797, #1798, #1801 and #1809 in the stopped stack. It is now
+   mostly deletions.
+3. Migrate the handler families, one pull request each. Delete the
+   `ExtractCodeID` and `FormCombinedID` code. Query with the request ID as
+   it is. The families: stop and stop lists; routes and stops-for-route;
+   trips, trip-details, trip-for-vehicle and block; schedule-for-stop and
+   schedule-for-route; arrivals (both endpoints and
+   arrivals-for-location); stops-for-location, trips-for-location and
+   trips-for-route; search; vehicles-for-agency and vehicle positions;
+   the report-problem endpoints.
+4. Resolve realtime IDs at ingest (§8), with one namespace. Extend the
+   mock-server realtime tests.
+5. Add the Java parity CI test from #1805, with its recorded data, for the
+   single-feed case. `knownJavaDifferences` lists what remains.
+
+### Phase C: multi-feed import
+
+1. Make `storeConfiguredFeed` loop over the feeds in one transaction. Apply
+   the default agency and the mappings for each feed. Name an agency without
+   `agency_id` after `agency_name`.
+2. Add the import-time validation of §5.4 with errors that name the feed.
+   Add collision tests for each entity type.
+3. Add expiry and metadata for each feed. Compute the ETag from the
+   fingerprint. List the feeds in `/metadata` and in the health endpoint.
+4. Use realtime `agency-ids` as the namespace list. Try the agencies in
+   order. Default to all agencies.
+5. Add a multi-feed Java parity fixture: two synthetic zip files, loaded as
+   two `GtfsBundle` objects in the `oba-api` Docker stack with gtfstidy off.
+   Record the IDs with `capture.py`. Replay them in CI.
+6. Check Puget Sound: load the obacloud bundle-inputs manifest for the
+   region. Compare stop, route, trip and service IDs with
+   `api.pugetsound.onebusaway.org` on the three stop classes from #1791
+   (Streetcar-only, shared, Sound Transit-only).
+
+### Phase D: stop consolidation
+
+1. Land the parser and the validator (#1771, #1772) as they are.
+2. Apply the rules at insert time (§9.2). Add the `stop-consolidation-url`
+   key and the manifest `stopConsolidationUrl` plumbing. Add the file to the
+   fingerprint. This reworks #1773, #1775 and #1776.
+3. Drop short trips (#1777, #1808).
+4. Add the `stop/{id}` alias (#1778) and the realtime translation (#1779).
+5. Check production: `stop/29_40` returns `1_16140`, and the absorbed-stop
+   probes in the stop-consolidation plan give the same results.
+
+### Phase E: documentation
+
+Update the wiki endpoint pages whose Implementation Decisions describe
+per-response agency derivation: `stops-for-location`, `search-stop`,
+`trips-for-location`, `schedule-for-route` and `stop-ids-for-agency`.
+Remove the rows of §13 as they are resolved.
+
+### Phase F: remaining parity items from the stopped stack
+
+These do not depend on the identity model. Open each one as its own pull
+request against `main`: the closest stop and next stop from the block
+snapshot (#1806), shapeless trip positions (#1807), and the Java
+orientation formula (#1810).
+
+### Open pull requests
+
+- #1791 to #1810: replaced by phases B and C. Close them when phase B.1
+  opens, with a link to this document. Reuse the Java-recorded data in
+  `testdata/java_parity` and the tests on those branches.
+- #1771, #1772, #1774: keep open. Land them in phase D.1.
+- #1773, #1775 to #1779, #1808: drafts on the streaming stack. Rework them
+  in phase D on the new identity model. Do not rebase them.
 
 ---
 
-## 8. Out of scope (deliberately)
+## 11. Out of scope
 
-- **`agency-id-mappings`** (Java spec §4.4): only needed when two feeds ship
-  colliding agency IDs; v1 fails loudly instead. Add later as a per-feed map
-  if a real feed pair needs it.
-- **Per-feed stop-ID prefixing**: superseded as a concept by §9, which
-  namespaces every entity uniformly instead of patching stops one feed at a
-  time. Until either lands, collisions between physically distinct stops
-  must be renamed upstream.
-- **Candidate-detection tooling** for shared stops: upstream pipeline's job
-  (Java spec §7.2 keeps it out of the server there, too).
-- **Consolidation audit CSV**: structured logs cover it (§5.5).
-- **Per-feed refresh intervals**: static refresh stays one 24h cycle for all
-  feeds (`internal/gtfs/static.go:162-190`); feeds are fetched together so
-  the dataset is always mutually consistent.
+- **Incremental reimport of one feed.** A change rebuilds the whole dataset.
+  A Java bundle rebuild does the same. Revisit when reload time becomes a
+  problem.
+- **A refresh interval for each feed.** One schedule covers all feeds. The
+  dataset is always consistent.
+- **Route collections grouped by short name** (`groupRoutesByShortName`).
+  This is off by default in Java.
+- **Fares, pathways, transfers and levels.** They are not stored, as today.
+- **Fuzzy realtime trip matching.**
+- **Candidate detection for consolidation and the audit CSV.** obacloud
+  owns both.
 
 ---
 
-## 9. v2 proposal: namespaced entity storage (combined IDs in the DB)
+## 12. Differences from Java, on purpose
 
-Java OBA never has a collision problem because every entity ID there is an
-`(agency, id)` tuple. This section proposes Maglev's equivalent — not as
-two-column composite primary keys, but as the same tuple **flattened into
-the string columns the schema already has**: at import time, store
-`MTS_60123` in `stops.id` instead of `60123`, using the feed's resolved
-`default-agency-id` as the namespace. Uniformly, for every ID kind that can
-collide across feeds: stop, trip, route, service, shape, and block IDs.
+| Java | Maglev | Reason |
+|---|---|---|
+| A second feed with no `defaultAgencyId` gets the agency of the first feed. | The feed uses its own first agency. | The Java value depends on load order by accident. Manifest mode always sets the value. |
+| A duplicate `agency_id` across feeds: the second is dropped silently. | The import stops. The error names both feeds. | Silent loss of the name and time zone of an agency is the worse failure. |
+| The same `AgencyAndId` from two feeds: the later one replaces the earlier one. | The import stops. | Same reason. The condition means that two feeds claim one agency. |
+| An unknown ID returns HTTP 200 with `null`. | HTTP 404. | This is the existing Maglev convention. |
+| Service-date time zone falls back to the JVM default when the default agency is unknown. | Falls back to the route agency, with a warning. | The JVM default is never correct. |
+| `trips-for-location` ignores `time` (application-modules#486). | `time` is honored. | Java bug. |
 
-This is a proposal, not part of v1. It deletes three problems in one move:
+---
 
-1. **The §4.3 collision policy, entirely.** Two feeds shipping `stop_id=10034`
-   yield `MTS_10034` and `NCTD_10034` — distinct rows, the Java spec §8.4
-   semantics. `checkCrossFeedCollisions` and the "rename upstream" operator
-   contract are removed. (The duplicate-`agency.txt`-ID check stays; the
-   namespace itself depends on agency IDs being distinct.)
-2. **The prefix nondeterminism in §2.1.** Today a stop's public prefix is
-   whatever unordered row `GetAgenciesForStops` returns first. With
-   namespaced storage the stored ID *is* the public ID — stable across
-   requests, restarts, and reimports.
-3. **The deferred per-feed `stop-id-prefix` design.** Namespacing everything
-   uniformly subsumes it.
+## 13. Open deviations from legacy
 
-### 9.1 Why flattened strings instead of composite key columns
+Each row is a Maglev behavior that differs from Java because of the
+identity model. The last column names the phase that resolves it. Remove
+rows as phases land.
 
-A true `(agency_id, id)` two-column PK means adding a column to every table,
-converting every FK join in `gtfsdb/query.sql` (90+ queries) to two-column
-joins, and regenerating every sqlc model. The flattened form has identical
-semantics — the tuple is bijectively encoded in the string *provided the
-namespace contains no underscore*: the split on the first `_`
-(`utils.ExtractAgencyIDAndCodeID`, `internal/utils/api.go:99-105`) decodes
-`A_B_C` as `(A, B_C)`, so an agency ID like `A_B` would corrupt the
-encoding. The §3.1 validation rule (default-agency-ids must not contain
-`_`) is what makes this safe — and the schema, the queries' join
-structure, and the transitive agency-ownership queries (§2.1) don't change
-shape at all. The string form is also exactly what the OneBusAway API
-already exposes, which is what makes §9.2 a simplification rather than a
-rewrite.
-
-### 9.2 What changes where
-
-- **Import** (`internal/gtfs/merge.go` territory): after per-feed parsing
-  and route-agency stamping, rewrite each feed's IDs in place —
-  `stop.Id`, `trip.ID`, `route.Id`, `service.Id`, `shape.ID`, and non-empty
-  `trip.BlockID` become `{defaultAgencyID}_{rawID}`. Because cross-entity
-  references in `gtfs.Static` are pointers (§4.1), rewriting the ID field on
-  the pointed-to struct updates every reference for free — **provided the
-  rewrite happens on the per-feed structs before concatenation** (the §4.1
-  pointer-aliasing rule; after `append` the pointers no longer target the
-  merged copies). Only string-typed references (`BlockID`, and `StopTime`
-  fields if any are by-value) need explicit rewriting. `StoreGtfsData` is untouched — it stores whatever IDs
-  it's given.
-- **Handlers** (the big-but-mechanical part): today every handler splits the
-  request's combined ID and queries by the raw half, then re-prefixes on the
-  way out with a guessed agency (`utils.FormCombinedID` at hundreds of call
-  sites, e.g. `internal/restapi/arrivals_and_departures_for_stop_handler.go`).
-  Both halves become deletions: look up by the full request ID as-is; emit
-  DB IDs as-is. Net handler code shrinks. Agency-scoped validation queries
-  (`GetStopForAgency` etc.) keep working unchanged — they filter on
-  `routes.agency_id`, which is independent of ID spelling.
-- **GTFS-RT ingest** (the genuinely new work): RT feeds carry raw IDs, and
-  Maglev matches them against `trips.id` / stop IDs directly
-  (`realTimeTripLookup` is keyed by exact string). Each RT feed entry needs
-  a namespace to prefix incoming trip/stop/vehicle IDs with before
-  matching. This must be an explicit per-feed field (`id-namespace`, or a
-  reference to the originating static feed) — **do not derive it from
-  `agency-ids`**: the namespace is the *static feed's* default agency, not
-  the RT feed's agency. Counterexample: SAN lives inside the MTS zip
-  (§5.2), so all its static IDs are `MTS_*`; an RT source for SAN with
-  `agency-ids: ["SAN"]` would prefix `SAN_` and match nothing. This slice
-  touches `internal/gtfs/realtime.go`, the most concurrency-sensitive code
-  in the repo; it is the riskiest PR and should extend the mock-server RT
-  tests.
-- **Consolidation** (§5): gets simpler — file tokens like `MTS_60123` now
-  match stored IDs byte-for-byte, so `stopKey` and the provenance lookup
-  map disappear.
-
-### 9.3 Behavior changes to sign off on
-
-- **Alternate-prefix lookups stop working.** Today `UCSD_60123` resolves for
-  a stop that came from the MTS feed, as long as a UCSD route serves it
-  (§2.1). Under v2 the stored ID is `MTS_60123` and `UCSD_60123` is a 404 —
-  which is exactly the Java server's behavior, so clients migrating from
-  Java OBA lose nothing; only clients that grew to depend on Maglev's
-  looser matching would notice.
-- **The namespace is provenance, not ownership.** A stop in the MTS+SAN zip
-  is `MTS_*` even if only SAN routes serve it (same as Java's
-  `defaultAgencyId` stamping, §5.2). Ownership queries stay transitive:
-  `stop-ids-for-agency/SAN` still returns that stop — just spelled `MTS_*`.
-- **Single-feed deployments are wire-compatible.** Public IDs were already
-  combined at the API layer, and the prefix for a single-agency feed is the
-  same agency the handlers guess today. The DB contents change spelling, so
-  one reimport (hash bump) and new ETags — no client-visible ID changes.
-
-### 9.4 Phasing and the decision gate
-
-v1 is not throwaway: config plumbing (PR 1), multi-feed fetch/merge (PR 2),
-and consolidation (PR 3) all survive; v2 replaces `checkCrossFeedCollisions`
-with the namespacing rewrite and then removes handler-side prefix juggling
-in slices (per-endpoint-family PRs, each shrinking code), with the RT
-namespace PR last.
-
-**Decision gate:** audit the 38 known MTS×NCTD stop_id collisions (§4.3).
-If they are mostly shared physical curbs, the consolidation file absorbs
-them, v1 stands on its own for the SDMTS deployment, and v2 is scheduled
-cleanup. If they are mostly coincidental numeric overlap, "rename upstream
-forever" is a fragile permanent contract — promote v2 to the main plan and
-land v1's PRs as its first phase.
+| Behavior | Legacy | Maglev today | Resolved by |
+|---|---|---|---|
+| Stop prefix on location endpoints | Fixed at build time. | The first row of `GetAgenciesForStops`, unordered. | B.3 |
+| Stop references in `trips-for-location` | One ID for each stop. | The ID of the entry that named the stop first. | B.2 |
+| `stops-for-location` stop-code search, stop without service | Returned. | Dropped. No agency can be resolved. | B.1 |
+| `search-stop`, sort key of a stop without service | The combined ID. | None. The stop sorts last. | B.1 |
+| Time-context agency for location queries | The agency of each entity. | `agencies[0]`. | B.3 |
+| Merged multi-agency zip file: stops for each agency | All under the first agency. | One for each serving agency. | B.1 gives the Java behavior. C fixes it. |
