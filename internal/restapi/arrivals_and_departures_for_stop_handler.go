@@ -18,6 +18,7 @@ type ArrivalsStopParams struct {
 	FrequencyBefore time.Duration
 	FrequencyAfter  time.Duration
 	Time            time.Time
+	TimeParam       string
 }
 
 // parseArrivalsAndDeparturesParams parses and validates parameters.
@@ -50,7 +51,13 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 	params.Before = parseMinutesValue(query, "minutesBefore", params.Before, maxBefore, addError)
 	params.FrequencyBefore = parseMinutesValue(query, "frequencyMinutesBefore", params.FrequencyBefore, maxArrivalWindow, addError)
 	params.FrequencyAfter = parseMinutesValue(query, "frequencyMinutesAfter", params.FrequencyAfter, maxArrivalWindow, addError)
-	params.Time = parseEpochMillisValue(query, "time", params.Time, addError)
+
+	params.TimeParam, fieldErrors = utils.ValidateArrivalTimeParam(query.Get("time"), fieldErrors)
+	if params.TimeParam != "" {
+		if ms, ok := utils.ParseEpochMillis(params.TimeParam); ok {
+			params.Time = time.UnixMilli(ms)
+		}
+	}
 
 	return params, fieldErrors
 }
@@ -95,7 +102,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	params.Time = params.Time.In(loc)
+	params.Time = utils.ResolveArrivalTime(params.TimeParam, loc, api.Clock.Now())
 
 	acc := newArrivalsAccumulator(stopAgencyID)
 	references := models.NewEmptyReferences()

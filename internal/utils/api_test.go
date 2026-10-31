@@ -757,6 +757,66 @@ func TestParseTimeParameter_DateStringUsesProvidedLocation(t *testing.T) {
 	assert.Equal(t, loc.String(), parsedTime.Location().String())
 }
 
+func TestValidateArrivalTimeParam(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectValue string
+		expectError bool
+	}{
+		{"empty string", "", "", false},
+		{"valid epoch millis", "1749837600000", "1749837600000", false},
+		{"epoch zero", "0", "0", false},
+		{"valid datetime format", "2025-06-13_08-00-00", "2025-06-13_08-00-00", false},
+		{"date only rejects matching Java", "2026-10-30", "", true},
+		{"invalid format", "invalid", "", true},
+		{"negative number", "-1000", "", true},
+		{"signed number", "+1749837600000", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			val, errs := ValidateArrivalTimeParam(tt.input, nil)
+			if tt.expectError {
+				assert.Contains(t, errs, "time")
+				assert.Equal(t, `Invalid field value for field "time".`, errs["time"][0])
+				assert.Empty(t, val)
+			} else {
+				assert.Empty(t, errs)
+				assert.Equal(t, tt.expectValue, val)
+			}
+		})
+	}
+}
+
+func TestResolveArrivalTime(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	now := time.Date(2025, 6, 13, 10, 0, 0, 0, time.UTC)
+
+	t.Run("empty string falls back to now in location", func(t *testing.T) {
+		res := ResolveArrivalTime("", loc, now)
+		assert.Equal(t, now.In(loc), res)
+	})
+
+	t.Run("epoch 0 falls back to now in location", func(t *testing.T) {
+		res := ResolveArrivalTime("0", loc, now)
+		assert.Equal(t, now.In(loc), res)
+	})
+
+	t.Run("epoch millis converts to location", func(t *testing.T) {
+		epoch := int64(1749837600000)
+		res := ResolveArrivalTime("1749837600000", loc, now)
+		assert.Equal(t, time.UnixMilli(epoch).In(loc), res)
+	})
+
+	t.Run("datetime format resolves in location", func(t *testing.T) {
+		res := ResolveArrivalTime("2025-06-13_08-00-00", loc, now)
+		expected := time.Date(2025, 6, 13, 8, 0, 0, 0, loc)
+		assert.Equal(t, expected, res)
+	})
+}
+
 func TestParseMaxCountClamped(t *testing.T) {
 	tests := []struct {
 		name             string

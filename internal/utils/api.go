@@ -225,6 +225,48 @@ func ParseTimeParameterOrNow(timeParam string, currentLocation *time.Location, c
 	return ParseTimeParameter(timeParam, currentLocation, c)
 }
 
+// LocationDateTimeLayout is the only datetime format the arrivals time
+// parameter accepts besides epoch millis.
+const LocationDateTimeLayout = "2006-01-02_15-04-05"
+
+// ValidateArrivalTimeParam validates that a time query parameter is either
+// absent, empty, an ASCII non-negative integer representing epoch milliseconds,
+// or a local datetime formatted as yyyy-MM-dd_HH-mm-ss. Bare dates, negative
+// numbers, and unparseable values add an error to fieldErrors matching Java.
+func ValidateArrivalTimeParam(timeParam string, fieldErrors map[string][]string) (string, map[string][]string) {
+	if timeParam == "" {
+		return "", fieldErrors
+	}
+	if _, ok := ParseEpochMillis(timeParam); ok {
+		return timeParam, fieldErrors
+	}
+	if _, err := time.ParseInLocation(LocationDateTimeLayout, timeParam, time.UTC); err == nil {
+		return timeParam, fieldErrors
+	}
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+	fieldErrors["time"] = append(fieldErrors["time"], `Invalid field value for field "time".`)
+	return "", fieldErrors
+}
+
+// ResolveArrivalTime turns a validated time parameter into the query instant.
+// Epoch millis are absolute; datetime values are read in the agency's timezone.
+// An empty value or epoch 0 falls back to the current time, matching Java.
+func ResolveArrivalTime(timeParam string, loc *time.Location, now time.Time) time.Time {
+	if timeParam == "" {
+		return now.In(loc)
+	}
+	if ms, ok := ParseEpochMillis(timeParam); ok {
+		if ms == 0 {
+			return now.In(loc)
+		}
+		return time.UnixMilli(ms).In(loc)
+	}
+	parsed, _ := time.ParseInLocation(LocationDateTimeLayout, timeParam, loc)
+	return parsed
+}
+
 // isZeroEpoch reports whether value is an epoch timestamp equal to 0.
 func isZeroEpoch(value string) bool {
 	epochMillis, ok := ParseEpochMillis(value)
