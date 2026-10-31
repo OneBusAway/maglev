@@ -135,6 +135,38 @@ func TestArrivalsAndDeparturesForLocationAcceptsDateTimeFormat(t *testing.T) {
 	}
 }
 
+// Java treats time=0 as "not supplied" (SystemTime.currentTimeMillis). With a
+// mock clock pinned to a fixture service day, omitted time and time=0 must
+// return the same non-empty results — not the empty set for 1970-01-01.
+func TestArrivalsAndDeparturesForLocationTimeZeroMatchesOmitted(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	respOmit, omit := callArrivalsForLocation(t, api)
+	respZero, zero := callArrivalsForLocation(t, api, url.Values{"time": {"0"}})
+
+	require.Equal(t, http.StatusOK, respOmit.StatusCode)
+	require.Equal(t, http.StatusOK, respZero.StatusCode)
+	assert.Empty(t, omit.Data.FieldErrors)
+	assert.Empty(t, zero.Data.FieldErrors)
+
+	omitEntry := omit.Data.Entry
+	zeroEntry := zero.Data.Entry
+	require.NotEmpty(t, omitEntry.ArrivalsAndDepartures, "fixture date must have arrivals when time is omitted")
+	require.NotEmpty(t, zeroEntry.ArrivalsAndDepartures, "time=0 must use now, not 1970-01-01")
+
+	assert.Equal(t, omitEntry.StopIDs, zeroEntry.StopIDs)
+	assert.Equal(t, omitEntry.NearbyStopIDs, zeroEntry.NearbyStopIDs)
+	require.Equal(t, len(omitEntry.ArrivalsAndDepartures), len(zeroEntry.ArrivalsAndDepartures))
+	for i := range omitEntry.ArrivalsAndDepartures {
+		a, b := omitEntry.ArrivalsAndDepartures[i], zeroEntry.ArrivalsAndDepartures[i]
+		assert.Equal(t, a.TripID, b.TripID, "arrival[%d].TripID", i)
+		assert.Equal(t, a.StopID, b.StopID, "arrival[%d].StopID", i)
+		assert.Equal(t, a.ServiceDate, b.ServiceDate, "arrival[%d].ServiceDate", i)
+		assert.Equal(t, a.ScheduledArrivalTime, b.ScheduledArrivalTime, "arrival[%d].ScheduledArrivalTime", i)
+	}
+}
+
 func TestArrivalsAndDeparturesForLocationEndToEnd(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()

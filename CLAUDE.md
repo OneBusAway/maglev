@@ -188,7 +188,10 @@ Located in `internal/restapi/`:
 | **Request Logging** | `request_logging_middleware.go` | HTTP request/response logging |
 | **Security** | `security_middleware.go` | Security headers and protections |
 
-Middleware chain (innermost to outermost): `handler → compression → rate limiting → API key validation`
+Middleware is applied at two levels, each listed innermost to outermost:
+
+- **Per route** (`internal/restapi/routes.go`): `handler → rate limiting → API key validation → Cache-Control`. Some handlers are also wrapped in an ETag middleware (`etagStatic`) inside rate limiting.
+- **Around the whole mux** (`cmd/api/app.go`): `GTFS expiry → version validation → compression → freshness → security headers → metrics → request logging → request ID → size limit → panic recovery`.
 
 ## Helper Modules
 
@@ -297,9 +300,13 @@ in memory:
 `GetAgencies(ctx)`, `GetTrips(ctx, limit)` and `GetStops(ctx)` are thin wrappers
 over the `ListAgencies`, `ListTripsWithLimit` and `ListStops` queries.
 
-The only static state the manager keeps in memory is `regionBounds`
-(`map[agencyID]*RegionBounds`, guarded by `staticMutex`), recomputed after each
-reload and read through `GetRegionBounds()`.
+The manager keeps two kinds of static state in memory:
+
+- `regionBounds` (`map[agencyID]*RegionBounds`, guarded by `staticMutex`),
+  recomputed after each reload and read through `GetRegionBounds()`.
+- The per-reload cache of its `DirectionCalculator` (`AdvancedDirectionCalculator`):
+  stop directions and trip stop-distance checks (`directionCache`). See
+  Direction Calculator below.
 
 **Real-Time Data** (protected by `realTimeMutex`):
 
@@ -307,7 +314,7 @@ reload and read through `GetRegionBounds()`.
 - `feedTrips` - `map[string][]gtfs.Trip` — trips per feed
 - `feedVehicles` - `map[string][]gtfs.Vehicle` — vehicles per feed
 - `feedAlerts` - `map[string][]gtfs.Alert` — alerts per feed
-- `feedVehicleLastSeen` - `map[string]map[string]time.Time` — per-feed, per-vehicle last-seen timestamps for stale vehicle expiry (15 min window)
+- `feedVehicleLastSeen` - `map[string]map[vehicleKey]time.Time` — per-feed, per-vehicle last-seen timestamps for stale vehicle expiry (15 min window)
 - `feedVehicleAgency` - `map[string]map[vehicleKey]string`: the one agency each vehicle was attributed to at ingestion (its route's agency, else the feed's first `agency-ids` entry)
 - `feedVehicleDataTime` - `map[string]time.Time`: when each feed's vehicle data was produced (header timestamp, else fetch time)
 

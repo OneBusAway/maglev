@@ -826,13 +826,16 @@ func (manager *Manager) IsServiceActiveOnDate(ctx context.Context, serviceID str
 }
 
 // GetSystemETag reads the system ETag from the database.
+// It returns a weak entity tag as required by RFC 9110 section 8.8.3,
+// because compression middleware serves the same validator for identity
+// and compressed representations.
 func (manager *Manager) GetSystemETag(ctx context.Context) string {
 	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
 	if err != nil || metadata.FileHash == "" {
 		return ""
 	}
 
-	return metadata.FileHash
+	return `W/"` + metadata.FileHash + `"`
 }
 
 // FeedExpiresAt reads the feed expiry time from the database.
