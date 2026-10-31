@@ -19,6 +19,7 @@ type ArrivalAndDepartureParams struct {
 	MinutesAfter  int
 	MinutesBefore int
 	Time          *time.Time
+	TimeParam     string
 	TripID        string
 	ServiceDate   *time.Time
 	VehicleID     string
@@ -77,6 +78,8 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 		if timeMs, ok := utils.ParseEpochMillis(timeStr); ok {
 			timeParam := time.UnixMilli(timeMs)
 			params.Time = &timeParam
+		} else if _, err := time.ParseInLocation(locationDateTimeLayout, timeStr, time.UTC); err == nil {
+			params.TimeParam = timeStr
 		} else {
 			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
 		}
@@ -126,7 +129,10 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 			localized := params.ServiceDate.In(loc[0])
 			params.ServiceDate = &localized
 		}
-		if params.Time != nil {
+		if params.TimeParam != "" {
+			t, _ := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, loc[0])
+			params.Time = &t
+		} else if params.Time != nil {
 			localized := params.Time.In(loc[0])
 			params.Time = &localized
 		}
@@ -204,7 +210,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		localized := params.ServiceDate.In(loc)
 		params.ServiceDate = &localized
 	}
-	if params.Time != nil {
+	if params.TimeParam != "" {
+		t, _ := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, loc)
+		params.Time = &t
+	} else if params.Time != nil {
 		localized := params.Time.In(loc)
 		params.Time = &localized
 	}
@@ -241,7 +250,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			localized := params.ServiceDate.In(loc)
 			params.ServiceDate = &localized
 		}
-		if params.Time != nil {
+		if params.TimeParam != "" {
+			t, _ := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, loc)
+			params.Time = &t
+		} else if params.Time != nil {
 			localized := params.Time.In(loc)
 			params.Time = &localized
 		}
