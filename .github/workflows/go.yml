@@ -55,7 +55,7 @@ jobs:
         shell: bash
 
       - name: Run go vet (fast mode)
-        run: go vet -tags='preftest sqlite_fts5 sqlite_math_functions' ./...
+        run: go vet -tags='perftest sqlite_fts5 sqlite_math_functions' ./...
         env:
           CGO_ENABLED: 1
         shell: bash
