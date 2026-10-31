@@ -84,6 +84,9 @@ func TestArrivalsAndDeparturesForLocationValidation(t *testing.T) {
 		{"negative frequencyMinutesBefore", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesBefore": {"-1"}}, []string{"frequencyMinutesBefore"}},
 		{"negative frequencyMinutesAfter", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesAfter": {"-1"}}, []string{"frequencyMinutesAfter"}},
 		{"non-numeric routeType", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"bus"}}, []string{"routeType"}},
+		{"overflow routeType positive", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"99999999999"}}, []string{"routeType"}},
+		{"overflow routeType int32 max plus one", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"2147483648"}}, []string{"routeType"}},
+		{"overflow routeType int32 min minus one", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"-2147483649"}}, []string{"routeType"}},
 		{"non-boolean emptyReturnsNotFound", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "emptyReturnsNotFound": {"maybe"}}, []string{"emptyReturnsNotFound"}},
 	}
 

@@ -46,7 +46,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			for _, rtStr := range routeTypeStrs {
 				rtStr = strings.TrimSpace(rtStr)
 				if rtStr != "" {
-					rt, err := strconv.Atoi(rtStr)
+					rt, err := strconv.ParseInt(rtStr, 10, 32)
 					if err != nil {
 						if fieldErrors == nil {
 							fieldErrors = make(map[string][]string)
@@ -57,7 +57,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 							}
 						}
 					} else {
-						routeTypes = append(routeTypes, rt)
+						routeTypes = append(routeTypes, int(rt))
 					}
 				}
 			}
