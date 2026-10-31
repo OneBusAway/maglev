@@ -17,8 +17,17 @@ type DataFreshness struct {
 	StaticGtfsLastUpdated *time.Time `json:"staticGtfsLastUpdated,omitempty"`
 	// StaticGtfsHash is the hex sha256 of the raw static GTFS zip, so an
 	// external service can tell whether it validates against the same bundle.
-	StaticGtfsHash string               `json:"staticGtfsHash,omitempty"`
-	RealtimeFeeds  map[string]time.Time `json:"realtimeFeeds,omitempty"`
+	StaticGtfsHash string `json:"staticGtfsHash,omitempty"`
+	// StaticGtfsFeeds lists each static feed's source and zip hash, so a
+	// client can compare the bundle it validates against feed by feed.
+	StaticGtfsFeeds []StaticGtfsFeed     `json:"staticGtfsFeeds,omitempty"`
+	RealtimeFeeds   map[string]time.Time `json:"realtimeFeeds,omitempty"`
+}
+
+// StaticGtfsFeed is the source URL and raw zip sha256 of one static feed.
+type StaticGtfsFeed struct {
+	Source string `json:"source"`
+	SHA256 string `json:"sha256"`
 }
 
 // dataFreshness reports when the static and realtime data were last updated
@@ -41,6 +50,9 @@ func (api *RestAPI) dataFreshness(ctx context.Context) (DataFreshness, error) {
 		freshness.StaticGtfsLastUpdated = &importTime
 	}
 	freshness.StaticGtfsHash = metadata.FileHash
+	if metadata.FileHash != "" {
+		freshness.StaticGtfsFeeds = []StaticGtfsFeed{{Source: metadata.FileSource, SHA256: metadata.FileHash}}
+	}
 	return freshness, nil
 }
 

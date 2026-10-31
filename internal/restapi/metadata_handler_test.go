@@ -153,3 +153,17 @@ func TestMetadataHandler_ImportMetadataQueryFails(t *testing.T) {
 	assert.Equal(t, "unavailable", body["status"])
 	assert.NotContains(t, body, "staticGtfsHash")
 }
+
+func TestMetadataHandler_StaticGtfsFeedsListsSingleFeed(t *testing.T) {
+	api := createTestApi(t)
+
+	resp, body := callAPIHandler[map[string]any](t, api, "/api/v2/metadata.json?key=TEST")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	feeds, ok := body["staticGtfsFeeds"].([]any)
+	require.True(t, ok, "staticGtfsFeeds must be a list")
+	require.Len(t, feeds, 1)
+	feed := feeds[0].(map[string]any)
+	assert.NotEmpty(t, feed["source"])
+	assert.Equal(t, rabaZipSha256(t), feed["sha256"])
+}
