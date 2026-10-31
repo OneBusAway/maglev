@@ -77,7 +77,7 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 
 	parentID := ""
 	if nulls.StringOrEmpty(stop.ParentStation) != "" {
-		parentID = utils.FormCombinedID(agencyID, stop.ParentStation.String)
+		parentID = utils.FormCombinedID(agencyID, nulls.StringOrEmpty(stop.ParentStation))
 	}
 
 	stopData := &models.Stop{
@@ -110,13 +110,13 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 				routeModel := models.NewRoute(
 					combinedRouteID,
 					route.AgencyID,
-					route.ShortName.String,
-					route.LongName.String,
-					route.Desc.String,
+					nulls.StringOrEmpty(route.ShortName),
+					nulls.StringOrEmpty(route.LongName),
+					nulls.StringOrEmpty(route.Desc),
 					models.RouteType(route.Type),
-					route.Url.String,
-					route.Color.String,
-					route.TextColor.String)
+					nulls.StringOrEmpty(route.Url),
+					nulls.StringOrEmpty(route.Color),
+					nulls.StringOrEmpty(route.TextColor))
 
 				references.Routes = append(references.Routes, routeModel)
 				uniqueRouteIDs[combinedRouteID] = true
@@ -124,7 +124,7 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if nulls.StringOrEmpty(stop.ParentStation) != "" {
-			parentRefs, parentRoutesMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, []string{stop.ParentStation.String})
+			parentRefs, parentRoutesMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, []string{nulls.StringOrEmpty(stop.ParentStation)})
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return
@@ -137,13 +137,13 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 					routeModel := models.NewRoute(
 						combinedRouteID,
 						pr.AgencyID,
-						pr.ShortName.String,
-						pr.LongName.String,
-						pr.Desc.String,
+						nulls.StringOrEmpty(pr.ShortName),
+						nulls.StringOrEmpty(pr.LongName),
+						nulls.StringOrEmpty(pr.Desc),
 						models.RouteType(pr.Type),
-						pr.Url.String,
-						pr.Color.String,
-						pr.TextColor.String)
+						nulls.StringOrEmpty(pr.Url),
+						nulls.StringOrEmpty(pr.Color),
+						nulls.StringOrEmpty(pr.TextColor))
 					references.Routes = append(references.Routes, routeModel)
 					uniqueRouteIDs[combinedRouteID] = true
 					uniqueAgencyIDs[pr.AgencyID] = true

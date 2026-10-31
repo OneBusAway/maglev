@@ -3,6 +3,7 @@ package restapi
 import (
 	"context"
 	"fmt"
+	"maglev.onebusaway.org/internal/nulls"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -462,18 +463,18 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 			continue
 		}
 
-		blockID := utils.FormBlockID(agencyID, refTrip.BlockID.String, refTrip.ID)
+		blockID := utils.FormBlockID(agencyID, nulls.StringOrEmpty(refTrip.BlockID), refTrip.ID)
 
 		refTripModel := &models.Trip{
 			ID:             entry.combinedID,
 			RouteID:        utils.FormCombinedID(refRoute.AgencyID, refTrip.RouteID),
 			ServiceID:      utils.FormCombinedID(agencyID, refTrip.ServiceID),
-			ShapeID:        utils.FormCombinedID(agencyID, refTrip.ShapeID.String),
-			TripHeadsign:   refTrip.TripHeadsign.String,
-			TripShortName:  refTrip.TripShortName.String,
+			ShapeID:        utils.FormCombinedID(agencyID, nulls.StringOrEmpty(refTrip.ShapeID)),
+			TripHeadsign:   nulls.StringOrEmpty(refTrip.TripHeadsign),
+			TripShortName:  nulls.StringOrEmpty(refTrip.TripShortName),
 			DirectionID:    strconv.FormatInt(refTrip.DirectionID.Int64, 10),
 			BlockID:        blockID,
-			RouteShortName: refRoute.ShortName.String,
+			RouteShortName: nulls.StringOrEmpty(refRoute.ShortName),
 			TimeZone:       "",
 			PeakOffPeak:    0,
 		}
