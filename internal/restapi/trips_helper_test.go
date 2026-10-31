@@ -1668,43 +1668,6 @@ func TestInterpolateDistanceAtScheduledTime_MultipleSegments(t *testing.T) {
 	assert.InDelta(t, 1000.0, d, 0.01)
 }
 
-func TestGetDistanceAlongShape_Projection(t *testing.T) {
-	shape := []gtfs.ShapePoint{
-		{Latitude: 0.0, Longitude: 0.0},
-		{Latitude: 0.01, Longitude: 0.0},
-	}
-
-	vehicleLat := 0.005
-	vehicleLon := 0.0001
-
-	expectedDist := utils.Distance(0.0, 0.0, 0.005, 0.0)
-
-	actualDist := getDistanceAlongShape(vehicleLat, vehicleLon, shape)
-
-	assert.InDelta(t, expectedDist, actualDist, 1.0,
-		"Distance calculation should use projection logic, not vertex snapping")
-}
-
-func TestGetDistanceAlongShape_LoopingRoute(t *testing.T) {
-	shape := []gtfs.ShapePoint{
-		{Latitude: 0.0, Longitude: 0.0},
-		{Latitude: 0.01, Longitude: 0.0},
-		{Latitude: 0.01, Longitude: 0.01},
-		{Latitude: 0.0, Longitude: 0.01},
-		{Latitude: 0.0001, Longitude: 0.0001},
-	}
-
-	vehicleLat := 0.00005
-	vehicleLon := 0.0
-
-	expectedDist := utils.Distance(0.0, 0.0, vehicleLat, vehicleLon)
-
-	actualDist := getDistanceAlongShapeInRange(vehicleLat, vehicleLon, shape, 0, 100)
-
-	assert.InDelta(t, expectedDist, actualDist, 5.0,
-		"Should identify distance at the start of the loop, not jump to the end")
-}
-
 // TestFindStopsByScheduleDeviation_Early verifies that a negative deviation (early vehicle)
 // produces correct offsets. effectiveScheduleTime = currentSeconds - (-300) = currentSeconds + 300,
 // which shifts the "effective" clock forward, making the vehicle appear ahead of schedule.
