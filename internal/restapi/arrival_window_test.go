@@ -285,8 +285,10 @@ func TestArrivalFrequencyWindowsSharedStopTimezones(t *testing.T) {
 	}
 }
 
-// TestArrivalWindow_StopTimeSpanningQueryWindow tests that stop and location arrival
-// endpoints return trips whose scheduled stop time interval spans the entire query window.
+// TestArrivalWindow_StopTimeSpanningQueryWindow verifies that a scheduled stop time
+// spanning the entire query window is excluded by the endpoint filter (matching Java parity),
+// but when its predicted arrival falls within the window, the wider SQL candidate query
+// ensures the trip is retained.
 func TestArrivalWindow_StopTimeSpanningQueryWindow(t *testing.T) {
 	files := frequencyFixtureFiles()
 	const spanningTripID = "spanning-trip"
@@ -298,13 +300,30 @@ func TestArrivalWindow_StopTimeSpanningQueryWindow(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(queryTime), "spanning-window.zip", files)
 	defer api.Shutdown()
 
+	params := url.Values{
+		"time":          {fmt.Sprint(queryTime.UnixMilli())},
+		"minutesBefore": {"5"},
+		"minutesAfter":  {"5"},
+	}
+
 	for _, endpoint := range []string{"stop", "location"} {
-		t.Run(endpoint, func(t *testing.T) {
-			arrivals := frequencyWindowArrivals(t, api, endpoint, url.Values{
-				"time":          {fmt.Sprint(queryTime.UnixMilli())},
-				"minutesBefore": {"5"},
-				"minutesAfter":  {"5"},
-			})
+		t.Run(endpoint+"/scheduled_spanning_excluded", func(t *testing.T) {
+			arrivals := frequencyWindowArrivals(t, api, endpoint, params)
+			assertFrequencyWindowTrips(t, arrivals, []string{})
+		})
+	}
+
+	delay := 12 * time.Minute
+	stopID := freqStopAID
+	seq := uint32(1)
+	api.GtfsManager.MockAddTripUpdate(spanningTripID, nil, []gtfs.StopTimeUpdate{
+		{StopID: &stopID, StopSequence: &seq, Arrival: &gtfs.StopTimeEvent{Delay: &delay}},
+	})
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	for _, endpoint := range []string{"stop", "location"} {
+		t.Run(endpoint+"/predicted_in_window_included", func(t *testing.T) {
+			arrivals := frequencyWindowArrivals(t, api, endpoint, params)
 			assertFrequencyWindowTrips(t, arrivals, []string{spanningTripID})
 		})
 	}

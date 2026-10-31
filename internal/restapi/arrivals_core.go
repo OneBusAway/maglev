@@ -751,21 +751,14 @@ func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopT
 	inRange := func(t time.Time) bool {
 		return !t.IsZero() && !t.Before(start) && !t.After(end)
 	}
-	// overlaps checks whether the [arr, dep] interval intersects the [start, end] window.
-	overlaps := func(arr, dep time.Time) bool {
-		if inRange(arr) || inRange(dep) {
-			return true
-		}
-		return !arr.IsZero() && !dep.IsZero() && !arr.After(end) && !dep.Before(start)
-	}
 	serviceStart := ast.ServiceDate.Start(location)
 	arrival := serviceStart.Add(time.Duration(ast.ArrivalTime))
 	departure := serviceStart.Add(time.Duration(ast.DepartureTime))
-	if overlaps(arrival, departure) {
+	if inRange(arrival) || inRange(departure) {
 		return true
 	}
 	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure)
-	return predicted && overlaps(predictedArrival, predictedDeparture)
+	return predicted && (inRange(predictedArrival) || inRange(predictedDeparture))
 }
 
 // convertStopsInWindowRow adapts the multi-stop window row to the single-stop
