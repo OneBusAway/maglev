@@ -27,7 +27,7 @@ All commands are managed through the Makefile:
 - `make coverage-report` - Output per-package test coverage as JSON for CI parsing (requires jq)
 - `make models` - Regenerate sqlc models from SQL queries
 - `make watch` - Run with Air for live reloading during development
-- `make fmt` - Format all Go code with `go fmt`
+- `make fmt` - Format all Go code with `gofmt -w .`
 - `make clean` - Clean build artifacts
 - `make build-pure` - Build without CGO (pure Go SQLite driver)
 - `make test-pure` - Run tests without CGO
