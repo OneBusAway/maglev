@@ -43,6 +43,7 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	userLon, fieldErrors := utils.ParseFloatParam(query, "userLon", fieldErrors)
 	userLocationAccuracy, fieldErrors := utils.ParseFloatParam(query, "userLocationAccuracy", fieldErrors)
 	userOnVehicle, fieldErrors := utils.ParseBoolParam(query, "userOnVehicle", false, fieldErrors)
+	fieldErrors = validateUserCoordinates(query, userLat, userLon, fieldErrors)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
