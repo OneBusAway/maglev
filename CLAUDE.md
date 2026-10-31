@@ -266,7 +266,7 @@ After modifying SQL queries or schema, run `make models` to regenerate the Go co
 
 **Route/Trip Relations:**
 - `GetStopIDsForRoute`, `GetStopIDsForTrip` - Stop IDs on route/trip
-- `GetRoutesForStop`, `GetRouteIDsForStop` - Routes serving a stop
+- `GetRoutesForStop`, `GetRouteIDsForStops` - Routes serving a stop
 - `GetAllTripsForRoute`, `GetTripsForRouteInActiveServiceIDs` - Trips on route
 - `GetStopsForRoute` - All stops on a route
 

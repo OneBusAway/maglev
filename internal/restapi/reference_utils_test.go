@@ -544,4 +544,90 @@ func TestStopReferences_AgencyWithUnderscore(t *testing.T) {
 	require.Len(t, routes, 1)
 	assert.Equal(t, "AGENCY_ONE", routes[0].agencyID)
 	assert.Equal(t, "ROUTE_100", routes[0].routeID)
+
+	// Verify BuildRouteReferences resolves static route IDs for an agency containing an underscore
+	routeRefs, err := api.BuildRouteReferences(ctx, "AGENCY_ONE", refs)
+	require.NoError(t, err)
+	require.Len(t, routeRefs, 1)
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", routeRefs[0].ID)
+	assert.Equal(t, "AGENCY_ONE", routeRefs[0].AgencyID)
+
+	// Verify appendTripRouteReferences resolves a trip whose routeId belongs to an agency with an underscore
+	tripRefs := &models.ReferencesModel{
+		Trips: []models.Trip{
+			{ID: "AGENCY_ONE_t1", RouteID: "AGENCY_ONE_ROUTE_100"},
+		},
+	}
+	require.NoError(t, api.appendTripRouteReferences(ctx, tripRefs, "AGENCY_ONE"))
+	require.Len(t, tripRefs.Routes, 1)
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", tripRefs.Routes[0].ID)
+	assert.Equal(t, "AGENCY_ONE", tripRefs.Routes[0].AgencyID)
+}
+
+func TestBuildRouteReferences_OverlappingAgencies(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"AGENCY,Agency Primary,http://agency.org,America/Los_Angeles\n" +
+			"AGENCY_SUB,Agency Sub,http://agencysub.org,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"ROUTE_A,AGENCY_SUB,RA,Route A,3\n" +
+			"SUB_ROUTE_B,AGENCY,RB,Route B,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1,Stop 1,37.7749,-122.4194\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"ROUTE_A,svc1,t1,Headsign 1,0\n" +
+			"SUB_ROUTE_B,svc1,t2,Headsign 2,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,08:00:00,08:00:00,s1,1\n" +
+			"t2,08:30:00,08:30:00,s1,2\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "overlapping-agencies.zip", files)
+	ctx := context.Background()
+
+	stops := []models.Stop{
+		{ID: "AGENCY_s1", StaticRouteIDs: []string{"AGENCY_SUB_ROUTE_A", "AGENCY_SUB_ROUTE_B"}},
+	}
+
+	routes, err := api.BuildRouteReferences(ctx, "AGENCY", stops)
+	require.NoError(t, err)
+	require.Len(t, routes, 2)
+
+	routesByID := make(map[string]models.Route, len(routes))
+	for _, r := range routes {
+		routesByID[r.ID] = r
+	}
+
+	routeA, ok := routesByID["AGENCY_SUB_ROUTE_A"]
+	require.True(t, ok)
+	assert.Equal(t, "AGENCY_SUB", routeA.AgencyID)
+
+	routeB, ok := routesByID["AGENCY_SUB_ROUTE_B"]
+	require.True(t, ok)
+	assert.Equal(t, "AGENCY", routeB.AgencyID)
+
+	// Verify appendTripRouteReferences resolves trips across both overlapping agencies
+	tripRefs := &models.ReferencesModel{
+		Trips: []models.Trip{
+			{ID: "AGENCY_SUB_t1", RouteID: "AGENCY_SUB_ROUTE_A"},
+			{ID: "AGENCY_t2", RouteID: "AGENCY_SUB_ROUTE_B"},
+		},
+	}
+	require.NoError(t, api.appendTripRouteReferences(ctx, tripRefs, "AGENCY"))
+	require.Len(t, tripRefs.Routes, 2)
+
+	tripRoutesByID := make(map[string]models.Route, len(tripRefs.Routes))
+	for _, r := range tripRefs.Routes {
+		tripRoutesByID[r.ID] = r
+	}
+
+	tripRouteA, ok := tripRoutesByID["AGENCY_SUB_ROUTE_A"]
+	require.True(t, ok)
+	assert.Equal(t, "AGENCY_SUB", tripRouteA.AgencyID)
+
+	tripRouteB, ok := tripRoutesByID["AGENCY_SUB_ROUTE_B"]
+	require.True(t, ok)
+	assert.Equal(t, "AGENCY", tripRouteB.AgencyID)
 }

@@ -2632,40 +2632,6 @@ func (q *Queries) GetRouteIDsForAgency(ctx context.Context, id string) ([]string
 	return items, nil
 }
 
-const getRouteIDsForStop = `-- name: GetRouteIDsForStop :many
-SELECT DISTINCT
-    (routes.agency_id || '_' || routes.id) AS route_id
-FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
-WHERE
-    stop_times.stop_id = ?
-`
-
-func (q *Queries) GetRouteIDsForStop(ctx context.Context, stopID string) ([]interface{}, error) {
-	rows, err := q.query(ctx, q.getRouteIDsForStopStmt, getRouteIDsForStop, stopID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []interface{}
-	for rows.Next() {
-		var route_id interface{}
-		if err := rows.Scan(&route_id); err != nil {
-			return nil, err
-		}
-		items = append(items, route_id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getRouteIDsForStops = `-- name: GetRouteIDsForStops :many
 SELECT DISTINCT
     routes.id AS route_id,

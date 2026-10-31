@@ -355,9 +355,10 @@ func retainTrip(refAcc, acc *arrivalsAccumulator, combinedTripID string) {
 // retainRoute carries a combined route ID's entity over from acc, under the
 // same contract as retainTrip.
 func retainRoute(refAcc, acc *arrivalsAccumulator, combinedRouteID string) {
-	if _, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedRouteID); err == nil {
-		if route, ok := acc.routes[bareID]; ok {
+	for bareID, route := range acc.routes {
+		if utils.FormCombinedID(route.AgencyID, route.ID) == combinedRouteID {
 			refAcc.routes[bareID] = route
+			return
 		}
 	}
 }
