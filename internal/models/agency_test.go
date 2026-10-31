@@ -1,10 +1,12 @@
 package models
 
 import (
+	"database/sql"
 	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"maglev.onebusaway.org/gtfsdb"
 )
 
 func TestAgencyCoverageCreation(t *testing.T) {
@@ -128,4 +130,33 @@ func TestAgencyReferenceWithEmptyStrings(t *testing.T) {
 	assert.Equal(t, "", agency.FareUrl)
 	assert.Equal(t, "", agency.Disclaimer)
 	assert.Equal(t, false, agency.PrivateService)
+}
+
+func TestAgencyReferenceFromDatabase_Nil(t *testing.T) {
+	ref := AgencyReferenceFromDatabase(nil)
+	assert.Equal(t, AgencyReference{}, ref)
+}
+
+func TestAgencyReferenceFromDatabase_Valid(t *testing.T) {
+	agency := &gtfsdb.Agency{
+		ID:       "agency-1",
+		Name:     "Metro Transit",
+		Url:      "https://metro.example.com",
+		Timezone: "America/New_York",
+		Lang:     sql.NullString{String: "en", Valid: true},
+		Phone:    sql.NullString{String: "555-1234", Valid: true},
+		Email:    sql.NullString{String: "info@metro.example.com", Valid: true},
+		FareUrl:  sql.NullString{String: "https://metro.example.com/fare", Valid: true},
+	}
+	ref := AgencyReferenceFromDatabase(agency)
+	assert.Equal(t, "agency-1", ref.ID)
+	assert.Equal(t, "Metro Transit", ref.Name)
+	assert.Equal(t, "https://metro.example.com", ref.URL)
+	assert.Equal(t, "America/New_York", ref.Timezone)
+	assert.Equal(t, "en", ref.Lang)
+	assert.Equal(t, "555-1234", ref.Phone)
+	assert.Equal(t, "info@metro.example.com", ref.Email)
+	assert.Equal(t, "https://metro.example.com/fare", ref.FareUrl)
+	assert.Equal(t, "", ref.Disclaimer)
+	assert.False(t, ref.PrivateService)
 }
