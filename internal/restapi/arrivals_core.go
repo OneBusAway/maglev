@@ -88,6 +88,15 @@ type activeStopTime struct {
 	Location    *time.Location
 }
 
+// scheduledOrFrequencyWindow picks the arrival window. A frequency trip uses
+// the frequency bounds; every other trip uses the scheduled bounds.
+func scheduledOrFrequencyWindow(scheduledBefore, scheduledAfter, frequencyBefore, frequencyAfter time.Duration, frequency bool) (before, after time.Duration) {
+	if frequency {
+		return frequencyBefore, frequencyAfter
+	}
+	return scheduledBefore, scheduledAfter
+}
+
 // arrivalsForStop computes the arrivals and departures for a single stop over
 // the requested window, recording the routes, trips, stops and situations they
 // reference into acc.
@@ -120,10 +129,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 
 		st := ast.GetStopTimesForStopInWindowRow
 
-		before, after := in.Before, in.After
-		if len(freqMap[st.TripID]) > 0 {
-			before, after = in.FrequencyBefore, in.FrequencyAfter
-		}
+		before, after := scheduledOrFrequencyWindow(in.Before, in.After, in.FrequencyBefore, in.FrequencyAfter, len(freqMap[st.TripID]) > 0)
 		if !api.stopTimeInArrivalWindow(ctx, ast, ast.Location, in.QueryTime, before, after) {
 			continue
 		}
@@ -709,10 +715,7 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 			continue
 		}
 
-		before, after := in.Before, in.After
-		if len(lookups.frequencies[st.TripID]) > 0 {
-			before, after = in.FrequencyBefore, in.FrequencyAfter
-		}
+		before, after := scheduledOrFrequencyWindow(in.Before, in.After, in.FrequencyBefore, in.FrequencyAfter, len(lookups.frequencies[st.TripID]) > 0)
 		if !api.stopTimeInArrivalWindow(ctx, b.activeStopTime, b.Location, b.QueryTime, before, after) {
 			continue
 		}
@@ -757,7 +760,7 @@ func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopT
 	if inRange(arrival) || inRange(departure) {
 		return true
 	}
-	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure)
+	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure, queryTime)
 	return predicted && (inRange(predictedArrival) || inRange(predictedDeparture))
 }
 
@@ -947,6 +950,7 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 		int64(st.StopSequence),
 		scheduledArrivalTime,
 		scheduledDepartureTime,
+		in.queryTime,
 	)
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
