@@ -1022,3 +1022,28 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	assert.Contains(t, ids, utils.FormCombinedID(agencyID, alertID))
 	assert.NotContains(t, ids, utils.FormCombinedID("a", alertID))
 }
+
+func TestArrivalsAndDeparturesForLocation_VehiclePositionAloneIsPredicted(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	vehicleTimestamp := mockClock.Now()
+	api.GtfsManager.MockAddVehicleWithOptions("v1", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+		Timestamp: &vehicleTimestamp,
+	})
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
+		"/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=47&lon=-122&radius=500")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	require.NotNil(t, a.TripStatus)
+	assert.True(t, a.Predicted, "a fresh vehicle position is predicted even without a trip update")
+	assert.True(t, a.TripStatus.Predicted)
+	assert.Equal(t, 0, a.TripStatus.ScheduleDeviation)
+	assert.Equal(t, a.ScheduledArrivalTime.UnixMilli(), a.PredictedArrivalTime.UnixMilli())
+	assert.Equal(t, a.ScheduledDepartureTime.UnixMilli(), a.PredictedDepartureTime.UnixMilli())
+}

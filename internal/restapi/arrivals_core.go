@@ -88,6 +88,15 @@ type activeStopTime struct {
 	Location    *time.Location
 }
 
+// scheduledOrFrequencyWindow picks the arrival window. A frequency trip uses
+// the frequency bounds; every other trip uses the scheduled bounds.
+func scheduledOrFrequencyWindow(scheduledBefore, scheduledAfter, frequencyBefore, frequencyAfter time.Duration, frequency bool) (before, after time.Duration) {
+	if frequency {
+		return frequencyBefore, frequencyAfter
+	}
+	return scheduledBefore, scheduledAfter
+}
+
 // arrivalsForStop computes the arrivals and departures for a single stop over
 // the requested window, recording the routes, trips, stops and situations they
 // reference into acc.
@@ -120,10 +129,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 
 		st := ast.GetStopTimesForStopInWindowRow
 
-		before, after := in.Before, in.After
-		if len(freqMap[st.TripID]) > 0 {
-			before, after = in.FrequencyBefore, in.FrequencyAfter
-		}
+		before, after := scheduledOrFrequencyWindow(in.Before, in.After, in.FrequencyBefore, in.FrequencyAfter, len(freqMap[st.TripID]) > 0)
 		if !api.stopTimeInArrivalWindow(ctx, ast, ast.Location, in.QueryTime, before, after) {
 			continue
 		}
@@ -709,10 +715,7 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 			continue
 		}
 
-		before, after := in.Before, in.After
-		if len(lookups.frequencies[st.TripID]) > 0 {
-			before, after = in.FrequencyBefore, in.FrequencyAfter
-		}
+		before, after := scheduledOrFrequencyWindow(in.Before, in.After, in.FrequencyBefore, in.FrequencyAfter, len(lookups.frequencies[st.TripID]) > 0)
 		if !api.stopTimeInArrivalWindow(ctx, b.activeStopTime, b.Location, b.QueryTime, before, after) {
 			continue
 		}
@@ -1017,6 +1020,12 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 // from its trip status's schedule deviation when getPredictedTimes found no
 // per-stop prediction.
 func (api *RestAPI) applyTripStatusPrediction(ctx context.Context, arrival *models.ArrivalAndDeparture, tripStatus *models.TripStatus, statusExtras *tripStatusExtras, in arrivalInput, sampleCache deviationSampleCache) {
+	if statusExtras != nil && statusExtras.recordDiscarded {
+		arrival.Predicted = false
+		arrival.PredictedArrivalTime = models.ModelTime{}
+		arrival.PredictedDepartureTime = models.ModelTime{}
+		return
+	}
 	if arrival.Predicted {
 		return
 	}
