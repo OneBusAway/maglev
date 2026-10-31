@@ -12,6 +12,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/logging"
 )
 
@@ -243,7 +244,7 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		slog.Bool("changed", changed))
 
 	manager.PrintStatistics()
-	manager.logFeedExpiry(ctx, logger)
+	manager.logFeedExpiry(ctx, logger, nil)
 
 	return changed, nil
 }
@@ -252,7 +253,7 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 // and updates the metrics gauge / emits warning logs about how soon the feed
 // will expire. The DB write itself happens atomically inside the import
 // transaction; this function is read-only.
-func (manager *Manager) logFeedExpiry(ctx context.Context, logger *slog.Logger) {
+func (manager *Manager) logFeedExpiry(ctx context.Context, logger *slog.Logger, clock clock.Clock) {
 	if manager.Metrics != nil && manager.Metrics.FeedExpiresAt != nil {
 		manager.Metrics.FeedExpiresAt.Set(-1)
 	}
@@ -267,7 +268,11 @@ func (manager *Manager) logFeedExpiry(ctx context.Context, logger *slog.Logger) 
 		manager.Metrics.FeedExpiresAt.Set(float64(expiresAt.Unix()))
 	}
 
-	daysUntil := int(time.Until(expiresAt).Hours() / 24)
+	now := time.Now()
+	if clock != nil {
+		now = clock.Now()
+	}
+	daysUntil := int(expiresAt.Sub(now).Hours() / 24)
 	switch {
 	case daysUntil < 0:
 		logger.Warn("GTFS feed has expired", slog.Time("expires_at", expiresAt), slog.Int("days_overdue", -daysUntil))
