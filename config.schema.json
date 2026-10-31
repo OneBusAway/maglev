@@ -73,32 +73,17 @@
       "minimum": 1
     },
     "gtfs-static-feed": {
-      "type": "object",
-      "description": "Configuration for the static GTFS feed",
-      "properties": {
-        "url": {
-          "type": "string",
-          "description": "URL for a static GTFS zip file (http/https URLs or local file paths)"
-        },
-        "auth-header-name": {
-          "type": "string",
-          "description": "Optional header name for static GTFS feed authentication"
-        },
-        "auth-header-value": {
-          "type": "string",
-          "description": "Optional header value for static GTFS feed authentication"
-        },
-        "enable-gtfs-tidy": {
-          "type": "boolean",
-          "description": "Enable GTFS tidying with gtfstidy tool (requires gtfstidy to be installed)",
-          "default": false
-        }
-      },
-      "required": ["url"],
-      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/definitions/staticFeed" }],
+      "description": "Configuration for a single static GTFS feed. Cannot be combined with gtfs-static-feeds.",
       "default": {
         "url": "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip"
       }
+    },
+    "gtfs-static-feeds": {
+      "type": "array",
+      "description": "Static GTFS feeds, in load order. Cannot be combined with gtfs-static-feed. Only the first feed is imported for now.",
+      "items": { "$ref": "#/definitions/staticFeed" },
+      "minItems": 1
     },
     "gtfs-rt-feeds": {
       "type": "array",
@@ -184,6 +169,52 @@
     "tls-key-path": {
       "type": "string",
       "description": "Path to TLS private key file. When set together with tls-cert-path, the server serves HTTPS."
+    }
+  },
+  "not": { "required": ["gtfs-static-feed", "gtfs-static-feeds"] },
+  "definitions": {
+    "staticFeed": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique name for this feed in logs and metrics (default: feed-{n})"
+        },
+        "url": {
+          "type": "string",
+          "description": "URL for a static GTFS zip file (http/https URLs or local file paths)"
+        },
+        "default-agency-id": {
+          "type": "string",
+          "description": "Agency ID for entities in this feed that name no agency. Must be unique across feeds and must not contain '_'. Validated but not applied until multi-feed import lands.",
+          "pattern": "^[^_]*$"
+        },
+        "agency-id-mappings": {
+          "type": "object",
+          "description": "Renames agency IDs from agency.txt and routes.txt, old value to new value. New values must be non-empty and must not contain '_'. Validated but not applied until multi-feed import lands.",
+          "additionalProperties": { "type": "string", "minLength": 1, "pattern": "^[^_]*$" }
+        },
+        "auth-header-name": {
+          "type": "string",
+          "description": "Optional header name for static GTFS feed authentication"
+        },
+        "auth-header-value": {
+          "type": "string",
+          "description": "Optional header value for static GTFS feed authentication"
+        },
+        "headers": {
+          "type": "object",
+          "description": "Optional HTTP headers to send with requests for this feed. Not applied until multi-feed import lands; use auth-header-name/auth-header-value for now.",
+          "additionalProperties": { "type": "string" }
+        },
+        "enable-gtfs-tidy": {
+          "type": "boolean",
+          "description": "Enable GTFS tidying with gtfstidy tool (requires gtfstidy to be installed)",
+          "default": false
+        }
+      },
+      "required": ["url"],
+      "additionalProperties": false
     }
   },
   "dependencies": {

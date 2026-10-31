@@ -551,7 +551,15 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
   "env": "development",
   "api-keys": ["test"],
   "rate-limit": 100,
-  "gtfs-static-feed": { "url": "..." },
+  "gtfs-static-feeds": [
+    {
+      "id": "sound-transit",
+      "url": "...",
+      "default-agency-id": "40",
+      "agency-id-mappings": { "ST": "40" },
+      "headers": { "Authorization": "Bearer ..." }
+    }
+  ],
   "gtfs-rt-feeds": [
     {
       "id": "my-feed",
@@ -566,6 +574,16 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
   ]
 }
 ```
+
+### Static Feeds
+- `gtfs-static-feeds` is a list of static feeds. The older `gtfs-static-feed` object still works and is read as a one-element list. Setting both keys, or an empty list, is an error.
+- Each feed takes `id`, `url`, `default-agency-id`, `agency-id-mappings`, `auth-header-name`/`auth-header-value`, `headers` and `enable-gtfs-tidy`.
+- `id` — defaults to `"feed-0"`, `"feed-1"`, …; must be unique
+- `default-agency-id` — must be unique across feeds; it and `agency-id-mappings` targets must not contain `_`
+- `url` is required on every feed. The Sound Transit default URL is filled in when neither key is set, or when the `gtfs-static-feed` object has no `url`; never for a list entry
+- In code, `JSONConfig.normalizeStaticFeeds` moves the singular key into `GtfsStaticFeeds` (and fills in ids), so read `GtfsStaticFeeds` only; the `GtfsStaticFeed` pointer is set only by JSON decoding
+- `GTFS_STATIC_AUTH_NAME`/`GTFS_STATIC_AUTH_VALUE` apply only when exactly one static feed is configured; with more feeds they are a startup error, so a secret is never dropped silently
+- For now the importer loads only the first feed. `default-agency-id` and `agency-id-mappings` are validated but not yet applied, and `headers` is accepted but not sent (use `auth-header-name`/`auth-header-value`); `ToGtfsConfigData` logs a warning when `agency-id-mappings` or `headers` is set
 
 ### GTFS-RT Feed Defaults
 - `id` — auto-generated as `"feed-0"`, `"feed-1"`, … when omitted

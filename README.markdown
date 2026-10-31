@@ -156,7 +156,8 @@ A JSON schema file is provided at `config.schema.json` for IDE autocomplete and 
 | `log-level`          | string  | "info"          | Log level (debug, info, warn, error)        |
 | `log-format`         | string  | "text"          | Log format (text, json)                     |
 | `rate-limit`         | integer | 100             | Requests per second across the whole service (shared bucket; exempt keys bypass it) |
-| `gtfs-static-feed`   | object  | (Sound Transit) | Static GTFS feed configuration              |
+| `gtfs-static-feeds`  | array   | (Sound Transit) | Static GTFS feeds, in load order (only the first is imported for now) |
+| `gtfs-static-feed`   | object  | (Sound Transit) | Legacy single static feed; read as a one-element `gtfs-static-feeds`. Cannot be combined with it |
 | `gtfs-rt-feeds`      | array   | (Sound Transit) | GTFS-RT feed configurations (see below)     |
 | `data-path`          | string  | "./gtfs.db"     | Path to SQLite database                     |
 
