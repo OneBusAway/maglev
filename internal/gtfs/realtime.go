@@ -49,7 +49,11 @@ type mergedRealtime struct {
 	vehiclesByRoute          map[string][]gtfs.Vehicle
 	vehiclePositionsByAgency map[string]AgencyVehiclePositions
 	alerts                   alertIndex
-	builtAt                  time.Time
+	alertFeedsByAgency       map[string]agencyAlertFeed
+	// alertsSince is the first snapshot's build time, the header time of an
+	// agency that has had no alerts since then.
+	alertsSince time.Time
+	builtAt     time.Time
 }
 
 // emptyMergedRealtime is returned before the first publish so a zero-value
@@ -67,6 +71,7 @@ var emptyMergedRealtime = &mergedRealtime{
 		byAgency: map[string][]gtfs.Alert{},
 		byStop:   map[string][]gtfs.Alert{},
 	},
+	alertFeedsByAgency: map[string]agencyAlertFeed{},
 }
 
 // mergedRealtime loads the current snapshot. Lock-free: callers must not hold
@@ -98,7 +103,9 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 			byStop:   maps.Clone(m.alerts.byStop),
 			all:      slices.Clone(m.alerts.all),
 		},
-		builtAt: m.builtAt,
+		alertFeedsByAgency: maps.Clone(m.alertFeedsByAgency),
+		alertsSince:        m.alertsSince,
+		builtAt:            m.builtAt,
 	}
 	if out.tripLookup == nil {
 		out.tripLookup = map[string]int{}
@@ -117,6 +124,9 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 	}
 	if out.vehiclePositionsByAgency == nil {
 		out.vehiclePositionsByAgency = map[string]AgencyVehiclePositions{}
+	}
+	if out.alertFeedsByAgency == nil {
+		out.alertFeedsByAgency = map[string]agencyAlertFeed{}
 	}
 	return out
 }
@@ -1089,6 +1099,11 @@ func routeBelongsToAllowedAgency(routeID string, allowed map[string]bool, routeA
 
 func (manager *Manager) rebuildMergedRealtimeLocked() {
 	builtAt := time.Now()
+	previous := manager.mergedRealtime()
+	alertsSince := previous.alertsSince
+	if alertsSince.IsZero() {
+		alertsSince = builtAt
+	}
 	feedIDs := make([]string, 0, len(manager.feedTrips))
 	totalTrips := 0
 	for id, trips := range manager.feedTrips {
@@ -1219,6 +1234,8 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		vehiclesByRoute:          vehiclesByRoute,
 		vehiclePositionsByAgency: manager.buildVehiclePositionsByAgency(vehicleFeedIDs, builtAt),
 		alerts:                   idx,
+		alertFeedsByAgency:       manager.buildAlertFeedsByAgency(alertFeedIDs, previous, builtAt),
+		alertsSince:              alertsSince,
 		builtAt:                  builtAt,
 	})
 }

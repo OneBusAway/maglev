@@ -8,11 +8,11 @@ import (
 	"maps"
 	"net/http"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -822,7 +822,7 @@ func situationRefsFromAlerts(alerts []gtfs.Alert, agencyID string) []situationRe
 		if alert.ID == "" {
 			continue
 		}
-		refs = append(refs, situationRef{ID: situationID(alert.ID, agencyIDForAlert(alert, agencyID)), Alert: alert})
+		refs = append(refs, situationRef{ID: internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert, agencyID)), Alert: alert})
 	}
 	return refs
 }
@@ -853,25 +853,10 @@ func dedupeSituationRefs(refs []situationRef) []situationRef {
 // situationIds would resolve to whichever one it happened to be built from.
 // The informed entity is the only source that does not vary by lookup path.
 func agencyIDForAlert(alert gtfs.Alert, fallbackAgencyID string) string {
-	for _, entity := range alert.InformedEntities {
-		if entity.AgencyID != nil && *entity.AgencyID != "" {
-			return *entity.AgencyID
-		}
+	if agencyID := internalgtfs.AlertAgencyID(alert); agencyID != "" {
+		return agencyID
 	}
 	return fallbackAgencyID
-}
-
-// situationID returns the combined-form ID for an alert.
-//
-// Prefixing is idempotent, not unconditional: a GTFS-RT feed exported by an OBA
-// instance already carries the agency prefix on its alert IDs — Puget Sound
-// ships "1_92239" — and prefixing again would publish "1_1_92239", which
-// resolves against nothing a client has seen. Upstream reports "1_92239".
-func situationID(alertID, agencyID string) string {
-	if agencyID == "" || strings.HasPrefix(alertID, agencyID+"_") {
-		return alertID
-	}
-	return utils.FormCombinedID(agencyID, alertID)
 }
 
 // situationCollector deduplicates the alerts referenced by list entries so the

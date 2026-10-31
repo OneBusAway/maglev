@@ -13,7 +13,6 @@ import (
 )
 
 const (
-	gtfsRealtimeVersion     = "2.0"
 	gtfsRealtimeContentType = "application/x-protobuf"
 	gtfsDateLayout          = "20060102"
 	// etagHashBytes is how much of the SHA-256 of a feed goes into its ETag.
@@ -26,7 +25,7 @@ const (
 func newVehiclePositionsFeed(positions internalgtfs.AgencyVehiclePositions) *gtfsrt.FeedMessage {
 	feed := &gtfsrt.FeedMessage{
 		Header: &gtfsrt.FeedHeader{
-			GtfsRealtimeVersion: proto.String(gtfsRealtimeVersion),
+			GtfsRealtimeVersion: proto.String(internalgtfs.GtfsRealtimeVersion),
 			Timestamp:           proto.Uint64(uint64(positions.Timestamp.Unix())),
 		},
 		Entity: make([]*gtfsrt.FeedEntity, 0, len(positions.Vehicles)),
