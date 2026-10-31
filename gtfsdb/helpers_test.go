@@ -294,7 +294,7 @@ func newFeedExpiryTestDB(t *testing.T) (*sql.DB, *Queries) {
 			lang TEXT, phone TEXT, fare_url TEXT, email TEXT
 		);
 		INSERT INTO agencies (id, name, url, timezone) VALUES ('1', 'Test', 'https://example.com', 'UTC');
-		CREATE TABLE calendar (end_date TEXT);
+		CREATE TABLE calendar (start_date TEXT, end_date TEXT);
 		CREATE TABLE calendar_dates (date TEXT, exception_type INTEGER);
 		CREATE TABLE import_metadata (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -565,4 +565,54 @@ func TestLatestAgencyExpiry(t *testing.T) {
 		expected := time.Date(2025, 6, 15, 23, 59, 59, 0, locLA)
 		assert.Equal(t, expected, expiry)
 	})
+}
+
+func TestFeedDateRange(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	ctx := context.Background()
+
+	// 1. Empty calendar and calendar_dates returns empty strings.
+	start, end, err := client.FeedDateRange(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "", start)
+	assert.Equal(t, "", end)
+
+	// 2. Calendar entries define initial range.
+	_, err = client.DB.ExecContext(ctx, `
+		INSERT INTO calendar (id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+		VALUES ('serv1', 1, 1, 1, 1, 1, 0, 0, '20260401', '20260430')
+	`)
+	require.NoError(t, err)
+
+	start, end, err = client.FeedDateRange(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "20260401", start)
+	assert.Equal(t, "20260430", end)
+
+	// 3. calendar_dates with exception_type=1 outside calendar range expands both start and end dates.
+	_, err = client.DB.ExecContext(ctx, `
+		INSERT INTO calendar_dates (service_id, date, exception_type)
+		VALUES ('serv1', '20260315', 1), ('serv1', '20260515', 1)
+	`)
+	require.NoError(t, err)
+
+	start, end, err = client.FeedDateRange(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "20260315", start)
+	assert.Equal(t, "20260515", end)
+
+	// 4. calendar_dates with exception_type=2 (service removed) outside calendar bounds does NOT expand range.
+	_, err = client.DB.ExecContext(ctx, `
+		INSERT INTO calendar_dates (service_id, date, exception_type)
+		VALUES ('serv1', '20260101', 2), ('serv1', '20261231', 2)
+	`)
+	require.NoError(t, err)
+
+	start, end, err = client.FeedDateRange(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "20260315", start)
+	assert.Equal(t, "20260515", end)
 }

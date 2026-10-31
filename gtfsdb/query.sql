@@ -1406,12 +1406,14 @@ WHERE stop_id = ?
 ORDER BY created_at DESC;
 
 
--- name: GetFeedEndDate :one
-SELECT COALESCE(CAST(MAX(max_date) AS TEXT), '') AS feed_end_date
+-- name: GetFeedDateRange :one
+SELECT 
+    COALESCE(CAST(MIN(min_date) AS TEXT), '') AS feed_start_date,
+    COALESCE(CAST(MAX(max_date) AS TEXT), '') AS feed_end_date
 FROM (
-    SELECT MAX(end_date) AS max_date FROM calendar
+    SELECT MIN(start_date) AS min_date, MAX(end_date) AS max_date FROM calendar
     UNION ALL
-    SELECT MAX(date) AS max_date FROM calendar_dates WHERE exception_type = 1
+    SELECT MIN(date) AS min_date, MAX(date) AS max_date FROM calendar_dates WHERE exception_type = 1
 );
 
 -- name: RouteHasFutureService :one
