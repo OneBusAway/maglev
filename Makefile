@@ -1,12 +1,11 @@
-# Detect OS (MSYS2 sets MSYSTEM; prefer Unix syntax over Windows CMD syntax)
-ifeq ($(OS),Windows_NT)
-    SET_ENV := set CGO_ENABLED=1
-else
-    SET_ENV := CGO_ENABLED=1
-endif
-
 BUILD_TAGS := sqlite_fts5 sqlite_math_functions
 PURE_TAGS := purego
+
+# Make exports CGO_ENABLED to these recipes itself, so it takes effect in any
+# shell (sh, Git Bash, cmd.exe) without shell-specific syntax in the recipe.
+build build-debug gtfstidy coverage-report coverage lint test test-latency \
+bench-sqlite-all bench-sqlite-perftest: override export CGO_ENABLED := 1
+build-pure test-pure: override export CGO_ENABLED := 0
 
 DOCKER_IMAGE := opentransitsoftwarefoundation/maglev
 
@@ -45,16 +44,16 @@ run: build
 	bin/maglev -f config.json
 
 build: gtfstidy
-	$(SET_ENV) go build -tags "$(BUILD_TAGS)" $(LDFLAGS) -o bin/maglev ./cmd/api
+	go build -tags "$(BUILD_TAGS)" $(LDFLAGS) -o bin/maglev ./cmd/api
 
 build-pure: gtfstidy
-	CGO_ENABLED=0 go build -tags "$(PURE_TAGS)" $(LDFLAGS) -o bin/maglev ./cmd/api
+	go build -tags "$(PURE_TAGS)" $(LDFLAGS) -o bin/maglev ./cmd/api
 
 build-debug: gtfstidy
-	$(SET_ENV) go build -tags "$(BUILD_TAGS)" $(LDFLAGS) -gcflags "all=-N -l" -o bin/maglev ./cmd/api
+	go build -tags "$(BUILD_TAGS)" $(LDFLAGS) -gcflags "all=-N -l" -o bin/maglev ./cmd/api
 
 gtfstidy:
-	$(SET_ENV) go build -tags "$(BUILD_TAGS)" -o bin/gtfstidy github.com/patrickbr/gtfstidy
+	go build -tags "$(BUILD_TAGS)" -o bin/gtfstidy github.com/patrickbr/gtfstidy
 
 clean:
 	go clean
@@ -68,33 +67,33 @@ check-k6:
 	@which k6 > /dev/null 2>&1 || (echo "Error: k6 is not installed. Install with: https://grafana.com/docs/k6/latest/set-up/install-k6/" && exit 1)
 
 coverage-report: check-jq
-	$(SET_ENV) go test -tags "$(BUILD_TAGS)" ./... -cover > /tmp/go-coverage.txt 2>&1 || (cat /tmp/go-coverage.txt && exit 1)
+	go test -tags "$(BUILD_TAGS)" ./... -cover > /tmp/go-coverage.txt 2>&1 || (cat /tmp/go-coverage.txt && exit 1)
 	grep '^ok' /tmp/go-coverage.txt | awk '{print $$2, $$5}' | jq -R 'split(" ") | {pkg: .[0], coverage: .[1]}'
 
 coverage:
-	$(SET_ENV) go test -tags "$(BUILD_TAGS)" -coverprofile=coverage.out ./...
+	go test -tags "$(BUILD_TAGS)" -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
 lint:
-	$(SET_ENV) go vet -tags "$(BUILD_TAGS)" ./...
+	go vet -tags "$(BUILD_TAGS)" ./...
 
 fmt:
 	go fmt ./...
 
 test:
-	$(SET_ENV) go test -tags "$(BUILD_TAGS)" ./...
+	go test -tags "$(BUILD_TAGS)" ./...
 
 test-latency:
-	$(SET_ENV) go test -tags "$(BUILD_TAGS)" ./gtfsdb/ -run "TestQueryLatency|TestExplainQueryPlans|TestConnectionPoolTuning" -v -count=1 -timeout 300s
+	go test -tags "$(BUILD_TAGS)" ./gtfsdb/ -run "TestQueryLatency|TestExplainQueryPlans|TestConnectionPoolTuning" -v -count=1 -timeout 300s
 
 bench-sqlite-all:
-	$(SET_ENV) go test -tags "$(BUILD_TAGS)" ./gtfsdb/ -bench=. -benchmem -benchtime=5s -run=^$
+	go test -tags "$(BUILD_TAGS)" ./gtfsdb/ -bench=. -benchmem -benchtime=5s -run=^$
 
 bench-sqlite-perftest:
-	$(SET_ENV) go test -tags "$(BUILD_TAGS) perftest" ./gtfsdb/ -bench=BenchmarkLargeDataset -benchmem -benchtime=10s -run=^$
+	go test -tags "$(BUILD_TAGS) perftest" ./gtfsdb/ -bench=BenchmarkLargeDataset -benchmem -benchtime=10s -run=^$
 
 test-pure:
-	CGO_ENABLED=0 go test -tags "$(PURE_TAGS)" ./...
+	go test -tags "$(PURE_TAGS)" ./...
 
 models:
 	go tool sqlc generate -f gtfsdb/sqlc.yml
