@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,8 +46,8 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			for _, rtStr := range routeTypeStrs {
 				rtStr = strings.TrimSpace(rtStr)
 				if rtStr != "" {
-					var rt int
-					if _, err := fmt.Sscanf(rtStr, "%d", &rt); err != nil {
+					rt, err := strconv.Atoi(rtStr)
+					if err != nil {
 						if fieldErrors == nil {
 							fieldErrors = make(map[string][]string)
 						}
