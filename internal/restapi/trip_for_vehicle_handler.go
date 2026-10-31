@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"maglev.onebusaway.org/internal/nulls"
 	"net/http"
 	"strconv"
 
@@ -192,11 +193,11 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 			utils.FormCombinedID(agencyID, trip.ID),
 			combinedRouteID,
 			utils.FormCombinedID(agencyID, trip.ServiceID),
-			trip.TripHeadsign.String,
-			trip.TripShortName.String,
+			nulls.StringOrEmpty(trip.TripHeadsign),
+			nulls.StringOrEmpty(trip.TripShortName),
 			strconv.FormatInt(trip.DirectionID.Int64, 10),
-			utils.FormBlockID(agencyID, trip.BlockID.String, trip.ID),
-			utils.FormCombinedID(agencyID, trip.ShapeID.String),
+			utils.FormBlockID(agencyID, nulls.StringOrEmpty(trip.BlockID), trip.ID),
+			utils.FormCombinedID(agencyID, nulls.StringOrEmpty(trip.ShapeID)),
 		)
 		references.Trips = append(references.Trips, *tripRef)
 	}
