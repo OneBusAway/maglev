@@ -434,6 +434,43 @@ func TestStopsForLocationHandlerRouteTypeErrorLimit(t *testing.T) {
 	assert.Contains(t, routeTypeErrors[0], "Invalid field value for field", "Error should use standard generic message")
 }
 
+func TestStopsForLocationHandlerRouteTypeInvalidTokens(t *testing.T) {
+	tests := []struct {
+		name      string
+		routeType string
+	}{
+		{
+			name:      "trailing letters after digit",
+			routeType: "3abc",
+		},
+		{
+			name:      "alphanumeric identifier",
+			routeType: "bus",
+		},
+		{
+			name:      "trailing letters in list",
+			routeType: "1,2,bad3",
+		},
+		{
+			name:      "trailing underscore",
+			routeType: "3_extra",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			url := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&routeType=" + tt.routeType
+			resp, model := callAPIHandler[StopsResponse](t, api, url)
+
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			routeTypeErrors := model.Data.FieldErrors["routeType"]
+			require.Len(t, routeTypeErrors, 1, "Should return a single error for invalid routeType")
+			assert.Contains(t, routeTypeErrors[0], "Invalid field value for field", "Error should use standard generic message")
+		})
+	}
+}
+
 func TestStopsForLocationHandlerRouteTypeTooManyTokens(t *testing.T) {
 	tokens := make([]string, 150)
 	for i := range tokens {
