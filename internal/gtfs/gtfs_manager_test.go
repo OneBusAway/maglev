@@ -558,3 +558,15 @@ func TestManager_DataFreshnessTracking(t *testing.T) {
 	feedTimes2 := manager.GetFeedUpdateTimes()
 	assert.Equal(t, now, feedTimes2["feed-1"])
 }
+
+func TestManager_GetSystemETag(t *testing.T) {
+	manager, _ := getSharedTestComponents(t)
+	require.NotNil(t, manager)
+
+	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, metadata.FileHash)
+
+	etag := manager.GetSystemETag(context.Background())
+	assert.Equal(t, `W/"`+metadata.FileHash+`"`, etag, "system ETag must match stored FileHash formatted as a weak quoted entity tag")
+}
