@@ -49,9 +49,9 @@ func (api *RestAPI) dataFreshness(ctx context.Context) (DataFreshness, error) {
 		importTime := time.Unix(0, metadata.ImportTime).UTC()
 		freshness.StaticGtfsLastUpdated = &importTime
 	}
-	freshness.StaticGtfsHash = metadata.FileHash
-	if metadata.FileHash != "" {
-		freshness.StaticGtfsFeeds = []StaticGtfsFeed{{Source: metadata.FileSource, SHA256: metadata.FileHash}}
+	freshness.StaticGtfsHash = metadata.RawFileHash
+	if metadata.RawFileHash != "" {
+		freshness.StaticGtfsFeeds = []StaticGtfsFeed{{Source: metadata.FileSource, SHA256: metadata.RawFileHash}}
 	}
 	return freshness, nil
 }

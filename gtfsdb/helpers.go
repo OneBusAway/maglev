@@ -30,7 +30,10 @@ var ddl string
 type GtfsData struct {
 	Static *gtfs.Static
 	Hash   string
-	Source string
+	// RawHash is the sha256 of the zip as downloaded, before any gtfstidy
+	// processing. Hash can differ from it when tidy rewrote the bytes.
+	RawHash string
+	Source  string
 }
 
 // ParseGtfsData hashes, parses, and structurally validates GTFS zip bytes.
@@ -141,6 +144,10 @@ func createDB(config Config) (*sql.DB, error) {
 		return nil, err
 	}
 
+	// Limit the pool before any statements run. An in-memory database is one
+	// database per connection, so the migration must see a single connection.
+	configureConnectionPool(db, config)
+
 	// Configure SQLite performance settings immediately after opening
 	ctx := context.Background()
 	err = configureSQLitePerformance(ctx, db)
@@ -155,9 +162,6 @@ func createDB(config Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("error performing database migration: %w", err)
 	}
 
-	// Configure connection pool settings
-	configureConnectionPool(db, config)
-
 	return db, nil
 }
 
@@ -171,6 +175,29 @@ func performDatabaseMigration(ctx context.Context, db *sql.DB) error {
 		if _, err := db.ExecContext(ctx, trimmedStmt); err != nil {
 			return fmt.Errorf("error executing DDL statement [%s]: %w", trimmedStmt, err)
 		}
+	}
+	return ensureRawFileHashColumn(ctx, db)
+}
+
+// ensureRawFileHashColumn adds import_metadata.raw_file_hash to databases
+// created before the column existed. CREATE TABLE IF NOT EXISTS does not
+// alter an existing table, so the column has to be added explicitly.
+func ensureRawFileHashColumn(ctx context.Context, db *sql.DB) error {
+	var tableColumns, rawColumns int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN name = 'raw_file_hash' THEN 1 ELSE 0 END), 0)
+		 FROM pragma_table_info('import_metadata')`,
+	).Scan(&tableColumns, &rawColumns)
+	if err != nil {
+		return fmt.Errorf("error checking import_metadata columns: %w", err)
+	}
+	// No table means the DDL did not create it, so there is nothing to alter.
+	if tableColumns == 0 || rawColumns > 0 {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx,
+		"ALTER TABLE import_metadata ADD COLUMN raw_file_hash TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("error adding raw_file_hash column: %w", err)
 	}
 	return nil
 }
@@ -221,8 +248,13 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	existingMetadata, err := c.Queries.GetImportMetadata(ctx)
 	if err == nil {
 		hasExisting = true
-		// We have existing metadata, check if hash matches
-		if existingMetadata.FileHash == data.Hash && existingMetadata.FileSource == data.Source {
+		// We have existing metadata, check if hash matches. A database written
+		// before raw_file_hash existed has no raw hash, so it is reimported once
+		// to record it.
+		isUnchanged := existingMetadata.FileHash == data.Hash &&
+			existingMetadata.FileSource == data.Source &&
+			existingMetadata.RawFileHash == data.RawHash
+		if isUnchanged {
 			// Refresh derived metadata even when the feed is unchanged, so existing
 			// databases pick up corrections to the expiry calculation on upgrade.
 			if err := c.withTransaction(ctx, nil, "refresh_feed_expiry", func(tx *sql.Tx) error {
@@ -480,9 +512,10 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		slog.String("source", data.Source))
 
 	_, err = qtx.UpsertImportMetadata(ctx, UpsertImportMetadataParams{
-		FileHash:   data.Hash,
-		ImportTime: time.Now().UnixNano(),
-		FileSource: data.Source,
+		FileHash:    data.Hash,
+		ImportTime:  time.Now().UnixNano(),
+		FileSource:  data.Source,
+		RawFileHash: data.RawHash,
 	})
 	if err != nil {
 		logging.LogError(logger, "Error updating import metadata", err)
