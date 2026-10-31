@@ -397,10 +397,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID), // routeID
-		route.ShortName.String,                         // routeShortName
-		route.LongName.String,                          // routeLongName
+		nulls.StringOrEmpty(route.ShortName),           // routeShortName
+		nulls.StringOrEmpty(route.LongName),            // routeLongName
 		utils.FormCombinedID(route.AgencyID, tripID),   // tripID
-		trip.TripHeadsign.String,                       // tripHeadsign
+		nulls.StringOrEmpty(trip.TripHeadsign),         // tripHeadsign
 		stopID,                                         // stopID
 		vehicleID,                                      // vehicleID
 		serviceStart,                                   // serviceDate
@@ -450,11 +450,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		utils.FormCombinedID(route.AgencyID, tripID),
 		utils.FormCombinedID(route.AgencyID, trip.RouteID),
 		utils.FormCombinedID(route.AgencyID, trip.ServiceID),
-		trip.TripHeadsign.String,
+		nulls.StringOrEmpty(trip.TripHeadsign),
 		"", // trip short name
 		strconv.FormatInt(trip.DirectionID.Int64, 10),
-		utils.FormBlockID(route.AgencyID, trip.BlockID.String, trip.ID),
-		utils.FormCombinedID(route.AgencyID, trip.ShapeID.String),
+		utils.FormBlockID(route.AgencyID, nulls.StringOrEmpty(trip.BlockID), trip.ID),
+		utils.FormCombinedID(route.AgencyID, nulls.StringOrEmpty(trip.ShapeID)),
 	)
 	references.Trips = append(references.Trips, *tripRef)
 
@@ -472,11 +472,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 						utils.FormCombinedID(activeRoute.AgencyID, activeTripID),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.RouteID),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ServiceID),
-						activeTrip.TripHeadsign.String,
+						nulls.StringOrEmpty(activeTrip.TripHeadsign),
 						"", // trip short name
 						strconv.FormatInt(activeTrip.DirectionID.Int64, 10),
-						utils.FormBlockID(activeRoute.AgencyID, activeTrip.BlockID.String, activeTrip.ID),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ShapeID.String),
+						utils.FormBlockID(activeRoute.AgencyID, nulls.StringOrEmpty(activeTrip.BlockID), activeTrip.ID),
+						utils.FormCombinedID(activeRoute.AgencyID, nulls.StringOrEmpty(activeTrip.ShapeID)),
 					)
 					references.Trips = append(references.Trips, *activeTripRef)
 				}
@@ -557,7 +557,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		stopRef := models.Stop{
 			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
-			Name:               stopData.Name.String,
+			Name:               nulls.StringOrEmpty(stopData.Name),
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
@@ -592,13 +592,13 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		routeRefs[combinedID] = models.NewRoute(
 			combinedID,
 			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String)
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor))
 	}
 	references.Routes = utils.MapValues(routeRefs)
 
