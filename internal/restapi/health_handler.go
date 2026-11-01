@@ -40,7 +40,7 @@ func (api *RestAPI) dataFreshness(ctx context.Context) (DataFreshness, error) {
 		importTime := time.Unix(0, metadata.ImportTime).UTC()
 		freshness.StaticGtfsLastUpdated = &importTime
 	}
-	freshness.StaticGtfsHash = metadata.FileHash
+	freshness.StaticGtfsHash = metadata.RawFileHash
 	return freshness, nil
 }
 

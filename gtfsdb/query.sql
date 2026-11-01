@@ -608,10 +608,11 @@ OR REPLACE INTO import_metadata (
     id,
     file_hash,
     import_time,
-    file_source
+    file_source,
+    raw_file_hash
 )
 VALUES
-    (1, ?, ?, ?) RETURNING *;
+    (1, ?, ?, ?, ?) RETURNING *;
 
 -- name: UpdateFeedExpiresAt :exec
 INSERT INTO import_metadata (id, file_hash, import_time, file_source, feed_expires_at)
