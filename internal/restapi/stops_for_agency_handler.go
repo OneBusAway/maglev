@@ -133,9 +133,7 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 	// Build a map of stop ID to route IDs in memory
 	routesByStop := make(map[string][]string)
 	for _, row := range routeIDsRows {
-		if rid, ok := row.RouteID.(string); ok {
-			routesByStop[row.StopID] = append(routesByStop[row.StopID], rid)
-		}
+		routesByStop[row.StopID] = append(routesByStop[row.StopID], utils.FormCombinedID(row.AgencyID, row.RouteID))
 	}
 
 	// Construct the stops list

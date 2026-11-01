@@ -10,6 +10,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -56,7 +57,12 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	currentTime := api.resolveTripQueryTime(params.Time, loc)
 
-	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
+	date := servicedate.Of(currentTime)
+	if params.ServiceDate != nil {
+		date = servicedate.FromInstant(*params.ServiceDate, loc)
+	}
+	serviceDate := date.Midnight(loc)
+	serviceStart := date.Start(loc)
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
 	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
@@ -76,6 +82,9 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 				"tripID", tripID,
 				"error", statusErr)
 			status = nil
+		}
+		if status != nil {
+			startTripStatusAtServiceStart(status, freqMap, tripID, serviceStart, currentTime)
 		}
 	}
 
@@ -101,13 +110,13 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	var frequency *models.Frequency
 	if len(freqRows) > 0 {
 		// TripDetails has one frequency field; take the window-matched row.
-		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceDate, currentTime), serviceDate)
+		converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqRows, serviceStart, currentTime), serviceStart)
 		frequency = &converted
 	}
 
 	entry := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, tripID),
-		ServiceDate:  models.NewModelTime(midnight),
+		ServiceDate:  models.NewModelTime(serviceStart),
 		Frequency:    frequency,
 		Status:       status,
 		Schedule:     schedule,

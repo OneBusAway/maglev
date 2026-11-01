@@ -151,14 +151,6 @@ func (api *RestAPI) BuildVehicleStatus(
 	}
 }
 
-func GetVehicleActiveTripID(vehicle *gtfs.Vehicle) string {
-	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
-		return ""
-	}
-
-	return vehicle.Trip.ID.ID
-}
-
 // wallClockSinceMidnightNs returns nanoseconds from local midnight to t using its
 // wall-clock fields, so the value is unaffected by DST offset changes.
 func wallClockSinceMidnightNs(t time.Time) int64 {

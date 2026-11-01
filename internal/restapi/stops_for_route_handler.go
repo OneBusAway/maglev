@@ -196,12 +196,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, stops []
 	// Organize Routes in Memory
 	routesMap := make(map[string][]string)
 	for _, row := range routeRows {
-		routeID, ok := row.RouteID.(string)
-		stopID := row.StopID
-
-		if ok {
-			routesMap[stopID] = append(routesMap[stopID], routeID)
-		}
+		routesMap[row.StopID] = append(routesMap[row.StopID], utils.FormCombinedID(row.AgencyID, row.RouteID))
 	}
 
 	stopsList := make([]models.Stop, 0, len(stops))
