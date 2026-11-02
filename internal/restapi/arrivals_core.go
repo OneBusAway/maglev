@@ -957,10 +957,10 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID),  // routeID
-		route.ShortName.String,                          // routeShortName
-		route.LongName.String,                           // routeLongName
+		nulls.StringOrEmpty(route.ShortName),            // routeShortName
+		nulls.StringOrEmpty(route.LongName),             // routeLongName
 		utils.FormCombinedID(route.AgencyID, st.TripID), // tripID
-		st.TripHeadsign.String,                          // tripHeadsign
+		nulls.StringOrEmpty(st.TripHeadsign),            // tripHeadsign
 		in.stopID,                                       // stopID
 		vehicleID,                                       // vehicleID
 		serviceStart,                                    // serviceDate
@@ -1243,11 +1243,11 @@ func (api *RestAPI) appendTripReferences(ctx context.Context, references *models
 			utils.FormCombinedID(routeAgencyID, trip.ID),        // Use route agency for trip ID
 			utils.FormCombinedID(routeAgencyID, trip.RouteID),   // Use route agency for route ID
 			utils.FormCombinedID(routeAgencyID, trip.ServiceID), // Use route agency for service ID
-			trip.TripHeadsign.String,
+			nulls.StringOrEmpty(trip.TripHeadsign),
 			"",
 			strconv.FormatInt(trip.DirectionID.Int64, 10),
-			utils.FormBlockID(routeAgencyID, trip.BlockID.String, trip.ID), // Use route agency for block ID
-			utils.FormCombinedID(routeAgencyID, trip.ShapeID.String),       // Use route agency for shape ID
+			utils.FormBlockID(routeAgencyID, nulls.StringOrEmpty(trip.BlockID), trip.ID), // Use route agency for block ID
+			utils.FormCombinedID(routeAgencyID, nulls.StringOrEmpty(trip.ShapeID)),       // Use route agency for shape ID
 		)
 		references.Trips = append(references.Trips, *tripRef)
 	}
@@ -1280,7 +1280,7 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 
 		references.Stops = append(references.Stops, models.Stop{
 			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
-			Name:               stopData.Name.String,
+			Name:               nulls.StringOrEmpty(stopData.Name),
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
@@ -1364,13 +1364,13 @@ func (api *RestAPI) appendRouteReferences(ctx context.Context, references *model
 		references.Routes = append(references.Routes, models.NewRoute(
 			utils.FormCombinedID(route.AgencyID, route.ID),
 			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String))
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor)))
 
 		// Add route agency to references if not already added
 		if !addedAgencyIDs[route.AgencyID] {
