@@ -247,9 +247,12 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 	}
 
-	// Set current time
+	// Java treats time=0 as not supplied on this endpoint only
+	// (ArrivalAndDepartureForStopAction.java:105-106) and uses the current
+	// time. The plural arrivals-and-departures-for-stop endpoint does not:
+	// a supplied 0 stays 1970.
 	var currentTime time.Time
-	if params.Time != nil {
+	if params.Time != nil && params.Time.UnixMilli() != 0 {
 		currentTime = *params.Time
 	} else {
 		currentTime = api.Clock.Now().In(loc)
