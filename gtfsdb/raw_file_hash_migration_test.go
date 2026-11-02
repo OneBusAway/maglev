@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"maglev.onebusaway.org/internal/appconf"
 )
 
 // TestEnsureRawFileHashColumnAddsMissingColumn covers a database created
@@ -36,4 +38,35 @@ func TestEnsureRawFileHashColumnAddsMissingColumn(t *testing.T) {
 	).Scan(&present)
 	require.NoError(t, err)
 	assert.Equal(t, 1, present)
+}
+
+// TestStoreGtfsDataRawHashOnlyChangeKeepsImportedData checks that a change to
+// the raw hash alone updates raw_file_hash without reporting a new import, so
+// the imported tables are left alone.
+func TestStoreGtfsDataRawHashOnlyChangeKeepsImportedData(t *testing.T) {
+	ctx := context.Background()
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	defer client.Close()
+
+	_, err = client.Queries.UpsertImportMetadata(ctx, UpsertImportMetadataParams{
+		FileHash:    "abcdef0123",
+		ImportTime:  1,
+		FileSource:  "feed.zip",
+		RawFileHash: "oldraw0123",
+	})
+	require.NoError(t, err)
+
+	imported, err := client.StoreGtfsData(ctx, &GtfsData{
+		Hash:    "abcdef0123",
+		RawHash: "newraw0123",
+		Source:  "feed.zip",
+	})
+	require.NoError(t, err)
+	assert.False(t, imported, "a raw-only change must not trigger a reimport")
+
+	md, err := client.Queries.GetImportMetadata(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "newraw0123", md.RawFileHash)
+	assert.Equal(t, "abcdef0123", md.FileHash)
 }

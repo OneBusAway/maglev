@@ -251,14 +251,21 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		// We have existing metadata, check if hash matches. A database written
 		// before raw_file_hash existed has no raw hash, so it is reimported once
 		// to record it.
+		// Only the post-tidy hash and source decide whether the tables need rebuilding.
+		// A raw-hash change alone leaves the imported data unchanged.
 		isUnchanged := existingMetadata.FileHash == data.Hash &&
-			existingMetadata.FileSource == data.Source &&
-			existingMetadata.RawFileHash == data.RawHash
+			existingMetadata.FileSource == data.Source
 		if isUnchanged {
 			// Refresh derived metadata even when the feed is unchanged, so existing
 			// databases pick up corrections to the expiry calculation on upgrade.
 			if err := c.withTransaction(ctx, nil, "refresh_feed_expiry", func(tx *sql.Tx) error {
-				return updateFeedExpiresAtFromCalendar(ctx, c.Queries.WithTx(tx))
+				qtx := c.Queries.WithTx(tx)
+				if existingMetadata.RawFileHash != data.RawHash {
+					if err := qtx.UpdateImportRawFileHash(ctx, data.RawHash); err != nil {
+						return fmt.Errorf("failed to update raw file hash: %w", err)
+					}
+				}
+				return updateFeedExpiresAtFromCalendar(ctx, qtx)
 			}); err != nil {
 				return false, fmt.Errorf("failed to refresh feed expiry: %w", err)
 			}

@@ -5618,6 +5618,15 @@ func (q *Queries) UpdateFeedExpiresAt(ctx context.Context, feedExpiresAt sql.Nul
 	return err
 }
 
+const updateImportRawFileHash = `-- name: UpdateImportRawFileHash :exec
+UPDATE import_metadata SET raw_file_hash = ? WHERE id = 1
+`
+
+func (q *Queries) UpdateImportRawFileHash(ctx context.Context, rawFileHash string) error {
+	_, err := q.exec(ctx, q.updateImportRawFileHashStmt, updateImportRawFileHash, rawFileHash)
+	return err
+}
+
 const updateImportTime = `-- name: UpdateImportTime :exec
 INSERT INTO import_metadata (id, file_hash, import_time, file_source)
 VALUES (1, '', ?, '')
