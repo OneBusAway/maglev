@@ -1,7 +1,10 @@
 package restapi
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -153,4 +156,199 @@ func TestFindSituationAlertPrefersPublishedID(t *testing.T) {
 
 	_, ok = findSituationAlert([]gtfs.Alert{published}, "40", "40_late")
 	assert.False(t, ok)
+}
+
+func TestSituationHandler_ParityAllAffectsAndConsequences(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	db := api.GtfsManager.GtfsDB.DB
+
+	// Add an underscore route to DB under agency 25 to test raw underscore qualification
+	_, err := db.Exec(`INSERT INTO routes (id, agency_id, short_name, type) VALUES ('r_under', '25', 'Under', 3)`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = db.Exec(`DELETE FROM routes WHERE id = 'r_under'`)
+	})
+
+	agency40 := "40"
+	route2Line := "2LINE"
+	stop20770 := "20770"
+	api.GtfsManager.MockAddAlert("feed-40", gtfs.Alert{
+		ID:     "20770",
+		Effect: 4, // DETOUR -> condition "", empty conditionDetails
+		InformedEntities: []gtfs.AlertInformedEntity{
+			{
+				AgencyID: &agency40,
+				RouteID:  &route2Line,
+				StopID:   &stop20770,
+			},
+		},
+		Header: []gtfs.AlertText{{Text: "Detour on 2LINE", Language: "en"}},
+	})
+
+	route151 := "151"
+	api.GtfsManager.MockAddAlert("feed-a", gtfs.Alert{
+		ID:     "alert-route1",
+		Effect: 1, // NO_SERVICE
+		InformedEntities: []gtfs.AlertInformedEntity{
+			{
+				// Selector agency is 40, but route 151 belongs to agency 25 in DB.
+				// Java looks up the raw route in the DB and uses route agency (25_151).
+				AgencyID: &agency40,
+				RouteID:  &route151,
+			},
+		},
+		Header: []gtfs.AlertText{{Text: "No service on route 1", Language: "en"}},
+	})
+
+	api.GtfsManager.MockAddAlert("feed-a", gtfs.Alert{
+		ID:     "alert-no-effect",
+		Effect: gtfs.UnknownEffect, // 8 -> proto default / absent effect
+		InformedEntities: []gtfs.AlertInformedEntity{
+			{
+				AgencyID: &agency40,
+				RouteID:  &route2Line,
+			},
+		},
+		Header: []gtfs.AlertText{{Text: "Info only", Language: "en"}},
+	})
+
+	rawUnder := "r_under"
+	alreadyPrefixed := "25_151"
+	tripID := "TRIP_1"
+	tripRoute := "TRIP_ROUTE"
+	api.GtfsManager.MockAddAlert("feed-a", gtfs.Alert{
+		ID:     "alert-underscores",
+		Effect: 2, // REDUCED_SERVICE
+		InformedEntities: []gtfs.AlertInformedEntity{
+			{
+				AgencyID: &agency40,
+				RouteID:  &rawUnder,
+			},
+			{
+				AgencyID: &agency40,
+				RouteID:  &alreadyPrefixed,
+			},
+			{
+				AgencyID: &agency40,
+				TripID: &gtfs.TripID{
+					ID:      tripID,
+					RouteID: tripRoute,
+				},
+			},
+		},
+		Header: []gtfs.AlertText{{Text: "Underscores and trip route", Language: "en"}},
+	})
+
+	api.GtfsManager.MockAddAlert("feed-a", gtfs.Alert{
+		ID:     "alert-no-effect-present",
+		Effect: gtfs.NoEffect, // 10 -> Java adds consequence for any effect present
+		InformedEntities: []gtfs.AlertInformedEntity{
+			{
+				AgencyID: &agency40,
+				RouteID:  &route2Line,
+			},
+		},
+		Header: []gtfs.AlertText{{Text: "No effect on service", Language: "en"}},
+	})
+
+	tripRouteFallback := "TRIP_ROUTE_ONLY"
+	api.GtfsManager.MockAddAlert("feed-a", gtfs.Alert{
+		ID:     "alert-trip-route-fallback",
+		Effect: 4, // DETOUR
+		InformedEntities: []gtfs.AlertInformedEntity{
+			{
+				AgencyID: &agency40,
+				TripID: &gtfs.TripID{
+					ID:      "", // empty trip_id
+					RouteID: tripRouteFallback,
+				},
+			},
+		},
+		Header: []gtfs.AlertText{{Text: "Trip route fallback", Language: "en"}},
+	})
+
+	t.Run("prefixes routeId and stopId with agency and sets consequence condition", func(t *testing.T) {
+		resp, model := callAPIHandler[SituationResponse](t, api, "/api/where/situation/40_20770.json?key=TEST")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "40_20770", model.Data.Entry.ID)
+
+		require.Len(t, model.Data.Entry.AllAffects, 1)
+		affect := model.Data.Entry.AllAffects[0]
+		assert.Equal(t, "40", affect.AgencyID)
+		assert.Equal(t, "40_2LINE", affect.RouteID, "routeId must be prefixed with agencyId")
+		assert.Equal(t, "40_20770", affect.StopID, "stopId must be prefixed with agencyId")
+
+		require.Len(t, model.Data.Entry.Consequences, 1)
+		assert.Equal(t, "", model.Data.Entry.Consequences[0].Condition)
+		consequenceJSON, err := json.Marshal(model.Data.Entry.Consequences[0].ConditionDetails)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"diversionPath":{"length":0,"levels":"","points":""},"diversionStopIds":[]}`, string(consequenceJSON))
+
+		server := httptest.NewServer(api.SetupAPIRoutes())
+		defer server.Close()
+		httpResp, err := http.Get(server.URL + "/api/where/situation/40_20770.json?key=TEST")
+		require.NoError(t, err)
+		body, err := io.ReadAll(httpResp.Body)
+		require.NoError(t, err)
+		_ = httpResp.Body.Close()
+		assert.Contains(t, string(body), `"conditionDetails":{"diversionPath":{"length":0,"levels":"","points":""},"diversionStopIds":[]}`)
+	})
+
+	t.Run("resolves route agency from DB even when selector specifies a different agency", func(t *testing.T) {
+		resp, model := callAPIHandler[SituationResponse](t, api, "/api/where/situation/40_alert-route1.json?key=TEST")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "40_alert-route1", model.Data.Entry.ID)
+
+		require.Len(t, model.Data.Entry.AllAffects, 1)
+		affect := model.Data.Entry.AllAffects[0]
+		assert.Equal(t, "40", affect.AgencyID, "agencyId is preserved from selector")
+		assert.Equal(t, "25_151", affect.RouteID, "routeId must be prefixed with route agency from DB")
+
+		require.Len(t, model.Data.Entry.Consequences, 1)
+		assert.Equal(t, "", model.Data.Entry.Consequences[0].Condition)
+	})
+
+	t.Run("emits empty consequences when alert effect is unset or unknown_effect", func(t *testing.T) {
+		resp, model := callAPIHandler[SituationResponse](t, api, "/api/where/situation/40_alert-no-effect.json?key=TEST")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "40_alert-no-effect", model.Data.Entry.ID)
+
+		assert.Empty(t, model.Data.Entry.Consequences, "consequences must be empty array when effect is unset")
+	})
+
+	t.Run("qualifies raw underscore IDs, preserves already-prefixed IDs, and ignores trip routeId when trip_id is present", func(t *testing.T) {
+		resp, model := callAPIHandler[SituationResponse](t, api, "/api/where/situation/40_alert-underscores.json?key=TEST")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		require.Len(t, model.Data.Entry.AllAffects, 3)
+		assert.Equal(t, "25_r_under", model.Data.Entry.AllAffects[0].RouteID, "raw underscore route ID in DB should be prefixed with DB agency")
+		assert.Equal(t, "25_151", model.Data.Entry.AllAffects[1].RouteID, "already prefixed route ID should be preserved")
+		assert.Equal(t, "40_TRIP_1", model.Data.Entry.AllAffects[2].TripID)
+		assert.Empty(t, model.Data.Entry.AllAffects[2].RouteID, "routeId must not be populated from trip.route_id when trip_id is present")
+	})
+
+	t.Run("emits consequence for NO_EFFECT matching Java", func(t *testing.T) {
+		resp, model := callAPIHandler[SituationResponse](t, api, "/api/where/situation/40_alert-no-effect-present.json?key=TEST")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "40_alert-no-effect-present", model.Data.Entry.ID)
+
+		require.Len(t, model.Data.Entry.Consequences, 1)
+		assert.Equal(t, "", model.Data.Entry.Consequences[0].Condition)
+		consequenceJSON, err := json.Marshal(model.Data.Entry.Consequences[0].ConditionDetails)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"diversionPath":{"length":0,"levels":"","points":""},"diversionStopIds":[]}`, string(consequenceJSON))
+	})
+
+	t.Run("populates routeId from trip route_id when trip_id is empty", func(t *testing.T) {
+		resp, model := callAPIHandler[SituationResponse](t, api, "/api/where/situation/40_alert-trip-route-fallback.json?key=TEST")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "40_alert-trip-route-fallback", model.Data.Entry.ID)
+
+		require.Len(t, model.Data.Entry.AllAffects, 1)
+		affect := model.Data.Entry.AllAffects[0]
+		assert.Equal(t, "40_TRIP_ROUTE_ONLY", affect.RouteID)
+		assert.Empty(t, affect.TripID)
+	})
 }
