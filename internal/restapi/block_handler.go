@@ -209,12 +209,12 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		routes = append(routes, models.Route{
 			ID:          routeID,
 			AgencyID:    agencyID,
-			ShortName:   route.ShortName.String,
-			LongName:    route.LongName.String,
-			Description: route.Desc.String,
+			ShortName:   nulls.StringOrEmpty(route.ShortName),
+			LongName:    nulls.StringOrEmpty(route.LongName),
+			Description: nulls.StringOrEmpty(route.Desc),
 			Type:        models.RouteType(route.Type),
-			Color:       route.Color.String,
-			TextColor:   route.TextColor.String,
+			Color:       nulls.StringOrEmpty(route.Color),
+			TextColor:   nulls.StringOrEmpty(route.TextColor),
 		})
 	}
 
@@ -228,8 +228,8 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 	for _, stop := range batchedStops {
 		stops = append(stops, models.Stop{
 			ID:             utils.FormCombinedID(agencyID, stop.ID),
-			Name:           stop.Name.String,
-			Code:           stop.Code.String,
+			Name:           nulls.StringOrEmpty(stop.Name),
+			Code:           nulls.StringOrEmpty(stop.Code),
 			Lat:            stop.Lat,
 			Lon:            stop.Lon,
 			Direction:      api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
@@ -256,9 +256,9 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 			RouteID:      utils.FormCombinedID(agencyID, trip.RouteID),
 			ServiceID:    utils.FormCombinedID(agencyID, trip.ServiceID),
 			DirectionID:  strconv.FormatInt(trip.DirectionID.Int64, 10),
-			BlockID:      utils.FormCombinedID(agencyID, trip.BlockID.String),
-			ShapeID:      utils.FormCombinedID(agencyID, trip.ShapeID.String),
-			TripHeadsign: trip.TripHeadsign.String,
+			BlockID:      utils.FormCombinedID(agencyID, nulls.StringOrEmpty(trip.BlockID)),
+			ShapeID:      utils.FormCombinedID(agencyID, nulls.StringOrEmpty(trip.ShapeID)),
+			TripHeadsign: nulls.StringOrEmpty(trip.TripHeadsign),
 		})
 	}
 

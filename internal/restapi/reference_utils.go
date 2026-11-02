@@ -378,17 +378,125 @@ func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []mode
 	return utils.MapValues(agenciesMap)
 }
 
-func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situation {
+// BuildSituationReferences converts GTFS-RT alerts into situation models,
+// prefixing route, stop, and trip IDs in allAffects with their agency from
+// the database, and emitting Java-parity consequence entries.
+func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.Alert) []models.Situation {
 	situations := make([]models.Situation, 0, len(alerts))
 
+	// Pre-collect candidate IDs for batch database lookup to avoid N+1 queries.
+	var routeCandidateIDs []string
+	var stopCandidateIDs []string
+	var tripCandidateIDs []string
+
 	for _, alert := range alerts {
+		for _, entity := range alert.InformedEntities {
+			routeID, stopID, tripID := extractRawEntityIDs(entity)
+
+			if routeID != "" {
+				routeCandidateIDs = append(routeCandidateIDs, routeID)
+				if parts := strings.SplitN(routeID, "_", 2); len(parts) == 2 {
+					routeCandidateIDs = append(routeCandidateIDs, parts[1])
+				}
+			}
+			if stopID != "" {
+				stopCandidateIDs = append(stopCandidateIDs, stopID)
+				if parts := strings.SplitN(stopID, "_", 2); len(parts) == 2 {
+					stopCandidateIDs = append(stopCandidateIDs, parts[1])
+				}
+			}
+			if tripID != "" {
+				tripCandidateIDs = append(tripCandidateIDs, tripID)
+				if parts := strings.SplitN(tripID, "_", 2); len(parts) == 2 {
+					tripCandidateIDs = append(tripCandidateIDs, parts[1])
+				}
+			}
+		}
+	}
+
+	knownAgencies := make(map[string]struct{})
+	routeAgencyMap := make(map[string]string)
+	stopAgencyMap := make(map[string]string)
+	tripAgencyMap := make(map[string]string)
+
+	if api != nil && api.Application != nil && api.GtfsManager != nil && api.GtfsManager.GtfsDB != nil && api.GtfsManager.GtfsDB.Queries != nil {
+		if agencyIDs, err := api.GtfsManager.GtfsDB.Queries.ListAgencyIds(ctx); err == nil {
+			for _, id := range agencyIDs {
+				knownAgencies[id] = struct{}{}
+			}
+		}
+
+		if len(routeCandidateIDs) > 0 {
+			slices.Sort(routeCandidateIDs)
+			uniqueRouteIDs := slices.Compact(routeCandidateIDs)
+			if routes, err := utils.QueryInBatches(ctx, uniqueRouteIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs); err == nil {
+				for _, r := range routes {
+					routeAgencyMap[r.ID] = r.AgencyID
+				}
+			}
+		}
+
+		if len(stopCandidateIDs) > 0 {
+			slices.Sort(stopCandidateIDs)
+			uniqueStopIDs := slices.Compact(stopCandidateIDs)
+			if stopRows, err := utils.QueryInBatches(ctx, uniqueStopIDs, api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops); err == nil {
+				for _, row := range stopRows {
+					if _, exists := stopAgencyMap[row.StopID]; !exists {
+						stopAgencyMap[row.StopID] = row.ID
+					}
+				}
+			}
+		}
+
+		if len(tripCandidateIDs) > 0 {
+			slices.Sort(tripCandidateIDs)
+			uniqueTripIDs := slices.Compact(tripCandidateIDs)
+			if trips, err := utils.QueryInBatches(ctx, uniqueTripIDs, api.GtfsManager.GtfsDB.Queries.GetTripsByIDs); err == nil {
+				var missingRouteIDs []string
+				for _, t := range trips {
+					if agency, ok := routeAgencyMap[t.RouteID]; ok {
+						tripAgencyMap[t.ID] = agency
+					} else {
+						missingRouteIDs = append(missingRouteIDs, t.RouteID)
+					}
+				}
+				if len(missingRouteIDs) > 0 {
+					slices.Sort(missingRouteIDs)
+					uniqueMissing := slices.Compact(missingRouteIDs)
+					if extraRoutes, err := utils.QueryInBatches(ctx, uniqueMissing, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs); err == nil {
+						for _, r := range extraRoutes {
+							routeAgencyMap[r.ID] = r.AgencyID
+						}
+						for _, t := range trips {
+							if agency, ok := routeAgencyMap[t.RouteID]; ok {
+								tripAgencyMap[t.ID] = agency
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	for _, alert := range alerts {
+		consequences := make([]models.SituationConsequence, 0)
+		if alertHasEffect(alert.Effect) {
+			consequences = append(consequences, models.SituationConsequence{
+				Condition: "",
+				ConditionDetails: &models.SituationConditionDetails{
+					DiversionPath:    models.Polyline{},
+					DiversionStopIDs: []string{},
+				},
+			})
+		}
+
 		situation := models.Situation{
 			ID:                 alert.ID,
 			CreationTime:       models.NewModelTime(time.Time{}),
 			ActiveWindows:      make([]models.ActiveWindow, 0, len(alert.ActivePeriods)),
 			AllAffects:         make([]models.AffectedEntity, 0, len(alert.InformedEntities)),
 			ConsequenceMessage: "",
-			Consequences:       []any{},
+			Consequences:       consequences,
 			PublicationWindows: []any{},
 			Reason:             mapAlertCauseToReason(alert.Cause),
 			Severity:           mapAlertEffectToSeverity(alert.Effect),
@@ -406,17 +514,24 @@ func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situa
 		}
 
 		for _, entity := range alert.InformedEntities {
+			rawRouteID, rawStopID, rawTripID := extractRawEntityIDs(entity)
+
+			fallbackAgency := getStringValue(entity.AgencyID)
+			if fallbackAgency == "" {
+				fallbackAgency = agencyIDForAlert(alert, "")
+			}
+
+			routeID := qualifyEntityID(rawRouteID, fallbackAgency, routeAgencyMap, knownAgencies)
+			stopID := qualifyEntityID(rawStopID, fallbackAgency, stopAgencyMap, knownAgencies)
+			tripID := qualifyEntityID(rawTripID, fallbackAgency, tripAgencyMap, knownAgencies)
+
 			affectedEntity := models.AffectedEntity{
 				AgencyID:      getStringValue(entity.AgencyID),
 				ApplicationID: "",
 				DirectionID:   entity.DirectionID.String(),
-				RouteID:       getStringValue(entity.RouteID),
-				StopID:        getStringValue(entity.StopID),
-				TripID:        "",
-			}
-
-			if entity.TripID != nil {
-				affectedEntity.TripID = entity.TripID.ID
+				RouteID:       routeID,
+				StopID:        stopID,
+				TripID:        tripID,
 			}
 
 			situation.AllAffects = append(situation.AllAffects, affectedEntity)
@@ -447,6 +562,59 @@ func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situa
 	}
 
 	return situations
+}
+
+// qualifyEntityID formats an entity identifier with its owning agency ID.
+// If the raw ID is found in the database, that entity agency is used.
+// If the ID is already qualified (e.g. agency_id), it is preserved.
+func qualifyEntityID(id, fallbackAgency string, rawToAgency map[string]string, knownAgencies map[string]struct{}) string {
+	if id == "" {
+		return ""
+	}
+	// 1. If id is directly a raw ID in the database, use that entity agency.
+	if agency, ok := rawToAgency[id]; ok && agency != "" {
+		return utils.FormCombinedID(agency, id)
+	}
+	// 2. If id is split as agency_rawID, check if the agency is known or rawID matches DB.
+	if parts := strings.SplitN(id, "_", 2); len(parts) == 2 {
+		prefixAgency := parts[0]
+		rawID := parts[1]
+		if actualAgency, ok := rawToAgency[rawID]; ok && actualAgency == prefixAgency {
+			return id
+		}
+		if _, ok := knownAgencies[prefixAgency]; ok {
+			return id
+		}
+	}
+	// 3. Fallback to alert/entity agency if available.
+	if fallbackAgency != "" {
+		if strings.HasPrefix(id, fallbackAgency+"_") {
+			return id
+		}
+		return utils.FormCombinedID(fallbackAgency, id)
+	}
+	return id
+}
+
+// extractRawEntityIDs extracts raw route, stop, and trip IDs from an EntitySelector.
+// Java only fills routeId from trip.route_id when trip_id is empty and route_id is not already set.
+func extractRawEntityIDs(entity gtfs.AlertInformedEntity) (routeID, stopID, tripID string) {
+	routeID = getStringValue(entity.RouteID)
+	stopID = getStringValue(entity.StopID)
+	if entity.TripID != nil {
+		tripID = entity.TripID.ID
+		if tripID == "" && routeID == "" && entity.TripID.RouteID != "" {
+			routeID = entity.TripID.RouteID
+		}
+	}
+	return routeID, stopID, tripID
+}
+
+// alertHasEffect reports whether an alert has an effect that warrants a consequence entry.
+// go-gtfs decodes an absent protobuf effect as UNKNOWN_EFFECT (8), not 0.
+// Java GtfsRealtimeAlertLibrary.java:72 adds a consequence whenever an effect is present (including NO_EFFECT).
+func alertHasEffect(effect gtfs.AlertEffect) bool {
+	return effect > 0 && effect != gtfs.UnknownEffect
 }
 
 func getStringValue(ptr *string) string {
@@ -918,7 +1086,7 @@ func (api *RestAPI) situationReferences(ctx context.Context, refs []situationRef
 	}
 
 	reqLogger := logging.ForComponent(ctx, "http_server")
-	situations := api.BuildSituationReferences(alerts)
+	situations := api.BuildSituationReferences(ctx, alerts)
 	if len(situations) != len(refs) {
 		// The ID stamping below pairs by position, so a length change in
 		// BuildSituationReferences would silently mislabel every situation.
