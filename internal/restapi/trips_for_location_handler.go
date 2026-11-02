@@ -239,7 +239,7 @@ func (api *RestAPI) resolveCurrentTime(timeParam string, currentLocation *time.L
 	if timeParam == "" {
 		return api.Clock.Now().In(currentLocation), nil
 	}
-	_, currentTime, timeFieldErrors, _ := utils.ParseTimeParameter(timeParam, currentLocation, api.Clock)
+	_, currentTime, timeFieldErrors, _ := utils.ParseTimeParameterOrNow(timeParam, currentLocation, api.Clock)
 	return currentTime, timeFieldErrors
 }
 

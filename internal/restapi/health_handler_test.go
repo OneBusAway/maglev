@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
 )
 
 func TestHealthHandlerWithNilApplication(t *testing.T) {
@@ -120,6 +121,44 @@ func TestHealthHandlerFeedExpiryUsesUTC(t *testing.T) {
 	assert.Equal(t, "2027-03-14T04:59:59Z", response.FeedExpiresAt)
 }
 
+func TestHealthHandlerFeedExpiryUsesClock(t *testing.T) {
+	manager := newTestManagerNoData(t)
+	manager.MarkReady()
+
+	expiresAt := time.Date(2025, time.June, 15, 0, 0, 0, 0, time.UTC)
+	manager.SetFeedExpiresAtForTest(t.Context(), expiresAt)
+
+	// Set clock before expiresAt -> DataExpired must be false.
+	beforeClock := clock.NewMockClock(time.Date(2025, time.June, 10, 0, 0, 0, 0, time.UTC))
+	apiBefore := NewRestAPI(&app.Application{
+		GtfsManager: manager,
+		Clock:       beforeClock,
+	})
+
+	wBefore := httptest.NewRecorder()
+	apiBefore.healthHandler(wBefore, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	require.Equal(t, http.StatusOK, wBefore.Code)
+
+	var respBefore HealthResponse
+	require.NoError(t, json.NewDecoder(wBefore.Body).Decode(&respBefore))
+	assert.False(t, respBefore.DataExpired, "feed should not be expired before expiry timestamp")
+
+	// Set clock after expiresAt -> DataExpired must be true.
+	afterClock := clock.NewMockClock(time.Date(2025, time.June, 20, 0, 0, 0, 0, time.UTC))
+	apiAfter := NewRestAPI(&app.Application{
+		GtfsManager: manager,
+		Clock:       afterClock,
+	})
+
+	wAfter := httptest.NewRecorder()
+	apiAfter.healthHandler(wAfter, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	require.Equal(t, http.StatusOK, wAfter.Code)
+
+	var respAfter HealthResponse
+	require.NoError(t, json.NewDecoder(wAfter.Body).Decode(&respAfter))
+	assert.True(t, respAfter.DataExpired, "feed should be expired after expiry timestamp")
+}
+
 func TestHealthHandlerStarting(t *testing.T) {
 	// Create a minimal manager but DON'T mark as ready to simulate startup phase
 	manager := newTestManagerNoData(t)
@@ -194,4 +233,30 @@ func TestHealthHandlerVerboseMode(t *testing.T) {
 	require.NotNil(t, healthRespVerbose.DataFreshness)
 	assert.NotNil(t, healthRespVerbose.DataFreshness.StaticGtfsLastUpdated)
 	assert.Contains(t, healthRespVerbose.DataFreshness.RealtimeFeeds, "feed-1")
+}
+
+func TestHealthHandler_VerboseIncludesHash(t *testing.T) {
+	api := createTestApi(t)
+
+	resp, health := callAPIHandler[HealthResponse](t, api, "/healthz?verbose=true")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotNil(t, health.DataFreshness)
+	assert.Equal(t, rabaZipSha256(t), health.DataFreshness.StaticGtfsHash)
+}
+
+func TestHealthHandler_VerboseImportMetadataQueryFails(t *testing.T) {
+	manager := newTestManagerWithoutImportMetadata(t)
+	manager.MarkReady()
+	api := NewRestAPI(&app.Application{GtfsManager: manager})
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz?verbose=true", nil)
+	rr := httptest.NewRecorder()
+	api.healthHandler(rr, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+	var health HealthResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &health))
+	assert.Equal(t, "unavailable", health.Status)
+	assert.Nil(t, health.DataFreshness)
 }

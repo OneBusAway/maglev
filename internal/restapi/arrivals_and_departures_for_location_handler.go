@@ -25,6 +25,8 @@ type arrivalsForLocationParams struct {
 	TimeParam            string
 	Before               time.Duration
 	After                time.Duration
+	FrequencyBefore      time.Duration
+	FrequencyAfter       time.Duration
 	MaxCount             int
 	RouteTypes           []int
 	EmptyReturnsNotFound bool
@@ -80,12 +82,14 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	acc := newArrivalsAccumulator("")
 	pending, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
-		Stops:      stops,
-		Agencies:   agencies,
-		QueryTime:  params.QueryTime,
-		Before:     params.Before,
-		After:      params.After,
-		RouteTypes: params.RouteTypes,
+		Stops:           stops,
+		Agencies:        agencies,
+		QueryTime:       params.QueryTime,
+		Before:          params.Before,
+		After:           params.After,
+		FrequencyBefore: params.FrequencyBefore,
+		FrequencyAfter:  params.FrequencyAfter,
+		RouteTypes:      params.RouteTypes,
 	}, acc)
 	if err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
@@ -829,6 +833,8 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 		QueryTime:         api.Clock.Now(),
 		Before:            5 * time.Minute,
 		After:             35 * time.Minute,
+		FrequencyBefore:   defaultFrequencyBefore,
+		FrequencyAfter:    defaultFrequencyAfter,
 		MaxCount:          models.DefaultMaxCountForArrivalsForLocation,
 		IncludeReferences: true,
 	}
@@ -859,6 +865,8 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 
 	params.Before = parseMinutesValue(queryParams, "minutesBefore", params.Before, maxArrivalWindow, addError)
 	params.After = parseMinutesValue(queryParams, "minutesAfter", params.After, maxArrivalWindow, addError)
+	params.FrequencyBefore = parseMinutesValue(queryParams, "frequencyMinutesBefore", params.FrequencyBefore, maxArrivalWindow, addError)
+	params.FrequencyAfter = parseMinutesValue(queryParams, "frequencyMinutesAfter", params.FrequencyAfter, maxArrivalWindow, addError)
 	// Only epoch millis and yyyy-MM-dd_HH-mm-ss are accepted. In particular
 	// signed values and date-only values fail here, at parse time, so a bad
 	// time reports 400 even when the stop search finds nothing. The datetime
@@ -881,12 +889,16 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 
 // resolveLocationQueryTime turns the validated time parameter into the query
 // instant. Epoch millis are absolute; datetime values read in the fallback
-// agency's timezone. An empty value falls back to now.
+// agency's timezone. An empty value or epoch 0 falls back to now — matching
+// Java, which treats 0 as "not supplied".
 func resolveLocationQueryTime(params arrivalsForLocationParams, agencies *stopAgencyIndex, now time.Time) time.Time {
 	if params.TimeParam == "" {
 		return now
 	}
 	if ms, ok := utils.ParseEpochMillis(params.TimeParam); ok {
+		if ms == 0 {
+			return now
+		}
 		return time.UnixMilli(ms)
 	}
 	parsed, _ := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, agencies.fallbackLocation)

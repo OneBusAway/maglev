@@ -69,7 +69,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	timeParam := r.URL.Query().Get("time")
-	_, currentTime, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation, api.Clock)
+	_, currentTime, fieldErrors, success := utils.ParseTimeParameterOrNow(timeParam, currentLocation, api.Clock)
 	if !success {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return

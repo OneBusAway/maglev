@@ -56,17 +56,3 @@ func findSituationAlert(alerts []gtfs.Alert, agencyID, requested string) (gtfs.A
 	}
 	return gtfs.Alert{}, false
 }
-
-// alertMatchesSituationID reports whether requested names this alert. An empty
-// alert id never matches. The situation id uses the alert's own agency when an
-// informed entity names one, and agencyID otherwise. That is the same fallback
-// situationRefsFromAlerts uses when it publishes situationIds.
-func alertMatchesSituationID(alert gtfs.Alert, agencyID, requested string) bool {
-	if alert.ID == "" || requested == "" {
-		return false
-	}
-	if alert.ID == requested {
-		return true
-	}
-	return situationID(alert.ID, agencyIDForAlert(alert, agencyID)) == requested
-}

@@ -79,6 +79,10 @@ func TestArrivalsAndDeparturesForLocationValidation(t *testing.T) {
 		{"date-only time", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "time": {"2025-06-13"}}, []string{"time"}},
 		{"zero maxCount", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "maxCount": {"0"}}, []string{"maxCount"}},
 		{"negative minutesBefore", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "minutesBefore": {"-5"}}, []string{"minutesBefore"}},
+		{"invalid frequencyMinutesBefore", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesBefore": {"invalid"}}, []string{"frequencyMinutesBefore"}},
+		{"invalid frequencyMinutesAfter", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesAfter": {"invalid"}}, []string{"frequencyMinutesAfter"}},
+		{"negative frequencyMinutesBefore", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesBefore": {"-1"}}, []string{"frequencyMinutesBefore"}},
+		{"negative frequencyMinutesAfter", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesAfter": {"-1"}}, []string{"frequencyMinutesAfter"}},
 		{"non-numeric routeType", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"bus"}}, []string{"routeType"}},
 		{"non-boolean emptyReturnsNotFound", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "emptyReturnsNotFound": {"maybe"}}, []string{"emptyReturnsNotFound"}},
 	}
@@ -128,6 +132,38 @@ func TestArrivalsAndDeparturesForLocationAcceptsDateTimeFormat(t *testing.T) {
 		scheduled := a.ScheduledArrivalTime.UnixMilli()
 		assert.GreaterOrEqual(t, scheduled, windowStart, "arrival scheduled before the requested window")
 		assert.LessOrEqual(t, scheduled, windowEnd, "arrival scheduled after the requested window")
+	}
+}
+
+// Java treats time=0 as "not supplied" (SystemTime.currentTimeMillis). With a
+// mock clock pinned to a fixture service day, omitted time and time=0 must
+// return the same non-empty results — not the empty set for 1970-01-01.
+func TestArrivalsAndDeparturesForLocationTimeZeroMatchesOmitted(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	respOmit, omit := callArrivalsForLocation(t, api)
+	respZero, zero := callArrivalsForLocation(t, api, url.Values{"time": {"0"}})
+
+	require.Equal(t, http.StatusOK, respOmit.StatusCode)
+	require.Equal(t, http.StatusOK, respZero.StatusCode)
+	assert.Empty(t, omit.Data.FieldErrors)
+	assert.Empty(t, zero.Data.FieldErrors)
+
+	omitEntry := omit.Data.Entry
+	zeroEntry := zero.Data.Entry
+	require.NotEmpty(t, omitEntry.ArrivalsAndDepartures, "fixture date must have arrivals when time is omitted")
+	require.NotEmpty(t, zeroEntry.ArrivalsAndDepartures, "time=0 must use now, not 1970-01-01")
+
+	assert.Equal(t, omitEntry.StopIDs, zeroEntry.StopIDs)
+	assert.Equal(t, omitEntry.NearbyStopIDs, zeroEntry.NearbyStopIDs)
+	require.Equal(t, len(omitEntry.ArrivalsAndDepartures), len(zeroEntry.ArrivalsAndDepartures))
+	for i := range omitEntry.ArrivalsAndDepartures {
+		a, b := omitEntry.ArrivalsAndDepartures[i], zeroEntry.ArrivalsAndDepartures[i]
+		assert.Equal(t, a.TripID, b.TripID, "arrival[%d].TripID", i)
+		assert.Equal(t, a.StopID, b.StopID, "arrival[%d].StopID", i)
+		assert.Equal(t, a.ServiceDate, b.ServiceDate, "arrival[%d].ServiceDate", i)
+		assert.Equal(t, a.ScheduledArrivalTime, b.ScheduledArrivalTime, "arrival[%d].ScheduledArrivalTime", i)
 	}
 }
 
@@ -210,6 +246,38 @@ func TestArrivalsAndDeparturesForLocationIncludesStopAlertsWithoutArrivals(t *te
 		return situation.ID == wantSituationID
 	})
 	assert.True(t, referenced, "the stop alert must resolve in references.situations")
+}
+
+func TestArrivalsAndDeparturesForLocationIncludesAgencyAlertsWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencyID := testdata.Raba.ID
+	const alertID = "location-no-arrivals-agency-alert"
+	api.GtfsManager.AddAlertForTest(gtfs.Alert{
+		ID:               alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agencyID}},
+		Header:           []gtfs.AlertText{{Text: "Agency alert without arrivals", Language: "en"}},
+	})
+
+	quietTime := time.Date(2025, 6, 13, 3, 0, 0, 0, arrivalsTestClock.Location())
+	resp, model := callArrivalsForLocation(t, api, url.Values{
+		"time":          {strconv.FormatInt(quietTime.UnixMilli(), 10)},
+		"minutesBefore": {"0"},
+		"minutesAfter":  {"0"},
+	})
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the quiet-time query must have no arrivals")
+
+	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+	assert.Contains(t, model.Data.Entry.SituationIDs, wantSituationID)
+	referenced := slices.ContainsFunc(model.Data.References.Situations, func(situation models.Situation) bool {
+		return situation.ID == wantSituationID
+	})
+	assert.True(t, referenced, "the agency alert must resolve in references.situations")
 }
 
 // stopIds come nearest first so maxCount truncation drops the farthest
