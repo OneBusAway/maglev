@@ -150,17 +150,24 @@ All endpoints are registered in `internal/restapi/routes.go`:
 
 | Endpoint | Handler | Description |
 |----------|---------|-------------|
+| `/healthz` | `health_handler.go` | Server health and feed freshness |
+| `/api/v2/metadata.json` | `metadata_handler.go` | GTFS data freshness and loaded bundle |
 | `/api/where/current-time.json` | `current_time_handler.go` | Server time |
+| `/api/where/config.json` | `config_handler.go` | Build and Git metadata |
+| `/api/where/metrics.json` | `metrics_handler.go` | Feed metrics and diagnostics |
 | `/api/where/agencies-with-coverage.json` | `agencies_with_coverage_handler.go` | All agencies with coverage areas |
 | `/api/where/agency/{id}` | `agency_handler.go` | Single agency details |
 | `/api/where/routes-for-agency/{id}` | `routes_for_agency_handler.go` | Routes for an agency |
 | `/api/where/route-ids-for-agency/{id}` | `route_ids_for_agency_handler.go` | Route IDs only |
+| `/api/where/route/{id}` | `route_handler.go` | Single route details |
+| `/api/where/routes-for-location.json` | `routes_for_location_handler.go` | Routes near coordinates |
+| `/api/where/search/route.json` | `route_search_handler.go` | Search routes by name |
 | `/api/where/stops-for-agency/{id}` | `stops_for_agency_handler.go` | Stops for an agency |
-| `/api/where/stop-ids-for-agency/{id}` | `stop-ids-for-agency_handler.go` | Stop IDs only |
+| `/api/where/stop-ids-for-agency/{id}` | `stop_ids_for_agency_handler.go` | Stop IDs only |
 | `/api/where/stop/{id}` | `stop_handler.go` | Single stop details |
 | `/api/where/stops-for-location.json` | `stops_for_location_handler.go` | Stops near coordinates |
 | `/api/where/stops-for-route/{id}` | `stops_for_route_handler.go` | Stops on a route |
-| `/api/where/routes-for-location.json` | `routes_for_location_handler.go` | Routes near coordinates |
+| `/api/where/search/stop.json` | `search_stops_handler.go` | Search stops by name |
 | `/api/where/trip/{id}` | `trip_handler.go` | Single trip details |
 | `/api/where/trip-details/{id}` | `trip_details_handler.go` | Extended trip info with status |
 | `/api/where/trips-for-route/{id}` | `trips_for_route_handler.go` | Trips on a route |
@@ -171,10 +178,16 @@ All endpoints are registered in `internal/restapi/routes.go`:
 | `/api/where/shape/{id}` | `shapes_handler.go` | Polyline shape data |
 | `/api/where/schedule-for-stop/{id}` | `schedule_for_stop_handler.go` | Stop schedule |
 | `/api/where/schedule-for-route/{id}` | `schedule_for_route_handler.go` | Route schedule |
-| `/api/where/arrival-and-departure-for-stop/{id}` | `arrival_and_departure_for_stop_handler.go` | Single arrival |
-| `/api/where/arrivals-and-departures-for-stop/{id}` | `arrival_and_departure_for_stop_handler.go` | All arrivals |
+| `/api/where/arrival-and-departure-for-stop/{id}` | `arrival_and_departure_for_stop_handler.go` | Single arrival and departure for a stop |
+| `/api/where/arrivals-and-departures-for-stop/{id}` | `arrivals_and_departures_for_stop_handler.go` | Arrivals and departures for a stop |
+| `/api/where/arrivals-and-departures-for-location.json` | `arrivals_and_departures_for_location_handler.go` | Arrivals and departures near coordinates |
+| `/api/where/situation/{id}` | `situation_handler.go` | Service alert details |
 | `/api/where/report-problem-with-trip/{id}` | `report_problem_with_trip_handler.go` | Report trip issue |
+| `/api/where/report-problem-with-trip.json` | `report_problem_with_trip_handler.go` | Report trip issue (query-param variant) |
 | `/api/where/report-problem-with-stop/{id}` | `report_problem_with_stop_handler.go` | Report stop issue |
+| `/api/where/report-problem-with-stop.json` | `report_problem_with_stop_handler.go` | Report stop issue (query-param variant) |
+| `/api/where/problem-reports-for-trip/{id}` | `problem_reports_for_trip_handler.go` | Problem reports for a trip (protected key) |
+| `/api/where/problem-reports-for-stop/{id}` | `problem_reports_for_stop_handler.go` | Problem reports for a stop (protected key) |
 | `/api/gtfs_realtime/vehicle-positions-for-agency/{id}.pb` | `vehicle_positions_for_agency_handler.go` | GTFS-RT vehicle positions for an agency |
 
 ## Middleware Components
