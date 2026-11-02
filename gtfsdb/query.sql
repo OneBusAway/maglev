@@ -864,6 +864,34 @@ WHERE
 ORDER BY
     id;
 
+-- name: GetBlockDetailsForTrip :many
+SELECT
+    t.service_id,
+    t.id as trip_id,
+    t.route_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.pickup_type,
+    st.drop_off_type,
+    s.lat,
+    s.lon
+FROM
+    trips t
+        JOIN
+    routes r ON r.id = t.route_id
+        JOIN
+    stop_times st ON t.id = st.trip_id
+        JOIN
+    stops s ON st.stop_id = s.id
+WHERE
+    t.id = sqlc.arg(trip_id)
+    AND r.agency_id = sqlc.arg(agency_id)
+    AND (t.block_id IS NULL OR length(t.block_id) = 0)
+ORDER BY
+    t.id ASC, st.stop_sequence ASC;
+
 -- name: GetBlockDetails :many
 SELECT
     t.service_id,
