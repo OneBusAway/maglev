@@ -889,12 +889,16 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 
 // resolveLocationQueryTime turns the validated time parameter into the query
 // instant. Epoch millis are absolute; datetime values read in the fallback
-// agency's timezone. An empty value falls back to now.
+// agency's timezone. An empty value or epoch 0 falls back to now — matching
+// Java, which treats 0 as "not supplied".
 func resolveLocationQueryTime(params arrivalsForLocationParams, agencies *stopAgencyIndex, now time.Time) time.Time {
 	if params.TimeParam == "" {
 		return now
 	}
 	if ms, ok := utils.ParseEpochMillis(params.TimeParam); ok {
+		if ms == 0 {
+			return now
+		}
 		return time.UnixMilli(ms)
 	}
 	parsed, _ := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, agencies.fallbackLocation)
@@ -933,12 +937,12 @@ func parseRouteTypesParam(queryParams map[string][]string, addError func(string,
 		if token == "" {
 			continue
 		}
-		routeType, err := strconv.Atoi(token)
+		routeType, err := strconv.ParseInt(token, 10, 32)
 		if err != nil {
 			addError("routeType", "must be a comma-delimited list of integers")
 			return nil
 		}
-		routeTypes = append(routeTypes, routeType)
+		routeTypes = append(routeTypes, int(routeType))
 	}
 	return routeTypes
 }

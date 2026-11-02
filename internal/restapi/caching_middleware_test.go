@@ -3,6 +3,7 @@ package restapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -210,6 +211,8 @@ func TestETagMiddleware_StaticFeedHash(t *testing.T) {
 	require.Equal(t, http.StatusOK, first.StatusCode)
 	etag := first.Header.Get("ETag")
 	require.NotEmpty(t, etag)
+	assert.True(t, strings.HasPrefix(etag, `W/"`), "static endpoint must provide a weak ETag")
+	assert.Regexp(t, `^W/"[0-9a-fA-F]+"$`, etag, "static endpoint must provide a weak quoted ETag per RFC 9110 section 8.8.3")
 
 	for _, tt := range []struct {
 		name         string
