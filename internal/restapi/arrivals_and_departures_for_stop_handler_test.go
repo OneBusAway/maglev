@@ -831,7 +831,7 @@ func TestPluralArrivals_PriorStopPropagation(t *testing.T) {
 	assert.Equal(t, scheduledArrivalMs+90000, arrival.PredictedArrivalTime.UnixMilli(),
 		"predicted arrival should be scheduled + propagated 90s delay")
 	assert.Equal(t, scheduledDepartureMs+90000, arrival.PredictedDepartureTime.UnixMilli(),
-		"predicted departure should be scheduled + propagated 90s delay")
+		"a single prior update keeps the full delay on the departure")
 }
 
 // TestPluralArrivals_TripLevelDelayFallback verifies that when a TripUpdate has a
@@ -866,7 +866,7 @@ func TestPluralArrivals_TripLevelDelayFallback(t *testing.T) {
 		assert.Equal(t, scheduledArrivalMs+120000, a.PredictedArrivalTime.UnixMilli(),
 			"predicted arrival should be scheduled + trip-level 120s delay")
 		assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli(),
-			"predicted departure should be scheduled + trip-level 120s delay")
+			"a trip delay next to a stop update keeps the full delay on the departure")
 		break
 	}
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
@@ -902,7 +902,8 @@ func TestPluralArrivals_TripLevelDelayWithoutVehicle(t *testing.T) {
 		found = true
 		assert.True(t, a.Predicted, "trip-level delay without vehicle should still be predicted")
 		assert.Equal(t, scheduledArrivalMs+120000, a.PredictedArrivalTime.UnixMilli())
-		assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli())
+		assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli(),
+			"a trip delay next to a stop update keeps the full delay on the departure")
 		break
 	}
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
