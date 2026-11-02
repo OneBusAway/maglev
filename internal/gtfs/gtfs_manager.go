@@ -688,7 +688,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	requestedBlockID := requestedTrip.BlockID.String
+	requestedBlockID := nulls.StringOrEmpty(requestedTrip.BlockID)
 
 	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
