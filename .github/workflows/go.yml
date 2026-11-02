@@ -17,14 +17,14 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
 
-      - name: Check go fmt
+      - name: Check gofmt
         run: |
-          unformatted=$(go fmt ./...)
+          unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
             echo "The following files are not formatted:"
             echo "$unformatted"
             echo ""
-            echo "To fix, run locally: go fmt ./..."
+            echo "To fix, run locally: gofmt -w ."
             exit 1
           fi
 
