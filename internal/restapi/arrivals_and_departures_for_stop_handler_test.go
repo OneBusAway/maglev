@@ -952,6 +952,67 @@ func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
 }
 
+func TestPluralArrivals_TripUpdateWithoutUsableDeviation(t *testing.T) {
+	tests := []struct {
+		name        string
+		addTripData func(*testing.T, *RestAPI, string, string)
+		wantPredict bool
+	}{
+		{
+			name: "empty stop time update predicts scheduled times",
+			addTripData: func(_ *testing.T, api *RestAPI, tripID, _ string) {
+				seq := uint32(2)
+				stopID := "dp-downstream-stop"
+				api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{{
+					StopSequence: &seq,
+					StopID:       &stopID,
+				}})
+			},
+			wantPredict: true,
+		},
+		{
+			name: "canceled trip update stays unpredicted",
+			addTripData: func(_ *testing.T, api *RestAPI, tripID, _ string) {
+				api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+					ID: gtfs.TripID{
+						ID:                   tripID,
+						ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
+					},
+				}})
+			},
+		},
+		{
+			name: "no trip update stays unpredicted",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+			api := createTestApiWithClock(t, mockClock)
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			_, combinedStopID, tripID, scheduledArrivalMs := setupDelayPropTestData(t, api, 1)
+			if tt.addTripData != nil {
+				tt.addTripData(t, api, tripID, "dp-stop")
+			}
+
+			_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
+			arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures,
+				utils.FormCombinedID("dp-agency", tripID))
+			assert.Equal(t, tt.wantPredict, arrival.Predicted)
+			if tt.wantPredict {
+				assert.Equal(t, scheduledArrivalMs, arrival.PredictedArrivalTime.UnixMilli())
+				assert.Equal(t, scheduledArrivalMs+5*60*1000, arrival.PredictedDepartureTime.UnixMilli())
+			} else {
+				assert.True(t, arrival.PredictedArrivalTime.IsZero())
+				assert.True(t, arrival.PredictedDepartureTime.IsZero())
+			}
+		})
+	}
+}
+
 // TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime is the
 // handler-level regression for the blockNotActive discard signal. When the
 // trip-level delay exceeds 1h, the GetScheduleDeviationForBlock helper

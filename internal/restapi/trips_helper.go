@@ -29,9 +29,9 @@ import (
 type tripStatusExtras struct {
 	snapshot   *scheduledBlockSnapshot
 	situations []situationRef
-	// deviationResolved reports that status.ScheduleDeviation came from a
-	// TripUpdate inside Java's blockNotActive window, rather than defaulting
-	// to 0.
+	// deviationResolved reports that the block had a retained, non-canceled
+	// TripUpdate inside Java's blockNotActive window, including when its
+	// schedule deviation defaults to 0.
 	deviationResolved bool
 	// blockTripIDs are the block's trips in start order, from which Java
 	// builds its per-stop deviation samples.
@@ -663,8 +663,8 @@ type scheduleDeviationFallback struct {
 // and applyBlockLocationToBean:
 //
 //   - Canceled trips are never predicted.
-//   - Without a resolved deviation there is nothing to apply: either no
-//     TripUpdate exists, or Java's blockNotActive guard discarded it.
+//   - Without a resolved deviation there is nothing to apply: there was no
+//     non-canceled TripUpdate, or Java's blockNotActive guard discarded it.
 //   - When the block's StopTimeUpdates yield deviation samples,
 //     getBestScheduleDeviation takes the last sample at or before the stop
 //     and refuses to propagate upstream, so a stop before every sample is

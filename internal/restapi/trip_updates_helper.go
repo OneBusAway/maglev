@@ -26,7 +26,8 @@ type StopDelayInfo struct {
 }
 
 // GetScheduleDeviationForBlock returns the schedule deviation in seconds
-// (positive = late) across every TripUpdate matching any tripID. Mirrors
+// (positive = late) across every non-canceled TripUpdate matching any tripID.
+// A retained update with no usable deviation resolves to zero. Mirrors
 // Java's GtfsRealtimeTripLibrary.applyTripUpdatesToRecord (lines 932-1014):
 //
 //  1. LAST trip-level delay across the block wins (Java overwrites
@@ -44,6 +45,16 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 		return 0, false
 	}
 	tripUpdates := api.collectBlockTripUpdates(tripIDs)
+	if len(tripUpdates) == 0 {
+		return 0, false
+	}
+	activeTripUpdates := tripUpdates[:0]
+	for _, update := range tripUpdates {
+		if update.tu.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED {
+			activeTripUpdates = append(activeTripUpdates, update)
+		}
+	}
+	tripUpdates = activeTripUpdates
 	if len(tripUpdates) == 0 {
 		return 0, false
 	}
@@ -69,7 +80,9 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 		}
 		return dev, true
 	}
-	return 0, false
+	// Java still sets scheduleDeviation to its default 0 when a non-canceled
+	// TripUpdate produced no usable deviation or timepoint prediction.
+	return 0, true
 }
 
 // blockNotActiveThresholdSeconds mirrors Java's blockNotActive filter
