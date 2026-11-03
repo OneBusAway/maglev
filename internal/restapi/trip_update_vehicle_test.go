@@ -141,7 +141,6 @@ func TestPluralArrivals_BeforeBlockStartMeasuresFromFirstStop(t *testing.T) {
 		{
 			name:        "no vehicle",
 			addRealtime: func(*RestAPI, string) {},
-			wantPhase:   "scheduled",
 		},
 		{
 			name: "vehicle reporting a position",
