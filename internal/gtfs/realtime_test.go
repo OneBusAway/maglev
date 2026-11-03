@@ -2321,3 +2321,47 @@ func TestNextTripUpdatesSeen(t *testing.T) {
 		})
 	}
 }
+
+// Polls a feed through the real ingestion path: the first-seen time holds while
+// an update's timestamp repeats and moves when the timestamp advances.
+func TestTripUpdateFirstSeen_FollowsFeedPolls(t *testing.T) {
+	const tripID = "trip"
+	updateTimestamp := uint64(1_767_268_800)
+	feedTime := updateTimestamp + 10
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		feed := &gtfsrt.FeedMessage{
+			Header: &gtfsrt.FeedHeader{GtfsRealtimeVersion: proto.String("2.0"), Timestamp: proto.Uint64(feedTime)},
+			Entity: []*gtfsrt.FeedEntity{{
+				Id: proto.String("entity"),
+				TripUpdate: &gtfsrt.TripUpdate{
+					Trip:      &gtfsrt.TripDescriptor{TripId: proto.String(tripID)},
+					Timestamp: proto.Uint64(updateTimestamp),
+				},
+			}},
+		}
+		data, err := proto.Marshal(feed)
+		assert.NoError(t, err)
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+
+	manager := newTestManager()
+	poll := func() time.Time {
+		t.Helper()
+		manager.updateFeedRealtime(context.Background(), RTFeedConfig{ID: "feed", TripUpdatesURL: server.URL, Enabled: true})
+		seenAt, ok := manager.TripUpdateFirstSeen(tripID)
+		require.True(t, ok)
+		return seenAt
+	}
+
+	firstSeen := poll()
+	assert.Equal(t, time.Unix(int64(feedTime), 0).Unix(), firstSeen.Unix())
+
+	feedTime += 30
+	assert.Equal(t, firstSeen.Unix(), poll().Unix(), "a repeated timestamp keeps the first time")
+
+	feedTime += 30
+	updateTimestamp += 60
+	assert.Equal(t, int64(feedTime), poll().Unix(), "an advanced timestamp is seen again")
+}
