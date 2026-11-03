@@ -465,14 +465,12 @@ func distinctShapeIDs(trips []gtfsdb.Trip) []string {
 	seen := make(map[string]bool)
 	var shapeIDs []string
 	for _, trip := range trips {
-		if !trip.ShapeID.Valid || nulls.StringOrEmpty(trip.ShapeID) == "" {
+		shapeID := nulls.StringOrEmpty(trip.ShapeID)
+		if shapeID == "" || seen[shapeID] {
 			continue
 		}
-		if seen[nulls.StringOrEmpty(trip.ShapeID)] {
-			continue
-		}
-		seen[nulls.StringOrEmpty(trip.ShapeID)] = true
-		shapeIDs = append(shapeIDs, nulls.StringOrEmpty(trip.ShapeID))
+		seen[shapeID] = true
+		shapeIDs = append(shapeIDs, shapeID)
 	}
 	slices.Sort(shapeIDs)
 	return shapeIDs

@@ -593,7 +593,7 @@ func (api *RestAPI) tripSpansForBlocksServingStops(
 
 	blockIDStrings := make([]string, len(blockIDs))
 	for i, blockID := range blockIDs {
-		blockIDStrings[i] = blockID.String
+		blockIDStrings[i] = nulls.StringOrEmpty(blockID)
 	}
 
 	return utils.QueryInBatchesReserving(ctx, blockIDStrings, len(day.serviceIDs),

@@ -167,7 +167,7 @@ func wallClockSinceMidnightNs(t time.Time) int64 {
 // nominalTripID when there is no block or no better match.
 func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID string, referenceTime time.Time) string {
 	nominalTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, nominalTripID)
-	if err != nil || !nominalTrip.BlockID.Valid || nulls.StringOrEmpty(nominalTrip.BlockID) == "" {
+	if err != nil || nulls.StringOrEmpty(nominalTrip.BlockID) == "" {
 		return nominalTripID
 	}
 
