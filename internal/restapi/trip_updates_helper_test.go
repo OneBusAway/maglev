@@ -30,6 +30,58 @@ func TestGetScheduleDeviation_NoUpdates(t *testing.T) {
 	assert.False(t, hasData, "no trip updates should return hasData=false")
 }
 
+func TestGetScheduleDeviation_CanceledDelayAndEmptyActiveUpdate(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	delay := 120 * time.Second
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{
+		{ID: gtfs.TripID{ID: "canceled-trip", ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED}, Delay: &delay},
+		{ID: gtfs.TripID{ID: "active-trip", ScheduleRelationship: gtfsrt.TripDescriptor_SCHEDULED}},
+	})
+
+	deviation, hasData := api.GetScheduleDeviationForBlock(
+		context.Background(), []string{"canceled-trip", "active-trip"}, devDate, devNow,
+	)
+	assert.Equal(t, 120, deviation)
+	assert.True(t, hasData)
+}
+
+func TestGetScheduleDeviation_EmptyUpdateRelationship(t *testing.T) {
+	tests := []struct {
+		name         string
+		relationship gtfs.TripScheduleRelationship
+		wantHasData  bool
+	}{
+		{name: "scheduled", relationship: gtfsrt.TripDescriptor_SCHEDULED, wantHasData: true},
+		{name: "unscheduled", relationship: gtfsrt.TripDescriptor_UNSCHEDULED, wantHasData: true},
+		{name: "added", relationship: gtfsrt.TripDescriptor_ADDED},
+		{name: "deleted", relationship: gtfsrt.TripDescriptor_DELETED},
+		{name: "duplicated", relationship: gtfsrt.TripDescriptor_DUPLICATED},
+		{name: "replacement", relationship: gtfsrt.TripDescriptor_REPLACEMENT},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			tripID := "empty-" + tt.name
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{
+				{ID: gtfs.TripID{ID: tripID, ScheduleRelationship: tt.relationship}},
+			})
+
+			deviation, hasData := api.GetScheduleDeviationForBlock(
+				context.Background(), []string{tripID}, devDate, devNow,
+			)
+			assert.Zero(t, deviation)
+			assert.Equal(t, tt.wantHasData, hasData)
+		})
+	}
+}
+
 // TestGetScheduleDeviation_TripLevelDelayWins: per Java's applyTripUpdatesToRecord,
 // a trip-level `delay` short-circuits the per-stop selection — it is the schedule
 // deviation, no further processing.

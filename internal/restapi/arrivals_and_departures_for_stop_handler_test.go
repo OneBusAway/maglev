@@ -1198,6 +1198,18 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 			wantPredicted: false,
 		},
 		{
+			name: "empty scheduled update predicts scheduled times",
+			setup: func(t *testing.T, api *RestAPI, now time.Time, tripID string) {
+				api.GtfsManager.MockAddTripUpdate(tripID, nil, nil)
+			},
+			wantPredicted: true,
+		},
+		{
+			name:          "no TripUpdate is not predicted",
+			setup:         func(t *testing.T, api *RestAPI, now time.Time, tripID string) {},
+			wantPredicted: false,
+		},
+		{
 			// The stop is scheduled 08:00 arrive / 08:05 depart and the block
 			// runs 174s late. Java's calculateDepartureDeviation lets the bus
 			// absorb the delay in the stop's 5-minute dwell, so only the
@@ -1247,6 +1259,42 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 			}
 			assert.Equal(t, a.ScheduledArrivalTime.Add(tt.wantArrivalOffset).UnixMilli(), a.PredictedArrivalTime.UnixMilli())
 			assert.Equal(t, a.ScheduledDepartureTime.Add(tt.wantDepartureOffset).UnixMilli(), a.PredictedDepartureTime.UnixMilli())
+		})
+	}
+}
+
+func TestPluralArrivals_OwnCanceledOrDeletedUpdateIsNotPredicted(t *testing.T) {
+	tests := []struct {
+		name         string
+		relationship gtfsrt.TripDescriptor_ScheduleRelationship
+	}{
+		{name: "canceled", relationship: gtfsrt.TripDescriptor_CANCELED},
+		{name: "deleted", relationship: gtfsrt.TripDescriptor_DELETED},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+			api := createTestApiWithClock(t, mockClock)
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+			siblingTripID := addEarlierBlockTrip(t, api)
+			siblingDelay := 174 * time.Second
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{
+				{ID: gtfs.TripID{ID: tripID, ScheduleRelationship: tt.relationship}},
+				{ID: gtfs.TripID{ID: siblingTripID, ScheduleRelationship: gtfsrt.TripDescriptor_SCHEDULED}, Delay: &siblingDelay},
+			})
+
+			_, model := callAPIHandler[ArrivalsAndDeparturesResponse](
+				t, api, arrivalsAndDeparturesURL(combinedStopID),
+			)
+			arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures,
+				utils.FormCombinedID("dp-agency", tripID))
+			assert.False(t, arrival.Predicted)
+			assert.True(t, arrival.PredictedArrivalTime.IsZero())
+			assert.True(t, arrival.PredictedDepartureTime.IsZero())
 		})
 	}
 }
