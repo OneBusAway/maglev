@@ -453,13 +453,9 @@ func shapeGapDistance(from, to blockTripData) float64 {
 //     short-circuits applyBlockLocationToBean; without this guard our
 //     snapshot clamps to the last stop's distance, producing "bus is 7 km
 //     past your stop" for trips that ended hours ago), or
-//   - !InRange (currentTime is before or after the block's schedule
-//     window). BuildTripStatus deliberately leaves the tripStatus distance
-//     fields at their defaults when InRange is false; callers of this
-//     method must apply the same gate or the arrival's distanceFromStop /
-//     numberOfStopsAway will report a clamped-to-block-start position for
-//     a bus that hasn't left the depot yet — e.g. "14 stops away" on an
-//     08:00 request for a trip departing 23:00 the same service day.
+//   - !InRange (currentTime is outside the block's schedule window). Callers
+//     wanting Java's position before the block starts pass the block's start
+//     time: see statusBlockSnapshot.
 func (s *scheduledBlockSnapshot) metricsForStop(
 	tripID string,
 	stopSequenceInTrip int,

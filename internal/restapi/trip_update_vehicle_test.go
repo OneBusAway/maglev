@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -112,6 +113,81 @@ func TestPluralArrivals_TripUpdateVehicleBeforeBlockStart(t *testing.T) {
 	assert.Equal(t, utils.FormCombinedID("dp-agency", firstStopID), status.NextStop)
 	assert.Equal(t, 31*60, status.ClosestStopTimeOffset, "seconds from the update's timestamp to the block's start")
 	assert.Equal(t, 31*60, status.NextStopTimeOffset)
+}
+
+// Java keeps a block location for a schedule time before the block starts: at
+// the block's first stop, however long before. Only past the block's end is
+// there none. Live Tampa reported these for blocks nine hours away.
+func TestPluralArrivals_BeforeBlockStartMeasuresFromFirstStop(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	const vehicleID = "bus-before-block-start"
+
+	tests := []struct {
+		name        string
+		addRealtime func(api *RestAPI, tripID string)
+		wantPhase   string
+		wantVehicle string
+	}{
+		{
+			name:        "no vehicle",
+			addRealtime: func(*RestAPI, string) {},
+			wantPhase:   "scheduled",
+		},
+		{
+			name: "vehicle reporting a position",
+			addRealtime: func(api *RestAPI, tripID string) {
+				now := serviceDate.Add(7 * time.Hour)
+				api.GtfsManager.MockAddVehicleWithOptions(vehicleID, tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+			},
+			wantPhase:   "in_progress",
+			wantVehicle: utils.FormCombinedID("dp-agency", vehicleID),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(7*time.Hour)))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			firstStopID, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+			downstreamStopID := addDownstreamStop(t, api, tripID)
+			tt.addRealtime(api, tripID)
+
+			endpoint := fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=180",
+				utils.FormCombinedID("dp-agency", downstreamStopID))
+			_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+
+			arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+			assert.Equal(t, 1, arrival.NumberOfStopsAway, "the block's first stop is one stop before this one")
+			require.NotNil(t, arrival.TripStatus)
+			assert.Equal(t, tt.wantPhase, arrival.TripStatus.Phase)
+			assert.Equal(t, tt.wantVehicle, arrival.TripStatus.VehicleID)
+			assert.Equal(t, utils.FormCombinedID("dp-agency", tripID), arrival.TripStatus.ActiveTripID)
+			if tt.wantVehicle == "" {
+				assert.Equal(t, utils.FormCombinedID("dp-agency", firstStopID), arrival.TripStatus.NextStop)
+				assert.Equal(t, 60*60, arrival.TripStatus.NextStopTimeOffset)
+			}
+		})
+	}
+}
+
+func TestPluralArrivals_AfterBlockEndReportsNoDistance(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(9*time.Hour+30*time.Minute)))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	downstreamStopID := addDownstreamStop(t, api, tripID)
+
+	endpoint := fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=60&minutesAfter=0",
+		utils.FormCombinedID("dp-agency", downstreamStopID))
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+
+	arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	assert.Zero(t, arrival.NumberOfStopsAway)
+	assert.Zero(t, arrival.DistanceFromStop)
 }
 
 func TestSingularArrival_TripUpdateVehicle(t *testing.T) {
