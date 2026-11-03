@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"testing"
@@ -665,6 +666,60 @@ func TestTripForVehicleHandler_TripUpdateVehicleAfterMidnight(t *testing.T) {
 			assert.Equal(t, "in_progress", model.Data.Entry.Status.Phase)
 		})
 	}
+}
+
+// queryCountingDB counts the queries that reach the database.
+type queryCountingDB struct {
+	gtfsdb.DBTX
+	queries int
+}
+
+func (db *queryCountingDB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	db.queries++
+	return db.DBTX.QueryContext(ctx, query, args...)
+}
+
+func (db *queryCountingDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	db.queries++
+	return db.DBTX.QueryRowContext(ctx, query, args...)
+}
+
+func countQueries(t *testing.T, api *RestAPI) *queryCountingDB {
+	t.Helper()
+	originalQueries := api.GtfsManager.GtfsDB.Queries
+	t.Cleanup(func() { api.GtfsManager.GtfsDB.Queries = originalQueries })
+	counter := &queryCountingDB{DBTX: api.GtfsManager.GtfsDB.DB}
+	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(counter)
+	return counter
+}
+
+func TestTripUpdateVehicleForTrip_NoQueriesWithoutTripUpdates(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(8*time.Hour)))
+	defer api.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	counter := countQueries(t, api)
+
+	assert.Nil(t, api.tripUpdateVehicleForTrip(context.Background(), tripID, serviceDate))
+	assert.Zero(t, counter.queries)
+}
+
+// Any caller can ask for an unknown vehicle, so each one must not cost a query
+// per trip update in the feed.
+func TestTripUpdateVehicleTrip_UnknownVehicleSkipsTripLookups(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8 * time.Hour)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(tripID, now))
+	counter := countQueries(t, api)
+
+	_, _, found := api.tripUpdateVehicleTrip(context.Background(), "dp-agency", "nobody")
+
+	assert.False(t, found)
+	assert.Equal(t, 1, counter.queries, "only the block lookup should run")
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
