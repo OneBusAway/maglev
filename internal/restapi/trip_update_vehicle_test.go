@@ -367,9 +367,10 @@ func TestPluralArrivals_RealBusStaysAtRecordPosition(t *testing.T) {
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 	downstreamStopID := addDownstreamStop(t, api, tripID)
 	latitude, longitude := float32(47.0), float32(-122.0)
+	positionTime := recordTime.Add(-20 * time.Second)
 	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{
 		Position:  &gtfs.Position{Latitude: &latitude, Longitude: &longitude},
-		Timestamp: &recordTime,
+		Timestamp: &positionTime,
 	})
 	predictedTenMinutesLate := serviceDate.Add(9*time.Hour + 10*time.Minute)
 	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
@@ -385,7 +386,9 @@ func TestPluralArrivals_RealBusStaysAtRecordPosition(t *testing.T) {
 		mockClock.Set(recordTime.Add(minutesAfterRecord * time.Minute))
 		_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
 
-		status := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID)).TripStatus
+		arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+		assert.Equal(t, recordTime.UnixMilli(), arrival.LastUpdateTime.UnixMilli())
+		status := arrival.TripStatus
 		require.NotNil(t, status)
 		assert.Equal(t, 600, status.ScheduleDeviation)
 		assert.Equal(t, utils.FormCombinedID("dp-agency", downstreamStopID), status.NextStop)
