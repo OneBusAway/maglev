@@ -213,6 +213,13 @@ func responseVehicleID(agencyID string, vehicle *gtfs.Vehicle) string {
 	return utils.FormCombinedID(agencyID, vehicle.ID.ID)
 }
 
+// isCanceledVehicle reports whether a vehicle's trip is canceled. Java neither
+// names the vehicle nor predicts times on such an arrival
+// (ArrivalsAndDeparturesBeanServiceImpl.java:426, :449, :476).
+func isCanceledVehicle(vehicle *gtfs.Vehicle) bool {
+	return vehicle != nil && vehicle.Trip != nil && vehicle.Trip.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED
+}
+
 // statusBlockSnapshot positions the block for a trip status at the vehicle's
 // schedule time. Java's record fixes that position when it is built, with
 // location interpolation off by default (AbstractBlockLocationServiceImpl.java
