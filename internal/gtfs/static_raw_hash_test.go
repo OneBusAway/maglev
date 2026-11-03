@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,6 +29,10 @@ func installFakeGtfsTidy(t *testing.T, src string) {
 // TestLoadGTFSDataRawHashIsZipHashWithTidyEnabled checks that RawHash is the
 // sha256 of the zip as read, while the stored Hash comes from the tidied bytes.
 func TestLoadGTFSDataRawHashIsZipHashWithTidyEnabled(t *testing.T) {
+	// The stand-in is a POSIX shell script, which Windows cannot execute.
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake gtfstidy is a POSIX shell script")
+	}
 	zipPath := models.GetFixturePath(t, "raba.zip")
 	raw, err := os.ReadFile(zipPath)
 	require.NoError(t, err)
