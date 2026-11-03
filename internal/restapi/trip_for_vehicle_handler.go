@@ -58,7 +58,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	currentTime := api.resolveTripQueryTime(params.Time, loc)
 
-	date := servicedate.Of(currentTime)
+	date := api.tripUpdateVehicleServiceDate(ctx, tripID, currentTime, loc)
 	if params.ServiceDate != nil {
 		date = servicedate.FromInstant(*params.ServiceDate, loc)
 	}
