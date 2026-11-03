@@ -143,10 +143,11 @@ const tripUpdateMaxAge = 5 * time.Minute
 // (GtfsRealtimeTripLibrary.java:1106-1108), so a newer position does not refresh
 // it. Ingestion fills in a missing timestamp from the feed's time.
 func (api *RestAPI) tripUpdateExpired(tripUpdate gtfs.Trip) bool {
-	if tripUpdate.Timestamp == nil {
-		return false
-	}
-	age := api.Clock.Now().Sub(*tripUpdate.Timestamp)
+	return tripUpdate.Timestamp != nil && api.recordTimeExpired(*tripUpdate.Timestamp)
+}
+
+func (api *RestAPI) recordTimeExpired(recordTime time.Time) bool {
+	age := api.Clock.Now().Sub(recordTime)
 	return age < -tripUpdateMaxAge || age > tripUpdateMaxAge
 }
 
@@ -163,16 +164,25 @@ type tripUpdateForTrip struct {
 	tu     gtfs.Trip
 }
 
-// collectBlockTripUpdates flattens every unexpired TripUpdate matching any
-// tripID into a slice in the order they appear, preserving block-trip-start
-// order when the caller passes a sorted slice.
+// collectBlockTripUpdates returns the TripUpdates of a block's record, or none
+// once that record has expired. Java builds one record from the block's updates,
+// timed by the last timestamp, so they expire together.
 func (api *RestAPI) collectBlockTripUpdates(tripIDs []string) []tripUpdateForTrip {
+	tripUpdates := api.blockTripUpdates(tripIDs)
+	if recordTime, hasTime := blockRecordTime(tripUpdates); hasTime && api.recordTimeExpired(recordTime) {
+		return nil
+	}
+	return tripUpdates
+}
+
+// blockTripUpdates flattens every TripUpdate matching any tripID into a slice in
+// the order they appear, preserving block-trip-start order when the caller passes
+// a sorted slice.
+func (api *RestAPI) blockTripUpdates(tripIDs []string) []tripUpdateForTrip {
 	var out []tripUpdateForTrip
 	for _, id := range tripIDs {
 		for _, tu := range api.GtfsManager.GetTripUpdatesForTrip(id) {
-			if !api.tripUpdateExpired(tu) {
-				out = append(out, tripUpdateForTrip{tripID: id, tu: tu})
-			}
+			out = append(out, tripUpdateForTrip{tripID: id, tu: tu})
 		}
 	}
 	return out
