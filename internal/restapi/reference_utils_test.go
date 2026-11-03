@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -544,4 +546,164 @@ func TestStopReferences_AgencyWithUnderscore(t *testing.T) {
 	require.Len(t, routes, 1)
 	assert.Equal(t, "AGENCY_ONE", routes[0].agencyID)
 	assert.Equal(t, "ROUTE_100", routes[0].routeID)
+}
+
+func TestBuildSituationReferences_Parity(t *testing.T) {
+	api := &RestAPI{}
+	agency := "40"
+	route := "2LINE"
+	stop := "20770"
+	trip := "TRIP1"
+
+	prefixedRoute := "40_2LINE"
+	prefixedStop := "40_20770"
+	tripWithRoute := "TRIP_WITH_ROUTE"
+	otherRoute := "OTHER_ROUTE"
+
+	alerts := []gtfs.Alert{
+		{
+			ID:     "alert-full",
+			Cause:  gtfs.AlertCause(3),  // TECHNICAL_PROBLEM -> equipmentReason
+			Effect: gtfs.AlertEffect(4), // DETOUR -> condition "", empty conditionDetails
+			InformedEntities: []gtfs.AlertInformedEntity{
+				{
+					AgencyID: &agency,
+					RouteID:  &route,
+					StopID:   &stop,
+					TripID:   &gtfs.TripID{ID: trip},
+				},
+			},
+		},
+		{
+			ID: "alert-already-prefixed",
+			InformedEntities: []gtfs.AlertInformedEntity{
+				{
+					AgencyID: &agency,
+					RouteID:  &prefixedRoute,
+					StopID:   &prefixedStop,
+					TripID:   &gtfs.TripID{ID: "40_TRIP1"},
+				},
+			},
+		},
+		{
+			ID:     "alert-unknown-effect",
+			Effect: gtfs.UnknownEffect, // 8 -> proto default / absent effect
+			InformedEntities: []gtfs.AlertInformedEntity{
+				{
+					AgencyID: &agency,
+					RouteID:  &route,
+					TripID: &gtfs.TripID{
+						ID:      tripWithRoute,
+						RouteID: otherRoute, // should NOT overwrite routeID because trip_id is present
+					},
+				},
+			},
+		},
+		{
+			ID:     "alert-no-effect",
+			Effect: gtfs.NoEffect, // 10 -> NO_EFFECT: Java GtfsRealtimeAlertLibrary emits consequence for any effect present
+			InformedEntities: []gtfs.AlertInformedEntity{
+				{
+					AgencyID: &agency,
+					RouteID:  &route,
+				},
+			},
+		},
+		{
+			ID:     "alert-trip-route-only",
+			Effect: gtfs.AlertEffect(4),
+			InformedEntities: []gtfs.AlertInformedEntity{
+				{
+					AgencyID: &agency,
+					TripID: &gtfs.TripID{
+						ID:      "", // empty trip_id, so trip.route_id should be used
+						RouteID: otherRoute,
+					},
+				},
+			},
+		},
+	}
+
+	situations := api.BuildSituationReferences(context.Background(), alerts)
+	require.Len(t, situations, 5)
+
+	// First alert: IDs are prefixed with agency
+	require.Len(t, situations[0].AllAffects, 1)
+	affect1 := situations[0].AllAffects[0]
+	assert.Equal(t, "40", affect1.AgencyID)
+	assert.Equal(t, "40_2LINE", affect1.RouteID)
+	assert.Equal(t, "40_20770", affect1.StopID)
+	assert.Equal(t, "40_TRIP1", affect1.TripID)
+
+	require.Len(t, situations[0].Consequences, 1)
+	assert.Equal(t, "", situations[0].Consequences[0].Condition)
+	consequenceJSON, err := json.Marshal(situations[0].Consequences[0])
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"condition":"","conditionDetails":{"diversionPath":{"length":0,"levels":"","points":""},"diversionStopIds":[]}}`, string(consequenceJSON))
+	assert.Equal(t, "equipmentReason", situations[0].Reason)
+	assert.Equal(t, "normal", situations[0].Severity)
+
+	// Second alert: Already prefixed IDs should not be double-prefixed
+	require.Len(t, situations[1].AllAffects, 1)
+	affect2 := situations[1].AllAffects[0]
+	assert.Equal(t, "40_2LINE", affect2.RouteID)
+	assert.Equal(t, "40_20770", affect2.StopID)
+	assert.Equal(t, "40_TRIP1", affect2.TripID)
+	assert.Empty(t, situations[1].Consequences)
+
+	// Third alert: UNKNOWN_EFFECT produces empty consequences, and trip.route_id does not overwrite routeID
+	require.Len(t, situations[2].AllAffects, 1)
+	affect3 := situations[2].AllAffects[0]
+	assert.Equal(t, "40_2LINE", affect3.RouteID)
+	assert.Equal(t, "40_TRIP_WITH_ROUTE", affect3.TripID)
+	assert.Empty(t, situations[2].Consequences)
+
+	// Fourth alert: NO_EFFECT emits consequence with empty condition and conditionDetails matching Java
+	require.Len(t, situations[3].Consequences, 1)
+	assert.Equal(t, "", situations[3].Consequences[0].Condition)
+	noEffectJSON, err := json.Marshal(situations[3].Consequences[0].ConditionDetails)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"diversionPath":{"length":0,"levels":"","points":""},"diversionStopIds":[]}`, string(noEffectJSON))
+
+	// Fifth alert: trip.route_id is used when trip_id is empty
+	require.Len(t, situations[4].AllAffects, 1)
+	affect5 := situations[4].AllAffects[0]
+	assert.Equal(t, "40_OTHER_ROUTE", affect5.RouteID)
+	assert.Empty(t, affect5.TripID)
+}
+
+func TestExtractRawEntityIDs(t *testing.T) {
+	route := "R1"
+	stop := "S1"
+
+	// 1. Both route and trip.route_id present: entity.RouteID wins
+	entity1 := gtfs.AlertInformedEntity{
+		RouteID: &route,
+		StopID:  &stop,
+		TripID:  &gtfs.TripID{ID: "T1", RouteID: "TRIP_R"},
+	}
+	r, s, tr := extractRawEntityIDs(entity1)
+	assert.Equal(t, "R1", r)
+	assert.Equal(t, "S1", s)
+	assert.Equal(t, "T1", tr)
+
+	// 2. Empty trip_id, route_id not set: falls back to trip.route_id
+	entity2 := gtfs.AlertInformedEntity{
+		StopID: &stop,
+		TripID: &gtfs.TripID{ID: "", RouteID: "TRIP_R"},
+	}
+	r, s, tr = extractRawEntityIDs(entity2)
+	assert.Equal(t, "TRIP_R", r)
+	assert.Equal(t, "S1", s)
+	assert.Equal(t, "", tr)
+
+	// 3. Non-empty trip_id, route_id not set: does not fall back to trip.route_id
+	entity3 := gtfs.AlertInformedEntity{
+		StopID: &stop,
+		TripID: &gtfs.TripID{ID: "T1", RouteID: "TRIP_R"},
+	}
+	r, s, tr = extractRawEntityIDs(entity3)
+	assert.Equal(t, "", r)
+	assert.Equal(t, "S1", s)
+	assert.Equal(t, "T1", tr)
 }
