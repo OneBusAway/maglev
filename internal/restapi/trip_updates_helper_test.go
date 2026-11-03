@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -1141,4 +1142,60 @@ func TestSTUDeviationPicker(t *testing.T) {
 			assert.Equal(t, tt.want, picker.bestDeviation)
 		})
 	}
+}
+
+func TestTripUpdateExpired(t *testing.T) {
+	now := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	const reportingVehicleID, tripUpdateOnlyVehicleID = "reporting-vehicle", "trip-update-only-vehicle"
+	api.GtfsManager.MockAddVehicle(reportingVehicleID, "some-trip", "some-route")
+	timestampAt := func(offset time.Duration) *time.Time {
+		timestamp := now.Add(offset)
+		return &timestamp
+	}
+
+	tests := []struct {
+		name      string
+		timestamp *time.Time
+		vehicleID string
+		want      bool
+	}{
+		{name: "no timestamp is never expired", timestamp: nil, vehicleID: tripUpdateOnlyVehicleID, want: false},
+		{name: "exactly five minutes old is kept", timestamp: timestampAt(-5 * time.Minute), vehicleID: tripUpdateOnlyVehicleID, want: false},
+		{name: "older than five minutes is expired", timestamp: timestampAt(-5*time.Minute - time.Second), vehicleID: tripUpdateOnlyVehicleID, want: true},
+		{name: "more than five minutes ahead is expired", timestamp: timestampAt(5*time.Minute + time.Second), vehicleID: tripUpdateOnlyVehicleID, want: true},
+		{name: "old update without a vehicle is expired", timestamp: timestampAt(-time.Hour), vehicleID: "", want: true},
+		{name: "a vehicle position does not keep an old update alive", timestamp: timestampAt(-time.Hour), vehicleID: reportingVehicleID, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tripUpdate := gtfs.Trip{Timestamp: tt.timestamp}
+			if tt.vehicleID != "" {
+				tripUpdate.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: tt.vehicleID}}
+			}
+			assert.Equal(t, tt.want, api.tripUpdateExpired(tripUpdate))
+		})
+	}
+}
+
+func TestGetStopDelaysFromTripUpdates_IgnoresExpiredTripUpdate(t *testing.T) {
+	now := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopID, tripID := "stop-1", "trip-expired-update"
+	expiredAt := now.Add(-time.Hour)
+	delay := 60 * time.Second
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:              gtfs.TripID{ID: tripID},
+		Timestamp:       &expiredAt,
+		StopTimeUpdates: []gtfs.StopTimeUpdate{{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}},
+	})
+
+	assert.Equal(t, 0, api.GetStopDelaysFromTripUpdates(tripID, nil).Len())
 }

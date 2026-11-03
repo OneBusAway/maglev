@@ -1075,6 +1075,33 @@ func TestPluralArrivals_OneBasedDownstreamSTUAppliesBlockDeviation(t *testing.T)
 	assert.Equal(t, a.ScheduledArrivalTime.Add(delay).UnixMilli(), a.PredictedArrivalTime.UnixMilli())
 }
 
+// Java stops using a vehicle record five minutes after its timestamp, so a
+// trip update the feed keeps repeating unchanged no longer predicts anything.
+func TestPluralArrivals_ExpiredTripUpdateIsNotPredicted(t *testing.T) {
+	now := time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopCode, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	expiredAt := now.Add(-6 * time.Minute)
+	delay := 174 * time.Second
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:              gtfs.TripID{ID: tripID},
+		Timestamp:       &expiredAt,
+		StopTimeUpdates: []gtfs.StopTimeUpdate{{StopID: &stopCode, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}},
+	})
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
+
+	a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	assert.False(t, a.Predicted)
+	assert.True(t, a.PredictedArrivalTime.IsZero())
+	require.NotNil(t, a.TripStatus)
+	assert.False(t, a.TripStatus.Predicted)
+	assert.Equal(t, 0, a.TripStatus.ScheduleDeviation)
+}
+
 func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
