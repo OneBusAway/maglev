@@ -34,7 +34,8 @@ type StopDelayInfo struct {
 //     processing). Publishers often emit delay=0 for future trips, which
 //     overrides the current trip's lateness — that's why Java reports 0.
 //  2. If no trip-level delay anywhere, closest-in-time STU across the block.
-//  3. Java's blockNotActive guard (GtfsRealtimeSource.java:811-821) discards
+//  3. If no update has any times, a zero deviation.
+//  4. Java's blockNotActive guard (GtfsRealtimeSource.java:811-821) discards
 //     records with |deviation| > 1h; we return (0, false) instead.
 //
 // tripIDs MUST be in block-trip-start order; caller sorts via
@@ -69,7 +70,10 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 		}
 		return dev, true
 	}
-	return 0, false
+	// Java builds a record from any trip update, with a zero deviation when it
+	// has no times (GtfsRealtimeTripLibrary.java:1104-1105). Live Tampa reports
+	// these, whose stops are all SKIPPED, as predicted and on schedule.
+	return 0, true
 }
 
 // deviationPickTime is the moment a block's deviation is chosen for. Java keeps
