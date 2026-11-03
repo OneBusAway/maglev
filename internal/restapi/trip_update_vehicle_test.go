@@ -14,6 +14,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -591,6 +592,77 @@ func TestReportedTripUpdateVehicleIDRoundTrips(t *testing.T) {
 			}
 			assert.Equal(t, http.StatusOK, details.StatusCode)
 			assert.Equal(t, tt.requestID, arrival.Data.Entry.VehicleID)
+		})
+	}
+}
+
+func TestTripForVehicleHandler_NamedVehicleReportsActiveTrip(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(10*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopID, _, morningTripID, _ := setupDelayPropTestData(t, api, 1)
+	laterTripID := addLaterBlockTrip(t, api, stopID, morningTripID)
+	for _, tripID := range []string{morningTripID, laterTripID} {
+		api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(tripID, now))
+	}
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api, fmt.Sprintf("/api/where/trip-for-vehicle/%s.json?key=TEST", plannedVehicleID))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, utils.FormCombinedID("dp-agency", laterTripID), model.Data.Entry.TripID)
+}
+
+// A trip past midnight belongs to the previous service date, and a vehicle known
+// only from its trip update is still that trip's vehicle then.
+func TestTripForVehicleHandler_TripUpdateVehicleAfterMidnight(t *testing.T) {
+	previousServiceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := previousServiceDate.Add(25*time.Hour + 10*time.Minute)
+
+	tests := []struct {
+		name         string
+		hasStartDate bool
+	}{
+		{name: "update with a start date", hasStartDate: true},
+		{name: "update without a start date"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			ctx := context.Background()
+			stopID, _, baseTripID, _ := setupDelayPropTestData(t, api, 1)
+			queries := api.GtfsManager.GtfsDB.Queries
+			baseTrip, err := queries.GetTrip(ctx, baseTripID)
+			require.NoError(t, err)
+			lateTripID := baseTripID + "-late"
+			_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+				ID: lateTripID, RouteID: baseTrip.RouteID, ServiceID: baseTrip.ServiceID, BlockID: nulls.String(lateTripID),
+			})
+			require.NoError(t, err)
+			for i, startAt := range []time.Duration{25 * time.Hour, 26 * time.Hour} {
+				_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+					TripID: lateTripID, StopID: stopID, StopSequence: int64(i + 1),
+					ArrivalTime: int64(startAt), DepartureTime: int64(startAt),
+				})
+				require.NoError(t, err)
+			}
+			tripUpdate := plannedVehicleTripUpdate(lateTripID, now)
+			tripUpdate.ID.HasStartDate = tt.hasStartDate
+			tripUpdate.ID.StartDate = previousServiceDate
+			api.GtfsManager.MockAddFullTripUpdate(tripUpdate)
+
+			resp, model := callAPIHandler[TripDetailsResponse](t, api, fmt.Sprintf("/api/where/trip-for-vehicle/%s.json?key=TEST", plannedVehicleID))
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, utils.FormCombinedID("dp-agency", lateTripID), model.Data.Entry.TripID)
+			require.NotNil(t, model.Data.Entry.Status)
+			assert.Equal(t, plannedVehicleID, model.Data.Entry.Status.VehicleID)
+			assert.Equal(t, "in_progress", model.Data.Entry.Status.Phase)
 		})
 	}
 }
