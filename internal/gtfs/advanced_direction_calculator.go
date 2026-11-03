@@ -148,9 +148,11 @@ func (adc *AdvancedDirectionCalculator) tripStopDistancesUsable(ctx context.Cont
 
 // CalculateStopDirection computes the direction for a stop using the Java algorithm
 func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Context, stopID string, gtfsDirection ...sql.NullString) string {
-	if len(gtfsDirection) > 0 && gtfsDirection[0].Valid && gtfsDirection[0].String != "" {
-		if direction := adc.translateGtfsDirection(gtfsDirection[0].String); direction != "" {
-			return direction
+	if len(gtfsDirection) > 0 {
+		if rawDirection := nulls.StringOrEmpty(gtfsDirection[0]); rawDirection != "" {
+			if direction := adc.translateGtfsDirection(rawDirection); direction != "" {
+				return direction
+			}
 		}
 	}
 
