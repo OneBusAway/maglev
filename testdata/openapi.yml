@@ -374,6 +374,7 @@ paths:
           example: 39
         - name: time
           in: query
+          description: "A value of 0 is treated as not supplied, and the current server time is used (ArrivalAndDepartureForStopAction.java#L105-L106)."
           schema:
             type: integer
           example: 1710979086000
@@ -451,11 +452,11 @@ paths:
           description: Include vehicles arriving or departing in the next n minutes.
         - name: time
           in: query
+          description: A supplied 0 is used as given (1970-01-01), so the response has no arrivals; Java substitutes the current time only when display.serviceDateFiltering is enabled.
           required: false
           schema:
             type: string
             format: date-time
-          description: The specific time for querying the system status.
       responses:
         '200':
           description: Successful response
