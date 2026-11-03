@@ -1001,6 +1001,9 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 		scheduledArrivalTime,
 		scheduledDepartureTime,
 	)
+	if isCanceledVehicle(vehicle) {
+		predictedArrivalTime, predictedDepartureTime, predicted = time.Time{}, time.Time{}, false
+	}
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 
@@ -1117,10 +1120,10 @@ func startTripStatusAtServiceStart(status *models.TripStatus, freqMap map[string
 	status.Frequency = &converted
 }
 
-// combinedVehicleID renders a vehicle's ID in the combined {agency}_{id} form
-// the spec requires, or empty when the trip has no vehicle assigned.
+// combinedVehicleID renders a vehicle's ID for an arrival: see responseVehicleID.
+// It is empty when the trip has no vehicle assigned or is canceled.
 func (api *RestAPI) combinedVehicleID(ctx context.Context, vehicle *gtfs.Vehicle, agencyID, tripID string) string {
-	if vehicle == nil || vehicle.Trip == nil {
+	if vehicle == nil || vehicle.Trip == nil || isCanceledVehicle(vehicle) {
 		return ""
 	}
 	reqLogger := logging.ForComponent(ctx, "http_server")

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -462,6 +463,36 @@ func TestBuildTripStatus_TripUpdateVehicleWithoutTimestamp(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, status)
+}
+
+// Java hides the vehicle on a canceled arrival (ArrivalsAndDeparturesBeanServiceImpl
+// .java:476) while the trip status still names it.
+func TestArrivals_CanceledTripHidesVehicle(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(7*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	canceled := plannedVehicleTripUpdate(tripID, now)
+	canceled.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+	api.GtfsManager.MockAddFullTripUpdate(canceled)
+	combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+
+	_, plural := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, fmt.Sprintf(
+		"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120", combinedStopID))
+	arrival := findArrivalForTrip(t, plural.Data.Entry.ArrivalsAndDepartures, combinedTripID)
+	assert.Empty(t, arrival.VehicleID)
+	assert.False(t, arrival.Predicted)
+	require.NotNil(t, arrival.TripStatus)
+	assert.Equal(t, "CANCELED", arrival.TripStatus.Status)
+
+	_, singular := callAPIHandler[ArrivalAndDepartureResponse](t, api, fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID, combinedTripID, serviceDate.UnixMilli()))
+	assert.Empty(t, singular.Data.Entry.VehicleID)
+	assert.False(t, singular.Data.Entry.Predicted)
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
