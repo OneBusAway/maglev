@@ -3,6 +3,7 @@ package restapi
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"math"
 	"slices"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 func TestCalculateBlockTripSequence(t *testing.T) {
@@ -120,4 +122,67 @@ func TestCalculateBlockTripSequence(t *testing.T) {
 			assert.LessOrEqual(t, results[i-1].earliestDepart, results[i].earliestDepart)
 		}
 	})
+}
+
+// findLaterTripInMultiTripShift returns a block shift's first trip and a later
+// trip of that shift, both active on serviceDate.
+func findLaterTripInMultiTripShift(t *testing.T, api *RestAPI, serviceDate time.Time) (firstTripID, laterTripID string) {
+	t.Helper()
+	ctx := context.Background()
+	trips, err := api.GtfsManager.GetTrips(ctx, 500)
+	require.NoError(t, err)
+	for _, trip := range trips {
+		shift := api.blockShiftTripIDsSortedByStartTime(ctx, trip.ID, serviceDate)
+		if len(shift) >= 2 {
+			return shift[0], shift[len(shift)-1]
+		}
+	}
+	require.Fail(t, "need a block shift with at least two trips in test data")
+	return "", ""
+}
+
+func TestArrivalBlockTripSequenceDiffersFromTripStatus(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, losAngeles)
+	firstTripID, laterTripID := findLaterTripInMultiTripShift(t, api, serviceDate)
+
+	queries := api.GtfsManager.GtfsDB.Queries
+	firstTripStops, err := queries.GetStopTimesForTrip(ctx, firstTripID)
+	require.NoError(t, err)
+	laterTripStops, err := queries.GetStopTimesForTrip(ctx, laterTripID)
+	require.NoError(t, err)
+	laterTrip, err := queries.GetTrip(ctx, laterTripID)
+	require.NoError(t, err)
+	route, err := queries.GetRoute(ctx, laterTrip.RouteID)
+	require.NoError(t, err)
+
+	queryTime := serviceDate.Add(time.Duration(firstTripStops[0].DepartureTime))
+	minutesUntilLaterTrip := int(time.Duration(laterTripStops[0].ArrivalTime-firstTripStops[0].DepartureTime).Minutes()) + 1
+	endpoint := fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&time=%d&minutesBefore=0&minutesAfter=%d",
+		utils.FormCombinedID(route.AgencyID, laterTripStops[0].StopID), queryTime.UnixMilli(), minutesUntilLaterTrip)
+
+	_, body := serveApiAndRetrieveEndpoint(t, api, endpoint)
+
+	entry, ok := body.Data.(map[string]any)["entry"].(map[string]any)
+	require.True(t, ok)
+	wantTripID := utils.FormCombinedID(route.AgencyID, laterTripID)
+	var arrival map[string]any
+	for _, raw := range entry["arrivalsAndDepartures"].([]any) {
+		if candidate := raw.(map[string]any); candidate["tripId"] == wantTripID {
+			arrival = candidate
+		}
+	}
+	require.NotNil(t, arrival, "the later trip must appear in the arrival window")
+
+	tripStatus := arrival["tripStatus"].(map[string]any)
+	require.Equal(t, utils.FormCombinedID(route.AgencyID, firstTripID), tripStatus["activeTripId"])
+	assert.EqualValues(t, api.calculateBlockTripSequence(ctx, laterTripID, serviceDate), arrival["blockTripSequence"],
+		"the arrival reports its own trip's position in the block")
+	assert.EqualValues(t, api.calculateBlockTripSequence(ctx, firstTripID, serviceDate), tripStatus["blockTripSequence"],
+		"the status reports the active trip's position in the block")
 }
