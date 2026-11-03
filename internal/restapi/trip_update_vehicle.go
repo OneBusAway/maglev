@@ -57,6 +57,9 @@ func (api *RestAPI) vehicleRecordExpired(ctx context.Context, vehicle *gtfs.Vehi
 // The vehicle carries the block's first update, whose schedule relationship is the
 // status of Java's whole record (GtfsRealtimeTripLibrary.java:325, :1101-1102).
 func (api *RestAPI) tripUpdateVehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+	if len(api.GtfsManager.GetAllTripUpdates()) == 0 {
+		return nil
+	}
 	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
 	for _, blockUpdate := range api.collectBlockTripUpdates(blockTripIDs) {
 		if vehicle := api.vehicleFromTripUpdate(ctx, blockUpdate.tu, blockUpdate.tripID, serviceDate); vehicle != nil {
@@ -165,12 +168,12 @@ func (api *RestAPI) tripUpdateVehicleTrip(ctx context.Context, agencyID, vehicle
 		if !namesVehicle(tripUpdate) || api.tripUpdateExpired(tripUpdate) {
 			continue
 		}
-		tripAgencyID, known := api.tripAgencyID(ctx, tripUpdate.ID.ID)
-		if !known {
+		feedVehicleID := tripUpdate.Vehicle.ID.ID
+		if feedVehicleID != rawVehicleID && feedVehicleID != vehicleID {
 			continue
 		}
-		feedVehicleID := tripUpdate.Vehicle.ID.ID
-		if feedVehicleID == rawVehicleID || (feedVehicleID == vehicleID && tripAgencyID == agencyID) {
+		tripAgencyID, known := api.tripAgencyID(ctx, tripUpdate.ID.ID)
+		if known && (feedVehicleID == rawVehicleID || tripAgencyID == agencyID) {
 			return tripAgencyID, api.activeTripOfTripUpdateVehicle(ctx, tripAgencyID, tripUpdate.ID.ID), true
 		}
 	}

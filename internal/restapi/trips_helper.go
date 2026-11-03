@@ -69,6 +69,19 @@ func (api *RestAPI) BuildTripStatus(
 	if vehicle == nil {
 		vehicle = api.vehicleForTrip(ctx, tripID, serviceDate)
 	}
+	return api.buildTripStatusForVehicle(ctx, agencyID, tripID, vehicle, serviceDate, currentTime, freqMap)
+}
+
+// buildTripStatusForVehicle is BuildTripStatus for a caller that has already
+// looked up the vehicle, where nil means the trip has none.
+func (api *RestAPI) buildTripStatusForVehicle(
+	ctx context.Context,
+	agencyID, tripID string,
+	vehicle *gtfs.Vehicle,
+	serviceDate time.Time,
+	currentTime time.Time,
+	freqMap map[string][]gtfsdb.Frequency,
+) (*models.TripStatus, *tripStatusExtras, error) {
 	// Normalize serviceDate to midnight for the response, consistent across all endpoints.
 	sdMidnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
 		0, 0, 0, 0, serviceDate.Location())
