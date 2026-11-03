@@ -116,7 +116,8 @@ type deviationSample struct {
 // blockDeviationSamples mirrors how AbstractBlockLocationServiceImpl turns a
 // block's timepoint predictions into ScheduleDeviationSamples. Every
 // non-skipped StopTimeUpdate across the block that resolves to a scheduled
-// stop time contributes one sample keyed by that stop's scheduled arrival.
+// stop time (see sampleEntryForSTU) contributes one sample keyed by that stop's
+// scheduled arrival.
 // A departure prediction is preferred over an arrival one, and a later
 // update for the same key replaces an earlier one. Sorted by key.
 func (api *RestAPI) blockDeviationSamples(ctx context.Context, tripIDs []string, serviceDate, currentTime time.Time) []deviationSample {
@@ -132,7 +133,7 @@ func (api *RestAPI) blockDeviationSamples(ctx context.Context, tripIDs []string,
 			if stu.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED {
 				continue
 			}
-			schedArr, schedDep := scheduleEntryForSTU(scheduled[t.tripID], stu, serviceDate, currentTime)
+			schedArr, schedDep := sampleEntryForSTU(scheduled[t.tripID], stu, serviceDate, currentTime)
 			if deviation, ok := stuDeviation(stu, schedArr, schedDep, serviceDate); ok {
 				deviationByArrival[schedArr] = deviation
 			}
@@ -147,6 +148,28 @@ func (api *RestAPI) blockDeviationSamples(ctx context.Context, tripIDs []string,
 		return cmp.Compare(a.scheduledArrival, b.scheduledArrival)
 	})
 	return samples
+}
+
+// sampleEntryForSTU resolves the stop time a StopTimeUpdate samples. Java matches
+// stop_sequence against StopTimeEntry.getSequence(), the stop's zero-based index
+// in the trip, unlike the per-stop prediction path, which uses the GTFS
+// stop_sequence. A feed numbering stops from 1 therefore matches nothing and
+// builds no samples, which live Java confirms. It returns zeroes on no match.
+func sampleEntryForSTU(schedMap map[string][]schedEntry, stu gtfs.StopTimeUpdate, serviceDate, currentTime time.Time) (schedArr, schedDep int64) {
+	if stu.StopSequence == nil {
+		return scheduleEntryForSTU(schedMap, stu, serviceDate, currentTime)
+	}
+	for stopID, entries := range schedMap {
+		if stu.StopID != nil && stopID != *stu.StopID {
+			continue
+		}
+		for _, e := range entries {
+			if e.position == int64(*stu.StopSequence) {
+				return e.arr, e.dep
+			}
+		}
+	}
+	return 0, 0
 }
 
 // deviationSampleCache memoizes blockDeviationSamples for one request. The
@@ -263,9 +286,10 @@ func pickTripLevelDeviation(tripUpdates []tripUpdateForTrip) (int, bool, bool) {
 	return deviation, true, false
 }
 
-// schedEntry captures one (stop_sequence, arrival, departure) tuple for a
-// stop_id; loop/lasso trips need multiple entries per stop_id.
-type schedEntry struct{ seq, arr, dep int64 }
+// schedEntry captures one stop time for a stop_id; loop/lasso trips need
+// multiple entries per stop_id. position is the stop's zero-based index in its
+// trip, which seq (the GTFS stop_sequence) need not equal.
+type schedEntry struct{ seq, position, arr, dep int64 }
 
 // loadScheduledForTrips batch-loads every trip's scheduled stop-time entries
 // (keyed by stop_id, with multiple entries per stop_id for loop trips) via
@@ -284,13 +308,16 @@ func (api *RestAPI) loadScheduledForTrips(ctx context.Context, tripIDs []string)
 	if err != nil {
 		return out
 	}
+	positionInTrip := make(map[string]int64, len(tripIDs))
 	for _, st := range stopTimes {
 		m := out[st.TripID]
 		m[st.StopID] = append(m[st.StopID], schedEntry{
-			seq: st.StopSequence,
-			arr: st.ArrivalTime / int64(time.Second),
-			dep: st.DepartureTime / int64(time.Second),
+			seq:      st.StopSequence,
+			position: positionInTrip[st.TripID],
+			arr:      st.ArrivalTime / int64(time.Second),
+			dep:      st.DepartureTime / int64(time.Second),
 		})
+		positionInTrip[st.TripID]++
 	}
 	return out
 }

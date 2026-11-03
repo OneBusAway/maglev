@@ -644,8 +644,7 @@ func TestBlockDeviationSamples(t *testing.T) {
 	require.GreaterOrEqual(t, len(stopTimes), 3, "need a trip with at least 3 distinct stop arrival times")
 
 	stuFor := func(st gtfsdb.StopTime, arrivalDelay, departureDelay *time.Duration) gtfs.StopTimeUpdate {
-		seq := uint32(st.StopSequence)
-		stu := gtfs.StopTimeUpdate{StopID: &st.StopID, StopSequence: &seq}
+		stu := gtfs.StopTimeUpdate{StopID: &st.StopID}
 		if arrivalDelay != nil {
 			stu.Arrival = &gtfs.StopTimeEvent{Delay: arrivalDelay}
 		}
@@ -669,6 +668,54 @@ func TestBlockDeviationSamples(t *testing.T) {
 		{scheduledArrival: utils.NanosToSeconds(stopTimes[0].ArrivalTime), deviation: 60},
 		{scheduledArrival: utils.NanosToSeconds(stopTimes[1].ArrivalTime), deviation: 90},
 	}, samples, "a departure prediction wins over an arrival one, and skipped stops contribute no sample")
+}
+
+// Java keeps a timepoint prediction as a sample only when its stop_sequence
+// equals the stop's zero-based index in the trip, even though the feed value is
+// the GTFS stop_sequence. Feeds numbering stops from 1 therefore build no
+// samples, and Java falls back to the block's schedule deviation.
+func TestBlockDeviationSamples_StopSequenceMustEqualZeroBasedIndex(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	trip := mustGetTrip(t, api)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(stopTimes), 2)
+	const stopIndex = 1
+	target := stopTimes[stopIndex]
+	delay := 60 * time.Second
+
+	tests := []struct {
+		name         string
+		stopSequence uint32
+		wantSamples  []deviationSample
+	}{
+		{
+			name:         "sequence equal to the zero-based index builds a sample",
+			stopSequence: stopIndex,
+			wantSamples:  []deviationSample{{scheduledArrival: utils.NanosToSeconds(target.ArrivalTime), deviation: 60}},
+		},
+		{
+			name:         "one-based sequence builds no sample",
+			stopSequence: stopIndex + 1,
+			wantSamples:  []deviationSample{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			api.GtfsManager.MockAddTripUpdate(trip.ID, nil, []gtfs.StopTimeUpdate{{
+				StopID:       &target.StopID,
+				StopSequence: &tt.stopSequence,
+				Arrival:      &gtfs.StopTimeEvent{Delay: &delay},
+			}})
+
+			assert.Equal(t, tt.wantSamples, api.blockDeviationSamples(ctx, []string{trip.ID}, devDate, devNow))
+		})
+	}
 }
 
 func TestDeviationSampleCache(t *testing.T) {

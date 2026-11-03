@@ -677,7 +677,8 @@ type scheduleDeviationFallback struct {
 //     getBestScheduleDeviation takes the last sample at or before the stop
 //     and refuses to propagate upstream, so a stop before every sample is
 //     predicted but gets no predicted times.
-//   - Without samples, the block-level deviation is used.
+//   - Without samples, which is every feed numbering stops from 1 (see
+//     sampleEntryForSTU), the block-level deviation is used.
 //   - The deviation is applied less any scheduled slack the vehicle can
 //     absorb before reaching the stop.
 func (api *RestAPI) predictedTimesFromScheduleDeviation(ctx context.Context, in scheduleDeviationFallback) (predictedArrival, predictedDeparture time.Time, predicted bool) {
