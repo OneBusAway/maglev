@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
@@ -104,7 +105,11 @@ func responseVehicleID(agencyID string, vehicle *gtfs.Vehicle) string {
 // statusBlockSnapshot positions the block for a trip status at the vehicle's
 // schedule time. A vehicle with a position is placed by currentTime; one known
 // only from a trip update stays where it was at the update's timestamp, the way
-// live Java reports it, and waits at the first stop until its block starts.
+// live Java reports it.
+//
+// A schedule time before the block starts is held at the block's first stop.
+// Java's getScheduledBlockLocationBeforeStartOfBlock does the same however long
+// before the start, so distanceFromStop and numberOfStopsAway stay meaningful.
 func (api *RestAPI) statusBlockSnapshot(
 	ctx context.Context,
 	status *models.TripStatus,
@@ -113,22 +118,38 @@ func (api *RestAPI) statusBlockSnapshot(
 	scheduleDeviation int,
 	currentTime, serviceDate time.Time,
 ) *scheduledBlockSnapshot {
-	deviation := time.Duration(scheduleDeviation) * time.Second
-	if !isTripUpdateVehicle(vehicle) {
-		return api.computeScheduledBlockSnapshot(ctx, tripID, currentTime.Add(-deviation), serviceDate)
+	tripUpdateVehicle := isTripUpdateVehicle(vehicle)
+	positionTime := currentTime
+	if tripUpdateVehicle {
+		positionTime = *vehicle.Timestamp
 	}
+	effectiveTime := positionTime.Add(-time.Duration(scheduleDeviation) * time.Second)
 
-	effectiveTime := vehicle.Timestamp.Add(-deviation)
 	snap := api.computeScheduledBlockSnapshot(ctx, tripID, effectiveTime, serviceDate)
 	if snap == nil {
 		return nil
 	}
-	applySnapshotStops(status, snap, utils.CalculateSecondsSinceServiceDate(effectiveTime, serviceDate), agencyID)
 	blockStart := servicedate.OffsetBase(serviceDate).Add(time.Duration(snap.Stops[0].EffectiveStopSeconds) * time.Second)
-	if effectiveTime.Before(blockStart) {
+	beforeBlockStart := effectiveTime.Before(blockStart) && !runsOwnSchedule(vehicle)
+
+	hasNoPosition := vehicle == nil || vehicle.Position == nil
+	if tripUpdateVehicle || (beforeBlockStart && hasNoPosition) {
+		applySnapshotStops(status, snap, utils.CalculateSecondsSinceServiceDate(effectiveTime, serviceDate), agencyID)
+	}
+	if beforeBlockStart {
 		return api.computeScheduledBlockSnapshot(ctx, tripID, blockStart, serviceDate)
 	}
 	return snap
+}
+
+// runsOwnSchedule reports whether a vehicle's trip departs from the static block
+// schedule, as Java's applyDynamicTripUpdatesToRecord assumes for these trips.
+func runsOwnSchedule(vehicle *gtfs.Vehicle) bool {
+	if vehicle == nil || vehicle.Trip == nil {
+		return false
+	}
+	relationship := vehicle.Trip.ID.ScheduleRelationship
+	return relationship == gtfsrt.TripDescriptor_ADDED || relationship == gtfsrt.TripDescriptor_DUPLICATED
 }
 
 // applySnapshotStops mirrors Java's getScheduledBlockLocationBetweenStopTimes
