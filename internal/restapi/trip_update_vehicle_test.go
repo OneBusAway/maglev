@@ -231,4 +231,44 @@ func TestResponseVehicleID_PositionVehicleAlwaysGetsAgency(t *testing.T) {
 	assert.Equal(t, "1_"+plannedVehicleID, responseVehicleID("1", vehicle))
 }
 
+// Java keeps a vehicle where its record placed it until a newer record arrives,
+// so a real bus's stops and distance do not move between requests. The vehicle's
+// position does not change this: location interpolation is off by default.
+func TestPluralArrivals_RealBusStaysAtRecordPosition(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	recordTime := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	mockClock := clock.NewMockClock(recordTime)
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	downstreamStopID := addDownstreamStop(t, api, tripID)
+	latitude, longitude := float32(47.0), float32(-122.0)
+	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+		Position:  &gtfs.Position{Latitude: &latitude, Longitude: &longitude},
+		Timestamp: &recordTime,
+	})
+	predictedTenMinutesLate := serviceDate.Add(9*time.Hour + 10*time.Minute)
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:              gtfs.TripID{ID: tripID},
+		Timestamp:       &recordTime,
+		Vehicle:         &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
+		StopTimeUpdates: []gtfs.StopTimeUpdate{{StopID: &downstreamStopID, Arrival: &gtfs.StopTimeEvent{Time: &predictedTenMinutesLate}}},
+	})
+	endpoint := fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120",
+		utils.FormCombinedID("dp-agency", downstreamStopID))
+
+	for _, minutesAfterRecord := range []time.Duration{0, 3} {
+		mockClock.Set(recordTime.Add(minutesAfterRecord * time.Minute))
+		_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+
+		status := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID)).TripStatus
+		require.NotNil(t, status)
+		assert.Equal(t, 600, status.ScheduleDeviation)
+		assert.Equal(t, utils.FormCombinedID("dp-agency", downstreamStopID), status.NextStop)
+		assert.Equal(t, 40*60, status.NextStopTimeOffset, "09:00 scheduled, from 08:20 on the schedule")
+	}
+}
+
 func ptrTime(t time.Time) *time.Time { return &t }

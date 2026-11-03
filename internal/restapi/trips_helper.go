@@ -253,7 +253,7 @@ func (api *RestAPI) BuildTripStatus(
 	// shift is a no-op.
 	var snap *scheduledBlockSnapshot
 	if len(stopTimes) > 0 {
-		snap = api.statusBlockSnapshot(ctx, status, vehicle, dbTripID, agencyID, scheduleDeviation, currentTime, serviceDate)
+		snap = api.statusBlockSnapshot(ctx, status, vehicle, dbTripID, agencyID, blockTripIDs, scheduleDeviation, currentTime, serviceDate)
 	}
 
 	// Snap-derived status fields — independent of target's shape.
