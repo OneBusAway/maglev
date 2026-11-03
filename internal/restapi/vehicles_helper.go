@@ -3,7 +3,6 @@ package restapi
 import (
 	"context"
 	"database/sql"
-	"maglev.onebusaway.org/internal/nulls"
 	"math"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 

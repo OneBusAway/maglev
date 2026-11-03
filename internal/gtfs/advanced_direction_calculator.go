@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
-	"maglev.onebusaway.org/internal/nulls"
 	"math"
 	"slices"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
