@@ -265,7 +265,7 @@ func (api *RestAPI) vehicleRecordTime(vehicle *gtfs.Vehicle, blockTripIDs []stri
 	if recordTime, ok := blockRecordTime(api.collectBlockTripUpdates(blockTripIDs)); ok {
 		return recordTime, true
 	}
-	if isTripUpdateVehicle(vehicle) {
+	if isTripUpdateVehicle(vehicle) && vehicle.Timestamp != nil {
 		return *vehicle.Timestamp, true
 	}
 	return time.Time{}, false
