@@ -90,6 +90,20 @@ func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.T
 	return &gtfs.Vehicle{ID: vehicleID, Trip: &tripUpdate, Timestamp: &recordTime}
 }
 
+// tripUpdateVehicleServiceDate returns the service date a vehicle known only from
+// a trip update is running tripID on. A trip past midnight belongs to the previous
+// date, which is the only case that differs from the date of at.
+func (api *RestAPI) tripUpdateVehicleServiceDate(ctx context.Context, tripID string, at time.Time, location *time.Location) servicedate.Date {
+	today := servicedate.Of(at)
+	yesterday := today.AddDays(-1)
+	runsYesterday := api.tripUpdateVehicleForTrip(ctx, tripID, today.Midnight(location)) == nil &&
+		api.tripUpdateVehicleForTrip(ctx, tripID, yesterday.Midnight(location)) != nil
+	if runsYesterday {
+		return yesterday
+	}
+	return today
+}
+
 // reportedTripUpdateVehicle returns the trip's trip-update vehicle when requestedID
 // is the ID responses report for it (see responseVehicleID), so that a client can
 // send that ID back. It returns nil otherwise.
@@ -157,7 +171,7 @@ func (api *RestAPI) tripUpdateVehicleTrip(ctx context.Context, agencyID, vehicle
 		}
 		feedVehicleID := tripUpdate.Vehicle.ID.ID
 		if feedVehicleID == rawVehicleID || (feedVehicleID == vehicleID && tripAgencyID == agencyID) {
-			return tripAgencyID, tripUpdate.ID.ID, true
+			return tripAgencyID, api.activeTripOfTripUpdateVehicle(ctx, tripAgencyID, tripUpdate.ID.ID), true
 		}
 	}
 	return api.blockVehicleTrip(ctx, agencyID, vehicleID)
@@ -176,16 +190,17 @@ func (api *RestAPI) blockVehicleTrip(ctx context.Context, agencyID, blockID stri
 				continue
 			}
 			if tripAgencyID, known := api.tripAgencyID(ctx, blockTrip.ID); known && tripAgencyID == agencyID {
-				return agencyID, api.activeTripInBlock(ctx, agencyID, blockTrip.ID), true
+				return agencyID, api.activeTripOfTripUpdateVehicle(ctx, agencyID, blockTrip.ID), true
 			}
 		}
 	}
 	return "", "", false
 }
 
-// activeTripInBlock returns the trip the block is running now. It falls back to
-// tripID when the block has no scheduled position at this time.
-func (api *RestAPI) activeTripInBlock(ctx context.Context, agencyID, tripID string) string {
+// activeTripOfTripUpdateVehicle returns the trip the vehicle's block is running
+// now. It falls back to tripID when the block has no scheduled position at this
+// time.
+func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID, tripID string) string {
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
 		return tripID
@@ -195,7 +210,7 @@ func (api *RestAPI) activeTripInBlock(ctx context.Context, agencyID, tripID stri
 		return tripID
 	}
 	now := api.Clock.Now().In(location)
-	serviceDate := servicedate.Of(now).Midnight(location)
+	serviceDate := api.tripUpdateVehicleServiceDate(ctx, tripID, now, location).Midnight(location)
 	snap := api.computeScheduledBlockSnapshot(ctx, tripID, now, serviceDate)
 	if snap == nil || snap.ActiveTripID == "" {
 		return tripID
