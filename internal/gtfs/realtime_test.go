@@ -1013,9 +1013,16 @@ func TestVehicleMerge_EpochZeroHeaderTimestamp(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed := RTFeedConfig{ID: "epoch-zero-feed", VehiclePositionsURL: server.URL, RefreshInterval: 30, Enabled: true}
+	feed := RTFeedConfig{
+		ID:                  "epoch-zero-feed",
+		AgencyIDs:           []string{"40"},
+		VehiclePositionsURL: server.URL,
+		RefreshInterval:     30,
+		Enabled:             true,
+	}
 	veh := &gtfsrt.VehiclePosition{
-		Vehicle: &gtfsrt.VehicleDescriptor{Id: proto.String("epochveh")},
+		Vehicle:  &gtfsrt.VehicleDescriptor{Id: proto.String("epochveh")},
+		Position: &gtfsrt.Position{Latitude: proto.Float32(47.6), Longitude: proto.Float32(-122.3)},
 	}
 	mu.Lock()
 	payload = encodeVehicleFeed(time.Unix(0, 0), []*gtfsrt.VehiclePosition{veh})
@@ -1026,8 +1033,11 @@ func TestVehicleMerge_EpochZeroHeaderTimestamp(t *testing.T) {
 
 	vehicles := manager.GetRealTimeVehicles()
 	require.Len(t, vehicles, 1, "a feed whose header timestamp is 0 must still be applied")
-	assert.False(t, manager.feedVehicleDataTime["epoch-zero-feed"].Before(before),
-		"data time must fall back to the fetch time")
+
+	positions := manager.VehiclePositionsForAgency("40")
+	require.Len(t, positions.Vehicles, 1, "the vehicle must be exported for its agency")
+	assert.False(t, positions.Timestamp.Before(before),
+		"export timestamp must fall back to the fetch time, not the epoch")
 }
 
 func TestNewVehicleKey(t *testing.T) {
