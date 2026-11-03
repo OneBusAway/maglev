@@ -3,12 +3,14 @@ package restapi
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/utils"
@@ -273,6 +275,94 @@ func TestPluralArrivals_TripUpdateWithoutVehicleUsesBlock(t *testing.T) {
 	assert.Equal(t, wantVehicleID, arrival.TripStatus.VehicleID)
 	assert.Equal(t, "in_progress", arrival.TripStatus.Phase)
 	assert.Equal(t, "SCHEDULED", arrival.TripStatus.Status)
+}
+
+func TestTripForVehicleHandler_TripUpdateVehicle(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer setupAPI.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
+	agencyID := "dp-agency"
+	combinedTripID := utils.FormCombinedID(agencyID, tripID)
+	expired := now.Add(-time.Hour)
+
+	namedUpdate := plannedVehicleTripUpdate(tripID, now)
+	shortNamedUpdate := namedUpdate
+	shortNamedUpdate.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "1519"}}
+	anonymousUpdate := namedUpdate
+	anonymousUpdate.Vehicle = nil
+	expiredUpdate := plannedVehicleTripUpdate(tripID, expired)
+
+	tests := []struct {
+		name       string
+		tripUpdate gtfs.Trip
+		requestID  string
+		wantTripID string
+	}{
+		{name: "raw ID the feed sent", tripUpdate: namedUpdate, requestID: plannedVehicleID, wantTripID: combinedTripID},
+		{name: "vehicle ID with the agency", tripUpdate: shortNamedUpdate, requestID: utils.FormCombinedID(agencyID, "1519"), wantTripID: combinedTripID},
+		{name: "block standing in as the vehicle", tripUpdate: anonymousUpdate, requestID: utils.FormCombinedID(agencyID, delayPropBlockID(t)), wantTripID: combinedTripID},
+		{name: "unknown vehicle", tripUpdate: namedUpdate, requestID: utils.FormCombinedID(agencyID, "nobody")},
+		{name: "another agency's block", tripUpdate: anonymousUpdate, requestID: utils.FormCombinedID("other", delayPropBlockID(t))},
+		{name: "expired update", tripUpdate: expiredUpdate, requestID: plannedVehicleID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Each subtest gets its own rate limiter: the mock clock never refills one.
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			api.GtfsManager.MockAddFullTripUpdate(tt.tripUpdate)
+
+			resp, model := callAPIHandler[TripDetailsResponse](t, api, fmt.Sprintf("/api/where/trip-for-vehicle/%s.json?key=TEST", tt.requestID))
+
+			if tt.wantTripID == "" {
+				assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+				return
+			}
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, tt.wantTripID, model.Data.Entry.TripID)
+		})
+	}
+}
+
+// Feeds can send an anonymous update for every trip of a block, and Java reports
+// the one the block is running now.
+func TestTripForVehicleHandler_BlockVehicleReportsActiveTrip(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(10*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+
+	stopID, _, morningTripID, _ := setupDelayPropTestData(t, api, 1)
+	queries := api.GtfsManager.GtfsDB.Queries
+	morningTrip, err := queries.GetTrip(ctx, morningTripID)
+	require.NoError(t, err)
+	laterTripID := morningTripID + "-later"
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: laterTripID, RouteID: morningTrip.RouteID, ServiceID: morningTrip.ServiceID, BlockID: morningTrip.BlockID,
+	})
+	require.NoError(t, err)
+	for i, startAt := range []time.Duration{10 * time.Hour, 11 * time.Hour} {
+		_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: laterTripID, StopID: stopID, StopSequence: int64(i + 1),
+			ArrivalTime: int64(startAt), DepartureTime: int64(startAt),
+		})
+		require.NoError(t, err)
+	}
+	for _, tripID := range []string{morningTripID, laterTripID} {
+		api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{ID: gtfs.TripID{ID: tripID}, Timestamp: &now})
+	}
+	vehicleID := utils.FormCombinedID("dp-agency", delayPropBlockID(t))
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api, fmt.Sprintf("/api/where/trip-for-vehicle/%s.json?key=TEST", vehicleID))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, utils.FormCombinedID("dp-agency", laterTripID), model.Data.Entry.TripID)
 }
 
 // Java keeps a vehicle where its record placed it until a newer record arrives,
