@@ -36,6 +36,9 @@ type tripStatusExtras struct {
 	// blockTripIDs are the block's trips in start order, from which Java
 	// builds its per-stop deviation samples.
 	blockTripIDs []string
+	// tripBlockSequence is the queried trip's position in its block. It can
+	// differ from status.BlockTripSequence, which follows the active trip.
+	tripBlockSequence int
 }
 
 // BuildTripStatus builds a TripStatus for the given trip.
@@ -83,6 +86,7 @@ func (api *RestAPI) BuildTripStatus(
 	if blockTripSequence > 0 {
 		status.BlockTripSequence = blockTripSequence
 	}
+	extras.tripBlockSequence = blockTripSequence
 
 	if vehicle != nil {
 		if vehicle.ID != nil {
@@ -262,6 +266,10 @@ func (api *RestAPI) BuildTripStatus(
 	// their defaults.
 	if snap != nil && snap.ActiveTripID != "" && snap.InRange {
 		status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
+		// Java's TripStatusBeanServiceImpl reports the active trip's sequence.
+		if snap.ActiveTripID != tripID {
+			status.BlockTripSequence = api.calculateBlockTripSequence(ctx, snap.ActiveTripID, serviceDate)
+		}
 		status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
 		if snap.ActiveTripTotalDistance > 0 {
 			status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
