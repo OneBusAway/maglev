@@ -445,4 +445,23 @@ func TestVehicleForTrip_DropsVehicleWithExpiredRecord(t *testing.T) {
 	}
 }
 
+// A feed serving trip updates and positions from one URL makes go-gtfs build a
+// vehicle from the update alone, with no timestamp when the update has none.
+func TestBuildTripStatus_TripUpdateVehicleWithoutTimestamp(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8 * time.Hour)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	vehicle := &gtfs.Vehicle{
+		ID:   &gtfs.VehicleID{ID: "bus"},
+		Trip: &gtfs.Trip{ID: gtfs.TripID{ID: tripID}, IsEntityInMessage: true},
+	}
+
+	status, _, err := api.BuildTripStatus(context.Background(), "dp-agency", tripID, vehicle, serviceDate, now, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, status)
+}
+
 func ptrTime(t time.Time) *time.Time { return &t }
