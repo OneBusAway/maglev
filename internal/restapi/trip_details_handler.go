@@ -224,29 +224,11 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var requestedVehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
-		vehicleAgencyID, rawVehicleID, vErr := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
-		if vErr != nil {
+		requestedVehicle = api.requestedVehicleForTrip(ctx, params.VehicleID, agencyID, trip.ID, serviceDate)
+		if requestedVehicle == nil {
 			api.sendNotFound(w, r)
 			return
 		}
-		if vehicleAgencyID != agencyID {
-			api.sendNotFound(w, r)
-			return
-		}
-		v, vErr := api.GtfsManager.GetVehicleByID(rawVehicleID)
-		if vErr != nil || v == nil {
-			api.sendNotFound(w, r)
-			return
-		}
-		// The trip-details endpoint must not accept a vehicle currently on
-		// a different trip. Java's TripDetailsBeanService restricts the
-		// vehicle argument to the trip we're describing; a mismatch is 404
-		// so the response never conflates two unrelated trips.
-		if v.Trip == nil || v.Trip.ID.ID != trip.ID {
-			api.sendNotFound(w, r)
-			return
-		}
-		requestedVehicle = v
 	}
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
@@ -530,4 +512,24 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 	}
 
 	return referencedTrips, nil
+}
+
+// requestedVehicleForTrip resolves a vehicleId parameter to the vehicle serving
+// tripID, or nil when it names no such vehicle. The endpoint must not accept a
+// vehicle currently on a different trip: Java's TripDetailsBeanService restricts
+// the vehicle argument to the trip being described, so the response never
+// conflates two unrelated trips.
+func (api *RestAPI) requestedVehicleForTrip(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+	if vehicle := api.reportedTripUpdateVehicle(ctx, requestedID, agencyID, tripID, serviceDate); vehicle != nil {
+		return vehicle
+	}
+	vehicleAgencyID, rawVehicleID, err := utils.ExtractAgencyIDAndCodeID(requestedID)
+	if err != nil || vehicleAgencyID != agencyID {
+		return nil
+	}
+	vehicle, err := api.GtfsManager.GetVehicleByID(rawVehicleID)
+	if err != nil || vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID != tripID {
+		return nil
+	}
+	return vehicle
 }
