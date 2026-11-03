@@ -36,7 +36,7 @@ func TestTripUpdateVehicleForTrip(t *testing.T) {
 		tripUpdate.ID.StartDate = startDate
 		return tripUpdate
 	}
-	withoutVehicle := plannedVehicleTripUpdate(tripID, now)
+	withoutVehicle := plannedVehicleTripUpdate(tripID, now.Add(time.Minute))
 	withoutVehicle.Vehicle = nil
 
 	tests := []struct {
@@ -44,12 +44,13 @@ func TestTripUpdateVehicleForTrip(t *testing.T) {
 		tripUpdate    gtfs.Trip
 		vehicleInFeed bool
 		wantVehicle   bool
+		wantVehicleID string
 	}{
 		{name: "fresh update within an hour of the block", tripUpdate: plannedVehicleTripUpdate(tripID, now.Add(time.Minute)), wantVehicle: true},
 		{name: "update for this service date", tripUpdate: withStartDate(plannedVehicleTripUpdate(tripID, now.Add(time.Minute)), serviceDate), wantVehicle: true},
 		{name: "update more than an hour before the block", tripUpdate: plannedVehicleTripUpdate(tripID, now.Add(-time.Minute))},
 		{name: "expired update", tripUpdate: plannedVehicleTripUpdate(tripID, now.Add(-time.Hour))},
-		{name: "update without a vehicle", tripUpdate: withoutVehicle},
+		{name: "update without a vehicle uses the block as the vehicle", tripUpdate: withoutVehicle, wantVehicle: true, wantVehicleID: delayPropBlockID(t)},
 		{name: "update for another service date", tripUpdate: withStartDate(plannedVehicleTripUpdate(tripID, now.Add(time.Minute)), serviceDate.AddDate(0, 0, 1))},
 		{name: "vehicle that reports a position", tripUpdate: plannedVehicleTripUpdate(tripID, now.Add(time.Minute)), vehicleInFeed: true},
 	}
@@ -69,7 +70,11 @@ func TestTripUpdateVehicleForTrip(t *testing.T) {
 				return
 			}
 			require.NotNil(t, vehicle)
-			assert.Equal(t, plannedVehicleID, vehicle.ID.ID)
+			wantVehicleID := tt.wantVehicleID
+			if wantVehicleID == "" {
+				wantVehicleID = plannedVehicleID
+			}
+			assert.Equal(t, wantVehicleID, vehicle.ID.ID)
 			assert.Equal(t, tt.tripUpdate.Timestamp, vehicle.Timestamp)
 			assert.True(t, isTripUpdateVehicle(vehicle))
 		})
@@ -220,15 +225,54 @@ func TestTripUpdateVehicleResponseID(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			vehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: tt.vehicleID}, Trip: &gtfs.Trip{IsEntityInMessage: true}}
+			named := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: tt.vehicleID}}
+			vehicle := &gtfs.Vehicle{ID: named.ID, Trip: &gtfs.Trip{IsEntityInMessage: true, Vehicle: named}}
 			assert.Equal(t, tt.want, responseVehicleID("1", vehicle))
 		})
 	}
 }
 
+// Java qualifies a block standing in as the vehicle with the agency, even when
+// the block's ID contains the separator.
+func TestResponseVehicleID_BlockAsVehicleAlwaysGetsAgency(t *testing.T) {
+	vehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "block_1"}, Trip: &gtfs.Trip{IsEntityInMessage: true}}
+	assert.Equal(t, "1_block_1", responseVehicleID("1", vehicle))
+}
+
 func TestResponseVehicleID_PositionVehicleAlwaysGetsAgency(t *testing.T) {
 	vehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: plannedVehicleID}, IsEntityInMessage: true}
 	assert.Equal(t, "1_"+plannedVehicleID, responseVehicleID("1", vehicle))
+}
+
+// A trip update naming no vehicle still builds a record in Java, with the block's
+// ID as the vehicle, which is how live Tampa reports 1_501 on block 501.
+func TestPluralArrivals_TripUpdateWithoutVehicleUsesBlock(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	downstreamStopID := addDownstreamStop(t, api, tripID)
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:              gtfs.TripID{ID: tripID},
+		Timestamp:       &now,
+		StopTimeUpdates: []gtfs.StopTimeUpdate{{StopID: &downstreamStopID, Arrival: &gtfs.StopTimeEvent{Time: ptrTime(serviceDate.Add(9 * time.Hour))}}},
+	})
+	endpoint := fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120",
+		utils.FormCombinedID("dp-agency", downstreamStopID))
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+
+	arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	wantVehicleID := utils.FormCombinedID("dp-agency", delayPropBlockID(t))
+	assert.Equal(t, wantVehicleID, arrival.VehicleID)
+	assert.True(t, arrival.Predicted)
+	require.NotNil(t, arrival.TripStatus)
+	assert.Equal(t, wantVehicleID, arrival.TripStatus.VehicleID)
+	assert.Equal(t, "in_progress", arrival.TripStatus.Phase)
+	assert.Equal(t, "SCHEDULED", arrival.TripStatus.Status)
 }
 
 // Java keeps a vehicle where its record placed it until a newer record arrives,
