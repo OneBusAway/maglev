@@ -87,19 +87,39 @@ func exceedsBlockNotActiveThreshold(deviationSeconds int) bool {
 		deviationSeconds < -blockNotActiveThresholdSeconds
 }
 
+// tripUpdateMaxAge mirrors Java's _predictionCacheMaxOffset
+// (BlockLocationServiceImpl.java:88): a vehicle record is used only within this
+// long of its timestamp.
+const tripUpdateMaxAge = 5 * time.Minute
+
+// tripUpdateExpired reports whether Java would have stopped using a trip update.
+// Java checks the record against the current time, not a request's target time,
+// and a record's time comes from its trip update when that has a timestamp
+// (GtfsRealtimeTripLibrary.java:1106-1108), so a newer position does not refresh
+// it. Without a timestamp there is nothing to compare.
+func (api *RestAPI) tripUpdateExpired(tripUpdate gtfs.Trip) bool {
+	if tripUpdate.Timestamp == nil {
+		return false
+	}
+	age := api.Clock.Now().Sub(*tripUpdate.Timestamp)
+	return age < -tripUpdateMaxAge || age > tripUpdateMaxAge
+}
+
 type tripUpdateForTrip struct {
 	tripID string
 	tu     gtfs.Trip
 }
 
-// collectBlockTripUpdates flattens every TripUpdate matching any tripID
-// into a slice in the order they appear, preserving block-trip-start order
-// when the caller passes a sorted slice.
+// collectBlockTripUpdates flattens every unexpired TripUpdate matching any
+// tripID into a slice in the order they appear, preserving block-trip-start
+// order when the caller passes a sorted slice.
 func (api *RestAPI) collectBlockTripUpdates(tripIDs []string) []tripUpdateForTrip {
 	var out []tripUpdateForTrip
 	for _, id := range tripIDs {
 		for _, tu := range api.GtfsManager.GetTripUpdatesForTrip(id) {
-			out = append(out, tripUpdateForTrip{tripID: id, tu: tu})
+			if !api.tripUpdateExpired(tu) {
+				out = append(out, tripUpdateForTrip{tripID: id, tu: tu})
+			}
 		}
 	}
 	return out
@@ -673,7 +693,7 @@ func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string, stopTimes []*gtf
 	}
 
 	tripUpdates := api.GtfsManager.GetTripUpdatesForTrip(tripID)
-	if len(tripUpdates) == 0 {
+	if len(tripUpdates) == 0 || api.tripUpdateExpired(tripUpdates[0]) {
 		return delays
 	}
 

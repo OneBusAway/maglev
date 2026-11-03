@@ -630,6 +630,9 @@ func (api *RestAPI) getPredictedTimes(
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
 		return time.Time{}, time.Time{}, false
 	}
+	if api.tripUpdateExpired(*realTimeTrip) {
+		return time.Time{}, time.Time{}, false
+	}
 
 	var arrivalOffset, departureOffset *time.Duration
 	var propagatedDelay time.Duration

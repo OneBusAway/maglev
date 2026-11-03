@@ -215,6 +215,18 @@ func (m *Manager) MockAddTripUpdate(tripID string, delay *time.Duration, stopTim
 	m.merged.Store(merged)
 }
 
+// MockAddFullTripUpdate adds a trip update carrying fields MockAddTripUpdate
+// cannot set, such as its timestamp and vehicle descriptor.
+func (m *Manager) MockAddFullTripUpdate(trip gtfs.Trip) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	merged := m.mergedRealtime().clone()
+	merged.trips = append(merged.trips, trip)
+	merged.tripLookup[trip.ID.ID] = len(merged.trips) - 1
+	m.merged.Store(merged)
+}
+
 func (m *Manager) MockAddAlert(feedID string, alert gtfs.Alert) {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
