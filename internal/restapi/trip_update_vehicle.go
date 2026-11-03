@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ const tripUpdateVehicleBlockWindow = time.Hour
 // vehicleForTrip returns the vehicle serving a trip's block: one reporting
 // positions when there is one, otherwise one known only from a trip update.
 func (api *RestAPI) vehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
-	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil && !api.vehicleRecordExpired(vehicle) {
+	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil && !api.vehicleRecordExpired(ctx, vehicle, serviceDate) {
 		return vehicle
 	}
 	return api.tripUpdateVehicleForTrip(ctx, tripID, serviceDate)
@@ -29,13 +30,22 @@ func (api *RestAPI) vehicleForTrip(ctx context.Context, tripID string, serviceDa
 
 // vehicleRecordExpired reports whether Java has dropped the record for a vehicle
 // because its trip update is too old. Maglev retains a vehicle that left the feed
-// for longer than that, and a position-only vehicle has no record to expire.
-func (api *RestAPI) vehicleRecordExpired(vehicle *gtfs.Vehicle) bool {
+// for longer than that, and a position-only vehicle has no record to expire. The
+// record's time comes from the whole block, not just the vehicle's current trip.
+func (api *RestAPI) vehicleRecordExpired(ctx context.Context, vehicle *gtfs.Vehicle, serviceDate time.Time) bool {
 	if vehicle.Trip == nil {
 		return false
 	}
-	tripUpdates := api.GtfsManager.GetTripUpdatesForTrip(vehicle.Trip.ID.ID)
-	return len(tripUpdates) > 0 && api.tripUpdateExpired(tripUpdates[0])
+	tripID := vehicle.Trip.ID.ID
+	if len(api.GtfsManager.GetTripUpdatesForTrip(tripID)) == 0 {
+		return false
+	}
+	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
+	if !slices.Contains(blockTripIDs, tripID) {
+		blockTripIDs = []string{tripID}
+	}
+	recordTime, hasTime := blockRecordTime(api.blockTripUpdates(blockTripIDs))
+	return hasTime && api.recordTimeExpired(recordTime)
 }
 
 // tripUpdateVehicleForTrip finds a vehicle named by a trip update on the trip's
@@ -43,12 +53,14 @@ func (api *RestAPI) vehicleRecordExpired(vehicle *gtfs.Vehicle) bool {
 // by vehicle and builds a record even with no position (GtfsRealtimeTripLibrary
 // .java:355-378), so feeds that plan a block before a bus is assigned, such as
 // Swiftly's block_*_schedBasedVehicle, still produce a vehicle in its responses.
+//
+// The vehicle carries the block's first update, whose schedule relationship is the
+// status of Java's whole record (GtfsRealtimeTripLibrary.java:325, :1101-1102).
 func (api *RestAPI) tripUpdateVehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
-	for _, blockTripID := range api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate) {
-		for _, tripUpdate := range api.GtfsManager.GetTripUpdatesForTrip(blockTripID) {
-			if vehicle := api.vehicleFromTripUpdate(ctx, tripUpdate, blockTripID, serviceDate); vehicle != nil {
-				return vehicle
-			}
+	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
+	for _, blockUpdate := range api.collectBlockTripUpdates(blockTripIDs) {
+		if vehicle := api.vehicleFromTripUpdate(ctx, blockUpdate.tu, blockUpdate.tripID, serviceDate); vehicle != nil {
+			return vehicle
 		}
 	}
 	return nil
@@ -62,7 +74,7 @@ func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.T
 	if vehicleID == nil {
 		return nil
 	}
-	if api.tripUpdateExpired(tripUpdate) || api.tripUpdateVehicleHasPosition(tripUpdate) {
+	if api.tripUpdateVehicleHasPosition(tripUpdate) {
 		return nil
 	}
 

@@ -337,24 +337,9 @@ func TestTripForVehicleHandler_BlockVehicleReportsActiveTrip(t *testing.T) {
 	api := createTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-	ctx := context.Background()
 
 	stopID, _, morningTripID, _ := setupDelayPropTestData(t, api, 1)
-	queries := api.GtfsManager.GtfsDB.Queries
-	morningTrip, err := queries.GetTrip(ctx, morningTripID)
-	require.NoError(t, err)
-	laterTripID := morningTripID + "-later"
-	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
-		ID: laterTripID, RouteID: morningTrip.RouteID, ServiceID: morningTrip.ServiceID, BlockID: morningTrip.BlockID,
-	})
-	require.NoError(t, err)
-	for i, startAt := range []time.Duration{10 * time.Hour, 11 * time.Hour} {
-		_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
-			TripID: laterTripID, StopID: stopID, StopSequence: int64(i + 1),
-			ArrivalTime: int64(startAt), DepartureTime: int64(startAt),
-		})
-		require.NoError(t, err)
-	}
+	laterTripID := addLaterBlockTrip(t, api, stopID, morningTripID)
 	for _, tripID := range []string{morningTripID, laterTripID} {
 		api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{ID: gtfs.TripID{ID: tripID}, Timestamp: &now})
 	}
@@ -446,6 +431,29 @@ func TestVehicleForTrip_DropsVehicleWithExpiredRecord(t *testing.T) {
 	}
 }
 
+// addLaterBlockTrip adds a trip running 10:00 to 11:00 to the block of the trip
+// setupDelayPropTestData created, and returns its ID.
+func addLaterBlockTrip(t *testing.T, api *RestAPI, stopID, tripID string) string {
+	t.Helper()
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+	trip, err := queries.GetTrip(ctx, tripID)
+	require.NoError(t, err)
+	laterTripID := tripID + "-later"
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: laterTripID, RouteID: trip.RouteID, ServiceID: trip.ServiceID, BlockID: trip.BlockID,
+	})
+	require.NoError(t, err)
+	for i, startAt := range []time.Duration{10 * time.Hour, 11 * time.Hour} {
+		_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: laterTripID, StopID: stopID, StopSequence: int64(i + 1),
+			ArrivalTime: int64(startAt), DepartureTime: int64(startAt),
+		})
+		require.NoError(t, err)
+	}
+	return laterTripID
+}
+
 // A feed serving trip updates and positions from one URL makes go-gtfs build a
 // vehicle from the update alone, with no timestamp when the update has none.
 func TestBuildTripStatus_TripUpdateVehicleWithoutTimestamp(t *testing.T) {
@@ -493,6 +501,51 @@ func TestArrivals_CanceledTripHidesVehicle(t *testing.T) {
 		combinedStopID, combinedTripID, serviceDate.UnixMilli()))
 	assert.Empty(t, singular.Data.Entry.VehicleID)
 	assert.False(t, singular.Data.Entry.Predicted)
+}
+
+// Java builds one record per vehicle whose time is the block's last timestamp
+// (GtfsRealtimeTripLibrary.java:948-950), so the block's updates expire together.
+func TestBlockTripUpdates_ExpireTogether(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8 * time.Hour)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	stopID, _, firstTripID, _ := setupDelayPropTestData(t, api, 1)
+	laterTripID := addLaterBlockTrip(t, api, stopID, firstTripID)
+	fresh := now.Add(-time.Minute)
+	stale := now.Add(-10 * time.Minute)
+
+	tests := []struct {
+		name        string
+		first, last time.Time
+		wantRecord  bool
+	}{
+		{name: "stale first update with a fresh last one keeps the record", first: stale, last: fresh, wantRecord: true},
+		{name: "fresh first update with a stale last one loses the record", first: fresh, last: stale},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", firstTripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+			for tripID, timestamp := range map[string]time.Time{firstTripID: tt.first, laterTripID: tt.last} {
+				api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+					ID: gtfs.TripID{ID: tripID}, Timestamp: &timestamp,
+					Vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
+				})
+			}
+
+			tripUpdates := api.collectBlockTripUpdates([]string{firstTripID, laterTripID})
+			vehicle := api.vehicleForTrip(context.Background(), firstTripID, serviceDate)
+
+			if tt.wantRecord {
+				assert.Len(t, tripUpdates, 2)
+			} else {
+				assert.Empty(t, tripUpdates)
+			}
+			assert.Equal(t, tt.wantRecord, vehicle != nil)
+		})
+	}
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
