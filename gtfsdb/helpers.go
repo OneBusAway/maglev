@@ -51,7 +51,7 @@ func ParseGtfsData(b []byte, source string) (*GtfsData, error) {
 		return nil, fmt.Errorf("GTFS validation failed: %w", err)
 	}
 
-	return &GtfsData{Static: staticData, Hash: hashStr, Source: source}, nil
+	return &GtfsData{Static: staticData, Hash: hashStr, RawHash: hashStr, Source: source}, nil
 }
 
 // metricsWrapper wraps *sql.DB for metric reporting purposes
@@ -144,10 +144,6 @@ func createDB(config Config) (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Limit the pool before any statements run. An in-memory database is one
-	// database per connection, so the migration must see a single connection.
-	configureConnectionPool(db, config)
-
 	// Configure SQLite performance settings immediately after opening
 	ctx := context.Background()
 	err = configureSQLitePerformance(ctx, db)
@@ -161,6 +157,9 @@ func createDB(config Config) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("error performing database migration: %w", err)
 	}
+
+	// Configure connection pool settings
+	configureConnectionPool(db, config)
 
 	return db, nil
 }
@@ -183,16 +182,14 @@ func performDatabaseMigration(ctx context.Context, db *sql.DB) error {
 // created before the column existed. CREATE TABLE IF NOT EXISTS does not
 // alter an existing table, so the column has to be added explicitly.
 func ensureRawFileHashColumn(ctx context.Context, db *sql.DB) error {
-	var tableColumns, rawColumns int
+	var rawColumns int
 	err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN name = 'raw_file_hash' THEN 1 ELSE 0 END), 0)
-		 FROM pragma_table_info('import_metadata')`,
-	).Scan(&tableColumns, &rawColumns)
+		`SELECT COUNT(*) FROM pragma_table_info('import_metadata') WHERE name = 'raw_file_hash'`,
+	).Scan(&rawColumns)
 	if err != nil {
 		return fmt.Errorf("error checking import_metadata columns: %w", err)
 	}
-	// No table means the DDL did not create it, so there is nothing to alter.
-	if tableColumns == 0 || rawColumns > 0 {
+	if rawColumns > 0 {
 		return nil
 	}
 	if _, err := db.ExecContext(ctx,
@@ -248,9 +245,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	existingMetadata, err := c.Queries.GetImportMetadata(ctx)
 	if err == nil {
 		hasExisting = true
-		// We have existing metadata, check if hash matches. A database written
-		// before raw_file_hash existed has no raw hash, so it is reimported once
-		// to record it.
+		// We have existing metadata, check if hash matches.
 		// Only the post-tidy hash and source decide whether the tables need rebuilding.
 		// A raw-hash change alone leaves the imported data unchanged.
 		isUnchanged := existingMetadata.FileHash == data.Hash &&
