@@ -8,6 +8,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -54,8 +55,11 @@ func (api *RestAPI) tripUpdateVehicleForTrip(ctx context.Context, tripID string,
 }
 
 func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.Trip, tripID string, serviceDate time.Time) *gtfs.Vehicle {
-	namesVehicle := tripUpdate.Vehicle != nil && tripUpdate.Vehicle.ID != nil && tripUpdate.Vehicle.ID.ID != ""
-	if !namesVehicle || !tripUpdateOnServiceDate(tripUpdate, serviceDate) {
+	if !tripUpdateOnServiceDate(tripUpdate, serviceDate) {
+		return nil
+	}
+	vehicleID := api.tripUpdateVehicleID(ctx, tripUpdate, tripID)
+	if vehicleID == nil {
 		return nil
 	}
 	if api.tripUpdateExpired(tripUpdate) || api.tripUpdateVehicleHasPosition(tripUpdate) {
@@ -71,7 +75,28 @@ func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.T
 	}
 
 	tripUpdate.IsEntityInMessage = true
-	return &gtfs.Vehicle{ID: tripUpdate.Vehicle.ID, Trip: &tripUpdate, Timestamp: &recordTime}
+	return &gtfs.Vehicle{ID: vehicleID, Trip: &tripUpdate, Timestamp: &recordTime}
+}
+
+// tripUpdateVehicleID returns the vehicle a trip update names. Java's record uses
+// the block's ID when it names none (GtfsRealtimeTripLibrary.java:556-559).
+func (api *RestAPI) tripUpdateVehicleID(ctx context.Context, tripUpdate gtfs.Trip, tripID string) *gtfs.VehicleID {
+	if namesVehicle(tripUpdate) {
+		return tripUpdate.Vehicle.ID
+	}
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	if err != nil {
+		return nil
+	}
+	blockID := nulls.StringOrEmpty(trip.BlockID)
+	if blockID == "" {
+		return nil
+	}
+	return &gtfs.VehicleID{ID: blockID}
+}
+
+func namesVehicle(tripUpdate gtfs.Trip) bool {
+	return tripUpdate.Vehicle != nil && tripUpdate.Vehicle.ID != nil && tripUpdate.Vehicle.ID.ID != ""
 }
 
 func tripUpdateOnServiceDate(tripUpdate gtfs.Trip, serviceDate time.Time) bool {
@@ -105,9 +130,10 @@ func isTripUpdateVehicle(vehicle *gtfs.Vehicle) bool {
 
 // responseVehicleID renders a vehicle's ID for an API response. Java leaves a
 // trip-update-only ID as the feed sent it when it already splits into an agency
-// and an ID, so live Tampa reports block_37462_schedBasedVehicle unprefixed.
+// and an ID, so live Tampa reports block_37462_schedBasedVehicle unprefixed. A
+// block standing in as the vehicle is always qualified with its agency.
 func responseVehicleID(agencyID string, vehicle *gtfs.Vehicle) string {
-	if isTripUpdateVehicle(vehicle) && strings.Contains(vehicle.ID.ID, "_") {
+	if isTripUpdateVehicle(vehicle) && namesVehicle(*vehicle.Trip) && strings.Contains(vehicle.ID.ID, "_") {
 		return vehicle.ID.ID
 	}
 	return utils.FormCombinedID(agencyID, vehicle.ID.ID)
@@ -162,10 +188,13 @@ func (api *RestAPI) vehicleRecordTime(vehicle *gtfs.Vehicle, blockTripIDs []stri
 	if vehicle == nil || runsOwnSchedule(vehicle) {
 		return time.Time{}, false
 	}
+	if recordTime, ok := blockRecordTime(api.collectBlockTripUpdates(blockTripIDs)); ok {
+		return recordTime, true
+	}
 	if isTripUpdateVehicle(vehicle) {
 		return *vehicle.Timestamp, true
 	}
-	return blockRecordTime(api.collectBlockTripUpdates(blockTripIDs))
+	return time.Time{}, false
 }
 
 // runsOwnSchedule reports whether a vehicle's trip departs from the static block
