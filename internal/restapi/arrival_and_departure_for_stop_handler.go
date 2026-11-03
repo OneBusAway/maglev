@@ -74,7 +74,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 	}
 
 	// Validate time
-	params.TimeParam, fieldErrors = utils.ValidateArrivalTimeParam(r.URL.Query().Get("time"), fieldErrors)
+	params.TimeParam, fieldErrors = utils.ParseArrivalTimeParam(r.URL.Query().Get("time"), fieldErrors)
 	if params.TimeParam != "" {
 		if ms, ok := utils.ParseEpochMillis(params.TimeParam); ok {
 			t := time.UnixMilli(ms)
@@ -129,9 +129,6 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 		if params.TimeParam != "" {
 			resolved := utils.ResolveArrivalTime(params.TimeParam, loc[0], time.Time{})
 			params.Time = &resolved
-		} else if params.Time != nil {
-			localized := params.Time.In(loc[0])
-			params.Time = &localized
 		}
 	}
 
@@ -210,9 +207,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if params.TimeParam != "" {
 		resolved := utils.ResolveArrivalTime(params.TimeParam, loc, api.Clock.Now())
 		params.Time = &resolved
-	} else if params.Time != nil {
-		localized := params.Time.In(loc)
-		params.Time = &localized
 	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)

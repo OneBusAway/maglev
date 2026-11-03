@@ -757,7 +757,7 @@ func TestParseTimeParameter_DateStringUsesProvidedLocation(t *testing.T) {
 	assert.Equal(t, loc.String(), parsedTime.Location().String())
 }
 
-func TestValidateArrivalTimeParam(t *testing.T) {
+func TestParseArrivalTimeParam(t *testing.T) {
 	tests := []struct {
 		name        string
 		input       string
@@ -776,7 +776,7 @@ func TestValidateArrivalTimeParam(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			val, errs := ValidateArrivalTimeParam(tt.input, nil)
+			val, errs := ParseArrivalTimeParam(tt.input, nil)
 			if tt.expectError {
 				assert.Contains(t, errs, "time")
 				assert.Equal(t, `Invalid field value for field "time".`, errs["time"][0])
@@ -799,9 +799,9 @@ func TestResolveArrivalTime(t *testing.T) {
 		assert.Equal(t, now.In(loc), res)
 	})
 
-	t.Run("epoch 0 falls back to now in location", func(t *testing.T) {
+	t.Run("epoch 0 resolves to epoch 0 in location", func(t *testing.T) {
 		res := ResolveArrivalTime("0", loc, now)
-		assert.Equal(t, now.In(loc), res)
+		assert.Equal(t, time.UnixMilli(0).In(loc), res)
 	})
 
 	t.Run("epoch millis converts to location", func(t *testing.T) {

@@ -69,8 +69,12 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// The service date is a local calendar date, so datetime values resolve in
 	// the fallback agency's timezone. The format was validated during parsing,
-	// so this resolution cannot fail.
-	params.QueryTime = utils.ResolveArrivalTime(params.TimeParam, agencies.fallbackLocation, api.Clock.Now())
+	// so this resolution cannot fail. Java treats time=0 as "not supplied" (now).
+	timeParam := params.TimeParam
+	if ms, ok := utils.ParseEpochMillis(timeParam); ok && ms == 0 {
+		timeParam = ""
+	}
+	params.QueryTime = utils.ResolveArrivalTime(timeParam, agencies.fallbackLocation, api.Clock.Now())
 
 	// Nearest stop first: truncation below drops entries from the end, so the
 	// farthest stops must sort last.
@@ -867,7 +871,7 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 	// signed values and date-only values fail here, at parse time, so a bad
 	// time reports 400 even when the stop search finds nothing. The datetime
 	// itself resolves after agencies are known; see the handler.
-	params.TimeParam, fieldErrors = utils.ValidateArrivalTimeParam(queryParams.Get("time"), fieldErrors)
+	params.TimeParam, fieldErrors = utils.ParseArrivalTimeParam(queryParams.Get("time"), fieldErrors)
 	params.MaxCount = parseArrivalsForLocationMaxCount(queryParams, addError)
 	params.RouteTypes = parseRouteTypesParam(queryParams, addError)
 	params.EmptyReturnsNotFound, fieldErrors = utils.ParseBoolParam(queryParams, "emptyReturnsNotFound", false, fieldErrors)

@@ -207,6 +207,19 @@ func TestArrivalsAndDeparturesForStopHandlerEndToEnd(t *testing.T) {
 
 // TestArrivalsAndDeparturesForStopHandler_StopCodeFallback tests that arrivals_and_departures_for_stop_handler
 // falls back to the raw stop entity id for code when the stop code is not supplied in the feed.
+func TestArrivalsAndDeparturesForStopHandler_TimeZeroReturnsEmpty(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{"time": {"0"}}))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	assert.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"time=0 queries epoch 0 (1970) and must return no arrivals")
+}
+
 func TestArrivalsAndDeparturesForStopHandler_StopCodeFallback(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()

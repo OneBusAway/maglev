@@ -182,22 +182,81 @@ func TestArrivalAndDepartureForStopHandlerWithTimeParameter(t *testing.T) {
 }
 
 func TestArrivalAndDepartureForStopHandlerWithDateTimeFormat(t *testing.T) {
-	api := createTestApi(t)
+	ctx := t.Context()
+	mockNow := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(mockNow)
+	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
-	stopID := utils.FormCombinedID("25", "5004")
-	tripID := utils.FormCombinedID("25", "9e7be5e4-3de9-456d-a174-d79bbbe40f80")
-	specificTime := time.Now().Add(time.Hour)
-	serviceDate := utils.CalculateServiceDate(specificTime)
-	timeFormatted := specificTime.Format("2006-01-02_15-04-05")
+	queries := api.GtfsManager.GtfsDB.Queries
+	const (
+		agencyID  = "DateTimeLoopAgency"
+		routeID   = "DateTimeLoopRoute"
+		tripID    = "DateTimeLoopTrip"
+		stopID    = "DateTimeLoopStop"
+		serviceID = "DateTimeLoopService"
+	)
+
+	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "DateTime Loop Transit", Url: "https://example.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID, Type: 3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: stopID, Name: nulls.String("DateTime Loop Stop"), Lat: 47.0, Lon: -122.0,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:     serviceID,
+		Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20200101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: routeID, ServiceID: serviceID,
+	})
+	require.NoError(t, err)
+
+	firstVisit := int64(8 * time.Hour)
+	secondVisit := int64(9 * time.Hour)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: 1,
+		ArrivalTime: firstVisit, DepartureTime: firstVisit,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: 8,
+		ArrivalTime: secondVisit, DepartureTime: secondVisit,
+	})
+	require.NoError(t, err)
+
+	combinedStopID := utils.FormCombinedID(agencyID, stopID)
+	combinedTripID := utils.FormCombinedID(agencyID, tripID)
+
+	serviceMidnight := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	// Query time near the 09:00 visit (08:55), while clock is pinned at midnight.
+	queryTime := serviceMidnight.Add(8*time.Hour + 55*time.Minute)
+	timeFormatted := queryTime.Format(utils.LocationDateTimeLayout)
+
 	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&time=%s",
-		stopID, tripID, serviceDate.UnixMilli(), timeFormatted)
+		combinedStopID, combinedTripID, serviceMidnight.UnixMilli(), timeFormatted)
 	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
 
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, stopID, model.Data.Entry.StopID)
-	assert.Equal(t, tripID, model.Data.Entry.TripID)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, combinedStopID, model.Data.Entry.StopID)
+	assert.Equal(t, combinedTripID, model.Data.Entry.TripID)
+	assert.Equal(t, 1, model.Data.Entry.StopSequence,
+		"datetime query near 09:00 should select the second visit (stopSequence index 1) despite clock at midnight")
 }
 
 func TestArrivalAndDepartureForStopHandlerRequiresTripId(t *testing.T) {

@@ -52,7 +52,7 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 	params.FrequencyBefore = parseMinutesValue(query, "frequencyMinutesBefore", params.FrequencyBefore, maxArrivalWindow, addError)
 	params.FrequencyAfter = parseMinutesValue(query, "frequencyMinutesAfter", params.FrequencyAfter, maxArrivalWindow, addError)
 
-	params.TimeParam, fieldErrors = utils.ValidateArrivalTimeParam(query.Get("time"), fieldErrors)
+	params.TimeParam, fieldErrors = utils.ParseArrivalTimeParam(query.Get("time"), fieldErrors)
 	if params.TimeParam != "" {
 		if ms, ok := utils.ParseEpochMillis(params.TimeParam); ok {
 			params.Time = time.UnixMilli(ms)
