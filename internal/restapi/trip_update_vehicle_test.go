@@ -548,4 +548,51 @@ func TestBlockTripUpdates_ExpireTogether(t *testing.T) {
 	}
 }
 
+// A vehicle ID an arrival reports must work when a client sends it back.
+func TestReportedTripUpdateVehicleIDRoundTrips(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(7*time.Hour + 30*time.Minute)
+	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer setupAPI.Shutdown()
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
+	combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+
+	tests := []struct {
+		name          string
+		feedVehicleID string
+		requestID     string
+		wantFound     bool
+	}{
+		{name: "raw ID", feedVehicleID: plannedVehicleID, requestID: plannedVehicleID, wantFound: true},
+		{name: "ID with the agency", feedVehicleID: "1519", requestID: "dp-agency_1519", wantFound: true},
+		{name: "another vehicle", feedVehicleID: "1519", requestID: "dp-agency_1520"},
+		{name: "same ID under another agency", feedVehicleID: "1519", requestID: "other_1519"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			tripUpdate := plannedVehicleTripUpdate(tripID, now)
+			tripUpdate.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: tt.feedVehicleID}}
+			api.GtfsManager.MockAddFullTripUpdate(tripUpdate)
+
+			details, _ := callAPIHandler[TripDetailsResponse](t, api, fmt.Sprintf(
+				"/api/where/trip-details/%s.json?key=TEST&serviceDate=%d&vehicleId=%s", combinedTripID, serviceDate.UnixMilli(), tt.requestID))
+			_, arrival := callAPIHandler[ArrivalAndDepartureResponse](t, api, fmt.Sprintf(
+				"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1&vehicleId=%s",
+				combinedStopID, combinedTripID, serviceDate.UnixMilli(), tt.requestID))
+
+			if !tt.wantFound {
+				assert.Equal(t, http.StatusNotFound, details.StatusCode)
+				assert.Empty(t, arrival.Data.Entry.VehicleID)
+				return
+			}
+			assert.Equal(t, http.StatusOK, details.StatusCode)
+			assert.Equal(t, tt.requestID, arrival.Data.Entry.VehicleID)
+		})
+	}
+}
+
 func ptrTime(t time.Time) *time.Time { return &t }

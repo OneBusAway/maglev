@@ -91,11 +91,9 @@ func (api *RestAPI) BuildTripStatus(
 	if vehicle != nil {
 		if vehicle.ID != nil {
 			// The OBA spec requires the combined {agencyId}_{vehicleId} form
-			// here — see the vehicleId field on
-			// arrival-and-departure-for-stop, arrivals-and-departures-for-stop,
-			// and trip-details. Downstream consumers (trip_details_handler,
-			// trip_for_vehicle_handler) parse it back with
-			// utils.ExtractAgencyIDAndCodeID and 404 on the un-prefixed form.
+			// here, apart from the raw IDs responseVehicleID describes. See the
+			// vehicleId field on arrival-and-departure-for-stop,
+			// arrivals-and-departures-for-stop, and trip-details.
 			status.VehicleID = responseVehicleID(agencyID, vehicle)
 		}
 		if vehicle.OccupancyStatus != nil {
