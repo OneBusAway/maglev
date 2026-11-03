@@ -1165,3 +1165,57 @@ func TestShapeGapDistance(t *testing.T) {
 	assert.Zero(t, shapeGapDistance(withShape, blockTripData{}))
 	assert.Zero(t, shapeGapDistance(blockTripData{}, nextShape))
 }
+
+// Java treats a vehicle between a stop's arrival and departure as at that stop
+// (ScheduledBlockLocationServiceImpl.java:218), and interpolates only from one
+// stop's departure to the next stop's arrival.
+func TestBuildSnapshotFromStops_DwellAtStop(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+		{EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 300, DistanceAlongBlock: 2000},
+	}
+
+	tests := []struct {
+		name         string
+		seconds      int64
+		wantNext     int
+		wantDistance float64
+	}{
+		{name: "travelling to the stop", seconds: 50, wantNext: 1, wantDistance: 500},
+		{name: "arriving at the stop", seconds: 100, wantNext: 1, wantDistance: 1000},
+		{name: "dwelling at the stop", seconds: 150, wantNext: 1, wantDistance: 1000},
+		{name: "departing the stop", seconds: 200, wantNext: 1, wantDistance: 1000},
+		{name: "travelling on after departure", seconds: 250, wantNext: 2, wantDistance: 1500},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			currentTime := serviceDate.Add(time.Duration(tt.seconds) * time.Second)
+
+			snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+			assert.Equal(t, tt.wantNext, snap.NextStopIndex)
+			assert.InDelta(t, tt.wantDistance, snap.DistanceAlongBlock, 0.001)
+		})
+	}
+}
+
+func TestApplySnapshotStops_DwellAtStop(t *testing.T) {
+	snap := &scheduledBlockSnapshot{
+		NextStopIndex: 1,
+		Stops: []blockStopMetric{
+			{StopID: "before", ArrivalSeconds: 0, DepartureSeconds: 0},
+			{StopID: "dwell", ArrivalSeconds: 100, DepartureSeconds: 200},
+		},
+	}
+	status := models.NewTripStatus()
+
+	applySnapshotStops(status, snap, 150, "1")
+
+	assert.Equal(t, "1_dwell", status.NextStop)
+	assert.Zero(t, status.NextStopTimeOffset)
+	assert.Equal(t, "1_dwell", status.ClosestStop)
+	assert.Zero(t, status.ClosestStopTimeOffset)
+}
