@@ -136,6 +136,14 @@ func (api *RestAPI) tripUpdateExpired(tripUpdate gtfs.Trip) bool {
 	return age < -tripUpdateMaxAge || age > tripUpdateMaxAge
 }
 
+func (api *RestAPI) tripUpdateVehicleHasPosition(tripUpdate gtfs.Trip) bool {
+	if tripUpdate.Vehicle == nil || tripUpdate.Vehicle.ID == nil {
+		return false
+	}
+	_, err := api.GtfsManager.GetVehicleByID(tripUpdate.Vehicle.ID.ID)
+	return err == nil
+}
+
 type tripUpdateForTrip struct {
 	tripID string
 	tu     gtfs.Trip

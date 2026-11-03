@@ -45,7 +45,7 @@ type tripStatusExtras struct {
 //
 // Pass a non-nil vehicle when it is already known (e.g. DUPLICATED trips, or when
 // the caller has already looked up the vehicle). Pass nil to have the function look
-// up the vehicle automatically via GetVehicleForTrip.
+// up the vehicle automatically via vehicleForTrip.
 //
 // tripID is used for DB lookups (stop times, shapes, block sequence). For DUPLICATED
 // trips whose synthetic ActiveTripID has no DB entry, set tripID to the base/static
@@ -67,7 +67,7 @@ func (api *RestAPI) BuildTripStatus(
 	freqMap map[string][]gtfsdb.Frequency,
 ) (*models.TripStatus, *tripStatusExtras, error) {
 	if vehicle == nil {
-		vehicle = api.GtfsManager.GetVehicleForTrip(ctx, tripID)
+		vehicle = api.vehicleForTrip(ctx, tripID, serviceDate)
 	}
 	// Normalize serviceDate to midnight for the response, consistent across all endpoints.
 	sdMidnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
@@ -96,7 +96,7 @@ func (api *RestAPI) BuildTripStatus(
 			// and trip-details. Downstream consumers (trip_details_handler,
 			// trip_for_vehicle_handler) parse it back with
 			// utils.ExtractAgencyIDAndCodeID and 404 on the un-prefixed form.
-			status.VehicleID = utils.FormCombinedID(agencyID, vehicle.ID.ID)
+			status.VehicleID = responseVehicleID(agencyID, vehicle)
 		}
 		if vehicle.OccupancyStatus != nil {
 			status.OccupancyStatus = vehicle.OccupancyStatus.String()
@@ -253,8 +253,7 @@ func (api *RestAPI) BuildTripStatus(
 	// shift is a no-op.
 	var snap *scheduledBlockSnapshot
 	if len(stopTimes) > 0 {
-		effectiveTime := currentTime.Add(-time.Duration(scheduleDeviation) * time.Second)
-		snap = api.computeScheduledBlockSnapshot(ctx, dbTripID, effectiveTime, serviceDate)
+		snap = api.statusBlockSnapshot(ctx, status, vehicle, dbTripID, agencyID, scheduleDeviation, currentTime, serviceDate)
 	}
 
 	// Snap-derived status fields — independent of target's shape.

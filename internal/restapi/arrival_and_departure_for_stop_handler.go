@@ -318,7 +318,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 	} else {
 		// If vehicleId is not provided, get the vehicle for the trip
-		vehicle = api.GtfsManager.GetVehicleForTrip(ctx, tripID)
+		vehicle = api.vehicleForTrip(ctx, tripID, serviceMidnight)
 	}
 
 	if vehicle != nil && vehicle.Trip != nil {
@@ -328,7 +328,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			// clients round-trip this value into /trip-for-vehicle/{id} and
 			// /trip-details/{id}?vehicleId=... which both extract the agency
 			// prefix before doing GetVehicleByID on the raw id.
-			vehicleID = utils.FormCombinedID(route.AgencyID, vehicle.ID.ID)
+			vehicleID = responseVehicleID(route.AgencyID, vehicle)
 		} else {
 			reqLogger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
 		}
