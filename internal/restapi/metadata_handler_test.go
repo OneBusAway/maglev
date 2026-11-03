@@ -158,9 +158,14 @@ func TestMetadataHandler_ImportMetadataQueryFails(t *testing.T) {
 // TestMetadataHandler_StaticGtfsHashReportsRawHash stores a post-tidy FileHash and
 // a different RawFileHash, and checks that staticGtfsHash reports the raw one.
 func TestMetadataHandler_StaticGtfsHashReportsRawHash(t *testing.T) {
-	api := createTestApi(t)
+	manager := newTestManagerNoData(t)
+	api := &RestAPI{
+		Application: &app.Application{
+			GtfsManager: manager,
+		},
+	}
 
-	_, err := api.GtfsManager.GtfsDB.Queries.UpsertImportMetadata(context.Background(), gtfsdb.UpsertImportMetadataParams{
+	_, err := manager.GtfsDB.Queries.UpsertImportMetadata(context.Background(), gtfsdb.UpsertImportMetadataParams{
 		FileHash:    "post-tidy-hash",
 		ImportTime:  time.Now().UnixNano(),
 		FileSource:  "raba.zip",
@@ -168,8 +173,12 @@ func TestMetadataHandler_StaticGtfsHashReportsRawHash(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	resp, body := callAPIHandler[map[string]any](t, api, "/api/v2/metadata.json?key=TEST")
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/metadata.json", nil)
+	rr := httptest.NewRecorder()
+	api.metadataHandler(rr, req)
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, rr.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
 	assert.Equal(t, "raw-zip-hash", body["staticGtfsHash"])
 }
