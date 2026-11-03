@@ -103,6 +103,20 @@ func (api *RestAPI) deviationPickTime(tripUpdates []tripUpdateForTrip, currentTi
 	return currentTime
 }
 
+// blockRecordTime is the time of the vehicle record Java builds from a block's
+// trip updates: the last timestamp in block order
+// (GtfsRealtimeTripLibrary.java:948-950).
+func blockRecordTime(tripUpdates []tripUpdateForTrip) (time.Time, bool) {
+	var recordTime time.Time
+	found := false
+	for _, t := range tripUpdates {
+		if t.tu.Timestamp != nil {
+			recordTime, found = *t.tu.Timestamp, true
+		}
+	}
+	return recordTime, found
+}
+
 // blockNotActiveThresholdSeconds mirrors Java's blockNotActive filter
 // (GtfsRealtimeSource.java:811-821): a schedule deviation whose absolute
 // value exceeds 1h causes the entire VehicleLocationRecord to be discarded.

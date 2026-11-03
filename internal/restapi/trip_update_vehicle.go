@@ -103,9 +103,10 @@ func responseVehicleID(agencyID string, vehicle *gtfs.Vehicle) string {
 }
 
 // statusBlockSnapshot positions the block for a trip status at the vehicle's
-// schedule time. A vehicle with a position is placed by currentTime; one known
-// only from a trip update stays where it was at the update's timestamp, the way
-// live Java reports it.
+// schedule time. Java's record fixes that position when it is built, with
+// location interpolation off by default (AbstractBlockLocationServiceImpl.java
+// :320), so a vehicle with a trip update stays where its record placed it. A
+// vehicle with no record, including a position-only one, is placed by currentTime.
 //
 // A schedule time before the block starts is held at the block's first stop.
 // Java's getScheduledBlockLocationBeforeStartOfBlock does the same however long
@@ -115,13 +116,13 @@ func (api *RestAPI) statusBlockSnapshot(
 	status *models.TripStatus,
 	vehicle *gtfs.Vehicle,
 	tripID, agencyID string,
+	blockTripIDs []string,
 	scheduleDeviation int,
 	currentTime, serviceDate time.Time,
 ) *scheduledBlockSnapshot {
-	tripUpdateVehicle := isTripUpdateVehicle(vehicle)
-	positionTime := currentTime
-	if tripUpdateVehicle {
-		positionTime = *vehicle.Timestamp
+	positionTime, hasRecord := api.vehicleRecordTime(vehicle, blockTripIDs)
+	if !hasRecord {
+		positionTime = currentTime
 	}
 	effectiveTime := positionTime.Add(-time.Duration(scheduleDeviation) * time.Second)
 
@@ -133,13 +134,27 @@ func (api *RestAPI) statusBlockSnapshot(
 	beforeBlockStart := effectiveTime.Before(blockStart) && !runsOwnSchedule(vehicle)
 
 	hasNoPosition := vehicle == nil || vehicle.Position == nil
-	if tripUpdateVehicle || (beforeBlockStart && hasNoPosition) {
+	if hasRecord || (beforeBlockStart && hasNoPosition) {
 		applySnapshotStops(status, snap, utils.CalculateSecondsSinceServiceDate(effectiveTime, serviceDate), agencyID)
 	}
 	if beforeBlockStart {
 		return api.computeScheduledBlockSnapshot(ctx, tripID, blockStart, serviceDate)
 	}
 	return snap
+}
+
+// vehicleRecordTime returns the time of the record Java would hold for a vehicle
+// on this block. A position-only vehicle has none, since Java builds records
+// from trip updates (see #1915), and neither does one on an ADDED or DUPLICATED
+// trip, which leaves the static block schedule.
+func (api *RestAPI) vehicleRecordTime(vehicle *gtfs.Vehicle, blockTripIDs []string) (time.Time, bool) {
+	if vehicle == nil || runsOwnSchedule(vehicle) {
+		return time.Time{}, false
+	}
+	if isTripUpdateVehicle(vehicle) {
+		return *vehicle.Timestamp, true
+	}
+	return blockRecordTime(api.collectBlockTripUpdates(blockTripIDs))
 }
 
 // runsOwnSchedule reports whether a vehicle's trip departs from the static block
