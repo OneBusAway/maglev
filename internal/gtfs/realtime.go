@@ -800,10 +800,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	// Update timestamp within the same lock
 	if hasNewData {
-		if manager.feedLastUpdate == nil {
-			manager.feedLastUpdate = make(map[string]time.Time)
-		}
-		manager.feedLastUpdate[feedID] = time.Now()
+		manager.recordFeedUpdateLocked(feedID, time.Now())
 	}
 
 	return hasNewData

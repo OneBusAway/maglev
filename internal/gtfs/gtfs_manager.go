@@ -90,6 +90,9 @@ type Manager struct {
 
 	// Tracks the last successful update time per feed
 	feedLastUpdate map[string]time.Time
+
+	// The newest of feedLastUpdate, readable without realTimeMutex by request paths.
+	latestFeedUpdate atomic.Pointer[time.Time]
 }
 
 // clearFeedData removes stale data for a specific feed when the staleness threshold is crossed
@@ -891,6 +894,24 @@ func (manager *Manager) GetStaticLastUpdated(ctx context.Context) time.Time {
 	return time.Unix(0, metadata.ImportTime).UTC()
 }
 
+// LatestFeedUpdateTime returns when a realtime feed last delivered new data, and
+// false before any has. It takes no lock, so request paths can call it per row.
+func (manager *Manager) LatestFeedUpdateTime() (time.Time, bool) {
+	latest := manager.latestFeedUpdate.Load()
+	if latest == nil {
+		return time.Time{}, false
+	}
+	return *latest, true
+}
+
+func (manager *Manager) recordFeedUpdateLocked(feedID string, updatedAt time.Time) {
+	if manager.feedLastUpdate == nil {
+		manager.feedLastUpdate = make(map[string]time.Time)
+	}
+	manager.feedLastUpdate[feedID] = updatedAt
+	manager.latestFeedUpdate.Store(&updatedAt)
+}
+
 // GetFeedUpdateTimes returns a copy of the last update times for all realtime feeds.
 func (manager *Manager) GetFeedUpdateTimes() map[string]time.Time {
 	manager.realTimeMutex.RLock()
@@ -909,12 +930,7 @@ func (manager *Manager) SetFeedUpdateTimeForTest(feedID string, t time.Time) {
 	manager.realTimeMutex.Lock()
 	defer manager.realTimeMutex.Unlock()
 
-	// Ensure map is initialized (helpful for tests)
-	if manager.feedLastUpdate == nil {
-		manager.feedLastUpdate = make(map[string]time.Time)
-	}
-
-	manager.feedLastUpdate[feedID] = t
+	manager.recordFeedUpdateLocked(feedID, t)
 }
 
 // SetStaticLastUpdatedForTest writes the static data timestamp to the database for testing purposes.
