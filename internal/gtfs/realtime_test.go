@@ -2290,3 +2290,34 @@ func TestGetDuplicatedVehiclesForRoute_NoMatchReturnsEmpty(t *testing.T) {
 
 	assert.Empty(t, result, "route miss should return empty result")
 }
+
+func TestNextTripUpdatesSeen(t *testing.T) {
+	timestamp := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	firstFeed := timestamp.Add(10 * time.Second)
+	laterFeed := timestamp.Add(40 * time.Second)
+	previous := map[string]tripUpdateSeen{"trip": {timestamp: timestamp, at: firstFeed}}
+	newerTimestamp := timestamp.Add(30 * time.Second)
+
+	tests := []struct {
+		name      string
+		previous  map[string]tripUpdateSeen
+		trip      gtfs.Trip
+		wantAt    time.Time
+		wantEntry bool
+	}{
+		{name: "new trip is seen at the feed's time", trip: gtfs.Trip{ID: gtfs.TripID{ID: "trip"}, Timestamp: &timestamp}, wantAt: laterFeed, wantEntry: true},
+		{name: "repeated timestamp keeps the first time", previous: previous, trip: gtfs.Trip{ID: gtfs.TripID{ID: "trip"}, Timestamp: &timestamp}, wantAt: firstFeed, wantEntry: true},
+		{name: "advanced timestamp is seen again", previous: previous, trip: gtfs.Trip{ID: gtfs.TripID{ID: "trip"}, Timestamp: &newerTimestamp}, wantAt: laterFeed, wantEntry: true},
+		{name: "no timestamp has no entry", previous: previous, trip: gtfs.Trip{ID: gtfs.TripID{ID: "trip"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			seen := nextTripUpdatesSeen(tt.previous, []gtfs.Trip{tt.trip}, laterFeed)
+
+			entry, ok := seen["trip"]
+			assert.Equal(t, tt.wantEntry, ok)
+			assert.Equal(t, tt.wantAt, entry.at)
+		})
+	}
+}

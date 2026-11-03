@@ -227,6 +227,19 @@ func (m *Manager) MockAddFullTripUpdate(trip gtfs.Trip) {
 	m.merged.Store(merged)
 }
 
+// MockSetTripUpdateFirstSeen sets when a trip update's timestamp first arrived.
+func (m *Manager) MockSetTripUpdateFirstSeen(tripID string, seenAt time.Time) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	merged := m.mergedRealtime().clone()
+	if merged.tripUpdateSeenAt == nil {
+		merged.tripUpdateSeenAt = map[string]time.Time{}
+	}
+	merged.tripUpdateSeenAt[tripID] = seenAt
+	m.merged.Store(merged)
+}
+
 func (m *Manager) MockAddAlert(feedID string, alert gtfs.Alert) {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
