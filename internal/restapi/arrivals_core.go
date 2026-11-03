@@ -985,7 +985,7 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 	// tripStatus.vehicleId (set by BuildTripStatus below). Internal
 	// lookups (GetVehicleForTrip / GetVehicleByID) use the raw RT id
 	// unchanged; the combined form is an output-only concern.
-	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
+	vehicle := api.vehicleForTrip(ctx, st.TripID, in.serviceDate.Midnight(in.location))
 	vehicleID := api.combinedVehicleID(ctx, vehicle, route.AgencyID, st.TripID)
 
 	// The raw feed stop_sequence, not in.stopPosition: GTFS-RT
@@ -1128,7 +1128,7 @@ func (api *RestAPI) combinedVehicleID(ctx context.Context, vehicle *gtfs.Vehicle
 		reqLogger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
 		return ""
 	}
-	return utils.FormCombinedID(agencyID, vehicle.ID.ID)
+	return responseVehicleID(agencyID, vehicle)
 }
 
 // tripStatusForArrival builds the trip status attached to every arrival, along
