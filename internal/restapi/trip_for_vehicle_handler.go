@@ -29,7 +29,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	tripID, ok := api.getVehicleTripIDOr404(w, r, agencyID, vehicleID)
+	agencyID, tripID, ok := api.getVehicleTripIDOr404(w, r, agencyID, vehicleID)
 	if !ok {
 		return
 	}
@@ -256,11 +256,17 @@ func referencedStopIDs(status *models.TripStatus, schedule *models.Schedule) ([]
 	return stopIDs, nil
 }
 
-func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request, agencyID, vehicleID string) (string, bool) {
+// getVehicleTripIDOr404 returns the vehicle's trip and the agency that trip
+// belongs to. The agency differs from the requested one only for a raw
+// trip-update vehicle ID, whose first part is not an agency: see responseVehicleID.
+func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request, agencyID, vehicleID string) (string, string, bool) {
 	vehicle, err := api.GtfsManager.GetVehicleByID(vehicleID)
 	if err != nil {
-		api.sendNotFound(w, r)
-		return "", false
+		tripAgencyID, tripID, found := api.tripUpdateVehicleTrip(r.Context(), agencyID, vehicleID)
+		if !found {
+			api.sendNotFound(w, r)
+		}
+		return tripAgencyID, tripID, found
 	}
 
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
@@ -270,9 +276,9 @@ func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request
 		reqLogger.Debug("vehicle has no current trip (idle)",
 			"vehicleID", vehicleID, "agencyID", agencyID)
 		api.sendNotFound(w, r)
-		return "", false
+		return "", "", false
 	}
-	return vehicle.Trip.ID.ID, true
+	return agencyID, vehicle.Trip.ID.ID, true
 }
 
 func (api *RestAPI) getTripOr404(ctx context.Context, w http.ResponseWriter, r *http.Request, agencyID, vehicleID, tripID string) (gtfsdb.Trip, bool) {
