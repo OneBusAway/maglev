@@ -30,6 +30,16 @@ func TestExtractIDFromParams(t *testing.T) {
 			id:   "789.data.json",
 			want: "789.data",
 		},
+		{
+			name: "ID with .json substring in name",
+			id:   "station.json_123.json",
+			want: "station.json_123",
+		},
+		{
+			name: "ID with multiple .json extensions removes only trailing",
+			id:   "1_foo.json.json",
+			want: "1_foo.json",
+		},
 	}
 
 	for _, tc := range testCases {

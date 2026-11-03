@@ -226,6 +226,27 @@ func (m *Manager) MockAddAlert(feedID string, alert gtfs.Alert) {
 	m.rebuildMergedRealtimeLocked()
 }
 
+// MockSetAgencyVehicles replaces a feed's vehicles with the given ones, all
+// attributed to agencyID and seen now, and rebuilds the snapshot so they
+// reach VehiclePositionsForAgency.
+func (m *Manager) MockSetAgencyVehicles(feedID, agencyID string, vehicles []gtfs.Vehicle) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	now := time.Now()
+	agencies := make(map[vehicleKey]string, len(vehicles))
+	lastSeen := make(map[vehicleKey]time.Time, len(vehicles))
+	for _, vehicle := range vehicles {
+		agencies[newVehicleKey(vehicle.ID)] = agencyID
+		lastSeen[newVehicleKey(vehicle.ID)] = now
+	}
+	m.feedVehicles[feedID] = vehicles
+	m.feedVehicleAgency[feedID] = agencies
+	m.feedVehicleLastSeen[feedID] = lastSeen
+	m.feedVehicleDataTime[feedID] = now
+	m.rebuildMergedRealtimeLocked()
+}
+
 // MockResetRealTimeData clears all mock real-time vehicles, trip updates, and alerts.
 func (m *Manager) MockResetRealTimeData() {
 	m.realTimeMutex.Lock()
@@ -233,6 +254,9 @@ func (m *Manager) MockResetRealTimeData() {
 
 	delete(m.feedTrips, "_test")
 	delete(m.feedVehicles, "_test")
+	delete(m.feedVehicleAgency, "_test")
+	delete(m.feedVehicleLastSeen, "_test")
+	delete(m.feedVehicleDataTime, "_test")
 	m.feedAlerts = make(map[string][]gtfs.Alert)
 	// rebuild republishes an empty snapshot from the (empty) feed maps, which
 	// also clears anything the Mock* helpers injected directly.

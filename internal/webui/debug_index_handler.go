@@ -1,7 +1,6 @@
 package webui
 
 import (
-	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -51,8 +50,12 @@ func (webUI *WebUI) debugIndexHandler(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if webUI.GtfsManager == nil || webUI.GtfsManager.GtfsDB == nil || webUI.GtfsManager.GtfsDB.Queries == nil {
+		http.Error(w, "Database not initialized", http.StatusInternalServerError)
+		return
+	}
 	dataType := r.URL.Query().Get("dataType")
-	ctx := context.Background()
+	ctx := r.Context()
 	queries := webUI.GtfsManager.GtfsDB.Queries
 
 	var data any

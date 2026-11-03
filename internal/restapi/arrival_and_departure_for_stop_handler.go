@@ -2,8 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -77,7 +75,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 	// Validate time
 	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
 		if timeMs, ok := utils.ParseEpochMillis(timeStr); ok {
-			timeParam := time.Unix(timeMs/1000, 0)
+			timeParam := time.UnixMilli(timeMs)
 			params.Time = &timeParam
 		} else {
 			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
@@ -92,7 +90,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 	// Validate serviceDate
 	if serviceDateStr := r.URL.Query().Get("serviceDate"); serviceDateStr != "" {
 		if serviceDateMs, ok := utils.ParseEpochMillis(serviceDateStr); ok {
-			serviceDate := time.Unix(serviceDateMs/1000, 0)
+			serviceDate := time.UnixMilli(serviceDateMs)
 			params.ServiceDate = &serviceDate
 		} else {
 			fieldErrors["serviceDate"] = []string{"must be a valid Unix timestamp in milliseconds"}
@@ -185,21 +183,13 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopCode)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
 	stopAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, stopAgencyID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -221,11 +211,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -242,11 +228,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if route.AgencyID != "" && route.AgencyID != stopAgency.ID {
 		routeAgency, agencyErr := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
 		if agencyErr != nil {
-			if errors.Is(agencyErr, sql.ErrNoRows) {
-				api.sendNotFound(w, r)
-			} else {
-				api.serverErrorResponse(w, r, agencyErr)
-			}
+			api.dbErrorResponse(w, r, agencyErr)
 			return
 		}
 		tripLoc, locErr := loadAgencyLocation(routeAgency.ID, routeAgency.Timezone)
@@ -265,9 +247,12 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 	}
 
-	// Set current time
+	// Java treats time=0 as not supplied on this endpoint only
+	// (ArrivalAndDepartureForStopAction.java:105-106) and uses the current
+	// time. The plural arrivals-and-departures-for-stop endpoint does not:
+	// a supplied 0 stays 1970.
 	var currentTime time.Time
-	if params.Time != nil {
+	if params.Time != nil && params.Time.UnixMilli() != 0 {
 		currentTime = *params.Time
 	} else {
 		currentTime = api.Clock.Now().In(loc)
@@ -382,7 +367,17 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			predictedDepartureTime = predictedDeparture
 			predicted = true
 		} else {
-			predicted = false
+			predictedArrivalTime, predictedDepartureTime, predicted = api.predictedTimesFromScheduleDeviation(ctx, scheduleDeviationFallback{
+				status:             status,
+				extras:             statusExtras,
+				tripID:             tripID,
+				stopSequence:       matchedStopTime.StopSequence,
+				stopArrivalSeconds: utils.NanosToSeconds(matchedStopTime.ArrivalTime),
+				serviceMidnight:    serviceMidnight,
+				currentTime:        currentTime,
+				scheduledArrival:   scheduledArrivalTime,
+				scheduledDeparture: scheduledDepartureTime,
+			})
 		}
 
 		// Reuse the snapshot BuildTripStatus already computed for this trip.
@@ -405,10 +400,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID), // routeID
-		route.ShortName.String,                         // routeShortName
-		route.LongName.String,                          // routeLongName
+		nulls.StringOrEmpty(route.ShortName),           // routeShortName
+		nulls.StringOrEmpty(route.LongName),            // routeLongName
 		utils.FormCombinedID(route.AgencyID, tripID),   // tripID
-		trip.TripHeadsign.String,                       // tripHeadsign
+		nulls.StringOrEmpty(trip.TripHeadsign),         // tripHeadsign
 		stopID,                                         // stopID
 		vehicleID,                                      // vehicleID
 		serviceStart,                                   // serviceDate
@@ -458,11 +453,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		utils.FormCombinedID(route.AgencyID, tripID),
 		utils.FormCombinedID(route.AgencyID, trip.RouteID),
 		utils.FormCombinedID(route.AgencyID, trip.ServiceID),
-		trip.TripHeadsign.String,
+		nulls.StringOrEmpty(trip.TripHeadsign),
 		"", // trip short name
 		strconv.FormatInt(trip.DirectionID.Int64, 10),
-		utils.FormCombinedID(route.AgencyID, trip.BlockID.String),
-		utils.FormCombinedID(route.AgencyID, trip.ShapeID.String),
+		utils.FormBlockID(route.AgencyID, nulls.StringOrEmpty(trip.BlockID), trip.ID),
+		utils.FormCombinedID(route.AgencyID, nulls.StringOrEmpty(trip.ShapeID)),
 	)
 	references.Trips = append(references.Trips, *tripRef)
 
@@ -480,11 +475,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 						utils.FormCombinedID(activeRoute.AgencyID, activeTripID),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.RouteID),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ServiceID),
-						activeTrip.TripHeadsign.String,
+						nulls.StringOrEmpty(activeTrip.TripHeadsign),
 						"", // trip short name
 						strconv.FormatInt(activeTrip.DirectionID.Int64, 10),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.BlockID.String),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ShapeID.String),
+						utils.FormBlockID(activeRoute.AgencyID, nulls.StringOrEmpty(activeTrip.BlockID), activeTrip.ID),
+						utils.FormCombinedID(activeRoute.AgencyID, nulls.StringOrEmpty(activeTrip.ShapeID)),
 					)
 					references.Trips = append(references.Trips, *activeTripRef)
 				}
@@ -565,7 +560,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		stopRef := models.Stop{
 			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
-			Name:               stopData.Name.String,
+			Name:               nulls.StringOrEmpty(stopData.Name),
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
@@ -600,13 +595,13 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		routeRefs[combinedID] = models.NewRoute(
 			combinedID,
 			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String)
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor))
 	}
 	references.Routes = utils.MapValues(routeRefs)
 

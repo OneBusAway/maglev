@@ -3,6 +3,7 @@ package restapi
 import (
 	"context"
 	"fmt"
+	"maglev.onebusaway.org/internal/nulls"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -166,7 +167,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -198,7 +199,12 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	currentTime := api.resolveTripQueryTime(params.Time, loc)
 
-	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
+	date := servicedate.Of(currentTime)
+	if params.ServiceDate != nil {
+		date = servicedate.FromInstant(*params.ServiceDate, loc)
+	}
+	serviceDate := date.Midnight(loc)
+	serviceStart := date.Start(loc)
 
 	// When serviceDate is explicitly provided, validate that the trip operates on
 	// that date. Per the wiki spec: "serviceDate is provided but no
@@ -253,10 +259,11 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	var schedule *models.Schedule
 	var status *models.TripStatus
 	var statusExtras *tripStatusExtras
+	statusFreqMap := map[string][]gtfsdb.Frequency{}
 
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime, nil)
+		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime, statusFreqMap)
 		if statusErr != nil {
 			api.serverErrorResponse(w, r, statusErr)
 			return
@@ -266,6 +273,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		// BuildTripStatus returns a default placeholder when tracking is absent, so we nil it to trigger JSON omitempty.
 		if status != nil && status.IsUntracked() {
 			status = nil
+		}
+		if status != nil {
+			startTripStatusAtServiceStart(status, statusFreqMap, trip.ID, serviceStart, currentTime)
 		}
 	}
 
@@ -296,13 +306,13 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		// TripDetails has only one frequency field, but GetFrequenciesForTrip query can return multiple rows
 		// when there are multiple frequency entries for the same trip. In order to adhere to the API contract,
 		// we take the first row which gives us the frequency with the earliest start_time
-		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
+		converted := models.NewFrequencyFromServiceStart(freqRows[0], serviceStart)
 		frequency = &converted
 	}
 
 	tripDetails := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, trip.ID),
-		ServiceDate:  models.NewModelTime(midnight),
+		ServiceDate:  models.NewModelTime(serviceStart),
 		Schedule:     schedule,
 		Frequency:    frequency,
 		SituationIDs: situationsIDs,
@@ -453,21 +463,18 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 			continue
 		}
 
-		var blockID string
-		if refTrip.BlockID.Valid && refTrip.BlockID.String != "" {
-			blockID = utils.FormCombinedID(agencyID, refTrip.BlockID.String)
-		}
+		blockID := utils.FormBlockID(agencyID, nulls.StringOrEmpty(refTrip.BlockID), refTrip.ID)
 
 		refTripModel := &models.Trip{
 			ID:             entry.combinedID,
 			RouteID:        utils.FormCombinedID(refRoute.AgencyID, refTrip.RouteID),
 			ServiceID:      utils.FormCombinedID(agencyID, refTrip.ServiceID),
-			ShapeID:        utils.FormCombinedID(agencyID, refTrip.ShapeID.String),
-			TripHeadsign:   refTrip.TripHeadsign.String,
-			TripShortName:  refTrip.TripShortName.String,
+			ShapeID:        utils.FormCombinedID(agencyID, nulls.StringOrEmpty(refTrip.ShapeID)),
+			TripHeadsign:   nulls.StringOrEmpty(refTrip.TripHeadsign),
+			TripShortName:  nulls.StringOrEmpty(refTrip.TripShortName),
 			DirectionID:    strconv.FormatInt(refTrip.DirectionID.Int64, 10),
 			BlockID:        blockID,
-			RouteShortName: refRoute.ShortName.String,
+			RouteShortName: nulls.StringOrEmpty(refRoute.ShortName),
 			TimeZone:       "",
 			PeakOffPeak:    0,
 		}

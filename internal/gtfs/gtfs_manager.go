@@ -70,6 +70,14 @@ type Manager struct {
 	feedAgencyFilter map[string]map[string]bool
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
 	feedVehicleLastSeen map[string]map[vehicleKey]time.Time // feedID -> vehicleKey -> lastSeen
+	// Per-feed agency each vehicle was attributed to at ingestion. Vehicles
+	// without an agency have no entry.
+	feedVehicleAgency map[string]map[vehicleKey]string // feedID -> vehicleKey -> agencyID
+	// Per-feed time its vehicle data was produced: the vehicle feed's header
+	// timestamp, else its fetch time.
+	feedVehicleDataTime map[string]time.Time
+	// Per-feed vehicles kept after dropping out of the feed's latest update
+	feedRetainedVehicles map[string]map[vehicleKey]struct{} // feedID -> retained vehicle keys
 
 	// Per-feed last successfully applied vehicle feed timestamp
 	feedVehicleTimestamp map[string]uint64 // feedID -> timestamp
@@ -94,8 +102,12 @@ func (manager *Manager) clearFeedData(feedID string) {
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
 
-	delete(manager.feedVehicleTimestamp, feedID)
+	// Keep the last applied vehicle timestamp. Dropping it lets the next poll
+	// of the same frozen payload look new and reset the circuit breaker.
 	delete(manager.feedVehicleLastSeen, feedID)
+	delete(manager.feedVehicleAgency, feedID)
+	delete(manager.feedVehicleDataTime, feedID)
+	delete(manager.feedRetainedVehicles, feedID)
 
 	delete(manager.feedLastUpdate, feedID)
 
@@ -144,6 +156,9 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedLastUpdate:       make(map[string]time.Time),
 		feedAgencyFilter:     config.feedAgencyFilters(),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
+		feedVehicleAgency:    make(map[string]map[vehicleKey]string),
+		feedVehicleDataTime:  make(map[string]time.Time),
+		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 		feedVehicleTimestamp: make(map[string]uint64),
 		Metrics:              config.Metrics,
 	}
@@ -677,7 +692,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	requestedBlockID := requestedTrip.BlockID.String
+	requestedBlockID := nulls.StringOrEmpty(requestedTrip.BlockID)
 
 	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
@@ -815,13 +830,16 @@ func (manager *Manager) IsServiceActiveOnDate(ctx context.Context, serviceID str
 }
 
 // GetSystemETag reads the system ETag from the database.
+// It returns a weak entity tag as required by RFC 9110 section 8.8.3,
+// because compression middleware serves the same validator for identity
+// and compressed representations.
 func (manager *Manager) GetSystemETag(ctx context.Context) string {
 	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
 	if err != nil || metadata.FileHash == "" {
 		return ""
 	}
 
-	return metadata.FileHash
+	return `W/"` + metadata.FileHash + `"`
 }
 
 // FeedExpiresAt reads the feed expiry time from the database.
@@ -830,7 +848,7 @@ func (manager *Manager) FeedExpiresAt(ctx context.Context) time.Time {
 	if err != nil || !metadata.FeedExpiresAt.Valid {
 		return time.Time{}
 	}
-	return time.Unix(metadata.FeedExpiresAt.Int64, 0)
+	return time.Unix(metadata.FeedExpiresAt.Int64, 0).UTC()
 }
 
 // SetFeedExpiresAtForTest sets the feed expiry time in the database for testing purposes.

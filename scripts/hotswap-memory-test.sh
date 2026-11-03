@@ -18,6 +18,7 @@ PPROF_DIR="$RESULTS_DIR/pprof"
 
 # Configuration
 BASE_URL="${MAGLEV_URL:-http://localhost:4000}"
+PPROF_URL="${PPROF_URL:-http://localhost:6060}"
 SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-1}"  # seconds
 LOAD_TEST_DURATION="${LOAD_TEST_DURATION:-60}"  # seconds
 
@@ -51,11 +52,11 @@ check_server() {
 
 # Check if pprof is enabled
 check_pprof() {
-    if ! curl -s "$BASE_URL/debug/pprof/" > /dev/null 2>&1; then
+    if ! curl -s "$PPROF_URL/debug/pprof/" > /dev/null 2>&1; then
         log_warn "pprof not enabled. Start server with MAGLEV_ENABLE_PPROF=1"
         return 1
     fi
-    log_info "pprof endpoint available"
+    log_info "pprof endpoint available at $PPROF_URL"
     return 0
 }
 
@@ -96,7 +97,7 @@ capture_heap_profile() {
     local output_file="$PPROF_DIR/heap_$name.pb.gz"
     
     log_info "Capturing heap profile: $name"
-    curl -s "$BASE_URL/debug/pprof/heap" > "$output_file" 2>/dev/null || {
+    curl -s "$PPROF_URL/debug/pprof/heap" > "$output_file" 2>/dev/null || {
         log_warn "Failed to capture heap profile"
         return 1
     }
@@ -167,7 +168,7 @@ run_hotswap_test() {
     log_info ""
     log_info "To trigger ForceUpdate:"
     log_info "  Option 1: Wait for the 24h ticker (not practical)"
-    log_info "  Option 2: Run the perftest: go test -tags=perftest -v -run TestHotSwapMemory_LargeAgency ./internal/gtfs/"
+    log_info "  Option 2: Run the perftest: go test -tags=\"perftest sqlite_fts5 sqlite_math_functions\" -v -run TestReloadMemory_LargeAgency ./internal/gtfs/"
     log_info "  Option 3: Use the API test endpoint (if implemented)"
     log_info ""
     
@@ -307,6 +308,7 @@ case "${1:-}" in
         echo ""
         echo "Environment variables:"
         echo "  MAGLEV_URL         - Server URL (default: http://localhost:4000)"
+        echo "  PPROF_URL          - pprof debug server URL (default: http://localhost:6060)"
         echo "  SAMPLE_INTERVAL    - RSS sample interval in seconds (default: 1)"
         echo "  LOAD_TEST_DURATION - k6 load test duration (default: 60)"
         echo ""

@@ -1035,7 +1035,8 @@ func (q *Queries) GetActiveLayoverBlockIDsForRoute(ctx context.Context, arg GetA
 
 const getActiveRouteIDsForStopsOnDate = `-- name: GetActiveRouteIDsForStopsOnDate :many
 SELECT DISTINCT
-    routes.agency_id || '_' || routes.id AS route_id,
+    routes.id AS route_id,
+    routes.agency_id,
     stop_times.stop_id
 FROM
     stop_times
@@ -1052,8 +1053,9 @@ type GetActiveRouteIDsForStopsOnDateParams struct {
 }
 
 type GetActiveRouteIDsForStopsOnDateRow struct {
-	RouteID interface{}
-	StopID  string
+	RouteID  string
+	AgencyID string
+	StopID   string
 }
 
 func (q *Queries) GetActiveRouteIDsForStopsOnDate(ctx context.Context, arg GetActiveRouteIDsForStopsOnDateParams) ([]GetActiveRouteIDsForStopsOnDateRow, error) {
@@ -1083,7 +1085,7 @@ func (q *Queries) GetActiveRouteIDsForStopsOnDate(ctx context.Context, arg GetAc
 	var items []GetActiveRouteIDsForStopsOnDateRow
 	for rows.Next() {
 		var i GetActiveRouteIDsForStopsOnDateRow
-		if err := rows.Scan(&i.RouteID, &i.StopID); err != nil {
+		if err := rows.Scan(&i.RouteID, &i.AgencyID, &i.StopID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2684,7 +2686,8 @@ func (q *Queries) GetRouteIDsForStop(ctx context.Context, stopID string) ([]inte
 
 const getRouteIDsForStops = `-- name: GetRouteIDsForStops :many
 SELECT DISTINCT
-    routes.agency_id || '_' || routes.id AS route_id,
+    routes.id AS route_id,
+    routes.agency_id,
     stop_times.stop_id
 FROM
     stop_times
@@ -2695,8 +2698,9 @@ WHERE
 `
 
 type GetRouteIDsForStopsRow struct {
-	RouteID interface{}
-	StopID  string
+	RouteID  string
+	AgencyID string
+	StopID   string
 }
 
 func (q *Queries) GetRouteIDsForStops(ctx context.Context, stopIds []string) ([]GetRouteIDsForStopsRow, error) {
@@ -2718,7 +2722,7 @@ func (q *Queries) GetRouteIDsForStops(ctx context.Context, stopIds []string) ([]
 	var items []GetRouteIDsForStopsRow
 	for rows.Next() {
 		var i GetRouteIDsForStopsRow
-		if err := rows.Scan(&i.RouteID, &i.StopID); err != nil {
+		if err := rows.Scan(&i.RouteID, &i.AgencyID, &i.StopID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

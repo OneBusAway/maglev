@@ -26,6 +26,16 @@ type blockStopMetric struct {
 	EffectiveStopSeconds int64 // wall-clock seconds since service-date midnight
 	DistanceAlongBlock   float64
 	DistanceAlongTrip    float64
+	ArrivalSeconds       int64
+	DepartureSeconds     int64
+	// AccumulatedSlack is the scheduled time, in seconds, a late vehicle can
+	// make up before reaching this stop: see accumulateBlockSlack.
+	AccumulatedSlack int64
+}
+
+// dwellSeconds is the stop's scheduled time between arrival and departure.
+func (s blockStopMetric) dwellSeconds() int64 {
+	return s.DepartureSeconds - s.ArrivalSeconds
 }
 
 // scheduledBlockSnapshot is a block's interpolated state at one currentTime —
@@ -161,6 +171,7 @@ func (api *RestAPI) computeScheduledBlockSnapshot(
 	if len(stops) == 0 {
 		return nil
 	}
+	accumulateBlockSlack(stops, trips, tripOffsets)
 
 	snap := buildSnapshotFromStops(stops, trips, currentTime, serviceDate)
 	assignActiveTrip(snap, trips, tripOffsets)
@@ -340,12 +351,83 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 				EffectiveStopSeconds: utils.EffectiveStopTimeSeconds(st.ArrivalTime, st.DepartureTime),
 				DistanceAlongBlock:   cumulativeBlockDist + tripStopDistances[k],
 				DistanceAlongTrip:    tripStopDistances[k],
+				ArrivalSeconds:       utils.NanosToSeconds(st.ArrivalTime),
+				DepartureSeconds:     utils.NanosToSeconds(st.DepartureTime),
 			})
 			blockSeq++
 		}
 		cumulativeBlockDist += tripLength
 	}
 	return stops, tripOffsets
+}
+
+// accumulateBlockSlack sets each stop's AccumulatedSlack the way Java's
+// BlockConfigurationEntryImpl.computeBlockTrips does: the dwell at every
+// earlier stop in the block, plus each layover between trips less the
+// estimated deadhead travel time. trips and tripOffsets must be the input
+// and output of the emitBlockStops call that produced stops.
+func accumulateBlockSlack(stops []blockStopMetric, trips []blockTripData, tripOffsets []float64) {
+	var accumulated int64
+	var previousTripStops []blockStopMetric
+	tripStart := 0
+	for i, trip := range trips {
+		tripStops := stops[tripStart : tripStart+len(trip.stopTimes)]
+		tripStart += len(trip.stopTimes)
+		if len(tripStops) == 0 {
+			continue
+		}
+		if len(previousTripStops) > 0 {
+			previousTripLength := tripOffsets[i] - tripOffsets[i-1]
+			deadhead := previousTripLength - previousTripStops[len(previousTripStops)-1].DistanceAlongTrip +
+				shapeGapDistance(trips[i-1], trip) +
+				tripStops[0].DistanceAlongTrip
+			accumulated += layoverSlack(previousTripStops, tripStops[0], deadhead)
+		}
+		for k := range tripStops {
+			tripStops[k].AccumulatedSlack = accumulated
+			accumulated += tripStops[k].dwellSeconds()
+		}
+		previousTripStops = tripStops
+	}
+}
+
+// layoverSlack is the scheduled time between a trip's last departure and the
+// next trip's first arrival, less the time the deadhead between them takes
+// at the earlier trip's average speed.
+func layoverSlack(previousTripStops []blockStopMetric, nextTripFirstStop blockStopMetric, deadheadDistance float64) int64 {
+	slack := nextTripFirstStop.ArrivalSeconds - previousTripStops[len(previousTripStops)-1].DepartureSeconds
+	if velocity := averageTravelVelocity(previousTripStops); velocity > 0 {
+		slack -= min(int64(deadheadDistance/velocity), slack)
+	}
+	return slack
+}
+
+// averageTravelVelocity mirrors Java's computeAverageTripTravelVelocity:
+// distance over time spent moving between stops, ignoring dwell. It is 0
+// when the trip spends no time moving.
+func averageTravelVelocity(tripStops []blockStopMetric) float64 {
+	var travelSeconds int64
+	var travelDistance float64
+	for k := 1; k < len(tripStops); k++ {
+		travelSeconds += tripStops[k].ArrivalSeconds - tripStops[k-1].DepartureSeconds
+		travelDistance += tripStops[k].DistanceAlongTrip - tripStops[k-1].DistanceAlongTrip
+	}
+	if travelSeconds == 0 {
+		return 0
+	}
+	return travelDistance / float64(travelSeconds)
+}
+
+// shapeGapDistance mirrors Java's computeGapDistancesBetweenTrips: the
+// straight-line distance from the end of one trip's shape to the start of
+// the next one's, or 0 when either trip has no shape.
+func shapeGapDistance(from, to blockTripData) float64 {
+	if len(from.shapePoints) == 0 || len(to.shapePoints) == 0 {
+		return 0
+	}
+	end := from.shapePoints[len(from.shapePoints)-1]
+	start := to.shapePoints[0]
+	return utils.Distance(end.Latitude, end.Longitude, start.Latitude, start.Longitude)
 }
 
 // metricsForStop is the Java applyBlockLocationToBean formula:

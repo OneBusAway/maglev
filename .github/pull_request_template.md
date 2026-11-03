@@ -45,12 +45,12 @@ as Draft.
 
 - [ ] This PR addresses one issue.
 - [ ] It is under ~200 changed lines, or the description says why it can't be split.
-- [ ] For a bug fix, the new or changed test fails on `main` and passes on this branch.
+- [ ] This PR is not a bug fix, or the new or changed test fails on `main` and passes on this branch.
 - [ ] Each commit is one logical change with a clear message.
-- [ ] I did not hand-edit `gtfsdb/` (sqlc-generated) or `testdata/openapi.yml` (synced from upstream).
-- [ ] Handlers pass `r.Context()` to DB/service calls, not `context.Background()`.
+- [ ] I did not hand-edit sqlc-generated files under `gtfsdb/` (`db.go`, `models.go`, `query.sql.go`) or `testdata/openapi.yml` (synced from upstream).
+- [ ] This PR changes no handler, or handlers pass `r.Context()` to DB/service calls, not `context.Background()`.
 - [ ] The response comparison above is filled in, or this PR doesn't change a Java-served response.
-- [ ] Any new endpoint matches `testdata/openapi.yml`, or an issue asking for it is open on OneBusAway/sdk-config.
+- [ ] This PR adds no endpoint, or each new endpoint matches `testdata/openapi.yml`, has an issue open on OneBusAway/sdk-config, or is outside the SDK and the description says why.
 - [ ] I read every line of this diff and can explain it if asked.
 
 ## Notes for reviewers (optional)

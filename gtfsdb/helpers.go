@@ -223,6 +223,13 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		hasExisting = true
 		// We have existing metadata, check if hash matches
 		if existingMetadata.FileHash == data.Hash && existingMetadata.FileSource == data.Source {
+			// Refresh derived metadata even when the feed is unchanged, so existing
+			// databases pick up corrections to the expiry calculation on upgrade.
+			if err := c.withTransaction(ctx, nil, "refresh_feed_expiry", func(tx *sql.Tx) error {
+				return updateFeedExpiresAtFromCalendar(ctx, c.Queries.WithTx(tx))
+			}); err != nil {
+				return false, fmt.Errorf("failed to refresh feed expiry: %w", err)
+			}
 			logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import",
 				slog.String("hash", data.Hash[:8]))
 			return false, nil
@@ -563,10 +570,6 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	return true, nil
 }
 
-// updateFeedExpiresAtFromCalendar reads the latest active service date from
-// calendar / calendar_dates, parses it, and persists feed_expires_at to
-// import_metadata. Intended to be called from within the StoreGtfsData
-// transaction so the value is atomic with the calendar data it was derived from.
 // buildStopAgencyIndex repopulates stop_agencies from the routes currently serving each
 // stop. The table is rebuilt rather than updated in place because an import replaces the
 // whole feed, and a stop can change agency or lose its routes between feed versions.
@@ -580,6 +583,9 @@ func buildStopAgencyIndex(ctx context.Context, qtx *Queries) error {
 	return nil
 }
 
+// updateFeedExpiresAtFromCalendar persists the end of the latest service date
+// in the latest-expiring agency timezone. Call within a transaction so expiry
+// is atomic with the calendar and agency data it was derived from.
 func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 	val, err := qtx.GetFeedEndDate(ctx)
 	if err != nil {
@@ -604,8 +610,14 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 		if err != nil {
 			return fmt.Errorf("failed to parse feed end date %q: %w", dateStr, err)
 		}
-		// 23:59:59 of the end date.
-		expiresAt := parsedTime.Add(24*time.Hour - time.Second)
+		agencies, err := qtx.ListAgencies(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get agency timezones: %w", err)
+		}
+		expiresAt, err := latestAgencyExpiry(parsedTime, agencies)
+		if err != nil {
+			return err
+		}
 		expires = sql.NullInt64{Int64: expiresAt.Unix(), Valid: true}
 	}
 
@@ -613,6 +625,35 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 		return fmt.Errorf("failed to persist feed_expires_at: %w", err)
 	}
 	return nil
+}
+
+func latestAgencyExpiry(serviceDate time.Time, agencies []Agency) (time.Time, error) {
+	if len(agencies) == 0 {
+		return time.Time{}, fmt.Errorf("cannot calculate feed expiry without an agency timezone")
+	}
+	var latest time.Time
+	seen := make(map[string]bool)
+	for _, agency := range agencies {
+		timezone := strings.TrimSpace(agency.Timezone)
+		if seen[timezone] {
+			continue
+		}
+		if timezone == "" {
+			return time.Time{}, fmt.Errorf("agency %q has empty timezone", agency.ID)
+		}
+		location, err := time.LoadLocation(timezone)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("agency %q has invalid timezone %q: %w", agency.ID, timezone, err)
+		}
+		seen[timezone] = true
+		// Construct local end-of-day directly: adding 24 hours to midnight
+		// is incorrect on daylight-saving transition dates.
+		expiresAt := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 23, 59, 59, 0, location)
+		if latest.IsZero() || expiresAt.After(latest) {
+			latest = expiresAt
+		}
+	}
+	return latest, nil
 }
 
 // clearAllGTFSDataWithQueries clears all GTFS data using the given Queries (e.g. transaction-scoped).
