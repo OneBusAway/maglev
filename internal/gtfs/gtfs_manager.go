@@ -64,6 +64,8 @@ type Manager struct {
 	// be resolved to any agency. Kept out of the merged view, but the metrics
 	// endpoint reports them as that feed's unmatched records.
 	feedUnattributedTrips map[string][]gtfs.Trip
+	// Per-feed, per-trip moment the trip update's current timestamp first arrived.
+	feedTripUpdateSeen map[string]map[string]tripUpdateSeen
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
 	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
 	// No lock is required for reads.
@@ -102,6 +104,7 @@ func (manager *Manager) clearFeedData(feedID string) {
 
 	manager.feedTrips[feedID] = nil
 	delete(manager.feedUnattributedTrips, feedID)
+	delete(manager.feedTripUpdateSeen, feedID)
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
 
@@ -892,6 +895,14 @@ func (manager *Manager) GetStaticLastUpdated(ctx context.Context) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(0, metadata.ImportTime).UTC()
+}
+
+// TripUpdateFirstSeen returns the feed time at which a trip's update first arrived
+// with its current timestamp, and false when no feed has delivered one. It takes
+// no lock, so request paths can call it per row.
+func (manager *Manager) TripUpdateFirstSeen(tripID string) (time.Time, bool) {
+	seenAt, ok := manager.mergedRealtime().tripUpdateSeenAt[tripID]
+	return seenAt, ok
 }
 
 // LatestFeedUpdateTime returns when a realtime feed last delivered new data, and
