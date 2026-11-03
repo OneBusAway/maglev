@@ -322,17 +322,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 
 	if vehicle != nil && vehicle.Trip != nil {
-		if vehicle.ID != nil {
-			// Combined {agencyId}_{vehicleId} form per spec; matches
-			// tripStatus.vehicleId (set by BuildTripStatus below) and lets
-			// clients round-trip this value into /trip-for-vehicle/{id} and
-			// /trip-details/{id}?vehicleId=... which both extract the agency
-			// prefix before doing GetVehicleByID on the raw id.
-			vehicleID = responseVehicleID(route.AgencyID, vehicle)
-		} else {
-			reqLogger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
-		}
-		predicted = true
+		// Matches tripStatus.vehicleId (set by BuildTripStatus below), and clients
+		// round-trip it into /trip-for-vehicle/{id} and /trip-details/{id}?vehicleId=...
+		vehicleID = api.combinedVehicleID(ctx, vehicle, route.AgencyID, tripID)
+		predicted = !isCanceledVehicle(vehicle)
 	}
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
@@ -389,6 +382,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 				numberOfStopsAway = n
 			}
 		}
+	}
+
+	if isCanceledVehicle(vehicle) {
+		predictedArrivalTime, predictedDepartureTime, predicted = time.Time{}, time.Time{}, false
 	}
 
 	totalStopsInTrip := len(orderedStopTimes)
