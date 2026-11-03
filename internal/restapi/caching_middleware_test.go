@@ -67,8 +67,14 @@ func TestCacheControlHeaders(t *testing.T) {
 			expectETag:     false,
 		},
 		{
-			name:           "User Reports (No Cache)",
-			endpoint:       "/api/where/report-problem-with-stop/1.json?key=org.onebusaway.iphone",
+			name:           "User Reports with Stop (No Cache)",
+			endpoint:       "/api/where/report-problem-with-stop/123.json?key=org.onebusaway.iphone",
+			expectedHeader: "no-cache, no-store, must-revalidate", // 0 seconds
+			expectETag:     false,
+		},
+		{
+			name:           "User Reports with Trip (No Cache)",
+			endpoint:       "/api/where/report-problem-with-trip/123.json?key=org.onebusaway.iphone",
 			expectedHeader: "no-cache, no-store, must-revalidate", // 0 seconds
 			expectETag:     false,
 		},
@@ -230,6 +236,41 @@ func TestETagMiddleware(t *testing.T) {
 	})
 }
 
+// TestETagMiddleware_StaticFeedHash preserves conditional requests for static feed hashes.
+func TestETagMiddleware_StaticFeedHash(t *testing.T) {
+	api := createTestApi(t)
+	path := "/api/where/agencies-with-coverage.json?key=" + vehiclePositionsKey
+	first, _ := getRaw(t, api, path, nil)
+	require.Equal(t, http.StatusOK, first.StatusCode)
+	etag := first.Header.Get("ETag")
+	require.NotEmpty(t, etag)
+	assert.True(t, strings.HasPrefix(etag, `W/"`), "static endpoint must provide a weak ETag")
+	assert.Regexp(t, `^W/"[0-9a-fA-F]+"$`, etag, "static endpoint must provide a weak quoted ETag per RFC 9110 section 8.8.3")
+
+	for _, tt := range []struct {
+		name         string
+		headerValues []string
+		wantStatus   int
+	}{
+		{"exact feed hash", []string{etag}, http.StatusNotModified},
+		{"feed hash in a list", []string{`"other", ` + etag}, http.StatusNotModified},
+		{"feed hash in second header line", []string{`"other"`, etag}, http.StatusNotModified},
+		{"different feed hash", []string{`"other"`}, http.StatusOK},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, body := getRaw(t, api, path, http.Header{"If-None-Match": tt.headerValues})
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+			if tt.wantStatus == http.StatusNotModified {
+				assert.Empty(t, body)
+			} else {
+				assert.NotEmpty(t, body)
+			}
+			assert.Equal(t, etag, resp.Header.Get("ETag"))
+			assert.Equal(t, "public, max-age=300", resp.Header.Get("Cache-Control"))
+		})
+	}
+}
+
 func TestIfNoneMatchHits(t *testing.T) {
 	const etag = `W/"abc"`
 	tests := []struct {
@@ -314,4 +355,114 @@ func TestStopsForLocationAcrossServiceDate(t *testing.T) {
 	require.NotEmpty(t, stopData1, "Expected stops to be returned for weekday")
 	require.NotEmpty(t, stopData2, "Expected stops to be returned for weekend")
 	require.NotEqual(t, stopData1, stopData2, "stops-for-location response should differ between weekday and weekend service dates")
+}
+
+// TestIfNoneMatchHits_ConditionalValidators checks weak comparison and all header lines.
+func TestIfNoneMatchHits_ConditionalValidators(t *testing.T) {
+	tests := []struct {
+		name         string
+		etag         string
+		headerValues []string
+		want         bool
+	}{
+		{
+			name:         "weak request matches strong response",
+			etag:         `"abc"`,
+			headerValues: []string{`W/"abc"`},
+			want:         true,
+		},
+		{
+			name:         "strong request matches weak response",
+			etag:         `W/"abc"`,
+			headerValues: []string{`"abc"`},
+			want:         true,
+		},
+		{
+			name:         "equivalent validator in a list",
+			etag:         `W/"abc"`,
+			headerValues: []string{`"other", "abc"`},
+			want:         true,
+		},
+		{
+			name:         "matching validator in second header line",
+			etag:         `W/"abc"`,
+			headerValues: []string{`"other"`, `W/"abc"`},
+			want:         true,
+		},
+		{
+			name:         "different validators across header lines",
+			etag:         `W/"abc"`,
+			headerValues: []string{`"other"`, `W/"different"`},
+			want:         false,
+		},
+		{
+			name:         "opaque tag comparison remains case sensitive",
+			etag:         `W/"abc"`,
+			headerValues: []string{`"ABC"`},
+			want:         false,
+		},
+		{
+			name:         "comma inside a quoted tag is preserved",
+			etag:         `W/"abc,def"`,
+			headerValues: []string{`"other", W/"abc,def"`},
+			want:         true,
+		},
+		{
+			name:         "empty opaque tag is valid",
+			etag:         `""`,
+			headerValues: []string{`W/""`},
+			want:         true,
+		},
+		{
+			name:         "whitespace and empty list elements are ignored",
+			etag:         `W/"abc"`,
+			headerValues: []string{" ,\t \"other\",, W/\"abc\", "},
+			want:         true,
+		},
+		{
+			name:         "unquoted tag does not match",
+			etag:         `"abc"`,
+			headerValues: []string{`abc`},
+			want:         false,
+		},
+		{
+			name:         "unterminated tag does not match",
+			etag:         `"abc"`,
+			headerValues: []string{`W/"abc`},
+			want:         false,
+		},
+		{
+			name:         "space inside a tag is invalid",
+			etag:         `"abc"`,
+			headerValues: []string{`"bad tag", "abc"`},
+			want:         false,
+		},
+		{
+			name:         "DEL inside a tag is invalid",
+			etag:         `"abc"`,
+			headerValues: []string{"\"bad\x7ftag\", \"abc\""},
+			want:         false,
+		},
+		{
+			name:         "missing list separator is invalid",
+			etag:         `"abc"`,
+			headerValues: []string{`"other" W/"abc"`},
+			want:         false,
+		},
+		{
+			name:         "backslash inside a tag is literal",
+			etag:         `W/"abc\"`,
+			headerValues: []string{`"abc\"`},
+			want:         true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			for _, value := range tt.headerValues {
+				req.Header.Add("If-None-Match", value)
+			}
+			assert.Equal(t, tt.want, ifNoneMatchHits(req, tt.etag))
+		})
+	}
 }

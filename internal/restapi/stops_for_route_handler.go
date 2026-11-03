@@ -196,12 +196,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, stops []
 	// Organize Routes in Memory
 	routesMap := make(map[string][]string)
 	for _, row := range routeRows {
-		routeID, ok := row.RouteID.(string)
-		stopID := row.StopID
-
-		if ok {
-			routesMap[stopID] = append(routesMap[stopID], routeID)
-		}
+		routesMap[row.StopID] = append(routesMap[row.StopID], utils.FormCombinedID(row.AgencyID, row.RouteID))
 	}
 
 	stopsList := make([]models.Stop, 0, len(stops))
@@ -227,7 +222,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, stops []
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),
 			Lon:                stop.Lon,
-			Name:               stop.Name.String,
+			Name:               nulls.StringOrEmpty(stop.Name),
 			Parent:             parentStationID(agencyID, stop),
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
@@ -361,7 +356,7 @@ func buildStopGroup(ctx context.Context, api *RestAPI, agencyID string, group di
 func countHeadsigns(trips []gtfsdb.Trip) map[string]int {
 	headsignCounts := make(map[string]int)
 	for _, trip := range trips {
-		headsignCounts[trip.TripHeadsign.String]++
+		headsignCounts[nulls.StringOrEmpty(trip.TripHeadsign)]++
 	}
 	return headsignCounts
 }
@@ -470,14 +465,14 @@ func distinctShapeIDs(trips []gtfsdb.Trip) []string {
 	seen := make(map[string]bool)
 	var shapeIDs []string
 	for _, trip := range trips {
-		if !trip.ShapeID.Valid || trip.ShapeID.String == "" {
+		if !trip.ShapeID.Valid || nulls.StringOrEmpty(trip.ShapeID) == "" {
 			continue
 		}
-		if seen[trip.ShapeID.String] {
+		if seen[nulls.StringOrEmpty(trip.ShapeID)] {
 			continue
 		}
-		seen[trip.ShapeID.String] = true
-		shapeIDs = append(shapeIDs, trip.ShapeID.String)
+		seen[nulls.StringOrEmpty(trip.ShapeID)] = true
+		shapeIDs = append(shapeIDs, nulls.StringOrEmpty(trip.ShapeID))
 	}
 	slices.Sort(shapeIDs)
 	return shapeIDs

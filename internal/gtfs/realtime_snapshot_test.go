@@ -20,6 +20,7 @@ func snapshotTestManager() *Manager {
 		feedLastUpdate:       make(map[string]time.Time),
 		feedAgencyFilter:     make(map[string]map[string]bool),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
+		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 		feedVehicleTimestamp: make(map[string]uint64),
 	}
 }
@@ -75,7 +76,7 @@ func TestMergedRealtimeBeforeFirstPublish(t *testing.T) {
 	assert.Empty(t, manager.GetRealTimeVehicles())
 	assert.Empty(t, manager.GetAllTripUpdates())
 	assert.Empty(t, manager.GetDuplicatedVehiclesForRoute("route-1"))
-	assert.Empty(t, manager.GetAlertsForStop("stop-1"))
+	assert.Empty(t, manager.GetAlertsForStop("stop-1", ""))
 	assert.Empty(t, manager.GetTripUpdatesForTrip("trip-1"))
 
 	_, err := manager.GetVehicleByID("veh-1")

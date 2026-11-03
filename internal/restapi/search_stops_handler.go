@@ -147,6 +147,12 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 
 	stops, isLimitExceeded := utils.PaginateSlice(stops, 0, limit)
 
+	if len(stops) == 0 {
+		response := models.NewListResponseWithRange([]models.Stop{}, *models.NewEmptyReferences(), false, api.Clock, false)
+		api.sendResponse(w, r, response)
+		return
+	}
+
 	// 4. Batch Fetch Related Data
 	stopIDs := make([]string, len(stops))
 	for i, s := range stops {
