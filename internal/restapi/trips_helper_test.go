@@ -443,7 +443,7 @@ func TestBuildTripStatus_NoRealtimeData_SetsScheduled(t *testing.T) {
 	assert.False(t, status.Predicted, "Predicted should be false with no real-time data")
 	assert.True(t, status.Scheduled, "Scheduled should be true with no real-time data")
 	assert.Equal(t, "default", status.Status)
-	assert.Equal(t, "scheduled", status.Phase)
+	assert.Empty(t, status.Phase)
 }
 
 func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
