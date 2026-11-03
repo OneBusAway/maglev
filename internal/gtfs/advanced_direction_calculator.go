@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"maglev.onebusaway.org/internal/nulls"
 	"math"
 	"slices"
 	"strconv"
@@ -300,7 +301,7 @@ type shapeOrientationKey struct {
 }
 
 func (adc *AdvancedDirectionCalculator) orientationKeyForTrip(ctx context.Context, stopTrip gtfsdb.GetStopsWithShapeContextRow, cache *directionCache) (shapeOrientationKey, error) {
-	key := shapeOrientationKey{shapeID: stopTrip.ShapeID.String, distTraveled: -1, useGeo: true}
+	key := shapeOrientationKey{shapeID: nulls.StringOrEmpty(stopTrip.ShapeID), distTraveled: -1, useGeo: true}
 	if !(stopTrip.ShapeDistTraveled.Valid && stopTrip.ShapeDistTraveled.Float64 >= 0) {
 		return key, nil
 	}

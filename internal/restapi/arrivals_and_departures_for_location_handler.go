@@ -937,12 +937,12 @@ func parseRouteTypesParam(queryParams map[string][]string, addError func(string,
 		if token == "" {
 			continue
 		}
-		routeType, err := strconv.Atoi(token)
+		routeType, err := strconv.ParseInt(token, 10, 32)
 		if err != nil {
 			addError("routeType", "must be a comma-delimited list of integers")
 			return nil
 		}
-		routeTypes = append(routeTypes, routeType)
+		routeTypes = append(routeTypes, int(routeType))
 	}
 	return routeTypes
 }
