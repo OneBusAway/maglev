@@ -90,6 +90,17 @@ func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.T
 	return &gtfs.Vehicle{ID: vehicleID, Trip: &tripUpdate, Timestamp: &recordTime}
 }
 
+// reportedTripUpdateVehicle returns the trip's trip-update vehicle when requestedID
+// is the ID responses report for it (see responseVehicleID), so that a client can
+// send that ID back. It returns nil otherwise.
+func (api *RestAPI) reportedTripUpdateVehicle(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+	vehicle := api.vehicleForTrip(ctx, tripID, serviceDate)
+	if !isTripUpdateVehicle(vehicle) || vehicle.ID == nil || responseVehicleID(agencyID, vehicle) != requestedID {
+		return nil
+	}
+	return vehicle
+}
+
 // tripUpdateVehicleID returns the vehicle a trip update names. Java's record uses
 // the block's ID when it names none (GtfsRealtimeTripLibrary.java:556-559).
 func (api *RestAPI) tripUpdateVehicleID(ctx context.Context, tripUpdate gtfs.Trip, tripID string) *gtfs.VehicleID {
