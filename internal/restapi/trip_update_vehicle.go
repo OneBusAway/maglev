@@ -118,6 +118,80 @@ func (api *RestAPI) blockRunsNear(ctx context.Context, tripID string, recordTime
 	return recordSeconds >= blockStart-window && recordSeconds <= blockEnd+window
 }
 
+// tripUpdateVehicleTrip finds the trip of a vehicle known only from a trip update
+// and the agency that trip belongs to. A raw ID such as
+// block_37462_schedBasedVehicle arrives split at its first separator, so its
+// parts are joined again to compare it with the feed's.
+func (api *RestAPI) tripUpdateVehicleTrip(ctx context.Context, agencyID, vehicleID string) (string, string, bool) {
+	rawVehicleID := utils.FormCombinedID(agencyID, vehicleID)
+	for _, tripUpdate := range api.GtfsManager.GetAllTripUpdates() {
+		if !namesVehicle(tripUpdate) || api.tripUpdateExpired(tripUpdate) {
+			continue
+		}
+		tripAgencyID, known := api.tripAgencyID(ctx, tripUpdate.ID.ID)
+		if !known {
+			continue
+		}
+		feedVehicleID := tripUpdate.Vehicle.ID.ID
+		if feedVehicleID == rawVehicleID || (feedVehicleID == vehicleID && tripAgencyID == agencyID) {
+			return tripAgencyID, tripUpdate.ID.ID, true
+		}
+	}
+	return api.blockVehicleTrip(ctx, agencyID, vehicleID)
+}
+
+// blockVehicleTrip finds the trip of a block standing in as a vehicle because its
+// trip update names none.
+func (api *RestAPI) blockVehicleTrip(ctx context.Context, agencyID, blockID string) (string, string, bool) {
+	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, nulls.String(blockID))
+	if err != nil {
+		return "", "", false
+	}
+	for _, blockTrip := range blockTrips {
+		for _, tripUpdate := range api.GtfsManager.GetTripUpdatesForTrip(blockTrip.ID) {
+			if namesVehicle(tripUpdate) || api.tripUpdateExpired(tripUpdate) {
+				continue
+			}
+			if tripAgencyID, known := api.tripAgencyID(ctx, blockTrip.ID); known && tripAgencyID == agencyID {
+				return agencyID, api.activeTripInBlock(ctx, agencyID, blockTrip.ID), true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// activeTripInBlock returns the trip the block is running now. It falls back to
+// tripID when the block has no scheduled position at this time.
+func (api *RestAPI) activeTripInBlock(ctx context.Context, agencyID, tripID string) string {
+	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+	if err != nil {
+		return tripID
+	}
+	location, err := loadAgencyLocation(agency.ID, agency.Timezone)
+	if err != nil {
+		return tripID
+	}
+	now := api.Clock.Now().In(location)
+	serviceDate := servicedate.Of(now).Midnight(location)
+	snap := api.computeScheduledBlockSnapshot(ctx, tripID, now, serviceDate)
+	if snap == nil || snap.ActiveTripID == "" {
+		return tripID
+	}
+	return snap.ActiveTripID
+}
+
+func (api *RestAPI) tripAgencyID(ctx context.Context, tripID string) (string, bool) {
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	if err != nil {
+		return "", false
+	}
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
+	if err != nil {
+		return "", false
+	}
+	return route.AgencyID, true
+}
+
 // isTripUpdateVehicle reports whether a vehicle comes from a trip update alone,
 // as built by vehicleFromTripUpdate, rather than from the vehicle positions feed.
 func isTripUpdateVehicle(vehicle *gtfs.Vehicle) bool {
