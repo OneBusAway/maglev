@@ -1149,9 +1149,9 @@ func (api *RestAPI) tripStatusForArrival(
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	st := in.stopTime
 
-	// The vehicle is passed through rather than left nil so BuildTripStatus
-	// does not repeat the GetVehicleForTrip lookup the caller already did.
-	status, extras, err := api.BuildTripStatus(ctx, in.route.AgencyID, st.TripID, vehicle, in.serviceDate.Midnight(in.location), in.queryTime, in.freqMap)
+	// The caller already looked up the vehicle, so a nil one means there is none:
+	// this does not repeat that lookup for every arrival row.
+	status, extras, err := api.buildTripStatusForVehicle(ctx, in.route.AgencyID, st.TripID, vehicle, in.serviceDate.Midnight(in.location), in.queryTime, in.freqMap)
 	if err != nil {
 		reqLogger.Warn("BuildTripStatus failed for arrival",
 			"tripID", st.TripID, "error", err)
