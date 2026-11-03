@@ -452,17 +452,12 @@ func (p *stuDeviationPicker) consider(scheduledSec, predictedSec int64) {
 	}
 }
 
-// shouldReplace decides whether a candidate STU displaces the incumbent.
-// A strictly-closer candidate always wins. When deltas are equal, a future
-// candidate is preferred over a past incumbent — Java's tiebreak favors
-// upcoming stops. Future candidates whose delta exceeds the incumbent's
-// must NOT bypass the delta comparison, so future-preference is gated on
-// `delta <= p.bestDelta`.
+// shouldReplace mirrors Java's updateBestScheduleDeviation
+// (GtfsRealtimeTripLibrary.java:1266): a strictly-closer candidate wins, and so
+// does the first upcoming candidate over a past incumbent, however far away it
+// is. A bus that has already served a stop reports its delay from the next one.
 func (p *stuDeviationPicker) shouldReplace(delta int64, isInPast bool) bool {
-	if delta < p.bestDelta {
-		return true
-	}
-	return !isInPast && p.bestIsInPast && delta <= p.bestDelta
+	return delta < p.bestDelta || (!isInPast && p.bestIsInPast)
 }
 
 func absInt64(v int64) int64 {

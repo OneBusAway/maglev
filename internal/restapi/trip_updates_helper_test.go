@@ -1054,3 +1054,44 @@ func TestStuPredictedFromEvent(t *testing.T) {
 		})
 	}
 }
+
+// Mirrors Java's updateBestScheduleDeviation: the first upcoming stop displaces
+// a past incumbent however far away it is, and after that only a strictly
+// closer stop wins.
+func TestSTUDeviationPicker(t *testing.T) {
+	const now = int64(1000)
+	type candidate struct{ scheduled, predicted int64 }
+
+	tests := []struct {
+		name       string
+		candidates []candidate
+		want       int
+	}{
+		{
+			name:       "upcoming stop beats a closer past stop",
+			candidates: []candidate{{scheduled: 919, predicted: 919}, {scheduled: 986, predicted: 1122}},
+			want:       136,
+		},
+		{
+			name:       "closest upcoming stop wins",
+			candidates: []candidate{{scheduled: 1050, predicted: 1100}, {scheduled: 1170, predicted: 1200}},
+			want:       50,
+		},
+		{
+			name:       "closest past stop wins when none is upcoming",
+			candidates: []candidate{{scheduled: 700, predicted: 800}, {scheduled: 880, predicted: 900}},
+			want:       20,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			picker := newSTUDeviationPicker(now)
+			for _, c := range tt.candidates {
+				picker.consider(c.scheduled, c.predicted)
+			}
+			assert.True(t, picker.found)
+			assert.Equal(t, tt.want, picker.bestDeviation)
+		})
+	}
+}
