@@ -20,10 +20,21 @@ const tripUpdateVehicleBlockWindow = time.Hour
 // vehicleForTrip returns the vehicle serving a trip's block: one reporting
 // positions when there is one, otherwise one known only from a trip update.
 func (api *RestAPI) vehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
-	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil {
+	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil && !api.vehicleRecordExpired(vehicle) {
 		return vehicle
 	}
 	return api.tripUpdateVehicleForTrip(ctx, tripID, serviceDate)
+}
+
+// vehicleRecordExpired reports whether Java has dropped the record for a vehicle
+// because its trip update is too old. Maglev retains a vehicle that left the feed
+// for longer than that, and a position-only vehicle has no record to expire.
+func (api *RestAPI) vehicleRecordExpired(vehicle *gtfs.Vehicle) bool {
+	if vehicle.Trip == nil {
+		return false
+	}
+	tripUpdates := api.GtfsManager.GetTripUpdatesForTrip(vehicle.Trip.ID.ID)
+	return len(tripUpdates) > 0 && api.tripUpdateExpired(tripUpdates[0])
 }
 
 // tripUpdateVehicleForTrip finds a vehicle named by a trip update on the trip's
