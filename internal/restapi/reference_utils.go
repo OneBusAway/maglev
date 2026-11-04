@@ -383,6 +383,7 @@ func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []mode
 // the database, and emitting Java-parity consequence entries.
 func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.Alert) []models.Situation {
 	situations := make([]models.Situation, 0, len(alerts))
+	logger := logging.ForComponent(ctx, "http_server")
 
 	// Pre-collect candidate IDs for batch database lookup to avoid N+1 queries.
 	var routeCandidateIDs []string
@@ -433,6 +434,8 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 				for _, r := range routes {
 					routeAgencyMap[r.ID] = r.AgencyID
 				}
+			} else {
+				logger.Error("failed to fetch routes for situation reference", "error", err)
 			}
 		}
 
@@ -445,6 +448,8 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 						stopAgencyMap[row.StopID] = row.ID
 					}
 				}
+			} else {
+				logger.Error("failed to fetch stops for situation reference", "error", err)
 			}
 		}
 
@@ -472,8 +477,12 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 								tripAgencyMap[t.ID] = agency
 							}
 						}
+					} else {
+						logger.Error("failed to fetch missing routes for situation reference", "error", err)
 					}
 				}
+			} else {
+				logger.Error("failed to fetch trips for situation reference", "error", err)
 			}
 		}
 	}
