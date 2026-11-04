@@ -203,6 +203,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	date := servicedate.Of(currentTime)
 	if params.ServiceDate != nil {
 		date = servicedate.FromInstant(*params.ServiceDate, loc)
+	} else if params.VehicleID != "" {
+		date = api.tripUpdateVehicleServiceDate(ctx, trip.ID, currentTime, loc)
 	}
 	serviceDate := date.Midnight(loc)
 	serviceStart := date.Start(loc)
