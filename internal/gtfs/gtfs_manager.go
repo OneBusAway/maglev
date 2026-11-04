@@ -116,6 +116,7 @@ func (manager *Manager) clearFeedData(feedID string) {
 	delete(manager.feedRetainedVehicles, feedID)
 
 	delete(manager.feedLastUpdate, feedID)
+	manager.latestFeedUpdate.Store(manager.newestFeedUpdateLocked())
 
 	manager.rebuildMergedRealtimeLocked()
 }
@@ -921,6 +922,18 @@ func (manager *Manager) recordFeedUpdateLocked(feedID string, updatedAt time.Tim
 	}
 	manager.feedLastUpdate[feedID] = updatedAt
 	manager.latestFeedUpdate.Store(&updatedAt)
+}
+
+// newestFeedUpdateLocked returns the newest remaining feed time, or nil with none.
+func (manager *Manager) newestFeedUpdateLocked() *time.Time {
+	var newest *time.Time
+	for _, updatedAt := range manager.feedLastUpdate {
+		if newest == nil || updatedAt.After(*newest) {
+			feedUpdate := updatedAt
+			newest = &feedUpdate
+		}
+	}
+	return newest
 }
 
 // GetFeedUpdateTimes returns a copy of the last update times for all realtime feeds.

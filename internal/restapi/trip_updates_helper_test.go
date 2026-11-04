@@ -1213,8 +1213,8 @@ func TestGetScheduleDeviationForBlock_PicksAtFeedTime(t *testing.T) {
 		want                 int
 	}{
 		{name: "feed time before the stop's prediction picks that stop", feedSecondsAfterStop: ptrInt64(0), want: firstStopDelay},
-		{name: "feed time after the stop's prediction picks the next stop", feedSecondsAfterStop: ptrInt64(firstStopDelay + 1), want: secondStopDelay},
 		{name: "no feed update falls back to the current time", want: secondStopDelay},
+		{name: "feed time after the stop's prediction picks the next stop", feedSecondsAfterStop: ptrInt64(firstStopDelay + 1), want: secondStopDelay},
 	}
 
 	for _, tt := range tests {
