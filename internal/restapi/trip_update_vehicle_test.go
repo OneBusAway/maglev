@@ -813,3 +813,57 @@ func TestTripUpdateVehicleForTrip_DropsRecordsJavaDiscards(t *testing.T) {
 		})
 	}
 }
+
+// Java's record takes its status from the trip update, and a vehicle position only
+// adds a location (GtfsRealtimeTripLibrary.java:325, :1101-1102).
+func TestArrivals_CanceledTripUpdateHidesRealBus(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+
+	tests := []struct {
+		name          string
+		updateVehicle string
+		wantStatus    string
+		wantHidden    bool
+	}{
+		{name: "update names the bus", updateVehicle: "bus", wantStatus: "CANCELED", wantHidden: true},
+		{name: "update names no vehicle", wantStatus: "CANCELED", wantHidden: true},
+		{name: "update names another vehicle", updateVehicle: "other", wantStatus: "SCHEDULED"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+			stopID := addDownstreamStop(t, api, tripID)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+			tripUpdate := gtfs.Trip{
+				ID:        gtfs.TripID{ID: tripID, ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED},
+				Timestamp: &now,
+			}
+			if tt.updateVehicle != "" {
+				tripUpdate.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: tt.updateVehicle}}
+			}
+			api.GtfsManager.MockAddFullTripUpdate(tripUpdate)
+			endpoint := fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120",
+				utils.FormCombinedID("dp-agency", stopID))
+
+			_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+
+			arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+			require.NotNil(t, arrival.TripStatus)
+			assert.Equal(t, tt.wantStatus, arrival.TripStatus.Status)
+			assert.Equal(t, tt.wantHidden, arrival.VehicleID == "")
+			if tt.wantHidden {
+				assert.False(t, arrival.Predicted)
+				assert.Zero(t, arrival.PredictedArrivalTime)
+			}
+
+			original, err := api.GtfsManager.GetVehicleByID("bus")
+			require.NoError(t, err)
+			assert.NotEqual(t, gtfsrt.TripDescriptor_CANCELED, original.Trip.ID.ScheduleRelationship, "the shared vehicle stays unchanged")
+		})
+	}
+}

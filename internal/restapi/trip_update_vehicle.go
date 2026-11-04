@@ -22,30 +22,63 @@ const tripUpdateVehicleBlockWindow = time.Hour
 // vehicleForTrip returns the vehicle serving a trip's block: one reporting
 // positions when there is one, otherwise one known only from a trip update.
 func (api *RestAPI) vehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
-	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil && !api.vehicleRecordExpired(ctx, vehicle, serviceDate) {
-		return vehicle
+	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil {
+		blockUpdates := api.vehicleBlockTripUpdates(ctx, vehicle, serviceDate)
+		if !api.vehicleRecordExpired(blockUpdates) {
+			return vehicleWithRecordStatus(vehicle, blockUpdates)
+		}
 	}
 	return api.tripUpdateVehicleForTrip(ctx, tripID, serviceDate)
 }
 
-// vehicleRecordExpired reports whether Java has dropped the record for a vehicle
-// because its trip update is too old. Maglev retains a vehicle that left the feed
-// for longer than that, and a position-only vehicle has no record to expire. The
-// record's time comes from the whole block, not just the vehicle's current trip.
-func (api *RestAPI) vehicleRecordExpired(ctx context.Context, vehicle *gtfs.Vehicle, serviceDate time.Time) bool {
+// vehicleBlockTripUpdates returns the trip updates of the block a vehicle reports
+// serving, which make up Java's record for it. A position-only vehicle has none.
+func (api *RestAPI) vehicleBlockTripUpdates(ctx context.Context, vehicle *gtfs.Vehicle, serviceDate time.Time) []tripUpdateForTrip {
 	if vehicle.Trip == nil {
-		return false
+		return nil
 	}
 	tripID := vehicle.Trip.ID.ID
 	if len(api.GtfsManager.GetTripUpdatesForTrip(tripID)) == 0 {
-		return false
+		return nil
 	}
 	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
 	if !slices.Contains(blockTripIDs, tripID) {
 		blockTripIDs = []string{tripID}
 	}
-	recordTime, hasTime := blockRecordTime(api.blockTripUpdates(blockTripIDs))
+	return api.blockTripUpdates(blockTripIDs)
+}
+
+// vehicleRecordExpired reports whether Java has dropped a vehicle's record because
+// its trip updates are too old. Maglev retains a vehicle that left the feed for
+// longer than that, and a position-only vehicle has no record to expire.
+func (api *RestAPI) vehicleRecordExpired(blockUpdates []tripUpdateForTrip) bool {
+	recordTime, hasTime := blockRecordTime(blockUpdates)
 	return hasTime && api.recordTimeExpired(recordTime)
+}
+
+// vehicleWithRecordStatus gives a vehicle the status of its record. Java takes it
+// from the block's first trip update, and a position only adds a location
+// (GtfsRealtimeTripLibrary.java:325, :1101-1102), so an update canceling the trip
+// outranks the position's own descriptor. It returns a copy because vehicles are
+// shared across requests.
+func vehicleWithRecordStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForTrip) *gtfs.Vehicle {
+	if len(blockUpdates) == 0 {
+		return vehicle
+	}
+	firstUpdate := blockUpdates[0].tu
+	if firstUpdate.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED {
+		return vehicle
+	}
+	namesAnotherVehicle := namesVehicle(firstUpdate) &&
+		(vehicle.ID == nil || vehicle.ID.ID != firstUpdate.Vehicle.ID.ID)
+	if namesAnotherVehicle {
+		return vehicle
+	}
+	canceledTrip := *vehicle.Trip
+	canceledTrip.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+	canceledVehicle := *vehicle
+	canceledVehicle.Trip = &canceledTrip
+	return &canceledVehicle
 }
 
 // tripUpdateVehicleForTrip finds a vehicle named by a trip update on the trip's
