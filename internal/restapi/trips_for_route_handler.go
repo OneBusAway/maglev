@@ -1173,10 +1173,7 @@ func (api *RestAPI) routeBlocksAndTripsInService(ctx context.Context, routeID st
 			return nil, nil, err
 		}
 		for _, blockID := range indexedBlocks {
-			// An empty block ID is a real block, so only NULL is skipped here.
-			if blockID.Valid {
-				blockIDs = append(blockIDs, nulls.StringOrEmpty(blockID))
-			}
+			blockIDs = append(blockIDs, nulls.StringOrEmpty(blockID))
 		}
 	}
 
