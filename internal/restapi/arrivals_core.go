@@ -987,13 +987,17 @@ func applyFrequency(arrival *models.ArrivalAndDeparture, freqs []gtfsdb.Frequenc
 }
 
 // startTripStatusAtServiceStart reports the trip status's serviceDate and frequency from serviceStart.
-func startTripStatusAtServiceStart(status *models.TripStatus, freqMap map[string][]gtfsdb.Frequency, tripID string, serviceStart, queryTime time.Time) {
+func startTripStatusAtServiceStart(status *models.TripStatus, freqMap map[string][]gtfsdb.Frequency, agencyID, tripID string, serviceStart, queryTime time.Time) {
 	status.ServiceDate = models.NewModelTime(serviceStart)
 	if status.Frequency == nil {
 		return
 	}
 	freqs := freqMap[tripID]
-	if _, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID); err == nil && len(freqMap[activeTripID]) > 0 {
+	activeTripID := extractBareEntityID(status.ActiveTripID, agencyID)
+	if activeTripID == "" {
+		_, activeTripID, _ = utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
+	}
+	if activeTripID != "" && len(freqMap[activeTripID]) > 0 {
 		freqs = freqMap[activeTripID]
 	}
 	if len(freqs) == 0 {
@@ -1044,7 +1048,7 @@ func (api *RestAPI) tripStatusForArrival(
 	if status == nil {
 		return nil, 0, 0, situations
 	}
-	startTripStatusAtServiceStart(status, in.freqMap, st.TripID, in.serviceDate.Start(in.location), in.queryTime)
+	startTripStatusAtServiceStart(status, in.freqMap, in.route.AgencyID, st.TripID, in.serviceDate.Start(in.location), in.queryTime)
 
 	api.recordTripStatusReferences(ctx, status, in.route.AgencyID, st.TripID, acc)
 

@@ -927,7 +927,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			// BuildTripStatus still reports local midnight. The entry reports the
 			// service-day start, so keep status.serviceDate on that same instant.
 			if status != nil {
-				startTripStatusAtServiceStart(status, freqMap, tripID, servicedate.OffsetBase(serviceDate), request.CurrentTime)
+				startTripStatusAtServiceStart(status, freqMap, agencyID, tripID, servicedate.OffsetBase(serviceDate), request.CurrentTime)
 			}
 		}
 

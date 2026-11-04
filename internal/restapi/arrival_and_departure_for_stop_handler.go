@@ -352,7 +352,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	var predictedArrivalTime, predictedDepartureTime time.Time
 	if status != nil {
-		startTripStatusAtServiceStart(status, freqMap, tripID, serviceStart, currentTime)
+		startTripStatusAtServiceStart(status, freqMap, route.AgencyID, tripID, serviceStart, currentTime)
 		tripStatus = status
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)

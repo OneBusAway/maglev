@@ -1182,3 +1182,59 @@ func TestRetainTripStatusEntities_ActiveTripDifferentRouteAgency(t *testing.T) {
 	assert.True(t, refAcc.stopIDs["stop_next"])
 	assert.True(t, refAcc.stopIDs["stop_close"])
 }
+
+func TestStartTripStatusAtServiceStart(t *testing.T) {
+	serviceStart := time.Unix(100000, 0)
+	queryTime := serviceStart.Add(10 * time.Minute)
+
+	baseFreq := gtfsdb.Frequency{
+		TripID:      "base_trip",
+		StartTime:   0,
+		EndTime:     3600,
+		HeadwaySecs: 600,
+	}
+	activeFreq := gtfsdb.Frequency{
+		TripID:      "active_trip",
+		StartTime:   0,
+		EndTime:     3600,
+		HeadwaySecs: 300,
+	}
+
+	freqMap := map[string][]gtfsdb.Frequency{
+		"base_trip":   {baseFreq},
+		"active_trip": {activeFreq},
+	}
+
+	// Case 1: Nil frequency returns early without modifying
+	statusNil := &models.TripStatus{}
+	startTripStatusAtServiceStart(statusNil, freqMap, "AGENCY_ONE", "base_trip", serviceStart, queryTime)
+	assert.Nil(t, statusNil.Frequency)
+	assert.Equal(t, serviceStart.UnixMilli(), statusNil.ServiceDate.Time.UnixMilli())
+
+	// Case 2: Underscore agency prefix on ActiveTripID resolves active trip frequency
+	statusWithActive := &models.TripStatus{
+		ActiveTripID: "AGENCY_ONE_active_trip",
+		Frequency:    &models.Frequency{},
+	}
+	startTripStatusAtServiceStart(statusWithActive, freqMap, "AGENCY_ONE", "base_trip", serviceStart, queryTime)
+	require.NotNil(t, statusWithActive.Frequency)
+	assert.Equal(t, 300*time.Second, statusWithActive.Frequency.Headway.Duration)
+
+	// Case 3: ActiveTripID not in freqMap falls back to scheduled tripID frequency
+	statusFallback := &models.TripStatus{
+		ActiveTripID: "AGENCY_ONE_unknown_active",
+		Frequency:    &models.Frequency{},
+	}
+	startTripStatusAtServiceStart(statusFallback, freqMap, "AGENCY_ONE", "base_trip", serviceStart, queryTime)
+	require.NotNil(t, statusFallback.Frequency)
+	assert.Equal(t, 600*time.Second, statusFallback.Frequency.Headway.Duration)
+
+	// Case 4: Fallback to ExtractAgencyIDAndCodeID when agencyID does not match prefix
+	statusAgencyFallback := &models.TripStatus{
+		ActiveTripID: "DIFF_active_trip",
+		Frequency:    &models.Frequency{},
+	}
+	startTripStatusAtServiceStart(statusAgencyFallback, freqMap, "AGENCY_ONE", "base_trip", serviceStart, queryTime)
+	require.NotNil(t, statusAgencyFallback.Frequency)
+	assert.Equal(t, 300*time.Second, statusAgencyFallback.Frequency.Headway.Duration)
+}

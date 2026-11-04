@@ -321,7 +321,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			// BuildTripStatus still reports local midnight. The entry reports the
 			// service-day start, so keep status.serviceDate on that same instant.
 			if status != nil {
-				startTripStatusAtServiceStart(status, freqMap, tripID, servicedate.OffsetBase(activeServiceDate), currentTime)
+				startTripStatusAtServiceStart(status, freqMap, activeAgencyID, tripID, servicedate.OffsetBase(activeServiceDate), currentTime)
 			}
 		}
 
@@ -407,7 +407,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				status = nil
 			}
 			if status != nil {
-				startTripStatusAtServiceStart(status, freqMap, baseTripID, servicedate.OffsetBase(serviceDate), currentTime)
+				startTripStatusAtServiceStart(status, freqMap, agencyID, baseTripID, servicedate.OffsetBase(serviceDate), currentTime)
 			}
 		}
 
