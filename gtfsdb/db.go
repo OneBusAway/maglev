@@ -237,9 +237,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getRouteIDsForAgencyStmt, err = db.PrepareContext(ctx, getRouteIDsForAgency); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRouteIDsForAgency: %w", err)
 	}
-	if q.getRouteIDsForStopStmt, err = db.PrepareContext(ctx, getRouteIDsForStop); err != nil {
-		return nil, fmt.Errorf("error preparing query GetRouteIDsForStop: %w", err)
-	}
 	if q.getRouteIDsForStopsStmt, err = db.PrepareContext(ctx, getRouteIDsForStops); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRouteIDsForStops: %w", err)
 	}
@@ -768,11 +765,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getRouteIDsForAgencyStmt: %w", cerr)
 		}
 	}
-	if q.getRouteIDsForStopStmt != nil {
-		if cerr := q.getRouteIDsForStopStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getRouteIDsForStopStmt: %w", cerr)
-		}
-	}
 	if q.getRouteIDsForStopsStmt != nil {
 		if cerr := q.getRouteIDsForStopsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getRouteIDsForStopsStmt: %w", cerr)
@@ -1163,7 +1155,6 @@ type Queries struct {
 	getProblemReportsByTripStmt               *sql.Stmt
 	getRouteStmt                              *sql.Stmt
 	getRouteIDsForAgencyStmt                  *sql.Stmt
-	getRouteIDsForStopStmt                    *sql.Stmt
 	getRouteIDsForStopsStmt                   *sql.Stmt
 	getRoutesByIDsStmt                        *sql.Stmt
 	getRoutesForAgencyStmt                    *sql.Stmt
@@ -1297,7 +1288,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getProblemReportsByTripStmt:               q.getProblemReportsByTripStmt,
 		getRouteStmt:                              q.getRouteStmt,
 		getRouteIDsForAgencyStmt:                  q.getRouteIDsForAgencyStmt,
-		getRouteIDsForStopStmt:                    q.getRouteIDsForStopStmt,
 		getRouteIDsForStopsStmt:                   q.getRouteIDsForStopsStmt,
 		getRoutesByIDsStmt:                        q.getRoutesByIDsStmt,
 		getRoutesForAgencyStmt:                    q.getRoutesForAgencyStmt,

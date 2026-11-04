@@ -253,7 +253,7 @@ func parentStationID(agencyID string, stop gtfsdb.Stop) string {
 
 // parentStationReferences builds stop references for the parent stations of
 // the given stops, labelled with the same combined IDs the stops' parent
-// fields carry. It also returns the combined route IDs serving each station,
+// fields carry. It also returns the stopRoute pairs serving each station,
 // keyed by bare station ID, so their routes can be referenced too.
 func (api *RestAPI) parentStationReferences(
 	ctx context.Context,
