@@ -475,8 +475,8 @@ func stuPredictedFromEvent(event *gtfs.StopTimeEvent, sched int64, serviceDate t
 
 // pickClosestSTUDeviation implements Java's updateBestScheduleDeviation:
 // across every STU in every block trip's TripUpdate, pick the one whose
-// predicted stop-time is closest to currentTime; tiebreak prefers stops
-// still in the future.
+// predicted stop-time is closest to currentTime, or the first still in the
+// future once the incumbent is past: see shouldReplace.
 func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []tripUpdateForTrip, serviceDate, currentTime time.Time) (int, bool) {
 	scheduled := api.loadScheduledForTrips(ctx, uniqueTripIDs(tripUpdates))
 	picker := newSTUDeviationPicker(utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate))
