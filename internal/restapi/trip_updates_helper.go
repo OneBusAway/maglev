@@ -127,7 +127,7 @@ const tripUpdateMaxAge = 5 * time.Minute
 // Java checks the record against the current time, not a request's target time,
 // and a record's time comes from its trip update when that has a timestamp
 // (GtfsRealtimeTripLibrary.java:1106-1108), so a newer position does not refresh
-// it. Without a timestamp there is nothing to compare.
+// it. Ingestion fills in a missing timestamp from the feed's time.
 func (api *RestAPI) tripUpdateExpired(tripUpdate gtfs.Trip) bool {
 	if tripUpdate.Timestamp == nil {
 		return false
