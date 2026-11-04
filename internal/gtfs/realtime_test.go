@@ -2365,3 +2365,65 @@ func TestTripUpdateFirstSeen_FollowsFeedPolls(t *testing.T) {
 	updateTimestamp += 60
 	assert.Equal(t, int64(feedTime), poll().Unix(), "an advanced timestamp is seen again")
 }
+
+func TestUpdateFeedRealtime_NormalizesTripUpdateTimestamps(t *testing.T) {
+	headerTime := time.Now().Add(-time.Minute).Truncate(time.Second)
+	updateTime := headerTime.Add(-30 * time.Second)
+
+	tests := []struct {
+		name      string
+		timestamp *uint64
+		want      time.Time
+	}{
+		{name: "seconds are kept", timestamp: proto.Uint64(uint64(updateTime.Unix())), want: updateTime},
+		{name: "milliseconds are converted", timestamp: proto.Uint64(uint64(updateTime.UnixMilli())), want: updateTime},
+		{name: "a missing timestamp takes the header time", want: headerTime},
+		{name: "a zero timestamp takes the header time", timestamp: proto.Uint64(0), want: headerTime},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const tripID = "trip"
+			manager := newTestManager()
+			serveTripUpdate(t, manager, tripID, tt.timestamp, proto.Uint64(uint64(headerTime.Unix())))
+
+			updates := manager.GetTripUpdatesForTrip(tripID)
+			require.Len(t, updates, 1)
+			require.NotNil(t, updates[0].Timestamp)
+			assert.Equal(t, tt.want.Unix(), updates[0].Timestamp.Unix())
+		})
+	}
+
+	t.Run("no header falls back to the fetch time", func(t *testing.T) {
+		const tripID = "trip"
+		manager := newTestManager()
+		before := time.Now().Truncate(time.Second)
+		serveTripUpdate(t, manager, tripID, nil, nil)
+
+		updates := manager.GetTripUpdatesForTrip(tripID)
+		require.Len(t, updates, 1)
+		require.NotNil(t, updates[0].Timestamp)
+		assert.GreaterOrEqual(t, updates[0].Timestamp.Unix(), before.Unix())
+	})
+}
+
+func serveTripUpdate(t *testing.T, manager *Manager, tripID string, timestamp, headerTime *uint64) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		feed := &gtfsrt.FeedMessage{
+			Header: &gtfsrt.FeedHeader{GtfsRealtimeVersion: proto.String("2.0"), Timestamp: headerTime},
+			Entity: []*gtfsrt.FeedEntity{{
+				Id: proto.String("entity"),
+				TripUpdate: &gtfsrt.TripUpdate{
+					Trip:      &gtfsrt.TripDescriptor{TripId: proto.String(tripID)},
+					Timestamp: timestamp,
+				},
+			}},
+		}
+		data, err := proto.Marshal(feed)
+		assert.NoError(t, err)
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	manager.updateFeedRealtime(context.Background(), RTFeedConfig{ID: "feed", TripUpdatesURL: server.URL, Enabled: true})
+}
