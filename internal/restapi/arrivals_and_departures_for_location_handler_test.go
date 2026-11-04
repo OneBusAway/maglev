@@ -1148,3 +1148,37 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 	// Verify route alerts for retained stops resolve when the agency has an underscore
 	assert.Contains(t, entry.SituationIDs, utils.FormCombinedID("AGENCY_ONE", "ALERT_1"))
 }
+
+func TestRetainTripStatusEntities_ActiveTripDifferentRouteAgency(t *testing.T) {
+	refAcc := newArrivalsAccumulator("")
+	acc := newArrivalsAccumulator("")
+
+	activeTrip := &gtfsdb.Trip{ID: "active_1", RouteID: "route_other"}
+	activeRoute := &gtfsdb.Route{ID: "route_other", AgencyID: "AGENCY_OTHER"}
+	acc.trips[activeTrip.ID] = activeTrip
+	acc.routes[activeRoute.ID] = activeRoute
+
+	agencies := &stopAgencyIndex{fallbackAgencyID: "AGENCY_FALLBACK"}
+	tripIndex := buildCombinedTripIndex(acc, agencies)
+	require.Contains(t, tripIndex, "AGENCY_OTHER_active_1")
+	require.NotContains(t, tripIndex, "AGENCY_SCHEDULED_active_1")
+
+	status := &models.TripStatus{
+		ActiveTripID: "AGENCY_SCHEDULED_active_1",
+		NextStop:     "AGENCY_OTHER_stop_next",
+		ClosestStop:  "AGENCY_OTHER_stop_close",
+	}
+
+	stopIndex := map[string]string{
+		"AGENCY_OTHER_stop_next":  "stop_next",
+		"AGENCY_OTHER_stop_close": "stop_close",
+	}
+
+	retainTripStatusEntities(refAcc, acc, status, stopIndex, tripIndex, "AGENCY_FALLBACK", "AGENCY_SCHEDULED")
+
+	assert.Equal(t, "AGENCY_SCHEDULED_active_1", status.ActiveTripID, "emitted ActiveTripID must remain unchanged")
+	assert.Contains(t, refAcc.trips, "active_1", "refAcc.trips must retain active trip despite route agency difference")
+	assert.Contains(t, refAcc.routes, "route_other", "refAcc.routes must retain active trip route")
+	assert.True(t, refAcc.stopIDs["stop_next"])
+	assert.True(t, refAcc.stopIDs["stop_close"])
+}

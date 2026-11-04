@@ -344,7 +344,13 @@ func retainedAccumulator(
 		retainStop(refAcc, a.StopID, stopIndex, fallbackAgencyID)
 		retainTrip(refAcc, acc, a.TripID, tripIndex)
 		retainRoute(refAcc, a.RouteID, routeIndex)
-		retainTripStatusEntities(refAcc, acc, a.TripStatus, stopIndex, tripIndex, fallbackAgencyID)
+		scheduledAgencyID := fallbackAgencyID
+		if trip, ok := tripIndex[a.TripID]; ok {
+			if aID := agencyForTrip(trip, acc, agencies); aID != "" {
+				scheduledAgencyID = aID
+			}
+		}
+		retainTripStatusEntities(refAcc, acc, a.TripStatus, stopIndex, tripIndex, fallbackAgencyID, scheduledAgencyID)
 	}
 
 	return refAcc
@@ -360,12 +366,28 @@ func retainTripStatusEntities(
 	stopIndex map[string]string,
 	tripIndex map[string]*gtfsdb.Trip,
 	fallbackAgencyID string,
+	scheduledAgencyID string,
 ) {
 	if status == nil {
 		return
 	}
 	retainStop(refAcc, status.NextStop, stopIndex, fallbackAgencyID)
 	retainStop(refAcc, status.ClosestStop, stopIndex, fallbackAgencyID)
+	if status.ActiveTripID == "" {
+		return
+	}
+	if acc != nil {
+		bareActiveTripID := extractBareEntityID(status.ActiveTripID, scheduledAgencyID)
+		if bareActiveTripID != "" {
+			if trip, ok := acc.trips[bareActiveTripID]; ok {
+				refAcc.trips[trip.ID] = trip
+				if route, ok := acc.routes[trip.RouteID]; ok {
+					refAcc.routes[route.ID] = route
+				}
+				return
+			}
+		}
+	}
 	retainTrip(refAcc, acc, status.ActiveTripID, tripIndex)
 }
 
