@@ -64,6 +64,31 @@ func candidateRouteIDs(routeID string) []string {
 	return candidates
 }
 
+// recordRouteCandidates records routeID and its agency-qualified variant into
+// expectedCombinedIDs, and appends previously unseen bare candidates to
+// candidateIDs using seen for deduplication.
+func recordRouteCandidates(
+	routeID, agencyID string,
+	expectedCombinedIDs map[string]bool,
+	seen map[string]bool,
+	candidateIDs []string,
+) []string {
+	if routeID == "" {
+		return candidateIDs
+	}
+	expectedCombinedIDs[routeID] = true
+	if !strings.Contains(routeID, "_") && agencyID != "" {
+		expectedCombinedIDs[utils.FormCombinedID(agencyID, routeID)] = true
+	}
+	for _, candID := range candidateRouteIDs(routeID) {
+		if !seen[candID] {
+			seen[candID] = true
+			candidateIDs = append(candidateIDs, candID)
+		}
+	}
+	return candidateIDs
+}
+
 // expectedRouteIDsForStops walks every stop's StaticRouteIDs and returns the
 // set of agency-combined IDs a route must match to be a legitimate reference,
 // plus the deduplicated bare route IDs to query the database for. A
@@ -79,17 +104,7 @@ func expectedRouteIDsForStops(ctx context.Context, stops []models.Stop, agencyID
 		}
 
 		for _, routeID := range stop.StaticRouteIDs {
-			expectedCombinedIDs[routeID] = true
-			if !strings.Contains(routeID, "_") && agencyID != "" {
-				expectedCombinedIDs[utils.FormCombinedID(agencyID, routeID)] = true
-			}
-
-			for _, candID := range candidateRouteIDs(routeID) {
-				if !routeIDSet[candID] {
-					routeIDSet[candID] = true
-					originalRouteIDs = append(originalRouteIDs, candID)
-				}
-			}
+			originalRouteIDs = recordRouteCandidates(routeID, agencyID, expectedCombinedIDs, routeIDSet, originalRouteIDs)
 		}
 	}
 
@@ -231,6 +246,23 @@ func scheduleLinkedTripIDs(schedule *models.Schedule) []string {
 	return linked
 }
 
+// tripRouteCandidates collects expected combined route IDs and bare route ID
+// candidates for trips whose route is not already present in references.Routes.
+func tripRouteCandidates(trips []models.Trip, present map[string]bool, requestAgencyID string) (map[string]bool, []string) {
+	expectedCombinedIDs := make(map[string]bool)
+	candidateSet := make(map[string]bool)
+	candidateIDs := make([]string, 0)
+
+	for _, trip := range trips {
+		if trip.RouteID == "" || present[trip.RouteID] {
+			continue
+		}
+		candidateIDs = recordRouteCandidates(trip.RouteID, requestAgencyID, expectedCombinedIDs, candidateSet, candidateIDs)
+	}
+
+	return expectedCombinedIDs, candidateIDs
+}
+
 // appendTripRouteReferences adds the route of every referenced trip whose routeId
 // is not already in references.routes, plus that route's agency when it is not
 // requestAgencyID. A route that no longer exists costs the reference, not the
@@ -241,26 +273,7 @@ func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *m
 		present[route.ID] = true
 	}
 
-	expectedCombinedIDs := make(map[string]bool)
-	candidateSet := make(map[string]bool)
-	candidateIDs := make([]string, 0)
-
-	for _, trip := range references.Trips {
-		if trip.RouteID == "" || present[trip.RouteID] {
-			continue
-		}
-		expectedCombinedIDs[trip.RouteID] = true
-		if !strings.Contains(trip.RouteID, "_") && requestAgencyID != "" {
-			expectedCombinedIDs[utils.FormCombinedID(requestAgencyID, trip.RouteID)] = true
-		}
-		for _, cand := range candidateRouteIDs(trip.RouteID) {
-			if !candidateSet[cand] {
-				candidateSet[cand] = true
-				candidateIDs = append(candidateIDs, cand)
-			}
-		}
-	}
-
+	expectedCombinedIDs, candidateIDs := tripRouteCandidates(references.Trips, present, requestAgencyID)
 	if len(candidateIDs) == 0 {
 		return nil
 	}

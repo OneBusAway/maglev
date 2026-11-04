@@ -85,6 +85,53 @@ func TestDedupeStrings(t *testing.T) {
 	}
 }
 
+func TestRecordRouteCandidates(t *testing.T) {
+	expected := make(map[string]bool)
+	seen := make(map[string]bool)
+	var candidates []string
+
+	// Empty route ID is skipped
+	candidates = recordRouteCandidates("", "AGENCY", expected, seen, candidates)
+	assert.Empty(t, candidates)
+	assert.Empty(t, expected)
+
+	// Route ID without underscore gets agency-qualified variant added to expected
+	candidates = recordRouteCandidates("100", "AGENCY", expected, seen, candidates)
+	assert.True(t, expected["100"])
+	assert.True(t, expected["AGENCY_100"])
+	assert.Equal(t, []string{"100"}, candidates)
+
+	// Route ID with underscore generates suffix candidates and does not add agency prefix
+	candidates = recordRouteCandidates("AGENCY_200", "AGENCY", expected, seen, candidates)
+	assert.True(t, expected["AGENCY_200"])
+	assert.Contains(t, candidates, "200")
+	assert.Contains(t, candidates, "AGENCY_200")
+
+	// Deduplication: re-recording the same route ID does not add duplicates
+	countBefore := len(candidates)
+	candidates = recordRouteCandidates("100", "AGENCY", expected, seen, candidates)
+	assert.Equal(t, countBefore, len(candidates))
+}
+
+func TestTripRouteCandidates(t *testing.T) {
+	present := map[string]bool{"AGENCY_R1": true}
+	trips := []models.Trip{
+		{ID: "t0", RouteID: ""},
+		{ID: "t1", RouteID: "AGENCY_R1"}, // already present
+		{ID: "t2", RouteID: "AGENCY_R2"},
+		{ID: "t3", RouteID: "R3"},
+	}
+
+	expectedCombinedIDs, candidates := tripRouteCandidates(trips, present, "AGENCY")
+	assert.False(t, expectedCombinedIDs["AGENCY_R1"])
+	assert.True(t, expectedCombinedIDs["AGENCY_R2"])
+	assert.True(t, expectedCombinedIDs["R3"])
+	assert.True(t, expectedCombinedIDs["AGENCY_R3"])
+	assert.Contains(t, candidates, "R2")
+	assert.Contains(t, candidates, "AGENCY_R2")
+	assert.Contains(t, candidates, "R3")
+}
+
 // firstRabaStopIDs returns raw (un-combined) stop IDs from the RABA test data.
 func firstRabaStopIDs(t *testing.T, api *RestAPI, limit int) []string {
 	t.Helper()
