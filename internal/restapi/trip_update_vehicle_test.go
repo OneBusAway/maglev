@@ -867,3 +867,35 @@ func TestArrivals_CanceledTripUpdateHidesRealBus(t *testing.T) {
 		})
 	}
 }
+
+func TestTripDetailsHandler_ReportedVehicleAfterMidnight(t *testing.T) {
+	previousServiceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := previousServiceDate.Add(25*time.Hour + 10*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+	stopID, _, baseTripID, _ := setupDelayPropTestData(t, api, 1)
+	queries := api.GtfsManager.GtfsDB.Queries
+	baseTrip, err := queries.GetTrip(ctx, baseTripID)
+	require.NoError(t, err)
+	lateTripID := baseTripID + "-late"
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: lateTripID, RouteID: baseTrip.RouteID, ServiceID: baseTrip.ServiceID, BlockID: nulls.String(lateTripID),
+	})
+	require.NoError(t, err)
+	for i, startAt := range []time.Duration{25 * time.Hour, 26 * time.Hour} {
+		_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: lateTripID, StopID: stopID, StopSequence: int64(i + 1),
+			ArrivalTime: int64(startAt), DepartureTime: int64(startAt),
+		})
+		require.NoError(t, err)
+	}
+	api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(lateTripID, now))
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api, fmt.Sprintf("/api/where/trip-details/%s.json?key=TEST&vehicleId=%s",
+		utils.FormCombinedID("dp-agency", lateTripID), plannedVehicleID))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, previousServiceDate.UnixMilli(), model.Data.Entry.ServiceDate.UnixMilli())
+}
