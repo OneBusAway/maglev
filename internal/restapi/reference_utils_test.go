@@ -8,7 +8,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -130,6 +132,64 @@ func TestTripRouteCandidates(t *testing.T) {
 	assert.Contains(t, candidates, "R2")
 	assert.Contains(t, candidates, "AGENCY_R2")
 	assert.Contains(t, candidates, "R3")
+}
+
+func TestFirstTranslatedString(t *testing.T) {
+	assert.Nil(t, firstTranslatedString(nil))
+	assert.Nil(t, firstTranslatedString([]gtfs.AlertText{}))
+	assert.Nil(t, firstTranslatedString([]gtfs.AlertText{{Text: "", Language: "en"}}))
+
+	translated := firstTranslatedString([]gtfs.AlertText{{Text: "Alert Text", Language: "en"}})
+	require.NotNil(t, translated)
+	assert.Equal(t, "Alert Text", translated.Value)
+	assert.Equal(t, "en", translated.Lang)
+}
+
+func TestBuildActiveWindows(t *testing.T) {
+	start := time.Unix(1000, 0)
+	end := time.Unix(2000, 0)
+	periods := []gtfs.AlertActivePeriod{
+		{StartsAt: &start, EndsAt: &end},
+		{StartsAt: nil, EndsAt: nil},
+	}
+
+	windows := buildActiveWindows(periods)
+	require.Len(t, windows, 2)
+	assert.Equal(t, start.UnixMilli(), windows[0].From)
+	assert.Equal(t, end.UnixMilli(), windows[0].To)
+	assert.Equal(t, int64(0), windows[1].From)
+	assert.Equal(t, int64(0), windows[1].To)
+}
+
+func TestBuildAffectedEntities(t *testing.T) {
+	agencyID := "AGENCY"
+	routeID := "ROUTE"
+	stopID := "STOP"
+	tripID := gtfs.TripID{ID: "TRIP1"}
+
+	entities := []gtfs.AlertInformedEntity{
+		{
+			AgencyID:    &agencyID,
+			RouteID:     &routeID,
+			StopID:      &stopID,
+			TripID:      &tripID,
+			DirectionID: gtfs.DirectionID(0),
+		},
+		{
+			DirectionID: gtfs.DirectionID(1),
+		},
+	}
+
+	affected := buildAffectedEntities(entities)
+	require.Len(t, affected, 2)
+	assert.Equal(t, "AGENCY", affected[0].AgencyID)
+	assert.Equal(t, "ROUTE", affected[0].RouteID)
+	assert.Equal(t, "STOP", affected[0].StopID)
+	assert.Equal(t, "TRIP1", affected[0].TripID)
+	assert.Equal(t, "UNSPECIFIED", affected[0].DirectionID)
+	assert.Equal(t, "", affected[1].AgencyID)
+	assert.Equal(t, "", affected[1].TripID)
+	assert.Equal(t, "TRUE", affected[1].DirectionID)
 }
 
 // firstRabaStopIDs returns raw (un-combined) stop IDs from the RABA test data.

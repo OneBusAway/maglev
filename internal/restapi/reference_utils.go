@@ -427,74 +427,72 @@ func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []mode
 	return utils.MapValues(agenciesMap)
 }
 
+func buildActiveWindows(periods []gtfs.AlertActivePeriod) []models.ActiveWindow {
+	windows := make([]models.ActiveWindow, 0, len(periods))
+	for _, period := range periods {
+		window := models.ActiveWindow{}
+		if period.StartsAt != nil {
+			window.From = period.StartsAt.UnixMilli()
+		}
+		if period.EndsAt != nil {
+			window.To = period.EndsAt.UnixMilli()
+		}
+		windows = append(windows, window)
+	}
+	return windows
+}
+
+func buildAffectedEntities(entities []gtfs.AlertInformedEntity) []models.AffectedEntity {
+	affected := make([]models.AffectedEntity, 0, len(entities))
+	for _, entity := range entities {
+		tripID := ""
+		if entity.TripID != nil {
+			tripID = entity.TripID.ID
+		}
+		affected = append(affected, models.AffectedEntity{
+			AgencyID:      getStringValue(entity.AgencyID),
+			ApplicationID: "",
+			DirectionID:   entity.DirectionID.String(),
+			RouteID:       getStringValue(entity.RouteID),
+			StopID:        getStringValue(entity.StopID),
+			TripID:        tripID,
+		})
+	}
+	return affected
+}
+
+func firstTranslatedString(texts []gtfs.AlertText) *models.TranslatedString {
+	if len(texts) == 0 || texts[0].Text == "" {
+		return nil
+	}
+	return &models.TranslatedString{
+		Value: texts[0].Text,
+		Lang:  texts[0].Language,
+	}
+}
+
+func buildSituation(alert gtfs.Alert) models.Situation {
+	return models.Situation{
+		ID:                 alert.ID,
+		CreationTime:       models.NewModelTime(time.Time{}),
+		ActiveWindows:      buildActiveWindows(alert.ActivePeriods),
+		AllAffects:         buildAffectedEntities(alert.InformedEntities),
+		ConsequenceMessage: "",
+		Consequences:       []any{},
+		PublicationWindows: []any{},
+		Reason:             mapAlertCauseToReason(alert.Cause),
+		Severity:           mapAlertEffectToSeverity(alert.Effect),
+		Summary:            firstTranslatedString(alert.Header),
+		Description:        firstTranslatedString(alert.Description),
+		URL:                firstTranslatedString(alert.URL),
+	}
+}
+
 func (api *RestAPI) BuildSituationReferences(alerts []gtfs.Alert) []models.Situation {
 	situations := make([]models.Situation, 0, len(alerts))
-
 	for _, alert := range alerts {
-		situation := models.Situation{
-			ID:                 alert.ID,
-			CreationTime:       models.NewModelTime(time.Time{}),
-			ActiveWindows:      make([]models.ActiveWindow, 0, len(alert.ActivePeriods)),
-			AllAffects:         make([]models.AffectedEntity, 0, len(alert.InformedEntities)),
-			ConsequenceMessage: "",
-			Consequences:       []any{},
-			PublicationWindows: []any{},
-			Reason:             mapAlertCauseToReason(alert.Cause),
-			Severity:           mapAlertEffectToSeverity(alert.Effect),
-		}
-
-		for _, period := range alert.ActivePeriods {
-			window := models.ActiveWindow{}
-			if period.StartsAt != nil {
-				window.From = period.StartsAt.UnixMilli()
-			}
-			if period.EndsAt != nil {
-				window.To = period.EndsAt.UnixMilli()
-			}
-			situation.ActiveWindows = append(situation.ActiveWindows, window)
-		}
-
-		for _, entity := range alert.InformedEntities {
-			affectedEntity := models.AffectedEntity{
-				AgencyID:      getStringValue(entity.AgencyID),
-				ApplicationID: "",
-				DirectionID:   entity.DirectionID.String(),
-				RouteID:       getStringValue(entity.RouteID),
-				StopID:        getStringValue(entity.StopID),
-				TripID:        "",
-			}
-
-			if entity.TripID != nil {
-				affectedEntity.TripID = entity.TripID.ID
-			}
-
-			situation.AllAffects = append(situation.AllAffects, affectedEntity)
-		}
-
-		if len(alert.Header) > 0 && alert.Header[0].Text != "" {
-			situation.Summary = &models.TranslatedString{
-				Value: alert.Header[0].Text,
-				Lang:  alert.Header[0].Language,
-			}
-		}
-
-		if len(alert.Description) > 0 && alert.Description[0].Text != "" {
-			situation.Description = &models.TranslatedString{
-				Value: alert.Description[0].Text,
-				Lang:  alert.Description[0].Language,
-			}
-		}
-
-		if len(alert.URL) > 0 && alert.URL[0].Text != "" {
-			situation.URL = &models.TranslatedString{
-				Value: alert.URL[0].Text,
-				Lang:  alert.URL[0].Language,
-			}
-		}
-
-		situations = append(situations, situation)
+		situations = append(situations, buildSituation(alert))
 	}
-
 	return situations
 }
 
