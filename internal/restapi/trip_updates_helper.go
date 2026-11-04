@@ -41,45 +41,52 @@ type StopDelayInfo struct {
 // tripIDs MUST be in block-trip-start order; caller sorts via
 // blockTripIDsSortedByStartTime.
 func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []string, serviceDate time.Time, currentTime time.Time) (int, bool) {
+	deviation, ok, _ := api.blockRecordDeviation(ctx, tripIDs, serviceDate, currentTime)
+	return deviation, ok
+}
+
+// blockRecordDeviation is GetScheduleDeviationForBlock, also reporting whether
+// Java's blockNotActive guard would discard the record.
+func (api *RestAPI) blockRecordDeviation(ctx context.Context, tripIDs []string, serviceDate time.Time, currentTime time.Time) (deviation int, ok, discarded bool) {
 	if len(tripIDs) == 0 {
-		return 0, false
+		return 0, false, false
 	}
 	tripUpdates := api.collectBlockTripUpdates(tripIDs)
 	if len(tripUpdates) == 0 {
-		return 0, false
+		return 0, false, false
 	}
 	// Java sets no deviation when the block's last update is canceled
 	// (GtfsRealtimeTripLibrary.java:953, :1104).
 	lastUpdate := tripUpdates[len(tripUpdates)-1].tu
 	if lastUpdate.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
-		return 0, false
+		return 0, false, false
 	}
 	dev, ok, discard := pickTripLevelDeviation(tripUpdates)
 	if discard {
 		// Java's blockNotActive guard fired: the entire VehicleLocationRecord
 		// would be discarded. We must NOT fall through to STU/per-stop paths —
 		// that would silently recover RT data Java treats as poisoned.
-		return 0, false
+		return 0, false, true
 	}
 	if ok {
-		return dev, true
+		return dev, true, false
 	}
 	if dev, ok := api.pickClosestSTUDeviation(ctx, tripUpdates, serviceDate, api.deviationPickTime(tripUpdates, currentTime)); ok {
 		if exceedsBlockNotActiveThreshold(dev) {
-			return 0, false
+			return 0, false, true
 		}
-		return dev, true
+		return dev, true, false
 	}
 	if dev, ok := pickFirstAvailableSTUDelay(tripUpdates); ok {
 		if exceedsBlockNotActiveThreshold(dev) {
-			return 0, false
+			return 0, false, true
 		}
-		return dev, true
+		return dev, true, false
 	}
 	// Java builds a record from any trip update, with a zero deviation when it
 	// has no times (GtfsRealtimeTripLibrary.java:1104-1105). Live Tampa reports
 	// these, whose stops are all SKIPPED, as predicted and on schedule.
-	return 0, true
+	return 0, true, false
 }
 
 // deviationPickTime is the moment a block's deviation is chosen for. Java keeps
