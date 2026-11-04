@@ -837,6 +837,10 @@ func TestParseMaxCountClamped(t *testing.T) {
 		{"at cap unchanged", "250", 250, false},
 		{"above cap clamps", "251", 250, false},
 		{"far above cap clamps", "10000", 250, false},
+		{"at max int32 clamps", "2147483647", 250, false},
+		{"overflow above int32 is error", "2147483648", 100, true},
+		{"64-bit int overflow is error", "99999999999", 100, true},
+		{"underflow below min int32 is error", "-2147483649", 100, true},
 		{"zero is an error", "0", 100, true},
 		{"negative is an error", "-1", 100, true},
 	}
@@ -937,6 +941,24 @@ func TestParseMaxCount(t *testing.T) {
 			name: "maxCount is negative",
 			countQueryParams: url.Values{
 				"maxCount": []string{"-1"},
+			},
+			defaultCount:     100,
+			expectError:      true,
+			expectedErrorKey: "maxCount",
+		},
+		{
+			name: "maxCount 64-bit integer overflow",
+			countQueryParams: url.Values{
+				"maxCount": []string{"99999999999"},
+			},
+			defaultCount:     100,
+			expectError:      true,
+			expectedErrorKey: "maxCount",
+		},
+		{
+			name: "maxCount int32 overflow 2147483648",
+			countQueryParams: url.Values{
+				"maxCount": []string{"2147483648"},
 			},
 			defaultCount:     100,
 			expectError:      true,
