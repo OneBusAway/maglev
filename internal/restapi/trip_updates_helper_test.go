@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -1308,4 +1309,26 @@ func TestGetScheduleDeviationForBlock_PicksAtRecordTime(t *testing.T) {
 			assert.Equal(t, tt.want, deviation)
 		})
 	}
+}
+
+func TestPluralArrivals_CanceledTripUpdateIsNotPredicted(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	stopID := addDownstreamStop(t, api, tripID)
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:        gtfs.TripID{ID: tripID, ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED},
+		Timestamp: &now,
+	})
+	endpoint := fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120",
+		utils.FormCombinedID("dp-agency", stopID))
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+
+	arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	assert.False(t, arrival.Predicted)
+	assert.Zero(t, arrival.PredictedArrivalTime)
 }
