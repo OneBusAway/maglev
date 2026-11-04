@@ -41,6 +41,19 @@ type tripStatusExtras struct {
 	tripBlockSequence int
 }
 
+// tripStatusInput holds what the steps of building one trip status read.
+type tripStatusInput struct {
+	agencyID string
+	// tripID is the queried trip.
+	tripID string
+	// dbTripID is the trip whose schedule data the status reads: the vehicle's
+	// active trip when the database has it, else tripID.
+	dbTripID    string
+	vehicle     *gtfs.Vehicle
+	serviceDate time.Time
+	currentTime time.Time
+}
+
 // BuildTripStatus builds a TripStatus for the given trip.
 //
 // Pass a non-nil vehicle when it is already known (e.g. DUPLICATED trips, or when
@@ -264,7 +277,15 @@ func (api *RestAPI) buildTripStatusForVehicle(
 	// shift is a no-op.
 	var snap *scheduledBlockSnapshot
 	if len(stopTimes) > 0 {
-		snap = api.statusBlockSnapshot(ctx, status, vehicle, dbTripID, agencyID, blockTripIDs, scheduleDeviation, currentTime, serviceDate)
+		input := tripStatusInput{
+			agencyID:    agencyID,
+			tripID:      tripID,
+			dbTripID:    dbTripID,
+			vehicle:     vehicle,
+			serviceDate: serviceDate,
+			currentTime: currentTime,
+		}
+		snap = api.statusBlockSnapshot(ctx, status, input, blockTripIDs, scheduleDeviation)
 	}
 
 	// Snap-derived status fields — independent of target's shape.
