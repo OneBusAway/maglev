@@ -330,6 +330,7 @@ The manager keeps two kinds of static state in memory:
 - `feedVehicleLastSeen` - `map[string]map[vehicleKey]time.Time` — per-feed, per-vehicle last-seen timestamps for stale vehicle expiry (15 min window)
 - `feedVehicleAgency` - `map[string]map[vehicleKey]string`: the one agency each vehicle was attributed to at ingestion (its route's agency, else the feed's first `agency-ids` entry)
 - `feedVehicleDataTime` - `map[string]time.Time`: when each feed's vehicle data was produced (header timestamp, else fetch time)
+- `feedTripUpdateSeen` - `map[string]map[string]tripUpdateSeen`: per-feed, per-trip feed time at which each trip update's timestamp was first seen
 
 *Derived merged view*, published by `rebuildMergedRealtimeLocked` after each feed
 update as one immutable `mergedRealtime` snapshot held in `merged
@@ -343,6 +344,7 @@ needs **no lock**. Never mutate what it returns:
 - `duplicatedVehicleByRoute` - Map of route ID → DUPLICATED-trip vehicles
 - `vehiclePositionsByAgency` - Map of agency ID → `AgencyVehiclePositions` (fresh, one per vehicle ID, sorted, plus the feed data time) for the GTFS-RT export, read with `VehiclePositionsForAgency`
 - `alerts` - `alertIndex` of alerts by trip, route, agency and stop
+- `tripUpdateSeenAt` - Map of trip ID → first-seen time, read with `TripUpdateFirstSeen`
 
 When a single feed refreshes, only its per-feed sub-map is overwritten; other feeds' data is untouched. A fresh snapshot is then built from all sub-maps and swapped in.
 

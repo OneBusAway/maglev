@@ -93,7 +93,7 @@ type Manager struct {
 	// Tracks the last successful update time per feed
 	feedLastUpdate map[string]time.Time
 
-	// The newest of feedLastUpdate, readable without realTimeMutex by request paths.
+	// The latest write to feedLastUpdate, readable without realTimeMutex by request paths.
 	latestFeedUpdate atomic.Pointer[time.Time]
 }
 
