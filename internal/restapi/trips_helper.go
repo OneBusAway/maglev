@@ -95,42 +95,8 @@ func (api *RestAPI) buildTripStatusForVehicle(
 	currentTime time.Time,
 	freqMap map[string][]gtfsdb.Frequency,
 ) (*models.TripStatus, *tripStatusExtras, error) {
-	// Normalize serviceDate to midnight for the response, consistent across all endpoints.
-	sdMidnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
-		0, 0, 0, 0, serviceDate.Location())
-	status := models.NewTripStatus()
-	status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
-	status.ServiceDate = models.NewModelTime(sdMidnight)
-	extras := &tripStatusExtras{situations: api.situationRefsForTrip(ctx, tripID)}
-	status.SituationIDs = situationIDsFromRefs(extras.situations)
-	// OccupancyCapacity and OccupancyCount default to 0 when no data is available.
-
-	// Computed up front (independent of vehicle/stop-time/shape data below) so
-	// it is still set even when the CANCELED early-return below skips the rest
-	// of this function.
-	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
-	if blockTripSequence > 0 {
-		status.BlockTripSequence = blockTripSequence
-	}
-	extras.tripBlockSequence = blockTripSequence
-
-	if vehicle != nil {
-		if vehicle.ID != nil {
-			// The OBA spec requires the combined {agencyId}_{vehicleId} form
-			// here, apart from the raw IDs responseVehicleID describes. See the
-			// vehicleId field on arrival-and-departure-for-stop,
-			// arrivals-and-departures-for-stop, and trip-details.
-			status.VehicleID = responseVehicleID(agencyID, vehicle)
-		}
-		if vehicle.OccupancyStatus != nil {
-			status.OccupancyStatus = vehicle.OccupancyStatus.String()
-		}
-		// NOTE: GTFS-RT OccupancyPercentage (0-100%) has no direct equivalent in the
-		// OBA TripStatus schema. The Java OBA server populates occupancyCapacity from
-		// agency-provided vehicle capacity data, not from GTFS-RT percentages.
-		// We intentionally leave OccupancyCapacity at its zero value (0) here, as GTFS-RT OccupancyPercentage has no direct mapping to OBA's capacity-based model.
-		// See: TripStatusBeanServiceImpl.java in onebusaway-transit-data-federation.
-	}
+	status, extras := api.newTripStatus(ctx, agencyID, tripID, serviceDate)
+	applyVehicleDescriptorFields(status, agencyID, vehicle)
 	api.BuildVehicleStatus(ctx, vehicle, tripID, agencyID, status, currentTime)
 
 	// Frequencies are reported even for CANCELED trips, so resolve the DB
@@ -139,27 +105,18 @@ func (api *RestAPI) buildTripStatusForVehicle(
 	if err != nil {
 		return status, extras, err
 	}
-
-	// Determine which trip ID to use for DB lookups (stop times, shapes, etc.).
-	// Usually activeTripRawID (which may differ from tripID when a vehicle is
-	// reassigned to a different trip in the same block). For DUPLICATED trips,
-	// activeTripRawID may be a synthetic ID not in the DB, so fall back to tripID.
-	dbTripID := activeTripRawID
-	if activeTripRawID != tripID {
-		if _, lookupErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripRawID); lookupErr != nil {
-			if !errors.Is(lookupErr, sql.ErrNoRows) {
-				slog.Warn("BuildTripStatus: failed to resolve active trip ID, falling back to trip ID",
-					slog.String("active_trip_id", activeTripRawID),
-					slog.String("trip_id", tripID),
-					slog.String("error", lookupErr.Error()))
-			}
-			dbTripID = tripID
-		}
+	input := tripStatusInput{
+		agencyID:    agencyID,
+		tripID:      tripID,
+		dbTripID:    api.statusLookupTripID(ctx, activeTripRawID, tripID),
+		vehicle:     vehicle,
+		serviceDate: serviceDate,
+		currentTime: currentTime,
 	}
 
 	// Reuse the batch-fetched frequencies when supplied; single-entry handlers
 	// fall back to a per-trip query.
-	frequency, freqErr := api.frequencyForEntry(ctx, freqMap, dbTripID, serviceDate, currentTime)
+	frequency, freqErr := api.frequencyForEntry(ctx, freqMap, input.dbTripID, serviceDate, currentTime)
 	if freqErr != nil {
 		return status, extras, freqErr
 	}
@@ -175,6 +132,105 @@ func (api *RestAPI) buildTripStatusForVehicle(
 		return status, extras, nil
 	}
 
+	scheduleDeviation := api.applyBlockDeviation(ctx, status, extras, input)
+
+	stopTimes := api.statusStopTimes(ctx, input.dbTripID)
+	api.applyStatusStops(ctx, status, input, stopTimes, scheduleDeviation)
+
+	shapeRows := api.statusShapeRows(ctx, input.dbTripID)
+	// Snap is built from BLOCK trip data (loadBlockTripData + emitBlockStops
+	// with per-block-trip haversine fallback), so it does not require the
+	// target trip's own shape. Computing it outside the target-shape gate
+	// means shapeless feeds still get ActiveTripID, ScheduledDistanceAlong
+	// Trip, and, most importantly, the snap that callers reuse for
+	// metricsForStop, which drives numberOfStopsAway / distanceFromStop.
+	//
+	// Apply the same schedule-deviation shift the live-vehicle branch
+	// below uses. Trip updates without vehicle positions are common;
+	// without this shift the response would self-contradict, publishing
+	// scheduleDeviation while placing the bus at its on-schedule position.
+	// With no real-time trip update, scheduleDeviation is 0 and the shift
+	// is a no-op.
+	var snap *scheduledBlockSnapshot
+	if len(stopTimes) > 0 {
+		snap = api.statusBlockSnapshot(ctx, status, input, extras.blockTripIDs, scheduleDeviation)
+	}
+	api.applySnapshotToStatus(ctx, status, input, snap)
+	api.applyShapeToStatus(ctx, status, input, snap, shapeRows, stopTimes)
+
+	extras.snapshot = snap
+	return status, extras, nil
+}
+
+// newTripStatus starts a status with the fields every trip reports, however
+// little else is known about it.
+func (api *RestAPI) newTripStatus(ctx context.Context, agencyID, tripID string, serviceDate time.Time) (*models.TripStatus, *tripStatusExtras) {
+	// Normalize serviceDate to midnight for the response, consistent across all endpoints.
+	sdMidnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
+		0, 0, 0, 0, serviceDate.Location())
+	status := models.NewTripStatus()
+	status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
+	status.ServiceDate = models.NewModelTime(sdMidnight)
+	extras := &tripStatusExtras{situations: api.situationRefsForTrip(ctx, tripID)}
+	status.SituationIDs = situationIDsFromRefs(extras.situations)
+	// OccupancyCapacity and OccupancyCount default to 0 when no data is available.
+
+	// Computed up front (independent of vehicle/stop-time/shape data) so it is
+	// still set when a CANCELED trip skips the rest of the status.
+	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
+	if blockTripSequence > 0 {
+		status.BlockTripSequence = blockTripSequence
+	}
+	extras.tripBlockSequence = blockTripSequence
+	return status, extras
+}
+
+// applyVehicleDescriptorFields copies the vehicle's ID and occupancy to the status.
+func applyVehicleDescriptorFields(status *models.TripStatus, agencyID string, vehicle *gtfs.Vehicle) {
+	if vehicle == nil {
+		return
+	}
+	if vehicle.ID != nil {
+		// The OBA spec requires the combined {agencyId}_{vehicleId} form
+		// here, apart from the raw IDs responseVehicleID describes. See the
+		// vehicleId field on arrival-and-departure-for-stop,
+		// arrivals-and-departures-for-stop, and trip-details.
+		status.VehicleID = responseVehicleID(agencyID, vehicle)
+	}
+	if vehicle.OccupancyStatus != nil {
+		status.OccupancyStatus = vehicle.OccupancyStatus.String()
+	}
+	// NOTE: GTFS-RT OccupancyPercentage (0-100%) has no direct equivalent in the
+	// OBA TripStatus schema. The Java OBA server populates occupancyCapacity from
+	// agency-provided vehicle capacity data, not from GTFS-RT percentages.
+	// We intentionally leave OccupancyCapacity at its zero value (0) here, as GTFS-RT OccupancyPercentage has no direct mapping to OBA's capacity-based model.
+	// See: TripStatusBeanServiceImpl.java in onebusaway-transit-data-federation.
+}
+
+// statusLookupTripID determines which trip ID to use for DB lookups (stop times,
+// shapes, etc.). Usually activeTripRawID (which may differ from tripID when a
+// vehicle is reassigned to a different trip in the same block). For DUPLICATED
+// trips, activeTripRawID may be a synthetic ID not in the DB, so fall back to tripID.
+func (api *RestAPI) statusLookupTripID(ctx context.Context, activeTripRawID, tripID string) string {
+	if activeTripRawID == tripID {
+		return activeTripRawID
+	}
+	_, lookupErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripRawID)
+	if lookupErr == nil {
+		return activeTripRawID
+	}
+	if !errors.Is(lookupErr, sql.ErrNoRows) {
+		slog.Warn("BuildTripStatus: failed to resolve active trip ID, falling back to trip ID",
+			slog.String("active_trip_id", activeTripRawID),
+			slog.String("trip_id", tripID),
+			slog.String("error", lookupErr.Error()))
+	}
+	return tripID
+}
+
+// applyBlockDeviation sets the status's deviation and predicted flag from the
+// block's trip updates, and returns the deviation the later steps shift by.
+func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.TripStatus, extras *tripStatusExtras, input tripStatusInput) int {
 	// Mirror Java's applyTripUpdatesToRecord: iterate all block trips in
 	// start-time order; last trip-level delay wins (Java overwrites
 	// best.scheduleDeviation unconditionally each time a trip-level delay is
@@ -186,8 +242,8 @@ func (api *RestAPI) buildTripStatusForVehicle(
 	// buses under one block) leak the last shift's delay into the first
 	// shift's scheduleDeviation, and status.ScheduleDeviation flows onward
 	// into effectiveTime / stop-offset math for every arrival on this trip.
-	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, dbTripID, serviceDate)
-	scheduleDeviation, hasRealtimeTripUpdate := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceDate, currentTime)
+	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, input.dbTripID, input.serviceDate)
+	scheduleDeviation, hasRealtimeTripUpdate := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, input.serviceDate, input.currentTime)
 
 	if hasRealtimeTripUpdate {
 		status.ScheduleDeviation = scheduleDeviation
@@ -195,238 +251,284 @@ func (api *RestAPI) buildTripStatusForVehicle(
 	extras.deviationResolved = hasRealtimeTripUpdate
 	extras.blockTripIDs = blockTripIDs
 
-	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
+	hasVehicleRealtimeData := input.vehicle != nil && !defaultStaleDetector.Check(input.vehicle, input.currentTime)
 	status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
+	return scheduleDeviation
+}
 
+// statusStopTimes returns the trip's stop times. A failed query logs and returns
+// none, so the status falls back to what it can report without them.
+func (api *RestAPI) statusStopTimes(ctx context.Context, dbTripID string) []gtfsdb.StopTime {
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, dbTripID)
 	if err != nil {
 		slog.Warn("buildTripStatusCore: failed to get stop times",
 			slog.String("trip_id", dbTripID),
 			slog.String("error", err.Error()))
 	}
-	if err == nil && len(stopTimes) > 0 {
+	return stopTimes
+}
+
+// statusShapeRows returns the trip's shape points. A failed query logs and
+// returns none, so the status falls back to what it can report without them.
+func (api *RestAPI) statusShapeRows(ctx context.Context, dbTripID string) []gtfsdb.Shape {
+	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, dbTripID)
+	if err != nil {
+		slog.Warn("buildTripStatusCore: failed to get shape points",
+			slog.String("trip_id", dbTripID),
+			slog.String("error", err.Error()))
+	}
+	return shapeRows
+}
+
+// applyStatusStops sets the status's closest and next stops from the vehicle or
+// its schedule.
+func (api *RestAPI) applyStatusStops(
+	ctx context.Context,
+	status *models.TripStatus,
+	input tripStatusInput,
+	stopTimes []gtfsdb.StopTime,
+	scheduleDeviation int,
+) {
+	if len(stopTimes) > 0 {
 		stopTimesPtrs := make([]*gtfsdb.StopTime, len(stopTimes))
 		for i := range stopTimes {
 			stopTimesPtrs[i] = &stopTimes[i]
 		}
-
-		var closestStopID, nextStopID string
-		var closestOffset, nextOffset int
-
-		if vehicle != nil && vehicle.Position != nil {
-			if vehicle.StopID != nil && *vehicle.StopID != "" {
-				closestStopID = *vehicle.StopID
-				closestOffset = api.calculateOffsetForStop(closestStopID, stopTimesPtrs, currentTime, serviceDate, scheduleDeviation)
-				isStoppedAt := vehicle.CurrentStatus != nil && *vehicle.CurrentStatus == gtfs.CurrentStatus(1)
-				if isStoppedAt {
-					nextStopID, nextOffset = api.findNextStopAfter(closestStopID, stopTimesPtrs, currentTime, serviceDate, scheduleDeviation)
-				} else {
-					nextStopID = closestStopID
-					nextOffset = closestOffset
-				}
-			} else if vehicle.CurrentStopSequence != nil {
-				closestStopID, closestOffset = api.findClosestStopBySequence(
-					stopTimesPtrs, *vehicle.CurrentStopSequence, currentTime, serviceDate, scheduleDeviation,
-				)
-				nextStopID, nextOffset = api.findNextStopBySequence(
-					ctx, stopTimesPtrs, *vehicle.CurrentStopSequence, currentTime, serviceDate, scheduleDeviation, vehicle, tripID,
-				)
-			} else {
-				closestStopID, closestOffset, nextStopID, nextOffset = api.findStopsByScheduleDeviation(
-					stopTimesPtrs, currentTime, serviceDate, scheduleDeviation,
-				)
-			}
-		} else {
-			stopDelays := api.GetStopDelaysFromTripUpdates(dbTripID, stopTimesPtrs)
-			closestStopID, closestOffset = findClosestStopByTimeWithDelays(currentTime, serviceDate, stopTimesPtrs, stopDelays)
-			nextStopID, nextOffset = findNextStopByTimeWithDelays(currentTime, serviceDate, stopTimesPtrs, stopDelays)
-		}
-
+		closestStopID, closestOffset, nextStopID, nextOffset := api.findStatusStops(ctx, input, stopTimesPtrs, scheduleDeviation)
 		if closestStopID != "" {
-			status.ClosestStop = utils.FormCombinedID(agencyID, closestStopID)
+			status.ClosestStop = utils.FormCombinedID(input.agencyID, closestStopID)
 			status.ClosestStopTimeOffset = closestOffset
 		}
 		if nextStopID != "" {
-			status.NextStop = utils.FormCombinedID(agencyID, nextStopID)
+			status.NextStop = utils.FormCombinedID(input.agencyID, nextStopID)
 			status.NextStopTimeOffset = nextOffset
 		}
 	}
 
 	if status.ClosestStop == "" || status.NextStop == "" {
-		api.fillStopsFromSchedule(ctx, status, dbTripID, currentTime, serviceDate, agencyID, stopTimes)
+		api.fillStopsFromSchedule(ctx, status, input.dbTripID, input.currentTime, input.serviceDate, input.agencyID, stopTimes)
+	}
+}
+
+// findStatusStops picks the closest and next stops: from the feed when the vehicle
+// reports a position, else from the schedule shifted by the trip update's delays.
+func (api *RestAPI) findStatusStops(
+	ctx context.Context,
+	input tripStatusInput,
+	stopTimesPtrs []*gtfsdb.StopTime,
+	scheduleDeviation int,
+) (closestStopID string, closestOffset int, nextStopID string, nextOffset int) {
+	vehicle := input.vehicle
+	if vehicle != nil && vehicle.Position != nil {
+		return api.findStatusStopsForPosition(ctx, input, stopTimesPtrs, scheduleDeviation)
+	}
+	stopDelays := api.GetStopDelaysFromTripUpdates(input.dbTripID, stopTimesPtrs)
+	closestStopID, closestOffset = findClosestStopByTimeWithDelays(input.currentTime, input.serviceDate, stopTimesPtrs, stopDelays)
+	nextStopID, nextOffset = findNextStopByTimeWithDelays(input.currentTime, input.serviceDate, stopTimesPtrs, stopDelays)
+	return closestStopID, closestOffset, nextStopID, nextOffset
+}
+
+// findStatusStopsForPosition picks the closest and next stops for a vehicle with a
+// position, from the stop or sequence it reports when it has one.
+func (api *RestAPI) findStatusStopsForPosition(
+	ctx context.Context,
+	input tripStatusInput,
+	stopTimesPtrs []*gtfsdb.StopTime,
+	scheduleDeviation int,
+) (closestStopID string, closestOffset int, nextStopID string, nextOffset int) {
+	vehicle, currentTime, serviceDate := input.vehicle, input.currentTime, input.serviceDate
+	if vehicle.StopID != nil && *vehicle.StopID != "" {
+		closestStopID = *vehicle.StopID
+		closestOffset = api.calculateOffsetForStop(closestStopID, stopTimesPtrs, currentTime, serviceDate, scheduleDeviation)
+		isStoppedAt := vehicle.CurrentStatus != nil && *vehicle.CurrentStatus == gtfs.CurrentStatus(1)
+		if !isStoppedAt {
+			return closestStopID, closestOffset, closestStopID, closestOffset
+		}
+		nextStopID, nextOffset = api.findNextStopAfter(closestStopID, stopTimesPtrs, currentTime, serviceDate, scheduleDeviation)
+		return closestStopID, closestOffset, nextStopID, nextOffset
+	}
+	if vehicle.CurrentStopSequence != nil {
+		closestStopID, closestOffset = api.findClosestStopBySequence(
+			stopTimesPtrs, *vehicle.CurrentStopSequence, currentTime, serviceDate, scheduleDeviation,
+		)
+		nextStopID, nextOffset = api.findNextStopBySequence(
+			ctx, stopTimesPtrs, *vehicle.CurrentStopSequence, currentTime, serviceDate, scheduleDeviation, vehicle, input.tripID,
+		)
+		return closestStopID, closestOffset, nextStopID, nextOffset
+	}
+	return api.findStopsByScheduleDeviation(stopTimesPtrs, currentTime, serviceDate, scheduleDeviation)
+}
+
+// snapshotLocatesActiveTrip reports whether the snapshot places the block on a
+// trip. Mirrors Java's null-BlockLocation semantics
+// (ScheduledBlockLocationServiceImpl.java:241-244): past the shift's last stop
+// Java returns null and the arrivals bean leaves tripStatus position fields at
+// their defaults. Before its first stop, statusBlockSnapshot has already held
+// the block there.
+func snapshotLocatesActiveTrip(snap *scheduledBlockSnapshot) bool {
+	return snap != nil && snap.ActiveTripID != "" && snap.InRange
+}
+
+// applySnapshotToStatus sets the snapshot-derived status fields, which don't
+// depend on the target trip's shape.
+func (api *RestAPI) applySnapshotToStatus(ctx context.Context, status *models.TripStatus, input tripStatusInput, snap *scheduledBlockSnapshot) {
+	if !snapshotLocatesActiveTrip(snap) {
+		return
+	}
+	status.ActiveTripID = utils.FormCombinedID(input.agencyID, snap.ActiveTripID)
+	// Java's TripStatusBeanServiceImpl reports the active trip's sequence.
+	if snap.ActiveTripID != input.tripID {
+		status.BlockTripSequence = api.activeTripBlockSequence(ctx, snap.ActiveTripID, input.serviceDate)
+	}
+	status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
+	if snap.ActiveTripTotalDistance > 0 {
+		status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
+	}
+	applySnapshotDistanceAlongTrip(status, input, snap)
+}
+
+// applySnapshotDistanceAlongTrip sets distanceAlongTrip, a distinct field from
+// scheduledDistanceAlongTrip per the OBA spec: the former is where the vehicle
+// ACTUALLY is (from live GPS), the latter is where the schedule expects it to
+// be. Java derives it from blockLocation.getDistanceAlongBlock() minus
+// activeBlockTrip.getDistanceAlongBlock(), a live-position value pulled from the
+// RT record.
+//
+// The correct implementation requires block-cumulative shape projection (concat
+// every block-trip's polyline; project vehicle GPS onto the full assembly;
+// subtract active-trip block offset). See
+// summary/distance-along-shape-library-port.md, the tracked followup.
+//
+// Until then, we produce a best-effort value in two tiers:
+//
+//  1. When snap's distance-picked active trip matches the vehicle's RT-declared
+//     trip, snap.ActiveTripShape IS the vehicle's shape, so projecting the
+//     vehicle's GPS onto it gives the true live position within that trip. This
+//     is the correct GPS-derived value that distinguishes distanceAlongTrip from
+//     scheduledDistanceAlongTrip.
+//
+//  2. When they don't match, projecting onto ActiveTripShape can produce
+//     catastrophic errors (a loop-route vehicle 21km along the block matches
+//     near a trip-start segment on a different trip's shape, yielding ~11m). Fall
+//     back to the schedule value, which collapses the two fields into one number
+//     but is never wildly wrong.
+//
+// Both are gated on the shift check to match Java's per-BlockInstance semantics.
+func applySnapshotDistanceAlongTrip(status *models.TripStatus, input tripStatusInput, snap *scheduledBlockSnapshot) {
+	vehicle := input.vehicle
+	if vehicle == nil || vehicle.Trip == nil || snap.ShiftTripIDs == nil {
+		return
+	}
+	_, sameShift := snap.ShiftTripIDs[vehicle.Trip.ID.ID]
+	_, arrivalInShift := snap.ShiftTripIDs[input.tripID]
+	if !sameShift || !arrivalInShift {
+		return
+	}
+	if distance, ok := liveVehicleDistanceOnSnapshot(input, snap); ok {
+		status.DistanceAlongTrip = distance
+		status.LastKnownDistanceAlongTrip = distance
+		return
+	}
+	status.DistanceAlongTrip = snap.ActiveTripScheduledDistance
+}
+
+// liveVehicleDistanceOnSnapshot projects the vehicle's GPS onto the active trip's
+// shape. A stale vehicle's GPS position is stale by definition; treating it as live
+// would mint a distanceAlongTrip from a position the vehicle occupied minutes/hours
+// ago. Gating the projection on freshness matches the gate on status.Predicted.
+func liveVehicleDistanceOnSnapshot(input tripStatusInput, snap *scheduledBlockSnapshot) (float64, bool) {
+	vehicle := input.vehicle
+	isLiveOnActiveTrip := vehicleHasCoordinates(vehicle) &&
+		snap.ActiveTripID == vehicle.Trip.ID.ID &&
+		!defaultStaleDetector.Check(vehicle, input.currentTime)
+	if !isLiveOnActiveTrip {
+		return 0, false
+	}
+	gpsPos := models.Location{
+		Lat: float64(*vehicle.Position.Latitude),
+		Lon: float64(*vehicle.Position.Longitude),
+	}
+	return projectVehicleDistanceOnShape(snap.ActiveTripShape, snap.ActiveTripCumulativeDistances, gpsPos)
+}
+
+func vehicleHasCoordinates(vehicle *gtfs.Vehicle) bool {
+	return vehicle != nil && vehicle.Position != nil &&
+		vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil
+}
+
+// applyShapeToStatus does the target-shape-dependent work: TotalDistanceAlongTrip
+// default, live-vehicle position projection onto target's shape, orientation
+// inference, and within-target interpolation fallback.
+func (api *RestAPI) applyShapeToStatus(
+	ctx context.Context,
+	status *models.TripStatus,
+	input tripStatusInput,
+	snap *scheduledBlockSnapshot,
+	shapeRows []gtfsdb.Shape,
+	stopTimes []gtfsdb.StopTime,
+) {
+	if len(shapeRows) <= 1 {
+		return
+	}
+	shapePoints := shapeRowsToPoints(shapeRows)
+	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+	// Snap's ActiveTripTotalDistance takes precedence; only fall back to target's
+	// shape total when snap didn't provide one.
+	if status.TotalDistanceAlongTrip == 0 {
+		status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
 	}
 
-	shapeRows, shapeErr := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, dbTripID)
-	if shapeErr != nil {
-		slog.Warn("buildTripStatusCore: failed to get shape points",
-			slog.String("trip_id", dbTripID),
-			slog.String("error", shapeErr.Error()))
+	switch {
+	case vehicleHasCoordinates(input.vehicle):
+		applyVehiclePositionOnShape(status, input.vehicle, shapePoints)
+	case snapshotLocatesActiveTrip(snap):
+		applySnapshotPosition(status, snap)
+	case len(stopTimes) > 0:
+		// currentTime is outside the shift's schedule, so fall back to
+		// within-target interpolation so position / orientation are not
+		// (0, 0). scheduledDistanceAlongTrip stays at its default; Java
+		// leaves it unset in this case too.
+		api.applyScheduledTripPositionToStatus(
+			ctx, status, stopTimes, shapePoints, cumulativeDistances, input.currentTime, input.serviceDate,
+		)
 	}
-	// Snap is built from BLOCK trip data (loadBlockTripData + emitBlockStops
-	// with per-block-trip haversine fallback), so it does not require the
-	// target trip's own shape. Computing it outside the target-shape gate
-	// means shapeless feeds still get ActiveTripID, ScheduledDistanceAlong
-	// Trip, and — most importantly — the snap that callers reuse for
-	// metricsForStop, which drives numberOfStopsAway / distanceFromStop.
-	//
-	// Apply the same schedule-deviation shift the live-vehicle branch
-	// below uses. Trip updates without vehicle positions are common;
-	// without this shift the response would self-contradict — publishing
-	// scheduleDeviation while placing the bus at its on-schedule position.
-	// When hasRealtimeTripUpdate is false, scheduleDeviation is 0 and the
-	// shift is a no-op.
-	var snap *scheduledBlockSnapshot
-	if len(stopTimes) > 0 {
-		input := tripStatusInput{
-			agencyID:    agencyID,
-			tripID:      tripID,
-			dbTripID:    dbTripID,
-			vehicle:     vehicle,
-			serviceDate: serviceDate,
-			currentTime: currentTime,
-		}
-		snap = api.statusBlockSnapshot(ctx, status, input, blockTripIDs, scheduleDeviation)
+}
+
+// applyVehiclePositionOnShape snaps the vehicle's reported location to the shape.
+// If the feed does not provide a bearing, it infers orientation from the heading
+// of the closest shape segment at the vehicle's position.
+func applyVehiclePositionOnShape(status *models.TripStatus, vehicle *gtfs.Vehicle, shapePoints []gtfs.ShapePoint) {
+	if status.LastKnownLocation == nil {
+		return
 	}
-
-	// Snap-derived status fields — independent of target's shape.
-	//
-	// Snapshot.InRange guard mirrors Java's null-BlockLocation semantics
-	// (ScheduledBlockLocationServiceImpl.java:241-244). Past the shift's last
-	// stop Java returns null and the arrivals bean leaves tripStatus position
-	// fields at their defaults. Before its first stop, statusBlockSnapshot has
-	// already held the block there.
-	if snap != nil && snap.ActiveTripID != "" && snap.InRange {
-		status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
-		// Java's TripStatusBeanServiceImpl reports the active trip's sequence.
-		if snap.ActiveTripID != tripID {
-			status.BlockTripSequence = api.activeTripBlockSequence(ctx, snap.ActiveTripID, serviceDate)
-		}
-		status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
-		if snap.ActiveTripTotalDistance > 0 {
-			status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
-		}
-		// Per the OBA spec, distanceAlongTrip is a distinct field from
-		// scheduledDistanceAlongTrip: the former is where the vehicle
-		// ACTUALLY is (from live GPS), the latter is where the schedule
-		// expects it to be. Java derives it from blockLocation.
-		// getDistanceAlongBlock() minus activeBlockTrip.getDistanceAlong
-		// Block() -- a live-position value pulled from the RT record.
-		//
-		// The correct implementation requires block-cumulative shape
-		// projection (concat every block-trip's polyline; project vehicle
-		// GPS onto the full assembly; subtract active-trip block offset).
-		// See summary/distance-along-shape-library-port.md -- that's the
-		// tracked followup.
-		//
-		// Until then, we produce a best-effort value in two tiers:
-		//
-		// 1) When snap's distance-picked active trip matches the vehicle's
-		//    RT-declared trip, snap.ActiveTripShape IS the vehicle's shape
-		//    -- projecting the vehicle's GPS onto it gives the true live
-		//    position within that trip. This is the correct GPS-derived
-		//    value that distinguishes distanceAlongTrip from scheduled
-		//    DistanceAlongTrip.
-		//
-		// 2) When they don't match, projecting onto ActiveTripShape can
-		//    produce catastrophic errors (a loop-route vehicle 21km along
-		//    the block matches near a trip-start segment on a different
-		//    trip's shape, yielding ~11m). Fall back to the schedule
-		//    value -- collapses the two fields into one number but is
-		//    never wildly wrong. Both are gated on the shift check to
-		//    match Java's per-BlockInstance semantics.
-		if vehicle != nil && vehicle.Trip != nil && snap.ShiftTripIDs != nil {
-			_, sameShift := snap.ShiftTripIDs[vehicle.Trip.ID.ID]
-			_, arrivalInShift := snap.ShiftTripIDs[tripID]
-			if sameShift && arrivalInShift {
-				gpsAssigned := false
-				// A stale vehicle's GPS position is stale by definition;
-				// treating it as live would mint a distanceAlongTrip from a
-				// position the vehicle occupied minutes/hours ago. Gate the
-				// GPS projection on freshness so stale (or unavailable) RT
-				// data falls through to snap.ActiveTripScheduledDistance --
-				// matches the freshness gate on status.Predicted (see the
-				// CANCELED branch above) and hasVehicleRealtimeData below.
-				if vehicle.Position != nil &&
-					vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil &&
-					snap.ActiveTripID == vehicle.Trip.ID.ID &&
-					!defaultStaleDetector.Check(vehicle, currentTime) {
-					gpsPos := models.Location{
-						Lat: float64(*vehicle.Position.Latitude),
-						Lon: float64(*vehicle.Position.Longitude),
-					}
-					if dist, ok := projectVehicleDistanceOnShape(
-						snap.ActiveTripShape,
-						snap.ActiveTripCumulativeDistances,
-						gpsPos,
-					); ok {
-						status.DistanceAlongTrip = dist
-						status.LastKnownDistanceAlongTrip = dist
-						gpsAssigned = true
-					}
-				}
-				if !gpsAssigned {
-					status.DistanceAlongTrip = snap.ActiveTripScheduledDistance
-				}
-			}
-		}
+	actualPosition := *status.LastKnownLocation
+	if projected := projectPositionWithShapePoints(shapePoints, actualPosition); projected != nil {
+		status.Position = *projected
 	}
-
-	// Target-shape-dependent work: TotalDistanceAlongTrip default,
-	// live-vehicle position projection onto target's shape, orientation
-	// inference, and within-target interpolation fallback.
-	if shapeErr == nil && len(shapeRows) > 1 {
-		shapePoints := shapeRowsToPoints(shapeRows)
-		cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
-		// Snap's ActiveTripTotalDistance (set above when available) takes
-		// precedence; only fall back to target's shape total when snap
-		// didn't provide one.
-		if status.TotalDistanceAlongTrip == 0 {
-			status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
-		}
-
-		if vehicle != nil && vehicle.Position != nil && vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil {
-			if status.LastKnownLocation != nil {
-				actualPosition := *status.LastKnownLocation
-
-				if projected := projectPositionWithShapePoints(shapePoints, actualPosition); projected != nil {
-					status.Position = *projected
-				}
-
-				// If the feed does not provide a bearing, infer orientation from the
-				// heading of the closest shape segment at the vehicle's position.
-				if vehicle.Position.Bearing == nil {
-					if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
-						status.Orientation = inferred
-						status.LastKnownOrientation = inferred
-					}
-				}
-			}
-		} else if snap != nil && snap.ActiveTripID != "" && snap.InRange {
-			// No live vehicle: place the bus at the interpolated position
-			// on the block's currently-active trip.
-			if pos, orient := positionAndOrientationAtDistance(
-				snap.ActiveTripShape,
-				snap.ActiveTripCumulativeDistances,
-				snap.ActiveTripScheduledDistance,
-			); pos != nil {
-				status.Position = *pos
-				if orient >= 0 {
-					status.Orientation = orient
-				}
-			}
-		} else if len(stopTimes) > 0 {
-			// currentTime is outside the shift's schedule — fall back to
-			// within-target interpolation so position / orientation are not
-			// (0, 0). scheduledDistanceAlongTrip stays at its default; Java
-			// leaves it unset in this case too.
-			api.applyScheduledTripPositionToStatus(
-				ctx, status, stopTimes, shapePoints, cumulativeDistances, currentTime, serviceDate,
-			)
-		}
+	if vehicle.Position.Bearing != nil {
+		return
 	}
+	if inferred := inferOrientationFromShape(actualPosition.Lat, actualPosition.Lon, shapePoints); inferred >= 0 {
+		status.Orientation = inferred
+		status.LastKnownOrientation = inferred
+	}
+}
 
-	extras.snapshot = snap
-	return status, extras, nil
+// applySnapshotPosition places a bus with no live vehicle at the interpolated
+// position on the block's currently-active trip.
+func applySnapshotPosition(status *models.TripStatus, snap *scheduledBlockSnapshot) {
+	position, orientation := positionAndOrientationAtDistance(
+		snap.ActiveTripShape,
+		snap.ActiveTripCumulativeDistances,
+		snap.ActiveTripScheduledDistance,
+	)
+	if position == nil {
+		return
+	}
+	status.Position = *position
+	if orientation >= 0 {
+		status.Orientation = orientation
+	}
 }
 
 // frequencyForEntry returns the frequency row whose window contains
