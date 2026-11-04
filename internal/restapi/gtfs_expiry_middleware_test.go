@@ -91,7 +91,7 @@ func TestGtfsExpiryMiddleware(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			middleware := GtfsExpiryMiddleware(tc.manager, nil)
+			middleware := GtfsExpiryMiddleware(tc.manager, clock.RealClock{})
 			handler := middleware(nextHandler)
 			handler.ServeHTTP(w, req)
 

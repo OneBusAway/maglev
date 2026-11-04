@@ -18,6 +18,7 @@ import (
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/restapi"
 )
 
 func TestParseAPIKeys(t *testing.T) {
@@ -99,6 +100,7 @@ func TestBuildApplicationWithMemoryDB(t *testing.T) {
 	// BuildApplication injects the metrics client into the config.
 	// We sync the injected Metrics over to our local copy so the assertion passes.
 	gtfsCfg.Metrics = coreApp.GtfsConfig.Metrics
+	gtfsCfg.Clock = coreApp.GtfsConfig.Clock
 	assert.Equal(t, gtfsCfg, coreApp.GtfsConfig, "GtfsConfig should match input")
 }
 
@@ -242,6 +244,59 @@ func TestCreateServerHandlerResponds(t *testing.T) {
 
 	// The current-time endpoint should respond (even if GTFS data isn't loaded)
 	assert.NotEqual(t, http.StatusNotFound, w.Code, "Handler should be configured and respond to requests")
+}
+
+func TestHealthzDataExpiredMatchesHeader(t *testing.T) {
+	ctx := context.Background()
+
+	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
+	if _, err := os.Stat(testDataPath); os.IsNotExist(err) {
+		t.Skip("Test data not available, skipping test")
+	}
+
+	fakeTimeStr := "2025-06-15T12:00:00Z"
+	t.Setenv("FAKETIME", "2025-06-15T12:00:00Z")
+	fixedTime, err := time.Parse(time.RFC3339, fakeTimeStr)
+	require.NoError(t, err)
+
+	cfg := appconf.Config{
+		Env: appconf.Test,
+	}
+
+	gtfsCfg := gtfs.Config{
+		GTFSDataPath: ":memory:",
+		GtfsURL:      testDataPath,
+	}
+
+	logger := slog.New(slog.DiscardHandler)
+	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg, logger)
+	require.NoError(t, err, "BuildApplication should not fail")
+
+	expiredTime := fixedTime.Add(-24 * time.Hour)
+	coreApp.GtfsManager.SetFeedExpiresAtForTest(ctx, expiredTime)
+
+	srv, api := CreateServer(coreApp, cfg, logger)
+	defer api.Shutdown()
+
+	healthReq := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	healthRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(healthRec, healthReq)
+	require.Equal(t, http.StatusOK, healthRec.Code)
+
+	var healthResp restapi.HealthResponse
+
+	err = json.Unmarshal(healthRec.Body.Bytes(), &healthResp)
+	require.NoError(t, err, "should unmarshal /healthz response")
+
+	apiReq := httptest.NewRequest(http.MethodGet, "/api/where/agencies-with-coverage.json?key=test", nil)
+	apiRec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(apiRec, apiReq)
+
+	headerExpiredVal := apiRec.Header().Get("X-Data-Expired")
+	headerExpired := headerExpiredVal == "true"
+
+	assert.Equal(t, healthResp.DataExpired, headerExpired, "/healthz data_expired must match X-Data-Expired header")
+	assert.True(t, healthResp.DataExpired, "feed should be marked as expired")
 }
 
 func TestRunServerStartsAndStopsCleanly(t *testing.T) {

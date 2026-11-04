@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/metrics"
 )
 
@@ -31,6 +32,7 @@ type Config struct {
 	EnableGTFSTidy        bool
 	StartupRetries        []time.Duration
 	Metrics               *metrics.Metrics
+	Clock                 clock.Clock
 }
 
 // enabledFeeds returns only the enabled feeds that have at least one URL configured.

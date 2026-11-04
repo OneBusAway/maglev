@@ -114,6 +114,10 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 	appMetrics := metrics.NewWithLogger(logger)
 	gtfsCfg.Metrics = appMetrics
 
+	// Select clock implementation based on environment
+	appClock := createClock(cfg.Env)
+	gtfsCfg.Clock = appClock
+
 	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize GTFS manager: %w", err)
@@ -126,9 +130,6 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 		// direction cache after every DB update.
 		gtfsManager.DirectionCalculator = directionCalculator
 	}
-
-	// Select clock implementation based on environment
-	appClock := createClock(cfg.Env)
 
 	coreApp := &app.Application{
 		Config:              cfg,
@@ -188,7 +189,7 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config, logger *slog.Log
 	// leaves web UI and other endpoints untouched.
 	// Order (innermost to outermost): expiry -> version.
 	var apiHandler http.Handler = mux
-	apiHandler = restapi.GtfsExpiryMiddleware(api.GtfsManager, nil)(apiHandler)
+	apiHandler = restapi.GtfsExpiryMiddleware(api.GtfsManager, coreApp.Clock)(apiHandler)
 	apiHandler = api.VersionValidationMiddleware(apiHandler)
 
 	// Apply compression around apiHandler (the mux plus API-specific middleware)
