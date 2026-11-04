@@ -204,18 +204,22 @@ func (api *RestAPI) blockDeviationSamples(ctx context.Context, tripIDs []string,
 // sampleEntryForSTU resolves the stop time a StopTimeUpdate samples. Java matches
 // stop_sequence against StopTimeEntry.getSequence(), the stop's zero-based index
 // in the trip, unlike the per-stop prediction path, which uses the GTFS
-// stop_sequence. A feed numbering stops from 1 therefore matches nothing and
-// builds no samples, which live Java confirms. It returns zeroes on no match.
+// stop_sequence. An update with no stop ID is first resolved by GTFS sequence
+// (GtfsRealtimeTripLibrary.java:1129-1140). A feed numbering stops from 1
+// therefore matches nothing and builds no samples, which live Java confirms. It
+// returns zeroes on no match.
 func sampleEntryForSTU(schedMap map[string][]schedEntry, stu gtfs.StopTimeUpdate, serviceDate, currentTime time.Time) (schedArr, schedDep int64) {
 	if stu.StopSequence == nil {
 		return scheduleEntryForSTU(schedMap, stu, serviceDate, currentTime)
 	}
+	sequence := int64(*stu.StopSequence)
 	for stopID, entries := range schedMap {
 		if stu.StopID != nil && stopID != *stu.StopID {
 			continue
 		}
 		for _, e := range entries {
-			if e.position == int64(*stu.StopSequence) {
+			resolved := stu.StopID != nil || e.seq == sequence
+			if resolved && e.position == sequence {
 				return e.arr, e.dep
 			}
 		}
