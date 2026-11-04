@@ -271,4 +271,44 @@ func TestPluralArrivals_RealBusStaysAtRecordPosition(t *testing.T) {
 	}
 }
 
+// Java has no record for a vehicle once its trip update's timestamp is over five
+// minutes old, so the arrival is schedule-only, even while Maglev still retains
+// the vehicle's last position.
+func TestVehicleForTrip_DropsVehicleWithExpiredRecord(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8 * time.Hour)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+
+	tests := []struct {
+		name        string
+		updateAge   *time.Duration
+		wantVehicle bool
+	}{
+		{name: "no trip update keeps the position-only vehicle", wantVehicle: true},
+		{name: "fresh trip update keeps the vehicle", updateAge: ptrDuration(5 * time.Minute), wantVehicle: true},
+		{name: "expired trip update drops the vehicle", updateAge: ptrDuration(5*time.Minute + time.Second)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+			if tt.updateAge != nil {
+				timestamp := now.Add(-*tt.updateAge)
+				api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+					ID:        gtfs.TripID{ID: tripID},
+					Timestamp: &timestamp,
+					Vehicle:   &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
+				})
+			}
+
+			vehicle := api.vehicleForTrip(context.Background(), tripID, serviceDate)
+
+			assert.Equal(t, tt.wantVehicle, vehicle != nil)
+		})
+	}
+}
+
 func ptrTime(t time.Time) *time.Time { return &t }
