@@ -270,10 +270,10 @@ func (api *RestAPI) buildTripStatusForVehicle(
 	// Snap-derived status fields — independent of target's shape.
 	//
 	// Snapshot.InRange guard mirrors Java's null-BlockLocation semantics
-	// (ScheduledBlockLocationServiceImpl.java:241-244). When currentTime
-	// falls outside the shift's [firstStop, lastStop] range, Java returns
-	// null and the arrivals bean leaves tripStatus position fields at
-	// their defaults.
+	// (ScheduledBlockLocationServiceImpl.java:241-244). Past the shift's last
+	// stop Java returns null and the arrivals bean leaves tripStatus position
+	// fields at their defaults. Before its first stop, statusBlockSnapshot has
+	// already held the block there.
 	if snap != nil && snap.ActiveTripID != "" && snap.InRange {
 		status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
 		// Java's TripStatusBeanServiceImpl reports the active trip's sequence.

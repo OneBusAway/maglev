@@ -69,30 +69,6 @@ func (api *RestAPI) tripUpdateVehicleForTrip(ctx context.Context, tripID string,
 	return nil
 }
 
-func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.Trip, tripID string, serviceDate time.Time) *gtfs.Vehicle {
-	if !tripUpdateOnServiceDate(tripUpdate, serviceDate) {
-		return nil
-	}
-	vehicleID := api.tripUpdateVehicleID(ctx, tripUpdate, tripID)
-	if vehicleID == nil {
-		return nil
-	}
-	if api.tripUpdateVehicleHasPosition(tripUpdate) {
-		return nil
-	}
-
-	recordTime := api.Clock.Now()
-	if tripUpdate.Timestamp != nil {
-		recordTime = *tripUpdate.Timestamp
-	}
-	if !api.blockRunsNear(ctx, tripID, recordTime, serviceDate) {
-		return nil
-	}
-
-	tripUpdate.IsEntityInMessage = true
-	return &gtfs.Vehicle{ID: vehicleID, Trip: &tripUpdate, Timestamp: &recordTime}
-}
-
 // tripUpdateVehicleServiceDate returns the service date a vehicle known only from
 // a trip update is running tripID on. A trip past midnight belongs to the previous
 // date, which is the only case that differs from the date of at.
@@ -116,6 +92,30 @@ func (api *RestAPI) reportedTripUpdateVehicle(ctx context.Context, requestedID, 
 		return nil
 	}
 	return vehicle
+}
+
+func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.Trip, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+	if !tripUpdateOnServiceDate(tripUpdate, serviceDate) {
+		return nil
+	}
+	vehicleID := api.tripUpdateVehicleID(ctx, tripUpdate, tripID)
+	if vehicleID == nil {
+		return nil
+	}
+	if api.tripUpdateVehicleHasPosition(tripUpdate) {
+		return nil
+	}
+
+	recordTime := api.Clock.Now()
+	if tripUpdate.Timestamp != nil {
+		recordTime = *tripUpdate.Timestamp
+	}
+	if !api.blockRunsNear(ctx, tripID, recordTime, serviceDate) {
+		return nil
+	}
+
+	tripUpdate.IsEntityInMessage = true
+	return &gtfs.Vehicle{ID: vehicleID, Trip: &tripUpdate, Timestamp: &recordTime}
 }
 
 // tripUpdateVehicleID returns the vehicle a trip update names. Java's record uses
@@ -148,7 +148,7 @@ func tripUpdateOnServiceDate(tripUpdate gtfs.Trip, serviceDate time.Time) bool {
 // tripUpdateVehicleBlockWindow of recordTime.
 func (api *RestAPI) blockRunsNear(ctx context.Context, tripID string, recordTime, serviceDate time.Time) bool {
 	snap := api.computeScheduledBlockSnapshot(ctx, tripID, recordTime, serviceDate)
-	if snap == nil || len(snap.Stops) == 0 {
+	if snap == nil {
 		return false
 	}
 	recordSeconds := utils.CalculateSecondsSinceServiceDate(recordTime, serviceDate)
