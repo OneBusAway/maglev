@@ -116,7 +116,7 @@ func (api *RestAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 	expiresAt := api.GtfsManager.FeedExpiresAt(r.Context())
 	if !expiresAt.IsZero() {
 		response.FeedExpiresAt = expiresAt.Format(time.RFC3339)
-		response.DataExpired = time.Now().After(expiresAt)
+		response.DataExpired = api.Clock.Now().After(expiresAt)
 	}
 
 	w.WriteHeader(http.StatusOK)

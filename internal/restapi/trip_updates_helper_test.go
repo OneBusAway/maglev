@@ -964,6 +964,16 @@ func TestStuReferenceTime(t *testing.T) {
 			want: 4200,
 		},
 		{
+			name: "departure time preferred over departure delay when arrival nil",
+			stu: gtfs.StopTimeUpdate{
+				Departure: &gtfs.StopTimeEvent{
+					Time:  &depTime,
+					Delay: &delay120,
+				},
+			},
+			want: 4200,
+		},
+		{
 			name: "departure delay used when arrival nil and departure time nil",
 			stu: gtfs.StopTimeUpdate{
 				Departure: &gtfs.StopTimeEvent{Delay: &delay120},
@@ -1006,6 +1016,15 @@ func TestStuPredictedFromEvent(t *testing.T) {
 			name:  "event with time returns seconds since service date",
 			event: &gtfs.StopTimeEvent{Time: &eventTime},
 			sched: 1000,
+			want:  5000,
+		},
+		{
+			name: "event with both time and delay prefers time",
+			event: &gtfs.StopTimeEvent{
+				Time:  &eventTime,
+				Delay: &delay,
+			},
+			sched: 4000,
 			want:  5000,
 		},
 		{
