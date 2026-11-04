@@ -971,3 +971,20 @@ func TestRetainRoute_AgencyWithUnderscore(t *testing.T) {
 
 	assert.Contains(t, refAcc.routes, "ROUTE_100", "retainRoute must retain the route even when agency ID contains an underscore")
 }
+
+func TestRetainRoute_EmptyCombinedID(t *testing.T) {
+	acc := newArrivalsAccumulator("AGENCY_ONE")
+	refAcc := newArrivalsAccumulator("AGENCY_ONE")
+
+	route := gtfsdb.Route{
+		ID:       "",
+		AgencyID: "",
+	}
+	acc.routes[""] = &route
+
+	retainRoute(refAcc, acc, "")
+	assert.Empty(t, refAcc.routes, "retainRoute must return without matching when combinedRouteID is empty")
+
+	retainRoute(refAcc, nil, "AGENCY_ONE_ROUTE_100")
+	assert.Empty(t, refAcc.routes, "retainRoute must return without panicking when acc is nil")
+}
