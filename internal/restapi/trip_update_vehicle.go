@@ -341,31 +341,30 @@ func isCanceledVehicle(vehicle *gtfs.Vehicle) bool {
 func (api *RestAPI) statusBlockSnapshot(
 	ctx context.Context,
 	status *models.TripStatus,
-	vehicle *gtfs.Vehicle,
-	tripID, agencyID string,
+	input tripStatusInput,
 	blockTripIDs []string,
 	scheduleDeviation int,
-	currentTime, serviceDate time.Time,
 ) *scheduledBlockSnapshot {
-	positionTime, hasRecord := api.vehicleRecordTime(vehicle, blockTripIDs)
+	positionTime, hasRecord := api.vehicleRecordTime(input.vehicle, blockTripIDs)
 	if !hasRecord {
-		positionTime = currentTime
+		positionTime = input.currentTime
 	}
 	effectiveTime := positionTime.Add(-time.Duration(scheduleDeviation) * time.Second)
 
-	snap := api.computeScheduledBlockSnapshot(ctx, tripID, effectiveTime, serviceDate)
+	snap := api.computeScheduledBlockSnapshot(ctx, input.dbTripID, effectiveTime, input.serviceDate)
 	if snap == nil {
 		return nil
 	}
-	blockStart := servicedate.OffsetBase(serviceDate).Add(time.Duration(snap.Stops[0].EffectiveStopSeconds) * time.Second)
-	beforeBlockStart := effectiveTime.Before(blockStart) && !runsOwnSchedule(vehicle)
+	blockStart := servicedate.OffsetBase(input.serviceDate).Add(time.Duration(snap.Stops[0].EffectiveStopSeconds) * time.Second)
+	beforeBlockStart := effectiveTime.Before(blockStart) && !runsOwnSchedule(input.vehicle)
 
-	hasNoPosition := vehicle == nil || vehicle.Position == nil
+	hasNoPosition := input.vehicle == nil || input.vehicle.Position == nil
 	if hasRecord || (beforeBlockStart && hasNoPosition) {
-		applySnapshotStops(status, snap, utils.CalculateSecondsSinceServiceDate(effectiveTime, serviceDate), agencyID)
+		effectiveSeconds := utils.CalculateSecondsSinceServiceDate(effectiveTime, input.serviceDate)
+		applySnapshotStops(status, snap, effectiveSeconds, input.agencyID)
 	}
 	if beforeBlockStart {
-		return api.computeScheduledBlockSnapshot(ctx, tripID, blockStart, serviceDate)
+		return api.computeScheduledBlockSnapshot(ctx, input.dbTripID, blockStart, input.serviceDate)
 	}
 	return snap
 }
