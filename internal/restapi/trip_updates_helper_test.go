@@ -1332,3 +1332,40 @@ func TestPluralArrivals_CanceledTripUpdateIsNotPredicted(t *testing.T) {
 	assert.False(t, arrival.Predicted)
 	assert.Zero(t, arrival.PredictedArrivalTime)
 }
+
+func TestSampleEntryForSTU_SequenceWithoutStopID(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	sequence := uint32(2)
+	stu := gtfs.StopTimeUpdate{StopSequence: &sequence}
+
+	tests := []struct {
+		name    string
+		entries map[string][]schedEntry
+		wantArr int64
+	}{
+		{
+			name: "a one-based feed's stop is not at that index",
+			entries: map[string][]schedEntry{
+				"first":  {{seq: 1, position: 0, arr: 10, dep: 11}},
+				"second": {{seq: 2, position: 1, arr: 20, dep: 21}},
+				"third":  {{seq: 3, position: 2, arr: 30, dep: 31}},
+			},
+		},
+		{
+			name: "a zero-based feed's stop is at that index",
+			entries: map[string][]schedEntry{
+				"first":  {{seq: 0, position: 0, arr: 10, dep: 11}},
+				"second": {{seq: 1, position: 1, arr: 20, dep: 21}},
+				"third":  {{seq: 2, position: 2, arr: 30, dep: 31}},
+			},
+			wantArr: 30,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			arrival, _ := sampleEntryForSTU(tt.entries, stu, serviceDate, serviceDate)
+			assert.Equal(t, tt.wantArr, arrival)
+		})
+	}
+}
