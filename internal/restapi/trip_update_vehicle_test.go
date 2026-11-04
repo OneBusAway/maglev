@@ -770,3 +770,46 @@ func TestArrivals_TripUpdateVehicleUsesBlockRecordTime(t *testing.T) {
 		})
 	}
 }
+
+// Java drops a record over an hour off schedule (GtfsRealtimeSource.java:728) and
+// has no location once the record's schedule time is past the block's last stop
+// (AbstractBlockLocationServiceImpl.java:274), unless the trip is canceled. The
+// fixture's block ends at 09:05.
+func TestTripUpdateVehicleForTrip_DropsRecordsJavaDiscards(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name         string
+		at           time.Duration
+		delay        time.Duration
+		relationship gtfsrt.TripDescriptor_ScheduleRelationship
+		wantVehicle  bool
+	}{
+		{name: "on schedule during the block", at: 8*time.Hour + 30*time.Minute, wantVehicle: true},
+		{name: "over an hour late", at: 8*time.Hour + 30*time.Minute, delay: 2 * time.Hour},
+		{name: "over an hour early", at: 8*time.Hour + 30*time.Minute, delay: -2 * time.Hour},
+		{name: "added trip over an hour late", at: 8*time.Hour + 30*time.Minute, delay: 2 * time.Hour, relationship: gtfsrt.TripDescriptor_ADDED, wantVehicle: true},
+		{name: "past the block's end", at: 9*time.Hour + 40*time.Minute},
+		{name: "past the end but running late enough", at: 9*time.Hour + 40*time.Minute, delay: 40 * time.Minute, wantVehicle: true},
+		{name: "canceled past the block's end", at: 9*time.Hour + 40*time.Minute, relationship: gtfsrt.TripDescriptor_CANCELED, wantVehicle: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := serviceDate.Add(tt.at)
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+			addDownstreamStop(t, api, tripID)
+			tripUpdate := plannedVehicleTripUpdate(tripID, now)
+			tripUpdate.ID.ScheduleRelationship = tt.relationship
+			tripUpdate.Delay = &tt.delay
+			api.GtfsManager.MockAddFullTripUpdate(tripUpdate)
+
+			vehicle := api.tripUpdateVehicleForTrip(context.Background(), tripID, serviceDate)
+
+			assert.Equal(t, tt.wantVehicle, vehicle != nil)
+		})
+	}
+}

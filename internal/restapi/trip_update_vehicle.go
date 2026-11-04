@@ -67,11 +67,45 @@ func (api *RestAPI) tripUpdateVehicleForTrip(ctx context.Context, tripID string,
 		recordTime = api.Clock.Now()
 	}
 	for _, blockUpdate := range blockUpdates {
-		if vehicle := api.vehicleFromTripUpdate(ctx, blockUpdate.tu, blockUpdate.tripID, recordTime, serviceDate); vehicle != nil {
-			return vehicle
+		vehicle := api.vehicleFromTripUpdate(ctx, blockUpdate.tu, blockUpdate.tripID, recordTime, serviceDate)
+		if vehicle == nil {
+			continue
 		}
+		if !api.recordInService(ctx, vehicle, blockUpdate.tripID, blockTripIDs, recordTime, serviceDate) {
+			return nil
+		}
+		return vehicle
 	}
 	return nil
+}
+
+// recordInService reports whether Java keeps a trip-update vehicle's record. It
+// discards one over an hour off schedule (GtfsRealtimeSource.java:728) and has no
+// location once the record's schedule time is past the block's last stop, unless
+// the trip is canceled (AbstractBlockLocationServiceImpl.java:274). ADDED and
+// DUPLICATED trips skip both, since they leave the static block schedule.
+func (api *RestAPI) recordInService(ctx context.Context, vehicle *gtfs.Vehicle, tripID string, blockTripIDs []string, recordTime, serviceDate time.Time) bool {
+	if runsOwnSchedule(vehicle) {
+		return true
+	}
+	deviation, _, discarded := api.blockRecordDeviation(ctx, blockTripIDs, serviceDate, recordTime)
+	if discarded {
+		return false
+	}
+	if isCanceledVehicle(vehicle) {
+		return true
+	}
+	scheduleTime := recordTime.Add(-time.Duration(deviation) * time.Second)
+	return !api.pastBlockEnd(ctx, tripID, scheduleTime, serviceDate)
+}
+
+func (api *RestAPI) pastBlockEnd(ctx context.Context, tripID string, scheduleTime, serviceDate time.Time) bool {
+	snap := api.computeScheduledBlockSnapshot(ctx, tripID, scheduleTime, serviceDate)
+	if snap == nil {
+		return false
+	}
+	blockEnd := snap.Stops[len(snap.Stops)-1].DepartureSeconds
+	return utils.CalculateSecondsSinceServiceDate(scheduleTime, serviceDate) > blockEnd
 }
 
 // tripUpdateVehicleServiceDate returns the service date a vehicle known only from
