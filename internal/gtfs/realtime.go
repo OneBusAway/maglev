@@ -536,8 +536,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		return false
 	}
 
+	var tripFeedTime time.Time
 	if tripData != nil && tripErr == nil {
-		normalizeTripUpdateTimestamps(tripData, time.Now())
+		tripFeedTime = normalizeTripUpdateTimestamps(tripData, time.Now())
 	}
 
 	// Apply agency-based filtering if configured for this feed.
@@ -580,7 +581,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	if tripData != nil && tripErr == nil {
 		manager.feedTrips[feedID] = tripData.Trips
-		manager.recordTripUpdatesSeenLocked(feedID, tripData)
+		manager.recordTripUpdatesSeenLocked(feedID, tripData, tripFeedTime)
 		if manager.feedUnattributedTrips == nil {
 			manager.feedUnattributedTrips = make(map[string][]gtfs.Trip)
 		}
@@ -822,8 +823,9 @@ const maxPlausibleTimestampAge = 100 * 365 * 24 * time.Hour
 // Java builds from it. Some feeds send milliseconds, and an update with no
 // timestamp, or a zero one, takes the feed's header time
 // (GtfsRealtimeTripLibrary.java:381-389, :532, :1106), so it can still expire when
-// the feed freezes. With no header it takes the fetch time.
-func normalizeTripUpdateTimestamps(tripData *gtfs.Realtime, fetchedAt time.Time) {
+// the feed freezes. With no header it takes the fetch time. It returns that feed
+// time.
+func normalizeTripUpdateTimestamps(tripData *gtfs.Realtime, fetchedAt time.Time) time.Time {
 	feedTime := fetchedAt
 	if tripData.CreatedAt.Unix() > 0 {
 		feedTime = timestampInSeconds(tripData.CreatedAt, fetchedAt)
@@ -836,6 +838,7 @@ func normalizeTripUpdateTimestamps(tripData *gtfs.Realtime, fetchedAt time.Time)
 		}
 		tripData.Trips[i].Timestamp = &normalized
 	}
+	return feedTime
 }
 
 // timestampInSeconds corrects a time parsed from a millisecond value as seconds.
@@ -853,13 +856,9 @@ type tripUpdateSeen struct {
 	at        time.Time
 }
 
-func (manager *Manager) recordTripUpdatesSeenLocked(feedID string, tripData *gtfs.Realtime) {
+func (manager *Manager) recordTripUpdatesSeenLocked(feedID string, tripData *gtfs.Realtime, feedTime time.Time) {
 	if manager.feedTripUpdateSeen == nil {
 		manager.feedTripUpdateSeen = make(map[string]map[string]tripUpdateSeen)
-	}
-	feedTime := tripData.CreatedAt
-	if feedTime.IsZero() {
-		feedTime = time.Now()
 	}
 	manager.feedTripUpdateSeen[feedID] = nextTripUpdatesSeen(manager.feedTripUpdateSeen[feedID], tripData.Trips, feedTime)
 }

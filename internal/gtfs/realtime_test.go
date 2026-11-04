@@ -2360,6 +2360,32 @@ func TestUpdateFeedRealtime_NormalizesTripUpdateTimestamps(t *testing.T) {
 	})
 }
 
+func TestUpdateFeedRealtime_FirstSeenUsesNormalizedFeedTime(t *testing.T) {
+	headerTime := time.Now().Add(-time.Minute).Truncate(time.Second)
+	updateTime := proto.Uint64(uint64(headerTime.Add(-30 * time.Second).Unix()))
+
+	t.Run("a millisecond header is converted", func(t *testing.T) {
+		const tripID = "trip"
+		manager := newTestManager()
+		serveTripUpdate(t, manager, tripID, updateTime, proto.Uint64(uint64(headerTime.UnixMilli())))
+
+		seenAt, ok := manager.TripUpdateFirstSeen(tripID)
+		require.True(t, ok)
+		assert.Equal(t, headerTime.Unix(), seenAt.Unix())
+	})
+
+	t.Run("a zero header takes the fetch time", func(t *testing.T) {
+		const tripID = "trip"
+		manager := newTestManager()
+		before := time.Now().Truncate(time.Second)
+		serveTripUpdate(t, manager, tripID, updateTime, proto.Uint64(0))
+
+		seenAt, ok := manager.TripUpdateFirstSeen(tripID)
+		require.True(t, ok)
+		assert.GreaterOrEqual(t, seenAt.Unix(), before.Unix())
+	})
+}
+
 func serveTripUpdate(t *testing.T, manager *Manager, tripID string, timestamp, headerTime *uint64) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
