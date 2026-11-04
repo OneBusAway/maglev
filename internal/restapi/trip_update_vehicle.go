@@ -61,8 +61,13 @@ func (api *RestAPI) tripUpdateVehicleForTrip(ctx context.Context, tripID string,
 		return nil
 	}
 	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
-	for _, blockUpdate := range api.collectBlockTripUpdates(blockTripIDs) {
-		if vehicle := api.vehicleFromTripUpdate(ctx, blockUpdate.tu, blockUpdate.tripID, serviceDate); vehicle != nil {
+	blockUpdates := api.collectBlockTripUpdates(blockTripIDs)
+	recordTime, hasTime := blockRecordTime(blockUpdates)
+	if !hasTime {
+		recordTime = api.Clock.Now()
+	}
+	for _, blockUpdate := range blockUpdates {
+		if vehicle := api.vehicleFromTripUpdate(ctx, blockUpdate.tu, blockUpdate.tripID, recordTime, serviceDate); vehicle != nil {
 			return vehicle
 		}
 	}
@@ -94,7 +99,7 @@ func (api *RestAPI) reportedTripUpdateVehicle(ctx context.Context, requestedID, 
 	return vehicle
 }
 
-func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.Trip, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.Trip, tripID string, recordTime, serviceDate time.Time) *gtfs.Vehicle {
 	if !tripUpdateOnServiceDate(tripUpdate, serviceDate) {
 		return nil
 	}
@@ -106,10 +111,6 @@ func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.T
 		return nil
 	}
 
-	recordTime := api.Clock.Now()
-	if tripUpdate.Timestamp != nil {
-		recordTime = *tripUpdate.Timestamp
-	}
 	if !api.blockRunsNear(ctx, tripID, recordTime, serviceDate) {
 		return nil
 	}
