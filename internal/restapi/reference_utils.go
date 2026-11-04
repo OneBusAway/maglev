@@ -425,6 +425,8 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 			for _, id := range agencyIDs {
 				knownAgencies[id] = struct{}{}
 			}
+		} else {
+			logger.Error("failed to fetch agencies for situation reference", "error", err)
 		}
 
 		if len(routeCandidateIDs) > 0 {
