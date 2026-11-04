@@ -83,16 +83,6 @@ func ifNoneMatchHits(r *http.Request, etag string) bool {
 }
 
 func entityTagListMatches(value, etag string) bool {
-	// Static endpoints currently send an unquoted feed hash. Preserve clients
-	// echoing that legacy value without accepting unquoted tags for valid ETags.
-	if !strings.HasPrefix(etag, `"`) {
-		for _, part := range strings.Split(value, ",") {
-			if strings.TrimSpace(part) == etag {
-				return etag != ""
-			}
-		}
-		return false
-	}
 	for value != "" {
 		value = strings.TrimLeft(value, " \t,")
 		tag, rest := scanEntityTag(value)

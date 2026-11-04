@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"maglev.onebusaway.org/internal/nulls"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
@@ -31,9 +32,9 @@ func FilterRoutes(q *gtfsdb.Queries, ctx context.Context, present map[string]boo
 		routeIDStr := FormCombinedID(r.AgencyID, r.ID)
 		if present[routeIDStr] {
 			refs = append(refs, models.NewRoute(
-				routeIDStr, r.AgencyID, r.ShortName.String, r.LongName.String,
-				r.Desc.String, models.RouteType(r.Type), r.Url.String,
-				r.Color.String, r.TextColor.String))
+				routeIDStr, r.AgencyID, nulls.StringOrEmpty(r.ShortName), nulls.StringOrEmpty(r.LongName),
+				nulls.StringOrEmpty(r.Desc), models.RouteType(r.Type), nulls.StringOrEmpty(r.Url),
+				nulls.StringOrEmpty(r.Color), nulls.StringOrEmpty(r.TextColor)))
 		}
 	}
 	return refs, nil

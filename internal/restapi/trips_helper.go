@@ -843,96 +843,6 @@ func findNextStopByTimeWithDelays(currentTime time.Time, serviceDate time.Time, 
 	return
 }
 
-func getDistanceAlongShape(lat, lon float64, shape []gtfs.ShapePoint) float64 {
-	if len(shape) < 2 {
-		return 0
-	}
-
-	cumulativeDistances := preCalculateCumulativeDistances(shape)
-
-	var minDistance = math.Inf(1)
-	var closestSegmentIndex int
-	var projectionRatio float64
-
-	for i := 0; i < len(shape)-1; i++ {
-		distance, ratio := distanceToLineSegment(
-			lat, lon,
-			shape[i].Latitude, shape[i].Longitude,
-			shape[i+1].Latitude, shape[i+1].Longitude,
-		)
-
-		if distance < minDistance {
-			minDistance = distance
-			closestSegmentIndex = i
-			projectionRatio = ratio
-		}
-	}
-
-	var segmentLength float64
-	if closestSegmentIndex < len(shape)-1 {
-		segmentLength = utils.Distance(
-			shape[closestSegmentIndex].Latitude, shape[closestSegmentIndex].Longitude,
-			shape[closestSegmentIndex+1].Latitude, shape[closestSegmentIndex+1].Longitude,
-		)
-	}
-
-	return interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio)
-}
-
-func getDistanceAlongShapeInRange(lat, lon float64, shape []gtfs.ShapePoint, minDistTraveled, maxDistTraveled float64) float64 {
-	if len(shape) < 2 {
-		return 0
-	}
-
-	cumulativeDistances := preCalculateCumulativeDistances(shape)
-	useRange := maxDistTraveled > minDistTraveled
-
-	var minDistance = math.Inf(1)
-	var closestSegmentIndex int
-	var projectionRatio float64
-	var foundInRange = false
-
-	for i := 0; i < len(shape)-1; i++ {
-		// check if this segment is within or overlaps the range
-		if useRange {
-			segmentStart := cumulativeDistances[i]
-			segmentEnd := cumulativeDistances[i+1]
-
-			if segmentEnd < minDistTraveled-models.RangeSearchBufferMeters || segmentStart > maxDistTraveled+models.RangeSearchBufferMeters {
-				continue
-			}
-		}
-
-		distance, ratio := distanceToLineSegment(
-			lat, lon,
-			shape[i].Latitude, shape[i].Longitude,
-			shape[i+1].Latitude, shape[i+1].Longitude,
-		)
-
-		if distance < minDistance {
-			minDistance = distance
-			closestSegmentIndex = i
-			projectionRatio = ratio
-			foundInRange = true
-		}
-	}
-
-	// Fallback to full shape search if nothing found in range (GPS drift edge case)
-	if useRange && !foundInRange {
-		return getDistanceAlongShape(lat, lon, shape)
-	}
-
-	var segmentLength float64
-	if closestSegmentIndex < len(shape)-1 {
-		segmentLength = utils.Distance(
-			shape[closestSegmentIndex].Latitude, shape[closestSegmentIndex].Longitude,
-			shape[closestSegmentIndex+1].Latitude, shape[closestSegmentIndex+1].Longitude,
-		)
-	}
-
-	return interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio)
-}
-
 // calculateBlockTripSequence calculates the index of a trip within its block's ordered trip sequence
 // for trips that are active on the given service date.
 // Returns 0 when the sequence is unavailable, for callers that treat 0 as "no data".
@@ -985,7 +895,7 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Warn("blockTripSequence: failed to get block trip sequence",
 				slog.String("trip_id", tripID),
-				slog.String("block_id", trip.BlockID.String),
+				slog.String("block_id", nulls.StringOrEmpty(trip.BlockID)),
 				slog.String("error", err.Error()))
 		}
 		return 0, false
@@ -1336,7 +1246,7 @@ func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTr
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Warn("getFirstStopOfNextTripInBlock: query failed",
 				slog.String("trip_id", currentTripID),
-				slog.String("block_id", trip.BlockID.String),
+				slog.String("block_id", nulls.StringOrEmpty(trip.BlockID)),
 				slog.String("error", err.Error()))
 		}
 		return nil

@@ -549,7 +549,7 @@ func tripsForRouteBlockAnchors(
 // compareTripsForRouteBlockSpans orders spans by block, start time, and trip
 // ID. Batched query results are individually sorted but must be merged here.
 func compareTripsForRouteBlockSpans(a, b gtfsdb.GetTripSpansForBlocksRow) int {
-	if byBlock := strings.Compare(a.BlockID.String, b.BlockID.String); byBlock != 0 {
+	if byBlock := strings.Compare(nulls.StringOrEmpty(a.BlockID), nulls.StringOrEmpty(b.BlockID)); byBlock != 0 {
 		return byBlock
 	}
 	if a.MinArrivalTime.Int64 < b.MinArrivalTime.Int64 {
@@ -650,7 +650,7 @@ func (api *RestAPI) buildBlockTripForRoute(
 			bt.BlockID.Valid &&
 			bt.MinArrivalTime.Valid &&
 			bt.MaxDepartureTime.Valid {
-			key := bt.BlockID.String
+			key := nulls.StringOrEmpty(bt.BlockID)
 			blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
 				ID:               bt.ID,
 				MinArrivalTime:   bt.MinArrivalTime.Int64,
@@ -700,7 +700,7 @@ func resolveInterlinedEntryTripID(
 	blockTripForRoute map[string][]blockTripEntry,
 	routeAgencyMap map[string]string,
 ) (result interlinedTripResolution, ok bool) {
-	entries := blockTripForRoute[fetchedTrip.BlockID.String]
+	entries := blockTripForRoute[nulls.StringOrEmpty(fetchedTrip.BlockID)]
 	if len(entries) == 0 {
 		return interlinedTripResolution{}, false
 	}
@@ -1093,7 +1093,7 @@ func (api *RestAPI) routeZones(
 func tripsByBlock(trips []gtfsdb.GetTripsByBlockIDsRow) map[string][]gtfsdb.GetTripsByBlockIDsRow {
 	byBlock := make(map[string][]gtfsdb.GetTripsByBlockIDsRow)
 	for _, trip := range trips {
-		byBlock[trip.BlockID.String] = append(byBlock[trip.BlockID.String], trip)
+		byBlock[nulls.StringOrEmpty(trip.BlockID)] = append(byBlock[nulls.StringOrEmpty(trip.BlockID)], trip)
 	}
 	return byBlock
 }
@@ -1390,13 +1390,13 @@ func (api *RestAPI) fillRoutesAndAgencies(ctx context.Context, sets *tripReferen
 		sets.routes[route.ID] = models.NewRoute(
 			utils.FormCombinedID(route.AgencyID, route.ID),
 			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String)
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor))
 
 		api.addAgencyReference(ctx, sets, route.AgencyID)
 	}
@@ -1466,11 +1466,11 @@ func newTripReference(trip gtfsdb.Trip) models.Trip {
 		ID:            trip.ID,
 		RouteID:       trip.RouteID,
 		ServiceID:     trip.ServiceID,
-		TripHeadsign:  trip.TripHeadsign.String,
-		TripShortName: trip.TripShortName.String,
+		TripHeadsign:  nulls.StringOrEmpty(trip.TripHeadsign),
+		TripShortName: nulls.StringOrEmpty(trip.TripShortName),
 		DirectionID:   strconv.FormatInt(trip.DirectionID.Int64, 10),
-		BlockID:       trip.BlockID.String,
-		ShapeID:       trip.ShapeID.String,
+		BlockID:       nulls.StringOrEmpty(trip.BlockID),
+		ShapeID:       nulls.StringOrEmpty(trip.ShapeID),
 	}
 }
 
