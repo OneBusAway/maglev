@@ -48,6 +48,12 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 	if len(tripUpdates) == 0 {
 		return 0, false
 	}
+	// Java sets no deviation when the block's last update is canceled
+	// (GtfsRealtimeTripLibrary.java:953, :1104).
+	lastUpdate := tripUpdates[len(tripUpdates)-1].tu
+	if lastUpdate.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
+		return 0, false
+	}
 	dev, ok, discard := pickTripLevelDeviation(tripUpdates)
 	if discard {
 		// Java's blockNotActive guard fired: the entire VehicleLocationRecord
