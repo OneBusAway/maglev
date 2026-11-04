@@ -2,7 +2,6 @@ package gtfs
 
 import (
 	"bytes"
-	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -36,7 +35,6 @@ func TestNewGTFSDBConfig_QueryMetricsRecorder(t *testing.T) {
 }
 
 func TestLogFeedExpiryUsesClock(t *testing.T) {
-	t.Helper()
 	client, err := gtfsdb.NewClient(gtfsdb.Config{
 		DBPath: ":memory:",
 		Env:    appconf.Test,
@@ -49,21 +47,35 @@ func TestLogFeedExpiryUsesClock(t *testing.T) {
 
 	expiresAt := time.Date(2025, time.June, 15, 0, 0, 0, 0, time.UTC)
 	manager.SetFeedExpiresAtForTest(t.Context(), expiresAt)
-
 	tests := []struct {
-		name         string
-		currentTime  *clock.MockClock
-		warningLevel string
+		name        string
+		currentTime *clock.MockClock
+		message     string
 	}{
 		{
-			name:         "Feed is valid well before expiration",
-			currentTime:  clock.NewMockClock(time.Date(2025, time.June, 5, 0, 0, 0, 0, time.UTC)),
-			warningLevel: "INFO",
+			name:        "Feed is past expiration",
+			currentTime: clock.NewMockClock(time.Date(2025, time.June, 20, 0, 0, 0, 0, time.UTC)),
+			message:     "GTFS feed has expired",
 		},
 		{
-			name:         "Feed is past expiration",
-			currentTime:  clock.NewMockClock(time.Date(2025, time.June, 20, 0, 0, 0, 0, time.UTC)),
-			warningLevel: "WARN",
+			name:        "Feed expires in 1 day or less",
+			currentTime: clock.NewMockClock(time.Date(2025, time.June, 14, 12, 0, 0, 0, time.UTC)),
+			message:     "GTFS feed expires in 1 day or less",
+		},
+		{
+			name:        "Feed expires in 3 days or less",
+			currentTime: clock.NewMockClock(time.Date(2025, time.June, 13, 0, 0, 0, 0, time.UTC)),
+			message:     "GTFS feed expires in 3 days or less",
+		},
+		{
+			name:        "Feed expires in 7 days or less",
+			currentTime: clock.NewMockClock(time.Date(2025, time.June, 10, 0, 0, 0, 0, time.UTC)),
+			message:     "GTFS feed expires in 7 days or less",
+		},
+		{
+			name:        "Feed is valid well before expiration",
+			currentTime: clock.NewMockClock(time.Date(2025, time.June, 5, 0, 0, 0, 0, time.UTC)), // daysUntil = 10 (default)
+			message:     "GTFS feed valid",
 		},
 	}
 
@@ -73,10 +85,10 @@ func TestLogFeedExpiryUsesClock(t *testing.T) {
 			testLogger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{
 				Level: slog.LevelDebug,
 			}))
+			manager.config.Clock = test.currentTime
 
-			manager.logFeedExpiry(t.Context(), testLogger, test.currentTime)
-			expectedWarnLvl := fmt.Sprintf(`"level":"%s"`, test.warningLevel)
-			assert.Contains(t, buf.String(), expectedWarnLvl, "expected warn level %s but wasn't found", test.warningLevel)
+			manager.logFeedExpiry(t.Context(), testLogger)
+			assert.Contains(t, buf.String(), test.message, "expected \"%s\" but got \"%s\"", test.message)
 		})
 	}
 }
