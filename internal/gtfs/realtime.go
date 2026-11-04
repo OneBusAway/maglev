@@ -701,6 +701,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			}
 			manager.feedVehicleAgency[feedID] = agencies
 			manager.recordVehicleDataTime(feedID, vehicleData.CreatedAt)
+			if manager.feedRetainedVehicles == nil {
+				manager.feedRetainedVehicles = make(map[string]map[vehicleKey]struct{})
+			}
 			manager.feedRetainedVehicles[feedID] = retainedKeys
 		} else {
 			// Even when skipping the vehicle update due to staleness, still clean up
