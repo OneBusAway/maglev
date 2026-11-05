@@ -286,12 +286,6 @@ func TestScheduleForRouteHandler_WithReferences(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.StopTimes)
 }
 
-// TestScheduleForRouteHandler_StopRouteIDsResolve checks the stop references
-// against Java's RouteScheduleBeanServiceImpl.addStopReference: a stop lists
-// only the schedule's route, even where other routes serve it, so every
-// routeId resolves in references.routes without the references growing to
-// every route of every stop. Stops 2000, 7017 and 7018 on RABA route 25_151
-// are also served by 25_24 and 25_157.
 func TestScheduleForRouteHandler_StopRouteIDsResolve(t *testing.T) {
 	api := newScheduleForRouteAPI(t)
 	defer api.Shutdown()
@@ -311,19 +305,24 @@ func TestScheduleForRouteHandler_StopRouteIDsResolve(t *testing.T) {
 	}
 
 	require.NotEmpty(t, refs.Stops)
-	stopIDs := make([]string, 0, len(refs.Stops))
+	var stop2000RouteIDs, stop2000StaticRouteIDs []string
 	for _, stop := range refs.Stops {
-		stopIDs = append(stopIDs, stop.ID)
-		assert.Equal(t, []string{routeID}, stop.RouteIDs, "stop %s", stop.ID)
-		assert.Equal(t, []string{}, stop.StaticRouteIDs, "stop %s", stop.ID)
+		if stop.ID == "25_2000" {
+			stop2000RouteIDs, stop2000StaticRouteIDs = stop.RouteIDs, stop.StaticRouteIDs
+		}
 		for _, rid := range stop.RouteIDs {
 			assert.True(t, routes[rid], "stop %s routeId %s missing from references.routes", stop.ID, rid)
 		}
+		for _, rid := range stop.StaticRouteIDs {
+			assert.True(t, routes[rid], "stop %s staticRouteId %s missing from references.routes", stop.ID, rid)
+		}
 	}
-	assert.Subset(t, stopIDs, []string{"25_2000", "25_7017", "25_7018"})
 
-	require.Len(t, refs.Routes, 1)
-	assert.Equal(t, routeID, refs.Routes[0].ID)
+	// Stop references are full stop records: 25_2000 lists every route serving it.
+	require.NotNil(t, stop2000RouteIDs, "stop 25_2000 missing from references.stops")
+	assert.Subset(t, stop2000RouteIDs, []string{"25_151", "25_24", "25_157"})
+	assert.Subset(t, stop2000StaticRouteIDs, []string{"25_151", "25_24", "25_157"})
+
 	for _, rt := range refs.Routes {
 		assert.True(t, agencies[rt.AgencyID], "route %s agency %s missing from references.agencies", rt.ID, rt.AgencyID)
 	}

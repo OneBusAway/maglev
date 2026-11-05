@@ -296,13 +296,22 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(uniqueStopIDs) > 0 {
-		stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, uniqueStopIDs)
+		modelStops, stopRoutes, err := stopModelsByIDs(api, ctx, agencyID, uniqueStopIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
 		}
-		references.Stops = api.scheduleStopReferences(ctx, agencyID, stops, utils.FormCombinedID(agencyID, routeID))
-		if err := api.mergeParentStopsIntoReferences(ctx, references, references.Stops, agencyID); err != nil {
+		references.Stops = append(references.Stops, modelStops...)
+
+		// Every routeId a stop reference lists must resolve in references.routes.
+		for combinedID, row := range stopRoutes {
+			if _, ok := routeRefs[combinedID]; ok {
+				continue
+			}
+			references.Routes = append(references.Routes, routeReferenceFromStopRow(row))
+			api.appendRouteAgencyReference(ctx, references, row.AgencyID, agencyID)
+		}
+		if err := api.mergeParentStopsIntoReferences(ctx, references, modelStops, agencyID); err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
 		}
@@ -319,20 +328,6 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		StopTripGroupings: stopTripGroupings,
 	}
 	api.sendResponse(w, r, models.NewEntryResponse(entry, *references, api.Clock))
-}
-
-// scheduleStopReferences builds the stop references of a route schedule. As in
-// Java's RouteScheduleBeanServiceImpl.addStopReference, each stop lists only
-// the schedule's route rather than every route serving it, and staticRouteIds
-// is left empty, so references.routes stays limited to the schedule's route.
-func (api *RestAPI) scheduleStopReferences(ctx context.Context, agencyID string, stops []gtfsdb.Stop, scheduleRouteID string) []models.Stop {
-	stopRefs := make([]models.Stop, 0, len(stops))
-	for _, stop := range stops {
-		stopRef := api.buildStopModel(ctx, agencyID, stop, []string{scheduleRouteID})
-		stopRef.StaticRouteIDs = []string{}
-		stopRefs = append(stopRefs, stopRef)
-	}
-	return stopRefs
 }
 
 // buildNoServiceResponse constructs the empty-schedule response for a route that has
