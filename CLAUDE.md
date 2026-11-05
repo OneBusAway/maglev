@@ -342,7 +342,7 @@ needs **no lock**. Never mutate what it returns:
 - `vehicleLookupByVehicle` - Map of vehicle ID → vehicle index
 - `duplicatedVehicleByRoute` - Map of route ID → DUPLICATED-trip vehicles
 - `vehiclePositionsByAgency` - Map of agency ID → `AgencyVehiclePositions` (fresh, one per vehicle ID, sorted, plus the feed data time) for the GTFS-RT export, read with `VehiclePositionsForAgency`
-- `alerts` - `alertIndex` of alerts by trip, route, agency and stop
+- `alerts` - `alertIndex` of `FeedAlert` values by trip, route, agency and stop. Each `FeedAlert` wraps a `gtfs.Alert` with its feed's first configured `agency-ids` entry, which `BuildSituationReferences` uses (like Java's `_agencyIds.get(0)`) to qualify entity IDs absent from the static feed
 
 When a single feed refreshes, only its per-feed sub-map is overwritten; other feeds' data is untouched. A fresh snapshot is then built from all sub-maps and swapped in.
 

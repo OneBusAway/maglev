@@ -560,7 +560,7 @@ func TestBuildSituationReferences_Parity(t *testing.T) {
 	tripWithRoute := "TRIP_WITH_ROUTE"
 	otherRoute := "OTHER_ROUTE"
 
-	alerts := []gtfs.Alert{
+	alerts := feedAlertsForTest("40", []gtfs.Alert{
 		{
 			ID:     "alert-full",
 			Cause:  gtfs.AlertCause(3),  // TECHNICAL_PROBLEM -> equipmentReason
@@ -622,7 +622,7 @@ func TestBuildSituationReferences_Parity(t *testing.T) {
 				},
 			},
 		},
-	}
+	})
 
 	situations := api.BuildSituationReferences(context.Background(), alerts)
 	require.Len(t, situations, 5)
@@ -670,6 +670,88 @@ func TestBuildSituationReferences_Parity(t *testing.T) {
 	affect5 := situations[4].AllAffects[0]
 	assert.Equal(t, "40_OTHER_ROUTE", affect5.RouteID)
 	assert.Empty(t, affect5.TripID)
+}
+
+func TestQualifyEntityIDFeedAgencyFallback(t *testing.T) {
+	rawToAgency := map[string]string{"known-route": "25"}
+
+	tests := []struct {
+		name         string
+		id           string
+		feedAgencyID string
+		want         string
+	}{
+		{"unknown entity uses the feed's first agency", "unknown-route", "40", "40_unknown-route"},
+		{"database agency wins over the feed's", "known-route", "40", "25_known-route"},
+		{"already qualified ID resolves through the database", "25_known-route", "40", "25_known-route"},
+		{"the feed's own prefix is not doubled", "40_unknown-route", "40", "40_unknown-route"},
+		{"an unrelated known prefix is treated as raw", "1_unknown-route", "40", "40_1_unknown-route"},
+		{"no agency at all keeps the raw ID", "unknown-route", "", "unknown-route"},
+		{"empty ID stays empty", "", "40", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, qualifyEntityID(tt.id, tt.feedAgencyID, rawToAgency))
+		})
+	}
+}
+
+// TestBuildSituationReferencesFeedAgencyFallback covers the cases in #1920:
+// an entity absent from the static feed is still published in combined form,
+// using the feed's first configured agency rather than the selector's agency.
+func TestBuildSituationReferencesFeedAgencyFallback(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "feed-agency-fallback.zip", agencyPrefixFiles())
+	selectorAgencyID := "selector"
+	unknownRouteID := "unknown-route"
+	knownRouteID := "own-route"
+
+	alerts := feedAlertsForTest("other", []gtfs.Alert{
+		{
+			ID: "unknown-entity",
+			InformedEntities: []gtfs.AlertInformedEntity{{
+				AgencyID: &selectorAgencyID,
+				RouteID:  &unknownRouteID,
+			}},
+		},
+		{
+			ID: "known-entity",
+			InformedEntities: []gtfs.AlertInformedEntity{{
+				AgencyID: &selectorAgencyID,
+				RouteID:  &knownRouteID,
+			}},
+		},
+	})
+
+	situations := api.BuildSituationReferences(context.Background(), alerts)
+	require.Len(t, situations, 2)
+	require.Len(t, situations[0].AllAffects, 1)
+	require.Len(t, situations[1].AllAffects, 1)
+
+	assert.Equal(t, "other_unknown-route", situations[0].AllAffects[0].RouteID,
+		"the feed's first agency must win over the selector's")
+	assert.Equal(t, "own_own-route", situations[1].AllAffects[0].RouteID,
+		"an entity present in the static feed keeps its own agency")
+}
+
+// TestBuildSituationReferencesWithoutFeedAgency verifies that a feed with no
+// agency-ids still emits a combined ID by falling back to the first static
+// agency, as Java's always-configured _agencyIds does.
+func TestBuildSituationReferencesWithoutFeedAgency(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "feed-agency-fallback.zip", agencyPrefixFiles())
+	unknownStopID := "unknown-stop"
+
+	alerts := feedAlertsForTest("", []gtfs.Alert{{
+		ID: "no-selector-agency",
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			StopID: &unknownStopID,
+		}},
+	}})
+
+	situations := api.BuildSituationReferences(context.Background(), alerts)
+	require.Len(t, situations, 1)
+	require.Len(t, situations[0].AllAffects, 1)
+	assert.Equal(t, "other_unknown-stop", situations[0].AllAffects[0].StopID)
 }
 
 func TestExtractRawEntityIDs(t *testing.T) {
