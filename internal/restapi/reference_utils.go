@@ -13,6 +13,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -380,8 +381,10 @@ func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []mode
 
 // BuildSituationReferences converts GTFS-RT alerts into situation models,
 // prefixing route, stop, and trip IDs in allAffects with their agency from
-// the database, and emitting Java-parity consequence entries.
-func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.Alert) []models.Situation {
+// the database, and emitting Java-parity consequence entries. An entity that
+// is absent from the static feed falls back to the first agency configured on
+// the feed that published the alert, as Java's GtfsRealtimeEntitySource does.
+func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []internalgtfs.FeedAlert) []models.Situation {
 	situations := make([]models.Situation, 0, len(alerts))
 
 	// Pre-collect candidate IDs for batch database lookup to avoid N+1 queries.
@@ -389,8 +392,8 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 	var stopCandidateIDs []string
 	var tripCandidateIDs []string
 
-	for _, alert := range alerts {
-		for _, entity := range alert.InformedEntities {
+	for _, feedAlert := range alerts {
+		for _, entity := range feedAlert.InformedEntities {
 			routeID, stopID, tripID := extractRawEntityIDs(entity)
 
 			if routeID != "" {
@@ -414,16 +417,17 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 		}
 	}
 
-	knownAgencies := make(map[string]struct{})
+	// Java always configures _agencyIds on a GTFS-RT feed. Maglev's agency-ids
+	// are optional, so a feed without one falls back to the first static agency
+	// (ListAgencyIds is ordered by ID) rather than emitting an unprefixed ID.
+	firstStaticAgencyID := ""
 	routeAgencyMap := make(map[string]string)
 	stopAgencyMap := make(map[string]string)
 	tripAgencyMap := make(map[string]string)
 
 	if api != nil && api.Application != nil && api.GtfsManager != nil && api.GtfsManager.GtfsDB != nil && api.GtfsManager.GtfsDB.Queries != nil {
-		if agencyIDs, err := api.GtfsManager.GtfsDB.Queries.ListAgencyIds(ctx); err == nil {
-			for _, id := range agencyIDs {
-				knownAgencies[id] = struct{}{}
-			}
+		if agencyIDs, err := api.GtfsManager.GtfsDB.Queries.ListAgencyIds(ctx); err == nil && len(agencyIDs) > 0 {
+			firstStaticAgencyID = agencyIDs[0]
 		}
 
 		if len(routeCandidateIDs) > 0 {
@@ -478,7 +482,13 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 		}
 	}
 
-	for _, alert := range alerts {
+	for _, feedAlert := range alerts {
+		alert := feedAlert.Alert
+		feedAgencyID := feedAlert.FeedAgencyID
+		if feedAgencyID == "" {
+			feedAgencyID = firstStaticAgencyID
+		}
+
 		consequences := make([]models.SituationConsequence, 0)
 		if alertHasEffect(alert.Effect) {
 			consequences = append(consequences, models.SituationConsequence{
@@ -516,14 +526,12 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 		for _, entity := range alert.InformedEntities {
 			rawRouteID, rawStopID, rawTripID := extractRawEntityIDs(entity)
 
-			fallbackAgency := getStringValue(entity.AgencyID)
-			if fallbackAgency == "" {
-				fallbackAgency = agencyIDForAlert(alert, "")
-			}
-
-			routeID := qualifyEntityID(rawRouteID, fallbackAgency, routeAgencyMap, knownAgencies)
-			stopID := qualifyEntityID(rawStopID, fallbackAgency, stopAgencyMap, knownAgencies)
-			tripID := qualifyEntityID(rawTripID, fallbackAgency, tripAgencyMap, knownAgencies)
+			// Java's GtfsRealtimeEntitySource resolves the entity against the
+			// static feed first, then falls back to _agencyIds.get(0). The
+			// selector's agency_id never takes part in that decision.
+			routeID := qualifyEntityID(rawRouteID, feedAgencyID, routeAgencyMap)
+			stopID := qualifyEntityID(rawStopID, feedAgencyID, stopAgencyMap)
+			tripID := qualifyEntityID(rawTripID, feedAgencyID, tripAgencyMap)
 
 			affectedEntity := models.AffectedEntity{
 				AgencyID:      getStringValue(entity.AgencyID),
@@ -565,35 +573,30 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 }
 
 // qualifyEntityID formats an entity identifier with its owning agency ID.
-// If the raw ID is found in the database, that entity agency is used.
-// If the ID is already qualified (e.g. agency_id), it is preserved.
-func qualifyEntityID(id, fallbackAgency string, rawToAgency map[string]string, knownAgencies map[string]struct{}) string {
+// Java's GtfsRealtimeEntitySource resolves the entity against the static feed
+// first, then ends with new AgencyAndId(_agencyIds.get(0), id), so even an ID
+// that is absent from the static feed is published in combined form.
+func qualifyEntityID(id, feedAgencyID string, rawToAgency map[string]string) string {
 	if id == "" {
 		return ""
 	}
-	// 1. If id is directly a raw ID in the database, use that entity agency.
+	// 1. The database is the authority: use the entity's own agency.
 	if agency, ok := rawToAgency[id]; ok && agency != "" {
 		return utils.FormCombinedID(agency, id)
 	}
-	// 2. If id is split as agency_rawID, check if the agency is known or rawID matches DB.
+	// 2. A feed exported by another OBA instance already publishes combined
+	// IDs. Keep one when its bare half resolves under the same agency.
 	if parts := strings.SplitN(id, "_", 2); len(parts) == 2 {
-		prefixAgency := parts[0]
-		rawID := parts[1]
-		if actualAgency, ok := rawToAgency[rawID]; ok && actualAgency == prefixAgency {
-			return id
-		}
-		if _, ok := knownAgencies[prefixAgency]; ok {
+		if actualAgency, ok := rawToAgency[parts[1]]; ok && actualAgency == parts[0] {
 			return id
 		}
 	}
-	// 3. Fallback to alert/entity agency if available.
-	if fallbackAgency != "" {
-		if strings.HasPrefix(id, fallbackAgency+"_") {
-			return id
-		}
-		return utils.FormCombinedID(fallbackAgency, id)
+	// 3. Fall back to the feed's first configured agency. Prefixing stays
+	// idempotent for that agency, so a feed's own combined ID is not doubled.
+	if feedAgencyID == "" || strings.HasPrefix(id, feedAgencyID+"_") {
+		return id
 	}
-	return id
+	return utils.FormCombinedID(feedAgencyID, id)
 }
 
 // extractRawEntityIDs extracts raw route, stop, and trip IDs from an EntitySelector.
@@ -976,21 +979,28 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 // same ID, or the IDs resolve to nothing. Everything that derives one derives
 // the other, so the two cannot drift apart.
 // situationRef pairs an alert with the situation ID that both list entries and
-// situation references use to refer to it.
+// situation references use to refer to it. FeedAgencyID travels with the alert
+// so allAffects can fall back to the feed's first configured agency.
 type situationRef struct {
-	ID    string
-	Alert gtfs.Alert
+	ID           string
+	Alert        gtfs.Alert
+	FeedAgencyID string
 }
 
 // situationRefsFromAlerts drops alerts with no ID and pairs the rest with the
 // situation ID used to refer to them.
-func situationRefsFromAlerts(alerts []gtfs.Alert, agencyID string) []situationRef {
+func situationRefsFromAlerts(alerts []internalgtfs.FeedAlert, agencyID string) []situationRef {
 	refs := make([]situationRef, 0, len(alerts))
-	for _, alert := range alerts {
+	for _, feedAlert := range alerts {
+		alert := feedAlert.Alert
 		if alert.ID == "" {
 			continue
 		}
-		refs = append(refs, situationRef{ID: situationID(alert.ID, agencyIDForAlert(alert, agencyID)), Alert: alert})
+		refs = append(refs, situationRef{
+			ID:           situationID(alert.ID, agencyIDForAlert(alert, agencyID)),
+			Alert:        alert,
+			FeedAgencyID: feedAlert.FeedAgencyID,
+		})
 	}
 	return refs
 }
@@ -1054,7 +1064,7 @@ func newSituationCollector() *situationCollector {
 }
 
 // add records the alerts affecting one trip and returns their situation IDs.
-func (c *situationCollector) add(alerts []gtfs.Alert, agencyID string) []string {
+func (c *situationCollector) add(alerts []internalgtfs.FeedAlert, agencyID string) []string {
 	return c.addRefs(situationRefsFromAlerts(alerts, agencyID))
 }
 
@@ -1074,15 +1084,16 @@ func (c *situationCollector) addRefs(refs []situationRef) []string {
 
 // situationReferences converts collected alerts into situation references,
 // stamping the same IDs the list entries use. BuildSituationReferences emits raw
-// alert IDs and preserves input order one-for-one.
+// alert IDs and preserves input order one-for-one, so the feed agency of each
+// reference travels with its alert.
 func (api *RestAPI) situationReferences(ctx context.Context, refs []situationRef) []models.Situation {
 	if len(refs) == 0 {
 		return []models.Situation{}
 	}
 
-	alerts := make([]gtfs.Alert, 0, len(refs))
+	alerts := make([]internalgtfs.FeedAlert, 0, len(refs))
 	for _, ref := range refs {
-		alerts = append(alerts, ref.Alert)
+		alerts = append(alerts, internalgtfs.FeedAlert{Alert: ref.Alert, FeedAgencyID: ref.FeedAgencyID})
 	}
 
 	reqLogger := logging.ForComponent(ctx, "http_server")

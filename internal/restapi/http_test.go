@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 
+	gogtfs "github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -119,6 +120,16 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 // Accepts testing.TB to support both *testing.T and *testing.B
 func createTestApi(t testing.TB) *RestAPI {
 	return createTestApiWithClock(t, clock.RealClock{})
+}
+
+// feedAlertsForTest wraps raw alerts with the first agency configured on a
+// feed, mirroring what rebuildMergedRealtimeLocked does with feed config.
+func feedAlertsForTest(feedAgencyID string, alerts []gogtfs.Alert) []gtfs.FeedAlert {
+	wrapped := make([]gtfs.FeedAlert, 0, len(alerts))
+	for _, alert := range alerts {
+		wrapped = append(wrapped, gtfs.FeedAlert{Alert: alert, FeedAgencyID: feedAgencyID})
+	}
+	return wrapped
 }
 
 // mustGetAgencies fetches agencies from the DB for use in tests.
