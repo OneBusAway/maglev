@@ -426,7 +426,9 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 				knownAgencies[id] = struct{}{}
 			}
 		} else {
-			logger.Error("failed to fetch agencies for situation reference", "error", err)
+			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+				logger.Error("failed to fetch agencies for situation reference", "error", err)
+			}
 		}
 
 		if len(routeCandidateIDs) > 0 {
@@ -437,7 +439,9 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 					routeAgencyMap[r.ID] = r.AgencyID
 				}
 			} else {
-				logger.Error("failed to fetch routes for situation reference", "error", err)
+				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+					logger.Error("failed to fetch routes for situation reference", "error", err)
+				}
 			}
 		}
 
@@ -451,7 +455,9 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 					}
 				}
 			} else {
-				logger.Error("failed to fetch stops for situation reference", "error", err)
+				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+					logger.Error("failed to fetch stops for situation reference", "error", err)
+				}
 			}
 		}
 
@@ -480,11 +486,15 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 							}
 						}
 					} else {
-						logger.Error("failed to fetch missing routes for situation reference", "error", err)
+						if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+							logger.Error("failed to fetch missing routes for situation reference", "error", err)
+						}
 					}
 				}
 			} else {
-				logger.Error("failed to fetch trips for situation reference", "error", err)
+				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+					logger.Error("failed to fetch trips for situation reference", "error", err)
+				}
 			}
 		}
 	}
