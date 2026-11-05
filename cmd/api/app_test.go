@@ -254,13 +254,15 @@ func TestHealthzDataExpiredMatchesHeader(t *testing.T) {
 		t.Skip("Test data not available, skipping test")
 	}
 
-	fakeTimeStr := "2025-06-15T12:00:00Z"
-	t.Setenv("FAKETIME", "2025-06-15T12:00:00Z")
+	fakeTimeStr := "2099-06-15T12:00:00Z"
+	t.Setenv("FAKETIME", fakeTimeStr)
 	fixedTime, err := time.Parse(time.RFC3339, fakeTimeStr)
 	require.NoError(t, err)
 
 	cfg := appconf.Config{
-		Env: appconf.Test,
+		Env:       appconf.Test,
+		ApiKeys:   []string{"test"},
+		RateLimit: 100,
 	}
 
 	gtfsCfg := gtfs.Config{
@@ -271,6 +273,7 @@ func TestHealthzDataExpiredMatchesHeader(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
 	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg, logger)
 	require.NoError(t, err, "BuildApplication should not fail")
+	assert.Equal(t, coreApp.Clock, coreApp.GtfsConfig.Clock)
 
 	expiredTime := fixedTime.Add(-24 * time.Hour)
 	coreApp.GtfsManager.SetFeedExpiresAtForTest(ctx, expiredTime)

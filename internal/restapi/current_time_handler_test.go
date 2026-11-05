@@ -222,7 +222,7 @@ func TestCurrentTimeHandler_EnvelopeMatchesEntryTime(t *testing.T) {
 	api.currentTimeHandler(w, r)
 
 	var model models.ResponseModel
-	_ = json.Unmarshal(w.Body.Bytes(), &model)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &model))
 
 	responseData, ok := model.Data.(map[string]any)
 	require.True(t, ok, "could not cast data to expected type")

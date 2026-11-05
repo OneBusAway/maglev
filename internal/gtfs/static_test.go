@@ -88,7 +88,7 @@ func TestLogFeedExpiryUsesClock(t *testing.T) {
 			manager.config.Clock = test.currentTime
 
 			manager.logFeedExpiry(t.Context(), testLogger)
-			assert.Contains(t, buf.String(), test.message, "expected \"%s\" but got \"%s\"", test.message)
+			assert.Contains(t, buf.String(), test.message)
 		})
 	}
 }
