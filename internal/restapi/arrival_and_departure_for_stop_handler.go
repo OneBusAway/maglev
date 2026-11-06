@@ -304,35 +304,31 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// If vehicleId is provided, validate it matches the trip
 	var vehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
-		_, providedVehicleID, err := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
-		if err == nil {
-			v, err := api.GtfsManager.GetVehicleByID(providedVehicleID)
-			// If vehicle is found, validate it matches the trip
-			if err == nil && v != nil && v.Trip != nil && v.Trip.ID.ID == tripID {
-				vehicle = v
+		vehicle = api.reportedTripUpdateVehicle(ctx, params.VehicleID, route.AgencyID, tripID, serviceMidnight)
+		if vehicle == nil {
+			_, providedVehicleID, err := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
+			if err == nil {
+				v, err := api.GtfsManager.GetVehicleByID(providedVehicleID)
+				// If vehicle is found, validate it matches the trip
+				if err == nil && v != nil && v.Trip != nil && v.Trip.ID.ID == tripID {
+					vehicle = v
+				}
+			} else {
+				reqLogger.Warn("malformed vehicleId provided",
+					"vehicleId", params.VehicleID,
+					"error", err)
 			}
-		} else {
-			reqLogger.Warn("malformed vehicleId provided",
-				"vehicleId", params.VehicleID,
-				"error", err)
 		}
 	} else {
 		// If vehicleId is not provided, get the vehicle for the trip
-		vehicle = api.GtfsManager.GetVehicleForTrip(ctx, tripID)
+		vehicle = api.vehicleForTrip(ctx, tripID, serviceMidnight)
 	}
 
 	if vehicle != nil && vehicle.Trip != nil {
-		if vehicle.ID != nil {
-			// Combined {agencyId}_{vehicleId} form per spec; matches
-			// tripStatus.vehicleId (set by BuildTripStatus below) and lets
-			// clients round-trip this value into /trip-for-vehicle/{id} and
-			// /trip-details/{id}?vehicleId=... which both extract the agency
-			// prefix before doing GetVehicleByID on the raw id.
-			vehicleID = utils.FormCombinedID(route.AgencyID, vehicle.ID.ID)
-		} else {
-			reqLogger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
-		}
-		predicted = true
+		// Matches tripStatus.vehicleId (set by BuildTripStatus below), and clients
+		// round-trip it into /trip-for-vehicle/{id} and /trip-details/{id}?vehicleId=...
+		vehicleID = api.combinedVehicleID(ctx, vehicle, route.AgencyID, tripID)
+		predicted = !isCanceledVehicle(vehicle)
 	}
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
@@ -389,6 +385,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 				numberOfStopsAway = n
 			}
 		}
+	}
+
+	if isCanceledVehicle(vehicle) {
+		predictedArrivalTime, predictedDepartureTime, predicted = time.Time{}, time.Time{}, false
 	}
 
 	totalStopsInTrip := len(orderedStopTimes)
