@@ -27,7 +27,7 @@ All commands are managed through the Makefile:
 - `make coverage-report` - Output per-package test coverage as JSON for CI parsing (requires jq)
 - `make models` - Regenerate sqlc models from SQL queries
 - `make watch` - Run with Air for live reloading during development
-- `make fmt` - Format all Go code with `go fmt`
+- `make fmt` - Format all Go code with `gofmt -w .`
 - `make clean` - Clean build artifacts
 - `make build-pure` - Build without CGO (pure Go SQLite driver)
 - `make test-pure` - Run tests without CGO
@@ -115,7 +115,7 @@ maglev/
 │   ├── restapi/          # HTTP handlers and middleware
 │   ├── utils/            # Helper functions (geometry, ID parsing, validation)
 │   └── webui/            # Web interface handlers
-├── gtfsdb/               # SQLite database layer (sqlc-generated)
+├── gtfsdb/               # SQLite database layer (sqlc models & handwritten helpers)
 └── testdata/             # Test fixtures (RABA GTFS data, protobuf files)
 ```
 
@@ -125,7 +125,7 @@ maglev/
 - **REST API Layer** (`internal/restapi/`): HTTP handlers for the OneBusAway API endpoints
 - **Web UI Layer** (`internal/webui/`): HTTP handlers for the web interface and landing page
 - **GTFS Manager** (`internal/gtfs/`): Manages both static GTFS data and real-time feeds (trip updates, vehicle positions)
-- **Database Layer** (`gtfsdb/`): SQLite database with sqlc-generated Go code for type-safe SQL operations
+- **Database Layer** (`gtfsdb/`): SQLite database with sqlc-generated queries and models, plus handwritten helpers
 - **Models** (`internal/models/`): Business logic and data structures for agencies, routes, stops, trips, vehicles
 - **Utilities** (`internal/utils/`, `internal/appconf/`, `internal/logging/`): Helper functions, configuration management, and logging
 
@@ -150,17 +150,24 @@ All endpoints are registered in `internal/restapi/routes.go`:
 
 | Endpoint | Handler | Description |
 |----------|---------|-------------|
+| `/healthz` | `health_handler.go` | Server health and feed freshness |
+| `/api/v2/metadata.json` | `metadata_handler.go` | GTFS data freshness and loaded bundle |
 | `/api/where/current-time.json` | `current_time_handler.go` | Server time |
+| `/api/where/config.json` | `config_handler.go` | Build and Git metadata |
+| `/api/where/metrics.json` | `metrics_handler.go` | Feed metrics and diagnostics |
 | `/api/where/agencies-with-coverage.json` | `agencies_with_coverage_handler.go` | All agencies with coverage areas |
 | `/api/where/agency/{id}` | `agency_handler.go` | Single agency details |
 | `/api/where/routes-for-agency/{id}` | `routes_for_agency_handler.go` | Routes for an agency |
 | `/api/where/route-ids-for-agency/{id}` | `route_ids_for_agency_handler.go` | Route IDs only |
+| `/api/where/route/{id}` | `route_handler.go` | Single route details |
+| `/api/where/routes-for-location.json` | `routes_for_location_handler.go` | Routes near coordinates |
+| `/api/where/search/route.json` | `route_search_handler.go` | Search routes by name |
 | `/api/where/stops-for-agency/{id}` | `stops_for_agency_handler.go` | Stops for an agency |
-| `/api/where/stop-ids-for-agency/{id}` | `stop-ids-for-agency_handler.go` | Stop IDs only |
+| `/api/where/stop-ids-for-agency/{id}` | `stop_ids_for_agency_handler.go` | Stop IDs only |
 | `/api/where/stop/{id}` | `stop_handler.go` | Single stop details |
 | `/api/where/stops-for-location.json` | `stops_for_location_handler.go` | Stops near coordinates |
 | `/api/where/stops-for-route/{id}` | `stops_for_route_handler.go` | Stops on a route |
-| `/api/where/routes-for-location.json` | `routes_for_location_handler.go` | Routes near coordinates |
+| `/api/where/search/stop.json` | `search_stops_handler.go` | Search stops by name |
 | `/api/where/trip/{id}` | `trip_handler.go` | Single trip details |
 | `/api/where/trip-details/{id}` | `trip_details_handler.go` | Extended trip info with status |
 | `/api/where/trips-for-route/{id}` | `trips_for_route_handler.go` | Trips on a route |
@@ -171,10 +178,16 @@ All endpoints are registered in `internal/restapi/routes.go`:
 | `/api/where/shape/{id}` | `shapes_handler.go` | Polyline shape data |
 | `/api/where/schedule-for-stop/{id}` | `schedule_for_stop_handler.go` | Stop schedule |
 | `/api/where/schedule-for-route/{id}` | `schedule_for_route_handler.go` | Route schedule |
-| `/api/where/arrival-and-departure-for-stop/{id}` | `arrival_and_departure_for_stop_handler.go` | Single arrival |
-| `/api/where/arrivals-and-departures-for-stop/{id}` | `arrival_and_departure_for_stop_handler.go` | All arrivals |
+| `/api/where/arrival-and-departure-for-stop/{id}` | `arrival_and_departure_for_stop_handler.go` | Single arrival and departure for a stop |
+| `/api/where/arrivals-and-departures-for-stop/{id}` | `arrivals_and_departures_for_stop_handler.go` | Arrivals and departures for a stop |
+| `/api/where/arrivals-and-departures-for-location.json` | `arrivals_and_departures_for_location_handler.go` | Arrivals and departures near coordinates |
+| `/api/where/situation/{id}` | `situation_handler.go` | Service alert details |
 | `/api/where/report-problem-with-trip/{id}` | `report_problem_with_trip_handler.go` | Report trip issue |
+| `/api/where/report-problem-with-trip.json` | `report_problem_with_trip_handler.go` | Report trip issue (query-param variant) |
 | `/api/where/report-problem-with-stop/{id}` | `report_problem_with_stop_handler.go` | Report stop issue |
+| `/api/where/report-problem-with-stop.json` | `report_problem_with_stop_handler.go` | Report stop issue (query-param variant) |
+| `/api/where/problem-reports-for-trip/{id}` | `problem_reports_for_trip_handler.go` | Problem reports for a trip (protected key) |
+| `/api/where/problem-reports-for-stop/{id}` | `problem_reports_for_stop_handler.go` | Problem reports for a stop (protected key) |
 | `/api/gtfs_realtime/vehicle-positions-for-agency/{id}.pb` | `vehicle_positions_for_agency_handler.go` | GTFS-RT vehicle positions for an agency |
 
 ## Middleware Components
@@ -188,7 +201,10 @@ Located in `internal/restapi/`:
 | **Request Logging** | `request_logging_middleware.go` | HTTP request/response logging |
 | **Security** | `security_middleware.go` | Security headers and protections |
 
-Middleware chain (innermost to outermost): `handler → compression → rate limiting → API key validation`
+Middleware is applied at two levels, each listed innermost to outermost:
+
+- **Per route** (`internal/restapi/routes.go`): `handler → rate limiting → API key validation → Cache-Control`. Some handlers are also wrapped in an ETag middleware (`etagStatic`) inside rate limiting.
+- **Around the whole mux** (`cmd/api/app.go`): `GTFS expiry → version validation → compression → freshness → security headers → metrics → request logging → request ID → size limit → panic recovery`.
 
 ## Helper Modules
 
@@ -244,7 +260,7 @@ The project uses SQLite with sqlc for type-safe database access:
 
 - Schema: `gtfsdb/schema.sql`
 - Queries: `gtfsdb/query.sql`
-- Generated code: `gtfsdb/query.sql.go` and `gtfsdb/models.go`
+- Generated code: `gtfsdb/db.go`, `gtfsdb/models.go`, and `gtfsdb/query.sql.go`
 - Configuration: `gtfsdb/sqlc.yml`
 
 After modifying SQL queries or schema, run `make models` to regenerate the Go code.
@@ -297,9 +313,13 @@ in memory:
 `GetAgencies(ctx)`, `GetTrips(ctx, limit)` and `GetStops(ctx)` are thin wrappers
 over the `ListAgencies`, `ListTripsWithLimit` and `ListStops` queries.
 
-The only static state the manager keeps in memory is `regionBounds`
-(`map[agencyID]*RegionBounds`, guarded by `staticMutex`), recomputed after each
-reload and read through `GetRegionBounds()`.
+The manager keeps two kinds of static state in memory:
+
+- `regionBounds` (`map[agencyID]*RegionBounds`, guarded by `staticMutex`),
+  recomputed after each reload and read through `GetRegionBounds()`.
+- The per-reload cache of its `DirectionCalculator` (`AdvancedDirectionCalculator`):
+  stop directions and trip stop-distance checks (`directionCache`). See
+  Direction Calculator below.
 
 **Real-Time Data** (protected by `realTimeMutex`):
 
@@ -307,7 +327,7 @@ reload and read through `GetRegionBounds()`.
 - `feedTrips` - `map[string][]gtfs.Trip` — trips per feed
 - `feedVehicles` - `map[string][]gtfs.Vehicle` — vehicles per feed
 - `feedAlerts` - `map[string][]gtfs.Alert` — alerts per feed
-- `feedVehicleLastSeen` - `map[string]map[string]time.Time` — per-feed, per-vehicle last-seen timestamps for stale vehicle expiry (15 min window)
+- `feedVehicleLastSeen` - `map[string]map[vehicleKey]time.Time` — per-feed, per-vehicle last-seen timestamps for stale vehicle expiry (15 min window)
 - `feedVehicleAgency` - `map[string]map[vehicleKey]string`: the one agency each vehicle was attributed to at ingestion (its route's agency, else the feed's first `agency-ids` entry)
 - `feedVehicleDataTime` - `map[string]time.Time`: when each feed's vehicle data was produced (header timestamp, else fetch time)
 
@@ -504,7 +524,7 @@ arrivalTimeMs := startOfDay.Add(arrivalDuration).UnixMilli()
 ## New Endpoint Implementation Workflow
 
 ### 1. Research and Planning
-- Fetch official API documentation from https://developer.onebusaway.org/api/where/methods
+- Read the endpoint's page on the [maglev.wiki](https://github.com/OneBusAway/maglev/wiki), including its Implementation Decisions
 - Examine production API responses to understand exact JSON structure
 - Check existing similar endpoints for patterns and data access methods
 
@@ -575,8 +595,12 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
 
 ## REST API Documentation
 
-The official REST API documentation is available at: https://developer.onebusaway.org/api/where/methods
+**The [maglev.wiki](https://github.com/OneBusAway/maglev/wiki) spec is the source of truth for endpoint behavior**: request parameters, defaults, response fields and status codes. Each endpoint page describes the Java OneBusAway server's behavior, which Maglev matches unless the page's Implementation Decisions section records a deliberate difference.
 
-The Open API specification is located at https://github.com/OneBusAway/sdk-config/blob/main/stainless/openapi.yml
+If an endpoint has no wiki page yet (for example `block` or the report-problem endpoints), follow the Java implementation, not openapi.yml, and flag it in the PR description.
 
-**All API endpoints MUST behave identically to what is defined in this OpenAPI spec.** This is the single source of truth for request parameters, response schemas, field names, types, and status codes. Always fetch the latest version of this spec before implementing new endpoints or modifying existing ones. If the codebase diverges from the spec, the spec wins.
+The OpenAPI spec (`testdata/openapi.yml`, synced from [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/stainless/openapi.yml)) comes second. It generates the client SDKs and has known errors. For example, it gives trips-for-route's `includeStatus` and `includeSchedule` a default of `false`, where Java and the wiki use `true`.
+
+When the wiki and openapi.yml disagree, follow the wiki and raise the discrepancy on OneBusAway/sdk-config. Don't change Maglev's behavior to match openapi.yml. An endpoint outside the SDK (such as `/api/where/metrics.json`) needs no openapi.yml entry, but the PR description must say why.
+
+The legacy API documentation is at https://developer.onebusaway.org/api/where/methods.

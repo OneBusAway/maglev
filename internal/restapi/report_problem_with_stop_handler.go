@@ -16,7 +16,7 @@ import (
 // and persists it to the database.
 func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.Request) {
 	reqLogger := logging.ForComponent(r.Context(), "problem_reporting")
-	agencyID, stopCode, ok := api.extractAndValidateAgencyCodeID(w, r)
+	agencyID, stopCode, ok := api.extractAgencyCodeID(w, r, "stopId")
 	if !ok {
 		return
 	}
@@ -37,6 +37,7 @@ func (api *RestAPI) reportProblemWithStopHandler(w http.ResponseWriter, r *http.
 	userLat, fieldErrors := utils.ParseFloatParam(query, "userLat", fieldErrors)
 	userLon, fieldErrors := utils.ParseFloatParam(query, "userLon", fieldErrors)
 	userLocationAccuracy, fieldErrors := utils.ParseFloatParam(query, "userLocationAccuracy", fieldErrors)
+	fieldErrors = validateUserCoordinates(query, userLat, userLon, fieldErrors)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return

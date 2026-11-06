@@ -374,7 +374,7 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 						if endpoint.name != "singular" {
 							found := false
 							for _, candidate := range body.Data.Entry.Arrivals {
-								if candidate.TripID == "dp-agency_"+trip && candidate.StopSequence == int(target)-1 {
+								if candidate.TripID == "dp-agency_"+trip && candidate.StopSequence == 1 {
 									arrival, found = candidate, true
 									break
 								}
@@ -383,10 +383,7 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 						}
 						assert.Equal(t, "dp-agency_"+trip, arrival.TripID)
 						assert.Equal(t, combinedStop, arrival.StopID)
-						wantSequence := int(target) - 1
-						if endpoint.name == "singular" {
-							wantSequence = 1 // Position in the ordered trip schedule.
-						}
+						wantSequence := 1 // All endpoints report the visit position, not the raw sequence.
 						assert.Equal(t, wantSequence, arrival.StopSequence)
 						assert.Equal(t, day.UnixMilli(), arrival.ServiceDate.UnixMilli())
 						assert.Equal(t, scheduledArrival, arrival.ScheduledArrivalTime.UnixMilli())
