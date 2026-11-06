@@ -22,11 +22,6 @@ type ArrivalsStopParams struct {
 
 // parseArrivalsAndDeparturesParams parses and validates parameters.
 func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsStopParams, map[string][]string) {
-	// Cap at one service day. Java doesn't cap; we do to bound per-request
-	// work — the handler iterates only ±1 day of stop_times anyway.
-	const maxBefore = 24 * time.Hour
-	const maxAfter = 24 * time.Hour
-
 	params := ArrivalsStopParams{
 		After:           35 * time.Minute, // Default
 		Before:          5 * time.Minute,  // Default
@@ -46,10 +41,10 @@ func (api *RestAPI) parseArrivalsAndDeparturesParams(r *http.Request) (ArrivalsS
 
 	query := r.URL.Query()
 
-	params.After = parseMinutesValue(query, "minutesAfter", params.After, maxAfter, addError)
-	params.Before = parseMinutesValue(query, "minutesBefore", params.Before, maxBefore, addError)
-	params.FrequencyBefore = parseMinutesValue(query, "frequencyMinutesBefore", params.FrequencyBefore, maxArrivalWindow, addError)
-	params.FrequencyAfter = parseMinutesValue(query, "frequencyMinutesAfter", params.FrequencyAfter, maxArrivalWindow, addError)
+	params.After = parseMinutesValue(query, "minutesAfter", params.After, addError)
+	params.Before = parseMinutesValue(query, "minutesBefore", params.Before, addError)
+	params.FrequencyBefore = parseMinutesValue(query, "frequencyMinutesBefore", params.FrequencyBefore, addError)
+	params.FrequencyAfter = parseMinutesValue(query, "frequencyMinutesAfter", params.FrequencyAfter, addError)
 	params.Time = parseEpochMillisValue(query, "time", params.Time, addError)
 
 	return params, fieldErrors
