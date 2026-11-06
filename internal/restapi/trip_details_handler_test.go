@@ -85,7 +85,7 @@ func TestTripDetailsHandlerEndToEnd(t *testing.T) {
 
 	if entry.Status != nil {
 		assert.NotZero(t, entry.Status.ServiceDate)
-		assert.Contains(t, []string{"scheduled", "in_progress", "completed"}, entry.Status.Phase)
+		assert.Contains(t, []string{"", "in_progress", "completed"}, entry.Status.Phase)
 		assert.NotNil(t, entry.Status.Predicted)
 	}
 

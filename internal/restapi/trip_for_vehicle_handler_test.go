@@ -84,7 +84,7 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 	assert.Equal(t, expectedServiceDate.UnixMilli(), entry.ServiceDate.UnixMilli())
 
 	if entry.Status != nil {
-		assert.Contains(t, []string{"scheduled", "in_progress", "completed"}, entry.Status.Phase)
+		assert.Contains(t, []string{"", "in_progress", "completed"}, entry.Status.Phase)
 		assert.NotZero(t, entry.Status.ServiceDate)
 	}
 

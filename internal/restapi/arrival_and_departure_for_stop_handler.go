@@ -427,6 +427,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		tripStatus,                                     // tripStatus
 		situationIDs,                                   // situationIds
 	)
+	applyVehicleRecordUpdateTime(arrival, status, statusExtras)
 
 	// The arrival's frequency uses the window-matched row fetched above.
 	if len(freqRows) > 0 {

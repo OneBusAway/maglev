@@ -397,14 +397,15 @@ func runsOwnSchedule(vehicle *gtfs.Vehicle) bool {
 }
 
 // applySnapshotStops mirrors Java's getScheduledBlockLocationBetweenStopTimes
-// for a vehicle with no position: the next stop is the snapshot's, and the
-// closest stop is whichever of it and the previous stop is nearer in time.
+// for a vehicle placed by its record: the next stop is the snapshot's, and the
+// closest stop is whichever of it and the previous stop is nearer in time. A
+// vehicle dwelling at the next stop is at it, with both offsets zero.
 func applySnapshotStops(status *models.TripStatus, snap *scheduledBlockSnapshot, effectiveSeconds int64, agencyID string) {
 	if snap.NextStopIndex < 0 {
 		return
 	}
 	next := snap.Stops[snap.NextStopIndex]
-	nextOffset := next.ArrivalSeconds - effectiveSeconds
+	nextOffset := max(next.ArrivalSeconds-effectiveSeconds, 0)
 	status.NextStop = utils.FormCombinedID(agencyID, next.StopID)
 	status.NextStopTimeOffset = int(nextOffset)
 

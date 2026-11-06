@@ -141,7 +141,6 @@ func TestPluralArrivals_BeforeBlockStartMeasuresFromFirstStop(t *testing.T) {
 		{
 			name:        "no vehicle",
 			addRealtime: func(*RestAPI, string) {},
-			wantPhase:   "scheduled",
 		},
 		{
 			name: "vehicle reporting a position",
@@ -367,9 +366,10 @@ func TestPluralArrivals_RealBusStaysAtRecordPosition(t *testing.T) {
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 	downstreamStopID := addDownstreamStop(t, api, tripID)
 	latitude, longitude := float32(47.0), float32(-122.0)
+	positionTime := recordTime.Add(-20 * time.Second)
 	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{
 		Position:  &gtfs.Position{Latitude: &latitude, Longitude: &longitude},
-		Timestamp: &recordTime,
+		Timestamp: &positionTime,
 	})
 	predictedTenMinutesLate := serviceDate.Add(9*time.Hour + 10*time.Minute)
 	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
@@ -385,7 +385,9 @@ func TestPluralArrivals_RealBusStaysAtRecordPosition(t *testing.T) {
 		mockClock.Set(recordTime.Add(minutesAfterRecord * time.Minute))
 		_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
 
-		status := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID)).TripStatus
+		arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+		assert.Equal(t, recordTime.UnixMilli(), arrival.LastUpdateTime.UnixMilli())
+		status := arrival.TripStatus
 		require.NotNil(t, status)
 		assert.Equal(t, 600, status.ScheduleDeviation)
 		assert.Equal(t, utils.FormCombinedID("dp-agency", downstreamStopID), status.NextStop)
@@ -898,4 +900,28 @@ func TestTripDetailsHandler_ReportedVehicleAfterMidnight(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, previousServiceDate.UnixMilli(), model.Data.Entry.ServiceDate.UnixMilli())
+}
+
+func TestSingularArrival_RealBusReportsRecordTime(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	recordTime := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	positionTime := recordTime.Add(-20 * time.Second)
+	api := createTestApiWithClock(t, clock.NewMockClock(recordTime))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &positionTime})
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:        gtfs.TripID{ID: tripID},
+		Timestamp: &recordTime,
+		Vehicle:   &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
+	})
+
+	resp, body := serveApiAndRetrieveEndpoint(t, api, fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID, utils.FormCombinedID("dp-agency", tripID), serviceDate.UnixMilli()))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	entry := body.Data.(map[string]any)["entry"].(map[string]any)
+	assert.EqualValues(t, recordTime.UnixMilli(), entry["lastUpdateTime"])
 }
