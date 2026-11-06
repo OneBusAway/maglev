@@ -449,11 +449,3 @@ func ParseBoolParam(params url.Values, key string, fallback bool, fieldErrors ma
 		return fallback, fieldErrors
 	}
 }
-
-// ClampRadius restricts a radius value to MaxSearchRadiusInMeters
-func ClampRadius(radius float64) float64 {
-	if radius > models.MaxSearchRadiusInMeters {
-		return models.MaxSearchRadiusInMeters
-	}
-	return radius
-}
