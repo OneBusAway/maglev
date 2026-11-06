@@ -1,9 +1,11 @@
 package restapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -11,10 +13,13 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -276,8 +281,92 @@ func TestTripDetailsHandlerWithIncludeStatus(t *testing.T) {
 	assert.Nil(t, model.Data.Entry.Status)
 }
 
-// TestTripDetailsHandlerStatusOmittedWhenNoTracking verifies Extension 4e:
-// The status key must be absent entirely when there is no tracking record, even if includeStatus=true.
+// runningTripAt returns a trip whose schedule has it running at t, with t's service date
+// active for it.
+func runningTripAt(t *testing.T, api *RestAPI, at time.Time) string {
+	t.Helper()
+	ctx := context.Background()
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, at.Format("20060102"))
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs)
+
+	offset := at.Sub(servicedate.OffsetBase(at)).Nanoseconds()
+	for _, serviceID := range serviceIDs {
+		var tripID string
+		err := api.GtfsManager.GtfsDB.DB.QueryRowContext(ctx,
+			"SELECT id FROM trips WHERE service_id = ? AND min_arrival_time <= ? AND max_departure_time >= ? LIMIT 1",
+			serviceID, offset, offset).Scan(&tripID)
+		if err == nil {
+			return tripID
+		}
+	}
+	t.Fatalf("no trip running at %v", at)
+	return ""
+}
+
+// Java reports where the schedule puts a running trip even with no tracking record,
+// so an untracked trip mid-run still gets a status.
+func TestTripDetailsHandlerScheduledStatusWhileRunningUntracked(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	tripID := utils.FormCombinedID(agency.ID, runningTripAt(t, api, arrivalsTestClock))
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeStatus=true")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotNil(t, model.Data.Entry.Status, "a running trip has a schedule-derived status")
+	assert.False(t, model.Data.Entry.Status.Predicted)
+	assert.Equal(t, tripID, model.Data.Entry.Status.ActiveTripID)
+	assert.NotEmpty(t, model.Data.Entry.Status.ClosestStop)
+}
+
+// tripInWindowButInactiveAt returns a trip whose stop-time span covers at but whose
+// service does not run on at's date.
+func tripInWindowButInactiveAt(t *testing.T, api *RestAPI, at time.Time) string {
+	t.Helper()
+	ctx := context.Background()
+	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, at.Format("20060102"))
+	require.NoError(t, err)
+
+	offset := at.Sub(servicedate.OffsetBase(at)).Nanoseconds()
+	rows, err := api.GtfsManager.GtfsDB.DB.QueryContext(ctx,
+		"SELECT id, service_id FROM trips WHERE min_arrival_time <= ? AND max_departure_time >= ?",
+		offset, offset)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var tripID, serviceID string
+		require.NoError(t, rows.Scan(&tripID, &serviceID))
+		if !slices.Contains(serviceIDs, serviceID) {
+			return tripID
+		}
+	}
+	require.NoError(t, rows.Err())
+	t.Skipf("fixture has no in-window trip inactive at %v", at)
+	return ""
+}
+
+// A trip whose service does not run on the query date is not running, even when the
+// time of day falls within its stop-time span.
+func TestTripDetailsHandlerStatusOmittedWhenServiceInactive(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	tripID := utils.FormCombinedID(agency.ID, tripInWindowButInactiveAt(t, api, arrivalsTestClock))
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeStatus=true")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Nil(t, model.Data.Entry.Status, "a trip not in service that day has no status")
+}
+
+// TestTripDetailsHandlerStatusOmittedWhenNoTracking: with no tracking record and the
+// trip not running at the query time, the status key is absent entirely.
 func TestTripDetailsHandlerStatusOmittedWhenNoTracking(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -293,7 +382,7 @@ func TestTripDetailsHandlerStatusOmittedWhenNoTracking(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Nil(t, model.Data.Entry.Status,
-		"status must be absent when the block has no current tracking record (extension 4e)")
+		"status must be absent when the trip is untracked and not running")
 
 	// Verify at the raw JSON level that "status" key is truly absent, not just null.
 	// assert.Nil passes for both absent and null after unmarshal; the spec requires absence.
@@ -303,7 +392,7 @@ func TestTripDetailsHandlerStatusOmittedWhenNoTracking(t *testing.T) {
 	entry := data["entry"].(map[string]any)
 	_, hasStatus := entry["status"]
 	assert.False(t, hasStatus,
-		"status key must not be present in JSON (not even as null) per extension 4e")
+		"status key must not be present in JSON (not even as null)")
 }
 
 func TestTripDetailsHandlerWithTimeParameter(t *testing.T) {
@@ -750,4 +839,30 @@ func TestTripDetailsHandlerAcceptsTripIDWithSpaces(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, resp.StatusCode, model.Text)
 	assert.Equal(t, tripID, model.Data.Entry.TripID)
+}
+
+func TestTripSpanCovers(t *testing.T) {
+	trip := gtfsdb.Trip{
+		MinArrivalTime:   nulls.Int64(int64(6 * time.Hour)),
+		MaxDepartureTime: nulls.Int64(int64(6*time.Hour + 30*time.Minute)),
+	}
+	freqs := []gtfsdb.Frequency{{StartTime: int64(6 * time.Hour), EndTime: int64(10 * time.Hour)}}
+
+	tests := []struct {
+		name   string
+		freqs  []gtfsdb.Frequency
+		offset time.Duration
+		want   bool
+	}{
+		{"within stop-time span", nil, 6*time.Hour + 10*time.Minute, true},
+		{"after stop-time span, no frequencies", nil, 8 * time.Hour, false},
+		{"within frequency window", freqs, 8 * time.Hour, true},
+		{"last frequency run still underway", freqs, 10*time.Hour + 20*time.Minute, true},
+		{"after last frequency run", freqs, 10*time.Hour + 40*time.Minute, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tripSpanCovers(trip, tc.freqs, tc.offset))
+		})
+	}
 }
