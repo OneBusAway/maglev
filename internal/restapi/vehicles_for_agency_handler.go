@@ -110,7 +110,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 	// Maps to build references
 	routeRefs := make(map[string]models.Route)
-	tripRefs := make(map[string]models.Trip)
+	tripIDsForRefs := make(map[string]struct{})
 	situations := newSituationCollector()
 
 	// Stops named by each entry's closestStop and nextStop. #1195 requires them in
@@ -215,11 +215,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 			vehicleStatus.TripStatus = tripStatus
 
-			// Add trip to references (basic trip reference)
-			tripRefs[vehicle.Trip.ID.ID] = models.Trip{
-				ID:      utils.FormCombinedID(id, vehicle.Trip.ID.ID),
-				RouteID: utils.FormCombinedID(id, vehicle.Trip.ID.RouteID),
-			}
+			tripIDsForRefs[vehicle.Trip.ID.ID] = struct{}{}
 
 			// Add the nominal trip's route to references (from batch-fetched map).
 			if route, ok := routeByID[vehicle.Trip.ID.RouteID]; ok {
@@ -234,10 +230,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			if activeTripID != vehicle.Trip.ID.ID {
 				if activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID); err == nil {
 					activeRouteID = activeTrip.RouteID
-					tripRefs[activeTripID] = models.Trip{
-						ID:      utils.FormCombinedID(id, activeTripID),
-						RouteID: utils.FormCombinedID(id, activeTrip.RouteID),
-					}
+					tripIDsForRefs[activeTripID] = struct{}{}
 					activeRoute, ok := routeByID[activeTrip.RouteID]
 					if !ok {
 						if fetched, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID); err == nil {
@@ -289,12 +282,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		vehiclesList = append(vehiclesList, vehicleStatus)
 	}
 
-	// Convert maps to slices for references
-	tripRefList := make([]models.Trip, 0, len(tripRefs))
-	for _, tripRef := range tripRefs {
-		tripRefList = append(tripRefList, tripRef)
-	}
-
 	// Omit references entirely when includeReferences=false.
 	references := models.NewEmptyReferences()
 	if includeReferences {
@@ -326,6 +313,11 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		}
 
 		references.Routes = routeRefList
+		tripRefList, err := api.buildVehiclesForAgencyTripReferences(ctx, id, tripIDsForRefs)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 		references.Trips = tripRefList
 		references.Situations = api.situationReferences(ctx, situations.refs)
 	}
@@ -379,6 +371,42 @@ func (api *RestAPI) fillTripStatusFromSharedBuilder(
 	status.DistanceAlongTrip = built.DistanceAlongTrip
 	// SetPredicted keeps Scheduled as its inverse.
 	status.SetPredicted(built.Predicted)
+}
+
+// buildVehiclesForAgencyTripReferences batch-fetches the given trip IDs and
+// builds full trip references via models.NewTripReference, matching
+// schedule-for-route and arrivals.
+func (api *RestAPI) buildVehiclesForAgencyTripReferences(
+	ctx context.Context,
+	agencyID string,
+	tripIDs map[string]struct{},
+) ([]models.Trip, error) {
+	if len(tripIDs) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(tripIDs))
+	for tripID := range tripIDs {
+		ids = append(ids, tripID)
+	}
+	trips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	tripRefList := make([]models.Trip, 0, len(trips))
+	for _, trip := range trips {
+		tripRef := models.NewTripReference(
+			utils.FormCombinedID(agencyID, trip.ID),
+			utils.FormCombinedID(agencyID, trip.RouteID),
+			utils.FormCombinedID(agencyID, trip.ServiceID),
+			trip.TripHeadsign.String,
+			trip.TripShortName.String,
+			strconv.FormatInt(trip.DirectionID.Int64, 10),
+			utils.FormCombinedID(agencyID, trip.BlockID.String),
+			utils.FormCombinedID(agencyID, trip.ShapeID.String),
+		)
+		tripRefList = append(tripRefList, *tripRef)
+	}
+	return tripRefList, nil
 }
 
 // addRouteReference inserts a route reference keyed by its combined agencyID_routeID.
