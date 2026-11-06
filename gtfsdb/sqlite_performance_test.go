@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -330,7 +331,7 @@ func TestSQLitePerformanceWithBulkOperations(t *testing.T) {
 	}
 
 	// This should complete quickly with proper pragmas
-	err = client.bulkInsertStopTimes(ctx, stopTimes, nil)
+	err = client.bulkInsertStopTimes(ctx, slices.Values(stopTimes), nil)
 	require.NoError(t, err, "Bulk insert should succeed with performance pragmas")
 
 	// Verify all inserted
