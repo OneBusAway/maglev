@@ -934,37 +934,16 @@ func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []Cr
 	return nil
 }
 
-// configureSQLitePerformance applies PRAGMA settings to optimize SQLite performance
-// for bulk GTFS data imports and queries.
+// configureSQLitePerformance enables Write-Ahead Logging, which allows
+// concurrent readers and a single writer. journal_mode=WAL is stored in the
+// database file, so one PRAGMA applies it to every connection. That is why it
+// stays a PRAGMA, while the connection-scoped settings ride the DSN.
 func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
-	pragmas := []struct {
-		name        string
-		description string
-	}{
-		// Increase cache size to 64MB (negative value means KB)
-		{"PRAGMA cache_size=-64000", "Set cache size to 64MB"},
-		// Store temp tables and indices in memory for faster operations
-		{"PRAGMA temp_store=MEMORY", "Store temporary data in memory"},
-		// Enable Write-Ahead Logging to allow concurrent readers and a single writer
-		{"PRAGMA journal_mode=WAL", "Enable WAL mode"},
+	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
+		logger := slog.Default().With(slog.String("component", "sqlite_performance"))
+		logging.LogError(logger, "failed to enable SQLite WAL mode", err)
+		return fmt.Errorf("failed to enable WAL mode: %w", err)
 	}
-
-	logger := slog.Default().With(slog.String("component", "sqlite_performance"))
-
-	for _, pragma := range pragmas {
-		_, err := db.ExecContext(ctx, pragma.name)
-		if err != nil {
-			logging.LogError(logger, "failed to set SQLite pragma", err, slog.String("pragma", pragma.description))
-			return fmt.Errorf("failed to execute %s: %w", pragma.name, err)
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-	}
-
-	logging.LogOperation(logger, "sqlite_performance_settings_applied",
-		slog.Int("pragma_count", len(pragmas)))
-
 	return nil
 }
 
