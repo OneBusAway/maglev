@@ -24,6 +24,12 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.backfillBlockTripEntryBlockIDStmt, err = db.PrepareContext(ctx, backfillBlockTripEntryBlockID); err != nil {
+		return nil, fmt.Errorf("error preparing query BackfillBlockTripEntryBlockID: %w", err)
+	}
+	if q.backfillTripsBlockIDStmt, err = db.PrepareContext(ctx, backfillTripsBlockID); err != nil {
+		return nil, fmt.Errorf("error preparing query BackfillTripsBlockID: %w", err)
+	}
 	if q.blockHasTripForAgencyStmt, err = db.PrepareContext(ctx, blockHasTripForAgency); err != nil {
 		return nil, fmt.Errorf("error preparing query BlockHasTripForAgency: %w", err)
 	}
@@ -413,6 +419,16 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.backfillBlockTripEntryBlockIDStmt != nil {
+		if cerr := q.backfillBlockTripEntryBlockIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing backfillBlockTripEntryBlockIDStmt: %w", cerr)
+		}
+	}
+	if q.backfillTripsBlockIDStmt != nil {
+		if cerr := q.backfillTripsBlockIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing backfillTripsBlockIDStmt: %w", cerr)
+		}
+	}
 	if q.blockHasTripForAgencyStmt != nil {
 		if cerr := q.blockHasTripForAgencyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing blockHasTripForAgencyStmt: %w", cerr)
@@ -1092,6 +1108,8 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 type Queries struct {
 	db                                        DBTX
 	tx                                        *sql.Tx
+	backfillBlockTripEntryBlockIDStmt         *sql.Stmt
+	backfillTripsBlockIDStmt                  *sql.Stmt
 	blockHasTripForAgencyStmt                 *sql.Stmt
 	buildStopAgenciesStmt                     *sql.Stmt
 	bulkUpdateTripTimeBoundsStmt              *sql.Stmt
@@ -1226,6 +1244,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
 		db:                                        tx,
 		tx:                                        tx,
+		backfillBlockTripEntryBlockIDStmt:         q.backfillBlockTripEntryBlockIDStmt,
+		backfillTripsBlockIDStmt:                  q.backfillTripsBlockIDStmt,
 		blockHasTripForAgencyStmt:                 q.blockHasTripForAgencyStmt,
 		buildStopAgenciesStmt:                     q.buildStopAgenciesStmt,
 		bulkUpdateTripTimeBoundsStmt:              q.bulkUpdateTripTimeBoundsStmt,
