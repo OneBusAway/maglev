@@ -964,6 +964,28 @@ func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 
 func ptrDuration(d time.Duration) *time.Duration { return &d }
 
+func TestGetPredictedTimes_CanceledTripWithLargeDelay(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	delay := 2 * time.Hour
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{
+		{
+			ID:    gtfs.TripID{ID: "canceled-large-delay", ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED},
+			Delay: &delay,
+		},
+	})
+
+	scheduledTime := time.Date(2025, 3, 14, 12, 0, 0, 0, time.UTC)
+	arrival, departure, predicted := api.getPredictedTimes(
+		context.Background(), "canceled-large-delay", "stop", 1, scheduledTime, scheduledTime,
+	)
+	assert.False(t, predicted)
+	assert.True(t, arrival.IsZero())
+	assert.True(t, departure.IsZero())
+}
+
 // Feeds that model dwell report a different Arrival and Departure deviation for
 // the same stop. Both sides must reach the response as the feed gave them --
 // regardless of the scheduled dwell, and regardless of what earlier stops the
