@@ -83,6 +83,72 @@ func TestRouteSearchHandlerMissingInputParam(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+func TestRouteSearchHandlerInputValidation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	type validationResponse struct {
+		Code int    `json:"code"`
+		Text string `json:"text"`
+		Data struct {
+			FieldErrors map[string][]string `json:"fieldErrors"`
+		} `json:"data"`
+	}
+
+	tests := []struct {
+		name          string
+		input         string
+		expectedError string
+	}{
+		{
+			name:          "input exceeding 200 characters",
+			input:         strings.Repeat("a", 201),
+			expectedError: "query too long (max 200 characters)",
+		},
+		{
+			name:          "input with script tag",
+			input:         "<script>alert('xss')</script>",
+			expectedError: "query contains invalid characters",
+		},
+		{
+			name:          "input with html tag",
+			input:         "<b>shasta</b>",
+			expectedError: "query contains invalid characters",
+		},
+		{
+			name:          "input with sql injection pattern",
+			input:         "shasta'; DROP TABLE routes; --",
+			expectedError: "query contains invalid characters",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[validationResponse](t, api,
+				routeSearchURL(url.Values{"input": {tt.input}}))
+
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.Equal(t, http.StatusBadRequest, model.Code)
+			assert.Contains(t, model.Data.FieldErrors, "input")
+			assert.Contains(t, model.Data.FieldErrors["input"], tt.expectedError)
+		})
+	}
+}
+
+func TestRouteSearchHandlerInputSanitization(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Whitespace around input is trimmed and matches Shasta route
+	resp, model := callAPIHandler[RoutesResponse](t, api,
+		routeSearchURL(url.Values{"input": {"  shasta  "}}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	require.NotEmpty(t, model.Data.List)
+	assert.Equal(t, "17", model.Data.List[0].ShortName)
+}
+
 func TestRouteSearchHandlerValidatesMaxCount(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

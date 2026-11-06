@@ -20,10 +20,18 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 	// Standardized parameter parsing
 	query, fieldErrors := utils.ParseRequiredStringParam(queryParams, "input", fieldErrors)
 	maxCount, fieldErrors := utils.ParseMaxCount(queryParams, 20, fieldErrors)
+	if err := utils.ValidateQuery(query); err != nil {
+		if fieldErrors == nil {
+			fieldErrors = make(map[string][]string)
+		}
+		fieldErrors["input"] = append(fieldErrors["input"], err.Error())
+	}
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
 	}
+
+	query = utils.SanitizeInput(query)
 
 	ctx := r.Context()
 	if ctx.Err() != nil {
