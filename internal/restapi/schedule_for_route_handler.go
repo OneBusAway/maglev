@@ -297,12 +297,21 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(uniqueStopIDs) > 0 {
-		modelStops, _, err := stopModelsByIDs(api, ctx, agencyID, uniqueStopIDs)
+		modelStops, stopRoutes, err := stopModelsByIDs(api, ctx, agencyID, uniqueStopIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
 		}
 		references.Stops = append(references.Stops, modelStops...)
+
+		// Every routeId a stop reference lists must resolve in references.routes.
+		for combinedID, row := range stopRoutes {
+			if _, ok := routeRefs[combinedID]; ok {
+				continue
+			}
+			references.Routes = append(references.Routes, routeReferenceFromStopRow(row))
+			api.appendRouteAgencyReference(ctx, references, row.AgencyID, agencyID)
+		}
 		if err := api.mergeParentStopsIntoReferences(ctx, references, modelStops, agencyID); err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
