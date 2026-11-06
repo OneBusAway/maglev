@@ -195,6 +195,47 @@ func TestNewArrivalsAndDepartureResponseEmptyArrays(t *testing.T) {
 	assert.Equal(t, stopID, entryData["stopId"])
 }
 
+func TestNewArrivalsAndDepartureResponseNilSlices(t *testing.T) {
+	references := NewEmptyReferences()
+	stopID := "stop_1"
+	c := clock.RealClock{}
+
+	// Test with untyped nil
+	response := NewArrivalsAndDepartureResponse(nil, *references, nil, nil, stopID, c)
+
+	responseData, ok := response.Data.(map[string]any)
+	assert.True(t, ok, "Response data should be a map")
+
+	entryData, ok := responseData["entry"].(map[string]any)
+	assert.True(t, ok, "Entry should be a map")
+	assert.Equal(t, []ArrivalAndDeparture{}, entryData["arrivalsAndDepartures"])
+	assert.Equal(t, []string{}, entryData["nearbyStopIds"])
+	assert.Equal(t, []string{}, entryData["situationIds"])
+	assert.Equal(t, stopID, entryData["stopId"])
+
+	jsonData, err := json.Marshal(response)
+	assert.NoError(t, err)
+
+	jsonStr := string(jsonData)
+	assert.Contains(t, jsonStr, `"arrivalsAndDepartures":[]`)
+	assert.Contains(t, jsonStr, `"nearbyStopIds":[]`)
+	assert.Contains(t, jsonStr, `"situationIds":[]`)
+	assert.NotContains(t, jsonStr, `"arrivalsAndDepartures":null`)
+	assert.NotContains(t, jsonStr, `"nearbyStopIds":null`)
+	assert.NotContains(t, jsonStr, `"situationIds":null`)
+
+	// Test with typed nil slice for arrivalsAndDepartures
+	var nilArrivals []ArrivalAndDeparture
+	responseTypedNil := NewArrivalsAndDepartureResponse(nilArrivals, *references, nil, nil, stopID, c)
+	jsonTypedData, err := json.Marshal(responseTypedNil)
+	assert.NoError(t, err)
+
+	jsonTypedStr := string(jsonTypedData)
+	assert.Contains(t, jsonTypedStr, `"arrivalsAndDepartures":[]`)
+	assert.Contains(t, jsonTypedStr, `"nearbyStopIds":[]`)
+	assert.Contains(t, jsonTypedStr, `"situationIds":[]`)
+}
+
 func TestResponseModelJSON(t *testing.T) {
 	// Create a response model with test data
 	response := ResponseModel{

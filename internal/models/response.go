@@ -54,6 +54,18 @@ func NewEntryResponse(entry any, references ReferencesModel, c clock.Clock) Resp
 }
 
 func NewArrivalsAndDepartureResponse(arrivalsAndDepartures any, references ReferencesModel, nearbyStopIds []string, situationIds []string, stopId string, c clock.Clock) ResponseModel {
+	if arrivalsAndDepartures == nil {
+		arrivalsAndDepartures = []ArrivalAndDeparture{}
+	} else if arr, ok := arrivalsAndDepartures.([]ArrivalAndDeparture); ok && arr == nil {
+		arrivalsAndDepartures = []ArrivalAndDeparture{}
+	}
+	if nearbyStopIds == nil {
+		nearbyStopIds = []string{}
+	}
+	if situationIds == nil {
+		situationIds = []string{}
+	}
+
 	entryData := map[string]any{
 		"arrivalsAndDepartures": arrivalsAndDepartures,
 		"nearbyStopIds":         nearbyStopIds,
