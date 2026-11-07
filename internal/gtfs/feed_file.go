@@ -74,7 +74,7 @@ func downloadFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 		req.Header.Set(config.StaticAuthHeaderKey, config.StaticAuthHeaderValue)
 	}
 
-	resp, err := newStaticHTTPClient().Do(req)
+	resp, err := staticHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("error downloading GTFS data: %w", err)
 	}
@@ -109,18 +109,35 @@ func downloadFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 	}, nil
 }
 
-// newStaticHTTPClient returns a client for downloading a static feed. Like the
-// realtime client, its transport is cloned from http.DefaultTransport to keep
-// its defaults (proxy from environment, dialer, HTTP/2).
+// Timeouts for downloading a static feed. The overall timeout allows for a
+// feed of maxStaticFeedBytes on a slow link.
+const (
+	staticTLSHandshakeTimeout   = 10 * time.Second
+	staticResponseHeaderTimeout = 30 * time.Second
+	staticIdleConnTimeout       = 90 * time.Second
+	staticDownloadTimeout       = 5 * time.Minute
+)
+
+// staticHTTPClient downloads static feeds. It is shared by every reload, so
+// an idle connection is reused or closed by its transport rather than left
+// behind on one that nothing uses again.
+var staticHTTPClient = newStaticHTTPClient()
+
 func newStaticHTTPClient() *http.Client {
-	transport := &http.Transport{}
+	transport := cloneDefaultTransport()
+	transport.TLSHandshakeTimeout = staticTLSHandshakeTimeout
+	transport.ResponseHeaderTimeout = staticResponseHeaderTimeout
+	transport.IdleConnTimeout = staticIdleConnTimeout
+	return &http.Client{Timeout: staticDownloadTimeout, Transport: transport}
+}
+
+// cloneDefaultTransport returns a copy of http.DefaultTransport, to keep its
+// defaults (proxy from environment, dialer, HTTP/2, keepalives).
+func cloneDefaultTransport() *http.Transport {
 	if t, ok := http.DefaultTransport.(*http.Transport); ok {
-		transport = t.Clone()
+		return t.Clone()
 	}
-	transport.TLSHandshakeTimeout = 10 * time.Second
-	transport.ResponseHeaderTimeout = 30 * time.Second
-	transport.IdleConnTimeout = 90 * time.Second
-	return &http.Client{Timeout: 5 * time.Minute, Transport: transport}
+	return &http.Transport{}
 }
 
 // Feed downloads are named downloadPrefix, then their owner, then "-" and the

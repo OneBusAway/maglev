@@ -159,12 +159,7 @@ const maxVehicleFeedFutureSkew = 15 * time.Minute
 var realtimeHTTPClient = newRealtimeHTTPClient()
 
 func newRealtimeHTTPClient() *http.Client {
-	var transport *http.Transport
-	if t, ok := http.DefaultTransport.(*http.Transport); ok {
-		transport = t.Clone()
-	} else {
-		transport = &http.Transport{}
-	}
+	transport := cloneDefaultTransport()
 	transport.MaxIdleConns = 50
 	transport.MaxIdleConnsPerHost = 10
 	transport.IdleConnTimeout = 90 * time.Second
