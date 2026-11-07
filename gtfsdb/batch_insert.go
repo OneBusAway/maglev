@@ -16,6 +16,8 @@ type batchInsert[T any] struct {
 	table      string
 	columns    []string
 	appendArgs func(args []any, row T) []any // appends one row's values in column order
+	// progressInterval is how many rows go in between progress log lines.
+	progressInterval int
 }
 
 // bulkInsertLogger returns the logger that the batch inserts log through. It
@@ -54,7 +56,9 @@ func insertInBatches[T any](ctx context.Context, tx *sql.Tx, batchSize int, inse
 		return 0, fmt.Errorf("batch size for %s must be at least 1, got %d", insert.table, batchSize)
 	}
 	logger := bulkInsertLogger()
-	const progressInterval = 100_000
+	logProgress := func(inserted int) {
+		logging.LogOperation(logger, insert.table+"_progress", slog.Int("inserted", inserted))
+	}
 
 	var fullBatch *sql.Stmt
 	defer func() {
@@ -89,8 +93,8 @@ func insertInBatches[T any](ctx context.Context, tx *sql.Tx, batchSize int, inse
 		if err != nil {
 			return fmt.Errorf("failed to insert %s batch: %w", insert.table, err)
 		}
-		if (inserted+rowsInBatch)/progressInterval > inserted/progressInterval {
-			logging.LogOperation(logger, insert.table+"_progress", slog.Int("inserted", inserted+rowsInBatch))
+		if (inserted+rowsInBatch)/insert.progressInterval > inserted/insert.progressInterval {
+			logProgress(inserted + rowsInBatch)
 		}
 		inserted += rowsInBatch
 		args, rowsInBatch = args[:0], 0
@@ -106,7 +110,15 @@ func insertInBatches[T any](ctx context.Context, tx *sql.Tx, batchSize int, inse
 			}
 		}
 	}
-	return inserted, flush()
+	if err := flush(); err != nil {
+		return inserted, err
+	}
+	// The last line shows the final count, unless the flush above already
+	// logged it on an interval boundary.
+	if inserted%insert.progressInterval != 0 {
+		logProgress(inserted)
+	}
+	return inserted, nil
 }
 
 // query returns the INSERT statement for the given number of rows.

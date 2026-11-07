@@ -1,9 +1,12 @@
 package gtfsdb
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
+	"regexp"
 	"slices"
 	"testing"
 
@@ -143,6 +146,48 @@ func TestInsertInBatchesHonorsCancellation(t *testing.T) {
 		})
 	}
 }
+
+// TestInsertInBatchesLogsProgress inserts with a progress interval of 3 and
+// batches of testBatchSize, so a line is logged at each batch that crosses an
+// interval boundary, plus one for the final count unless it is on a boundary.
+func TestInsertInBatchesLogsProgress(t *testing.T) {
+	everyThreeRows := shapeInsert
+	everyThreeRows.progressInterval = 3
+	tests := []struct {
+		rowCount     int
+		wantProgress []string
+	}{
+		{rowCount: 0, wantProgress: nil},
+		{rowCount: 1, wantProgress: []string{"1"}},
+		{rowCount: 6, wantProgress: []string{"4", "6"}},
+		{rowCount: 7, wantProgress: []string{"4", "6", "7"}},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%d rows", tt.rowCount), func(t *testing.T) {
+			rows := make([]CreateShapeParams, tt.rowCount)
+			for i := range rows {
+				rows[i] = shapeRow("A", int64(i))
+			}
+
+			var logs bytes.Buffer
+			previousLogger := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			_, err := insertShapesInBatches(t, context.Background(), everyThreeRows, slices.Values(rows))
+			slog.SetDefault(previousLogger)
+			require.NoError(t, err)
+
+			var progress []string
+			for _, match := range shapesProgressLine.FindAllStringSubmatch(logs.String(), -1) {
+				progress = append(progress, match[1])
+			}
+			assert.Equal(t, tt.wantProgress, progress)
+		})
+	}
+}
+
+// shapesProgressLine matches a shapes progress log line and captures its
+// inserted count.
+var shapesProgressLine = regexp.MustCompile(`msg=shapes_progress .*inserted=(\d+)`)
 
 // testBatchSize is the batch size the shape error tests insert with.
 const testBatchSize = 2

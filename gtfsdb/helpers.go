@@ -841,6 +841,7 @@ var stopTimeInsert = batchInsert[CreateStopTimeParams]{
 		return append(args, st.TripID, st.ArrivalTime, st.DepartureTime, st.StopID, st.StopSequence,
 			st.StopHeadsign, st.PickupType, st.DropOffType, st.ShapeDistTraveled, st.Timepoint)
 	},
+	progressInterval: 100_000,
 }
 
 // bulkInsertStopTimes inserts stop times in the order they arrive, holding one
@@ -857,6 +858,7 @@ var shapeInsert = batchInsert[CreateShapeParams]{
 	appendArgs: func(args []any, s CreateShapeParams) []any {
 		return append(args, s.ShapeID, s.Lat, s.Lon, s.ShapePtSequence, s.ShapeDistTraveled)
 	},
+	progressInterval: 50_000,
 }
 
 // bulkInsertShapes inserts shape points in the order they arrive, holding one
