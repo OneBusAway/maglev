@@ -2,6 +2,7 @@ package gtfsdb
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -18,10 +19,14 @@ func TestBlockTripEntryBlockIDJoinUsesIndex(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 
-	rows, err := client.DB.QueryContext(context.Background(), `EXPLAIN QUERY PLAN
-		SELECT DISTINCT a.block_id FROM block_trip_entry a
-		JOIN block_trip_entry b ON b.block_id = a.block_id
-		WHERE a.trip_id = 't1'`)
+	// Explain the generated query itself, with one value in each IN list, so the
+	// test follows any change to its joins and filters.
+	sliceMarker := regexp.MustCompile(`/\*SLICE:\w+\*/\?`)
+	query := sliceMarker.ReplaceAllString(getBlocksForBlockTripIndexIDs, "?")
+	fromTime, toTime, routeID := int64(0), int64(3600), "route_1"
+	indexID, activeServiceID, routeServiceID := int64(1), "service_1", "service_1"
+	rows, err := client.DB.QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+query,
+		fromTime, toTime, routeID, indexID, activeServiceID, routeServiceID)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 
@@ -34,5 +39,6 @@ func TestBlockTripEntryBlockIDJoinUsesIndex(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 
-	assert.Contains(t, strings.Join(plan, "\n"), "idx_block_trip_entry_block_id")
+	assert.Contains(t, strings.Join(plan, "\n"),
+		"SEARCH route_bte USING INDEX idx_block_trip_entry_block_id (block_id=?)")
 }
