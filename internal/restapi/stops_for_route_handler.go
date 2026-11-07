@@ -57,11 +57,15 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	var serviceIDs []string
 	if filterByDate {
-		formattedDate, _, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation, api.Clock)
-		if !success {
+		parsedDate, err := utils.ParseDate(timeParam, currentLocation)
+		if err != nil {
+			fieldErrors := map[string][]string{
+				"time": {`Invalid field value for field "time".`},
+			}
 			api.validationErrorResponse(w, r, fieldErrors)
 			return
 		}
+		formattedDate := parsedDate.Format("20060102")
 		serviceIDs, err = api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
@@ -222,7 +226,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, stops []
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),
 			Lon:                stop.Lon,
-			Name:               stop.Name.String,
+			Name:               nulls.StringOrEmpty(stop.Name),
 			Parent:             parentStationID(agencyID, stop),
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
@@ -356,7 +360,7 @@ func buildStopGroup(ctx context.Context, api *RestAPI, agencyID string, group di
 func countHeadsigns(trips []gtfsdb.Trip) map[string]int {
 	headsignCounts := make(map[string]int)
 	for _, trip := range trips {
-		headsignCounts[trip.TripHeadsign.String]++
+		headsignCounts[nulls.StringOrEmpty(trip.TripHeadsign)]++
 	}
 	return headsignCounts
 }
@@ -465,14 +469,14 @@ func distinctShapeIDs(trips []gtfsdb.Trip) []string {
 	seen := make(map[string]bool)
 	var shapeIDs []string
 	for _, trip := range trips {
-		if !trip.ShapeID.Valid || trip.ShapeID.String == "" {
+		if !trip.ShapeID.Valid || nulls.StringOrEmpty(trip.ShapeID) == "" {
 			continue
 		}
-		if seen[trip.ShapeID.String] {
+		if seen[nulls.StringOrEmpty(trip.ShapeID)] {
 			continue
 		}
-		seen[trip.ShapeID.String] = true
-		shapeIDs = append(shapeIDs, trip.ShapeID.String)
+		seen[nulls.StringOrEmpty(trip.ShapeID)] = true
+		shapeIDs = append(shapeIDs, nulls.StringOrEmpty(trip.ShapeID))
 	}
 	slices.Sort(shapeIDs)
 	return shapeIDs

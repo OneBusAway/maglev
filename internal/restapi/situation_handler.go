@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/OneBusAway/go-gtfs"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -43,7 +44,7 @@ func findSituationAlert(alerts []gtfs.Alert, agencyID, requested string) (gtfs.A
 		if alert.ID == "" {
 			continue
 		}
-		if situationID(alert.ID, agencyIDForAlert(alert, agencyID)) == requested {
+		if internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert, agencyID)) == requested {
 			return alert, true
 		}
 		if !foundRaw && alert.ID == requested {

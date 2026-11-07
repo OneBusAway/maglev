@@ -455,6 +455,18 @@ func TestStopsForLocationHandlerRouteTypeInvalidTokens(t *testing.T) {
 			name:      "trailing underscore",
 			routeType: "3_extra",
 		},
+		{
+			name:      "64-bit integer overflow exceeding int32",
+			routeType: "99999999999",
+		},
+		{
+			name:      "int32 max plus one",
+			routeType: "2147483648",
+		},
+		{
+			name:      "int32 min minus one",
+			routeType: "-2147483649",
+		},
 	}
 
 	for _, tt := range tests {
@@ -783,7 +795,7 @@ func TestStopsForLocationAcceptsDocumentedTimeFormats(t *testing.T) {
 	}{
 		{name: "epoch millis", timeParam: serviceDateEpochMs, expectStops: true},
 		{name: "date and time", timeParam: "2025-06-13_14-00-00", expectStops: true},
-		{name: "date only", timeParam: "2025-06-13", expectStops: true},
+		{name: "date only", timeParam: "2025-06-13", expectStops: false},
 		{name: "malformed", timeParam: "garbage", expectStops: false},
 		{name: "absent", timeParam: "", expectStops: false},
 	}

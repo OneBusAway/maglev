@@ -3941,11 +3941,8 @@ SELECT
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
 WHERE st.stop_id = ?1
-  AND (
-    (st.arrival_time BETWEEN ?2 AND ?3)
-        OR
-    (st.departure_time BETWEEN ?2 AND ?3)
-    )
+  AND st.departure_time >= ?2
+  AND st.arrival_time <= ?3
 ORDER BY st.arrival_time
 `
 
@@ -4016,11 +4013,8 @@ SELECT
     t.block_id
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
-WHERE (
-    (st.arrival_time BETWEEN ?1 AND ?2)
-        OR
-    (st.departure_time BETWEEN ?1 AND ?2)
-    )
+WHERE st.departure_time >= ?1
+  AND st.arrival_time <= ?2
   AND st.stop_id IN (/*SLICE:stop_ids*/?)
 ORDER BY st.stop_id, st.arrival_time
 `
