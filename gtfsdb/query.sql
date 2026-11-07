@@ -284,14 +284,13 @@ FROM
 
 -- name: GetStopIDsForAgency :many
 SELECT
-    stop_agencies.stop_id
+    stop_id
 FROM
     stop_agencies
-    JOIN stops ON stops.id = stop_agencies.stop_id
 WHERE
-    stop_agencies.agency_id = ?
+    agency_id = ?
 ORDER BY
-    stops.rowid;
+    stop_id;
 
 -- name: GetTrip :one
 SELECT
