@@ -235,3 +235,26 @@ func TestReloadStaticSkipsParseWhenTidyFails(t *testing.T) {
 	assert.False(t, changed)
 	assert.Equal(t, 1, counter.count("parsing_gtfs_data"), "a feed whose tidy failed must not be parsed again")
 }
+
+// TestParseHashesOnlyLocalFeedsAgain checks that parse trusts the hash of a
+// download, which nothing else can change, and hashes a local feed again.
+func TestParseHashesOnlyLocalFeedsAgain(t *testing.T) {
+	const fetchedHash = "hash-when-fetched"
+	path := models.GetFixturePath(t, "raba.zip")
+	tests := []struct {
+		name    string
+		private bool
+		want    string
+	}{
+		{"download", true, fetchedHash},
+		{"local feed", false, rabaContentHash(t)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			feed := &feedFile{path: path, hash: fetchedHash, private: tt.private, cleanup: func() {}}
+			data, err := feed.parse(context.Background(), Config{GtfsURL: path})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, data.Hash)
+		})
+	}
+}

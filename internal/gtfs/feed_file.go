@@ -26,8 +26,11 @@ const maxStaticFeedBytes = 200 * 1024 * 1024
 // feedFile is a static GTFS zip on local disk. hash identifies it in
 // import_metadata when it is imported as configured.
 type feedFile struct {
-	path    string
-	hash    string
+	path string
+	hash string
+	// private is set for a download, which nothing but this import can
+	// change, so hash still describes it when it is parsed.
+	private bool
 	cleanup func()
 }
 
@@ -98,7 +101,12 @@ func downloadFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 		remove()
 		return nil, fmt.Errorf("static GTFS response exceeds size limit of %d bytes", maxStaticFeedBytes)
 	}
-	return &feedFile{path: file.Name(), hash: feedHash(hex.EncodeToString(hasher.Sum(nil)), config), cleanup: remove}, nil
+	return &feedFile{
+		path:    file.Name(),
+		hash:    feedHash(hex.EncodeToString(hasher.Sum(nil)), config),
+		private: true,
+		cleanup: remove,
+	}, nil
 }
 
 // newStaticHTTPClient returns a client for downloading a static feed. Like the
@@ -211,15 +219,18 @@ func feedHash(contentHash string, config Config) string {
 }
 
 // parse reads the feed, runs gtfstidy when enabled, then parses and validates
-// it. The returned hash is that of the bytes it read, so it matches the stored
-// data even if the file changed since it was fetched.
+// it. A local feed is hashed again from the bytes read, so the stored hash
+// matches the stored data even if the file changed since it was fetched.
 func (f *feedFile) parse(ctx context.Context, config Config) (*gtfsdb.GtfsData, error) {
 	b, err := os.ReadFile(f.path)
 	if err != nil {
 		return nil, fmt.Errorf("error reading GTFS data: %w", err)
 	}
-	sum := sha256.Sum256(b)
-	hash := feedHash(hex.EncodeToString(sum[:]), config)
+	hash := f.hash
+	if !f.private {
+		sum := sha256.Sum256(b)
+		hash = feedHash(hex.EncodeToString(sum[:]), config)
+	}
 
 	if config.EnableGTFSTidy {
 		logger := slog.Default().With(slog.String("component", "gtfs_loader"))
