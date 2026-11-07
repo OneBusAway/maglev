@@ -1,8 +1,6 @@
 package gtfsdb
 
 import (
-	"archive/zip"
-	"bytes"
 	"testing"
 	"time"
 
@@ -27,21 +25,12 @@ func TestImportCSVHeadersWithSpaces(t *testing.T) {
 		// Arrival and departure differ at each stop, so each column is pinned.
 		"stop_times.txt": "trip_id, arrival_time, departure_time, stop_id, stop_sequence\ntrip_1,06:00:00,06:01:00,stop_1,1\ntrip_1,06:10:00,06:11:00,stop_2,2\ntrip_2,07:00:00,07:00:00,stop_2,1\ntrip_2,07:10:00,07:10:00,stop_1,2\n",
 	}
-	var buf bytes.Buffer
-	w := zip.NewWriter(&buf)
-	for name, content := range files {
-		f, err := w.Create(name)
-		require.NoError(t, err)
-		_, err = f.Write([]byte(content))
-		require.NoError(t, err)
-	}
-	require.NoError(t, w.Close())
 
 	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 
-	parsed, err := ParseGtfsData(buf.Bytes(), "spaced-headers")
+	parsed, err := ParseGtfsData(writeGTFSZip(t, files), "spaced-headers")
 	require.NoError(t, err)
 	_, err = client.StoreGtfsData(t.Context(), parsed)
 	require.NoError(t, err)
