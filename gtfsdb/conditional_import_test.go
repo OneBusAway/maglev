@@ -331,7 +331,7 @@ func TestSkipIfImported(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 
-	imported, err := client.SkipIfImported(t.Context(), "hash", "source")
+	imported, err := client.SkipIfImported(t.Context(), FeedIdentity{Hash: "hash", Source: "source"})
 	require.NoError(t, err)
 	assert.False(t, imported, "an empty database holds no feed")
 
@@ -350,7 +350,7 @@ func TestSkipIfImported(t *testing.T) {
 		{parsed.Hash, "other-source", false},
 		{"other-hash", "source", false},
 	} {
-		imported, err := client.SkipIfImported(t.Context(), tt.hash, tt.source)
+		imported, err := client.SkipIfImported(t.Context(), FeedIdentity{Hash: tt.hash, Source: tt.source})
 		require.NoError(t, err)
 		assert.Equal(t, tt.want, imported, "%s from %s", tt.hash, tt.source)
 	}

@@ -50,7 +50,7 @@ func TestStreamedImportSkipsTripsWithoutStopTimes(t *testing.T) {
 		"trips.txt":      "route_id,service_id,trip_id\nr,s,with_stops\nr,s,without_stops\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nwith_stops,08:00:00,08:00:00,st1,1\nwith_stops,08:10:00,08:10:00,st2,2\n",
 	})
-	data, err := ParseGtfsStream(bytes.NewReader(feed), int64(len(feed)), strings.Repeat("a", 64), "source")
+	data, err := ParseGtfsStream(bytes.NewReader(feed), int64(len(feed)), FeedIdentity{Hash: strings.Repeat("a", 64), Source: "source"})
 	require.NoError(t, err)
 	client := newTestClient(t)
 	_, err = client.StoreGtfsData(t.Context(), data)
@@ -117,7 +117,7 @@ func TestStreamedImportFailsWhenTheFeedCanNoLongerBeRead(t *testing.T) {
 		t.Run(tt.file, func(t *testing.T) {
 			reader := &failingReaderAt{ReaderAt: bytes.NewReader(raba)}
 			reader.failFrom, reader.failTo = zipEntryRange(t, raba, tt.file)
-			data, err := ParseGtfsStream(reader, int64(len(raba)), strings.Repeat("a", 64), "source")
+			data, err := ParseGtfsStream(reader, int64(len(raba)), FeedIdentity{Hash: strings.Repeat("a", 64), Source: "source"})
 			require.NoError(t, err)
 
 			reader.fail.Store(true)
@@ -173,7 +173,7 @@ func smallFeed(t *testing.T, files map[string]string) []byte {
 // importStreamedFeed parses feed as a stream and stores it in a new client.
 func importStreamedFeed(t *testing.T, feed []byte) *Client {
 	t.Helper()
-	data, err := ParseGtfsStream(bytes.NewReader(feed), int64(len(feed)), smallFeedHash, "source")
+	data, err := ParseGtfsStream(bytes.NewReader(feed), int64(len(feed)), FeedIdentity{Hash: smallFeedHash, Source: "source"})
 	require.NoError(t, err)
 	client := newTestClient(t)
 	_, err = client.StoreGtfsData(t.Context(), data)
@@ -301,7 +301,7 @@ func TestFailedStreamedImportKeepsPreviousFeed(t *testing.T) {
 
 	reader := &failingReaderAt{ReaderAt: bytes.NewReader(raba)}
 	reader.failFrom, reader.failTo = zipEntryRange(t, raba, "stop_times.txt")
-	second, err := ParseGtfsStream(reader, int64(len(raba)), strings.Repeat("b", 64), "source")
+	second, err := ParseGtfsStream(reader, int64(len(raba)), FeedIdentity{Hash: strings.Repeat("b", 64), Source: "source"})
 	require.NoError(t, err)
 	reader.fail.Store(true)
 	_, err = client.StoreGtfsData(t.Context(), second)
@@ -327,7 +327,7 @@ func TestStreamedImportClearsMissingParentStation(t *testing.T) {
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"t1,08:00:00,08:00:00,st1,1\nt1,08:10:00,08:10:00,st2,2\n",
 	})
-	data, err := ParseGtfsStream(bytes.NewReader(feed), int64(len(feed)), smallFeedHash, "source")
+	data, err := ParseGtfsStream(bytes.NewReader(feed), int64(len(feed)), FeedIdentity{Hash: smallFeedHash, Source: "source"})
 	require.NoError(t, err)
 	// go-gtfs already drops a parent it can't find, so put one back and
 	// validate again to reach the clearing that copies the streamed stops.

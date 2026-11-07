@@ -38,11 +38,18 @@ type GtfsData struct {
 	stream *gtfs.StaticStream
 }
 
+// FeedIdentity names a feed in import_metadata: the hash it is stored under
+// and the source it came from.
+type FeedIdentity struct {
+	Hash   string
+	Source string
+}
+
 // ParseGtfsData hashes, parses, and structurally validates GTFS zip bytes.
 // The given source is stored on the returned struct for later use by StoreGtfsData.
 func ParseGtfsData(b []byte, source string) (*GtfsData, error) {
 	sum := sha256.Sum256(b)
-	return ParseGtfsStream(bytes.NewReader(b), int64(len(b)), hex.EncodeToString(sum[:]), source)
+	return ParseGtfsStream(bytes.NewReader(b), int64(len(b)), FeedIdentity{Hash: hex.EncodeToString(sum[:]), Source: source})
 }
 
 // metricsWrapper wraps *sql.DB for metric reporting purposes
@@ -197,10 +204,10 @@ func (c *Client) withTransaction(ctx context.Context, tx *sql.Tx, label string, 
 }
 
 // SkipIfImported reports whether the database already holds the feed with
-// this hash from this source, so a caller can skip parsing and storing it.
+// this identity, so a caller can skip parsing and storing it.
 // When it does, it refreshes the feed's derived metadata, as StoreGtfsData
 // does for an unchanged feed.
-func (c *Client) SkipIfImported(ctx context.Context, hash, source string) (bool, error) {
+func (c *Client) SkipIfImported(ctx context.Context, feed FeedIdentity) (bool, error) {
 	metadata, err := c.Queries.GetImportMetadata(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -208,21 +215,21 @@ func (c *Client) SkipIfImported(ctx context.Context, hash, source string) (bool,
 	if err != nil {
 		return false, fmt.Errorf("error checking import metadata: %w", err)
 	}
-	return c.skipUnchangedFeed(ctx, metadata, hash, source)
+	return c.skipUnchangedFeed(ctx, metadata, feed)
 }
 
 // skipUnchangedFeed is the one rule for a feed the database already holds.
-// When import_metadata describes the feed with this hash from this source, it
+// When import_metadata describes the feed with this identity, it
 // refreshes the derived metadata and reports true; otherwise it does nothing.
-func (c *Client) skipUnchangedFeed(ctx context.Context, metadata ImportMetadatum, hash, source string) (bool, error) {
-	if metadata.FileHash != hash || metadata.FileSource != source {
+func (c *Client) skipUnchangedFeed(ctx context.Context, metadata ImportMetadatum, feed FeedIdentity) (bool, error) {
+	if metadata.FileHash != feed.Hash || metadata.FileSource != feed.Source {
 		return false, nil
 	}
 	if err := c.refreshFeedExpiry(ctx); err != nil {
 		return false, err
 	}
 	logger := slog.Default().With(slog.String("component", "gtfs_importer"))
-	logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import", slog.String("hash", hash[:8]))
+	logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import", slog.String("hash", feed.Hash[:8]))
 	return true, nil
 }
 
@@ -258,7 +265,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	existingMetadata, err := c.Queries.GetImportMetadata(ctx)
 	if err == nil {
 		hasExisting = true
-		skipped, err := c.skipUnchangedFeed(ctx, existingMetadata, data.Hash, data.Source)
+		skipped, err := c.skipUnchangedFeed(ctx, existingMetadata, FeedIdentity{Hash: data.Hash, Source: data.Source})
 		if err != nil {
 			return false, err
 		}

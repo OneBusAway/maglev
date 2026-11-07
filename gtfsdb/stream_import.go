@@ -14,7 +14,7 @@ import (
 // ParseGtfsStream parses the feed in r without its stop times and shape
 // points, and validates it. StoreGtfsData then reads those from r one trip or
 // shape at a time, so r must stay open, and unchanged, until it returns.
-func ParseGtfsStream(r io.ReaderAt, size int64, hash, source string) (*GtfsData, error) {
+func ParseGtfsStream(r io.ReaderAt, size int64, feed FeedIdentity) (*GtfsData, error) {
 	logger := slog.Default().With(slog.String("component", "gtfs_parser"))
 	logging.LogOperation(logger, "parsing_gtfs_data", slog.Int64("bytes", size))
 	stream, err := gtfs.ParseStaticStream(r, size, gtfs.ParseStaticOptions{})
@@ -26,7 +26,7 @@ func ParseGtfsStream(r io.ReaderAt, size int64, hash, source string) (*GtfsData,
 		return nil, fmt.Errorf("GTFS validation failed: %w", err)
 	}
 
-	return &GtfsData{Static: stream.Static, Hash: hash, Source: source, stream: stream}, nil
+	return &GtfsData{Static: stream.Static, Hash: feed.Hash, Source: feed.Source, stream: stream}, nil
 }
 
 // feedRows reads a feed's stop times and shape points from its stream for

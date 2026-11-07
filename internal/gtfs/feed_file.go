@@ -42,6 +42,11 @@ func (f *feedFile) importHash(config Config) string {
 	return feedHash(f.contentHash, config)
 }
 
+// identity names an import of this feed in import_metadata.
+func (f *feedFile) identity(config Config) gtfsdb.FeedIdentity {
+	return gtfsdb.FeedIdentity{Hash: f.importHash(config), Source: config.GtfsURL}
+}
+
 // close closes and removes the private copy, if there is one.
 func (f *feedFile) close() {
 	if f.open == nil {
@@ -308,7 +313,7 @@ func (f *feedFile) parseFile(config Config) (*gtfsdb.GtfsData, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error reading GTFS data: %w", err)
 	}
-	return gtfsdb.ParseGtfsStream(f.open, info.Size(), f.importHash(config), config.GtfsURL)
+	return gtfsdb.ParseGtfsStream(f.open, info.Size(), f.identity(config))
 }
 
 func (f *feedFile) parseTidied(ctx context.Context, config Config) (*gtfsdb.GtfsData, error) {
@@ -319,5 +324,5 @@ func (f *feedFile) parseTidied(ctx context.Context, config Config) (*gtfsdb.Gtfs
 		logging.LogError(logger, "Failed to tidy GTFS data, using original data", err)
 		return f.parseFile(config)
 	}
-	return gtfsdb.ParseGtfsStream(bytes.NewReader(tidiedData), int64(len(tidiedData)), f.importHash(config), config.GtfsURL)
+	return gtfsdb.ParseGtfsStream(bytes.NewReader(tidiedData), int64(len(tidiedData)), f.identity(config))
 }

@@ -156,7 +156,7 @@ func (manager *Manager) storeConfiguredFeed(ctx context.Context, logger *slog.Lo
 	}
 	defer feed.close()
 
-	skipped, err := manager.GtfsDB.SkipIfImported(ctx, feed.importHash(manager.config), manager.config.GtfsURL)
+	skipped, err := manager.GtfsDB.SkipIfImported(ctx, feed.identity(manager.config))
 	if err != nil {
 		logging.LogError(logger, "Error checking whether GTFS data is already imported", err,
 			slog.String("source", manager.config.GtfsURL))
