@@ -15,14 +15,14 @@ import (
 func TestBuildSituationReferencesCoverage(t *testing.T) {
 	api := &RestAPI{}
 
-	alerts := []gtfs.Alert{
+	alerts := feedAlertsForTest("", []gtfs.Alert{
 		{
 			ID: "alert1",
 			// We intentionally omit Cause, Effect, and Headers to keep the test simple.
 			// Go will use their zero-values, which will safely trigger the default
 			// fallback cases in the mapping functions and ensure 100% path coverage.
 		},
-	}
+	})
 
 	// Call it as a method on the API struct, passing alerts first
 	refs := api.BuildSituationReferences(context.Background(), alerts)

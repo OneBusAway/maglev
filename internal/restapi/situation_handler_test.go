@@ -143,18 +143,18 @@ func TestFindSituationAlertPrefersPublishedID(t *testing.T) {
 		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agency25}},
 	}
 
-	got, ok := findSituationAlert([]gtfs.Alert{rawCollision, published}, "25", "25_late")
+	got, ok := findSituationAlert(feedAlertsForTest("", []gtfs.Alert{rawCollision, published}), "25", "25_late")
 	require.True(t, ok)
 	assert.Equal(t, "late", got.ID, "the published 25_late must win over an earlier raw id")
 
-	got, ok = findSituationAlert([]gtfs.Alert{rawCollision}, "25", "25_late")
+	got, ok = findSituationAlert(feedAlertsForTest("", []gtfs.Alert{rawCollision}), "25", "25_late")
 	require.True(t, ok)
 	assert.Equal(t, "25_late", got.ID, "a raw id still matches when nothing publishes it")
 
-	_, ok = findSituationAlert([]gtfs.Alert{published}, "25", "")
+	_, ok = findSituationAlert(feedAlertsForTest("", []gtfs.Alert{published}), "25", "")
 	assert.False(t, ok)
 
-	_, ok = findSituationAlert([]gtfs.Alert{published}, "40", "40_late")
+	_, ok = findSituationAlert(feedAlertsForTest("", []gtfs.Alert{published}), "40", "40_late")
 	assert.False(t, ok)
 }
 
@@ -163,6 +163,11 @@ func TestSituationHandler_ParityAllAffectsAndConsequences(t *testing.T) {
 	defer cleanup()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	db := api.GtfsManager.GtfsDB.DB
+
+	// Java qualifies unknown entity IDs with the feed's first configured
+	// agency, so the mock feeds need the same agency-ids as production config.
+	api.GtfsManager.MockSetFeedAgencyIDs("feed-40", "40")
+	api.GtfsManager.MockSetFeedAgencyIDs("feed-a", "40")
 
 	// Add an underscore route to DB under agency 25 to test raw underscore qualification
 	_, err := db.Exec(`INSERT INTO routes (id, agency_id, short_name, type) VALUES ('r_under', '25', 'Under', 3)`)
@@ -350,5 +355,52 @@ func TestSituationHandler_ParityAllAffectsAndConsequences(t *testing.T) {
 		affect := model.Data.Entry.AllAffects[0]
 		assert.Equal(t, "40_TRIP_ROUTE_ONLY", affect.RouteID)
 		assert.Empty(t, affect.TripID)
+	})
+}
+
+// TestSituationHandler_FeedAgencyFallback covers #1920: Java ignores the
+// entity selector's agency and falls back to the feed's first configured
+// agency for IDs that are absent from the static feed.
+func TestSituationHandler_FeedAgencyFallback(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	api.GtfsManager.MockSetFeedAgencyIDs("feed-with-agencies", "25")
+
+	selectorAgencyID := "40"
+	unknownRouteID := "unknown-route"
+	api.GtfsManager.MockAddAlert("feed-with-agencies", gtfs.Alert{
+		ID: "feed-agency-alert",
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			AgencyID: &selectorAgencyID,
+			RouteID:  &unknownRouteID,
+		}},
+	})
+
+	unknownStopID := "unknown-stop"
+	api.GtfsManager.MockAddAlert("feed-without-agencies", gtfs.Alert{
+		ID: "no-selector-agency-alert",
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			StopID: &unknownStopID,
+		}},
+	})
+
+	t.Run("the feed's first agency wins over the selector's", func(t *testing.T) {
+		resp, model := callAPIHandler[SituationResponse](t, api, "/api/where/situation/40_feed-agency-alert.json?key=TEST")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		require.Len(t, model.Data.Entry.AllAffects, 1)
+		assert.Equal(t, "25_unknown-route", model.Data.Entry.AllAffects[0].RouteID)
+		assert.Equal(t, "40", model.Data.Entry.AllAffects[0].AgencyID,
+			"the selector's agency is still reported on the affect")
+	})
+
+	t.Run("an alert with no agency anywhere still emits a combined ID", func(t *testing.T) {
+		resp, model := callAPIHandler[SituationResponse](t, api, "/api/where/situation/25_no-selector-agency-alert.json?key=TEST")
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		require.Len(t, model.Data.Entry.AllAffects, 1)
+		assert.Equal(t, "25_unknown-stop", model.Data.Entry.AllAffects[0].StopID)
 	})
 }
