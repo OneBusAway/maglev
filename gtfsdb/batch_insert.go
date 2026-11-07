@@ -18,10 +18,17 @@ type batchInsert[T any] struct {
 	appendArgs func(args []any, row T) []any // appends one row's values in column order
 }
 
+// bulkInsertLogger returns the logger that the batch inserts log through. It
+// reads slog.Default on each call, so it follows a default logger that changes
+// after the package loads.
+func bulkInsertLogger() *slog.Logger {
+	return slog.Default().With(slog.String("component", "bulk_insert"))
+}
+
 // bulkInsertRows runs insertInBatches in tx, or in a transaction of its own
 // when tx is nil, and logs the start and the number of rows inserted.
 func bulkInsertRows[T any](ctx context.Context, c *Client, tx *sql.Tx, insert batchInsert[T], rows iter.Seq[T]) error {
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+	logger := bulkInsertLogger()
 	logging.LogOperation(logger, "inserting_"+insert.table)
 
 	batchSize := c.config.SafeBatchSize(len(insert.columns))
@@ -46,7 +53,7 @@ func insertInBatches[T any](ctx context.Context, tx *sql.Tx, batchSize int, inse
 	if batchSize < 1 {
 		return 0, fmt.Errorf("batch size for %s must be at least 1, got %d", insert.table, batchSize)
 	}
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+	logger := bulkInsertLogger()
 	const progressInterval = 100_000
 
 	var fullBatch *sql.Stmt
