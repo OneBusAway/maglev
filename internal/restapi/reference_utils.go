@@ -591,9 +591,10 @@ func qualifyEntityID(id, feedAgencyID string, rawToAgency map[string]string) str
 			return id
 		}
 	}
-	// 3. Fall back to the feed's first configured agency. Prefixing stays
-	// idempotent for that agency, so a feed's own combined ID is not doubled.
-	if feedAgencyID == "" || strings.HasPrefix(id, feedAgencyID+"_") {
+		// 3. Fall back to the feed's first configured agency, as Java does. Java
+	// does not special-case an ID that already starts with that agency: on a
+	// feed whose first agency is 40, an unknown 40_x becomes 40_40_x.
+	if feedAgencyID == "" {
 		return id
 	}
 	return utils.FormCombinedID(feedAgencyID, id)

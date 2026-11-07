@@ -643,12 +643,13 @@ func TestBuildSituationReferences_Parity(t *testing.T) {
 	assert.Equal(t, "equipmentReason", situations[0].Reason)
 	assert.Equal(t, "normal", situations[0].Severity)
 
-	// Second alert: Already prefixed IDs should not be double-prefixed
+	// Second alert: Java prefixes unknown IDs even when they already start
+	// with the feed's agency, so these become double-prefixed.
 	require.Len(t, situations[1].AllAffects, 1)
 	affect2 := situations[1].AllAffects[0]
-	assert.Equal(t, "40_2LINE", affect2.RouteID)
-	assert.Equal(t, "40_20770", affect2.StopID)
-	assert.Equal(t, "40_TRIP1", affect2.TripID)
+	assert.Equal(t, "40_40_2LINE", affect2.RouteID)
+	assert.Equal(t, "40_40_20770", affect2.StopID)
+	assert.Equal(t, "40_40_TRIP1", affect2.TripID)
 	assert.Empty(t, situations[1].Consequences)
 
 	// Third alert: UNKNOWN_EFFECT produces empty consequences, and trip.route_id does not overwrite routeID
@@ -684,7 +685,7 @@ func TestQualifyEntityIDFeedAgencyFallback(t *testing.T) {
 		{"unknown entity uses the feed's first agency", "unknown-route", "40", "40_unknown-route"},
 		{"database agency wins over the feed's", "known-route", "40", "25_known-route"},
 		{"already qualified ID resolves through the database", "25_known-route", "40", "25_known-route"},
-		{"the feed's own prefix is not doubled", "40_unknown-route", "40", "40_unknown-route"},
+		{"an unknown ID already carrying the feed's prefix is still prefixed", "40_unknown-route", "40", "40_40_unknown-route"},
 		{"an unrelated known prefix is treated as raw", "1_unknown-route", "40", "40_1_unknown-route"},
 		{"no agency at all keeps the raw ID", "unknown-route", "", "unknown-route"},
 		{"empty ID stays empty", "", "40", ""},
