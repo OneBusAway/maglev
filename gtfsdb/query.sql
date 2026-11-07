@@ -608,15 +608,19 @@ OR REPLACE INTO import_metadata (
     id,
     file_hash,
     import_time,
-    file_source
+    file_source,
+    raw_file_hash
 )
 VALUES
-    (1, ?, ?, ?) RETURNING *;
+    (1, ?, ?, ?, ?) RETURNING *;
 
 -- name: UpdateFeedExpiresAt :exec
 INSERT INTO import_metadata (id, file_hash, import_time, file_source, feed_expires_at)
 VALUES (1, '', 0, '', ?)
 ON CONFLICT(id) DO UPDATE SET feed_expires_at = excluded.feed_expires_at;
+
+-- name: UpdateImportRawFileHash :exec
+UPDATE import_metadata SET raw_file_hash = ? WHERE id = 1;
 
 -- name: UpdateImportTime :exec
 INSERT INTO import_metadata (id, file_hash, import_time, file_source)

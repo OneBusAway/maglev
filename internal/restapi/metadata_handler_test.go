@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/gtfs"
 )
@@ -152,4 +153,32 @@ func TestMetadataHandler_ImportMetadataQueryFails(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
 	assert.Equal(t, "unavailable", body["status"])
 	assert.NotContains(t, body, "staticGtfsHash")
+}
+
+// TestMetadataHandler_StaticGtfsHashReportsRawHash stores a post-tidy FileHash and
+// a different RawFileHash, and checks that staticGtfsHash reports the raw one.
+func TestMetadataHandler_StaticGtfsHashReportsRawHash(t *testing.T) {
+	manager := newTestManagerNoData(t)
+	api := &RestAPI{
+		Application: &app.Application{
+			GtfsManager: manager,
+		},
+	}
+
+	_, err := manager.GtfsDB.Queries.UpsertImportMetadata(context.Background(), gtfsdb.UpsertImportMetadataParams{
+		FileHash:    "post-tidy-hash",
+		ImportTime:  time.Now().UnixNano(),
+		FileSource:  "raba.zip",
+		RawFileHash: "raw-zip-hash",
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v2/metadata.json", nil)
+	rr := httptest.NewRecorder()
+	api.metadataHandler(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+	assert.Equal(t, "raw-zip-hash", body["staticGtfsHash"])
 }

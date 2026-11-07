@@ -198,6 +198,14 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
         agency_id TEXT NOT NULL,
         PRIMARY KEY (stop_id, agency_id)
     );
+    CREATE TABLE IF NOT EXISTS import_metadata (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        file_hash TEXT NOT NULL,
+        import_time INTEGER NOT NULL,
+        file_source TEXT NOT NULL,
+        feed_expires_at INTEGER,
+        raw_file_hash TEXT NOT NULL DEFAULT ''
+    );
     CREATE TABLE IF NOT EXISTS routes (
         id TEXT PRIMARY KEY
     );
@@ -301,7 +309,8 @@ func newFeedExpiryTestDB(t *testing.T) (*sql.DB, *Queries) {
 			file_hash TEXT NOT NULL,
 			import_time INTEGER NOT NULL,
 			file_source TEXT NOT NULL,
-			feed_expires_at INTEGER
+			feed_expires_at INTEGER,
+			raw_file_hash TEXT NOT NULL DEFAULT ''
 		);
 		INSERT INTO import_metadata (id, file_hash, import_time, file_source) VALUES (1, '', 0, '');
 	`)

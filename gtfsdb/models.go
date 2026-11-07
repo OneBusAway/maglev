@@ -80,6 +80,7 @@ type ImportMetadatum struct {
 	ImportTime    int64
 	FileSource    string
 	FeedExpiresAt sql.NullInt64
+	RawFileHash   string
 }
 
 type ProblemReportsStop struct {

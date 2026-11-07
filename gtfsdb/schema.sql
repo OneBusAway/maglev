@@ -396,7 +396,8 @@ CREATE TABLE
         file_hash TEXT NOT NULL,
         import_time INTEGER NOT NULL,
         file_source TEXT NOT NULL,
-        feed_expires_at INTEGER
+        feed_expires_at INTEGER,
+        raw_file_hash TEXT NOT NULL DEFAULT ''
     ) STRICT;
 
 -- migrate

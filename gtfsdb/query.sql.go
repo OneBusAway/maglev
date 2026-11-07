@@ -2319,7 +2319,7 @@ func (q *Queries) GetFrequencyTripIDs(ctx context.Context) ([]string, error) {
 
 const getImportMetadata = `-- name: GetImportMetadata :one
 SELECT
-    id, file_hash, import_time, file_source, feed_expires_at
+    id, file_hash, import_time, file_source, feed_expires_at, raw_file_hash
 FROM
     import_metadata
 WHERE
@@ -2335,6 +2335,7 @@ func (q *Queries) GetImportMetadata(ctx context.Context) (ImportMetadatum, error
 		&i.ImportTime,
 		&i.FileSource,
 		&i.FeedExpiresAt,
+		&i.RawFileHash,
 	)
 	return i, err
 }
@@ -5617,6 +5618,15 @@ func (q *Queries) UpdateFeedExpiresAt(ctx context.Context, feedExpiresAt sql.Nul
 	return err
 }
 
+const updateImportRawFileHash = `-- name: UpdateImportRawFileHash :exec
+UPDATE import_metadata SET raw_file_hash = ? WHERE id = 1
+`
+
+func (q *Queries) UpdateImportRawFileHash(ctx context.Context, rawFileHash string) error {
+	_, err := q.exec(ctx, q.updateImportRawFileHashStmt, updateImportRawFileHash, rawFileHash)
+	return err
+}
+
 const updateImportTime = `-- name: UpdateImportTime :exec
 INSERT INTO import_metadata (id, file_hash, import_time, file_source)
 VALUES (1, '', ?, '')
@@ -5650,20 +5660,27 @@ OR REPLACE INTO import_metadata (
     id,
     file_hash,
     import_time,
-    file_source
+    file_source,
+    raw_file_hash
 )
 VALUES
-    (1, ?, ?, ?) RETURNING id, file_hash, import_time, file_source, feed_expires_at
+    (1, ?, ?, ?, ?) RETURNING id, file_hash, import_time, file_source, feed_expires_at, raw_file_hash
 `
 
 type UpsertImportMetadataParams struct {
-	FileHash   string
-	ImportTime int64
-	FileSource string
+	FileHash    string
+	ImportTime  int64
+	FileSource  string
+	RawFileHash string
 }
 
 func (q *Queries) UpsertImportMetadata(ctx context.Context, arg UpsertImportMetadataParams) (ImportMetadatum, error) {
-	row := q.queryRow(ctx, q.upsertImportMetadataStmt, upsertImportMetadata, arg.FileHash, arg.ImportTime, arg.FileSource)
+	row := q.queryRow(ctx, q.upsertImportMetadataStmt, upsertImportMetadata,
+		arg.FileHash,
+		arg.ImportTime,
+		arg.FileSource,
+		arg.RawFileHash,
+	)
 	var i ImportMetadatum
 	err := row.Scan(
 		&i.ID,
@@ -5671,6 +5688,7 @@ func (q *Queries) UpsertImportMetadata(ctx context.Context, arg UpsertImportMeta
 		&i.ImportTime,
 		&i.FileSource,
 		&i.FeedExpiresAt,
+		&i.RawFileHash,
 	)
 	return i, err
 }

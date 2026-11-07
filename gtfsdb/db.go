@@ -399,6 +399,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updateFeedExpiresAtStmt, err = db.PrepareContext(ctx, updateFeedExpiresAt); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateFeedExpiresAt: %w", err)
 	}
+	if q.updateImportRawFileHashStmt, err = db.PrepareContext(ctx, updateImportRawFileHash); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateImportRawFileHash: %w", err)
+	}
 	if q.updateImportTimeStmt, err = db.PrepareContext(ctx, updateImportTime); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateImportTime: %w", err)
 	}
@@ -1038,6 +1041,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing updateFeedExpiresAtStmt: %w", cerr)
 		}
 	}
+	if q.updateImportRawFileHashStmt != nil {
+		if cerr := q.updateImportRawFileHashStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateImportRawFileHashStmt: %w", cerr)
+		}
+	}
 	if q.updateImportTimeStmt != nil {
 		if cerr := q.updateImportTimeStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateImportTimeStmt: %w", cerr)
@@ -1217,6 +1225,7 @@ type Queries struct {
 	routeHasFutureServiceStmt                 *sql.Stmt
 	shapeHasTripForAgencyStmt                 *sql.Stmt
 	updateFeedExpiresAtStmt                   *sql.Stmt
+	updateImportRawFileHashStmt               *sql.Stmt
 	updateImportTimeStmt                      *sql.Stmt
 	updateStopDirectionStmt                   *sql.Stmt
 	upsertImportMetadataStmt                  *sql.Stmt
@@ -1351,6 +1360,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		routeHasFutureServiceStmt:                 q.routeHasFutureServiceStmt,
 		shapeHasTripForAgencyStmt:                 q.shapeHasTripForAgencyStmt,
 		updateFeedExpiresAtStmt:                   q.updateFeedExpiresAtStmt,
+		updateImportRawFileHashStmt:               q.updateImportRawFileHashStmt,
 		updateImportTimeStmt:                      q.updateImportTimeStmt,
 		updateStopDirectionStmt:                   q.updateStopDirectionStmt,
 		upsertImportMetadataStmt:                  q.upsertImportMetadataStmt,

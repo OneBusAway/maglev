@@ -2,6 +2,8 @@ package gtfs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,8 +20,6 @@ import (
 func rawGtfsData(ctx context.Context, source string, config Config) ([]byte, error) {
 	var b []byte
 	var err error
-
-	logger := slog.Default().With(slog.String("component", "gtfs_loader"))
 
 	if config.isLocalFile() {
 		b, err = os.ReadFile(source)
@@ -66,18 +66,23 @@ func rawGtfsData(ctx context.Context, source string, config Config) ([]byte, err
 		}
 	}
 
-	// Process through gtfstidy if enabled
-	if config.EnableGTFSTidy {
-		logging.LogOperation(logger, "gtfstidy_enabled_processing_gtfs_data")
-		tidiedData, err := tidyGTFSData(ctx, b, logger)
-		if err != nil {
-			logging.LogError(logger, "Failed to tidy GTFS data, using original data", err)
-		} else {
-			b = tidiedData
-		}
-	}
-
 	return b, nil
+}
+
+// tidyIfEnabled runs the zip through gtfstidy when it is enabled. If tidy
+// fails, the original bytes are used.
+func tidyIfEnabled(ctx context.Context, b []byte, config Config) []byte {
+	if !config.EnableGTFSTidy {
+		return b
+	}
+	logger := slog.Default().With(slog.String("component", "gtfs_loader"))
+	logging.LogOperation(logger, "gtfstidy_enabled_processing_gtfs_data")
+	tidiedData, err := tidyGTFSData(ctx, b, logger)
+	if err != nil {
+		logging.LogError(logger, "Failed to tidy GTFS data, using original data", err)
+		return b
+	}
+	return tidiedData
 }
 
 // openGtfsDB opens (or creates) the single SQLite database used by the manager.
@@ -125,15 +130,18 @@ func newGTFSDBConfig(dbPath string, config Config) gtfsdb.Config {
 
 // loadGTFSData loads, parses, hashes, and validates GTFS data from either a URL or a local file.
 func loadGTFSData(ctx context.Context, config Config) (*gtfsdb.GtfsData, error) {
-	b, err := rawGtfsData(ctx, config.GtfsURL, config)
+	raw, err := rawGtfsData(ctx, config.GtfsURL, config)
 	if err != nil {
 		return nil, fmt.Errorf("error reading GTFS data: %w", err)
 	}
 
-	data, err := gtfsdb.ParseGtfsData(b, config.GtfsURL)
+	data, err := gtfsdb.ParseGtfsData(tidyIfEnabled(ctx, raw, config), config.GtfsURL)
 	if err != nil {
 		return nil, err
 	}
+	// The raw hash is taken before tidy, so it matches the zip the feed URL serves.
+	rawSum := sha256.Sum256(raw)
+	data.RawHash = hex.EncodeToString(rawSum[:])
 
 	if err := validateStaticAgencyTimezones(data.Static); err != nil {
 		return nil, fmt.Errorf("invalid GTFS agency timezone: %w", err)
