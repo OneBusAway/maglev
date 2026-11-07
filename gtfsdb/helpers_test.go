@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
@@ -454,4 +455,114 @@ func TestStoreGtfsData_UnchangedFeedExpiryFailure(t *testing.T) {
 	metadata, err := q.GetImportMetadata(t.Context())
 	require.NoError(t, err)
 	assert.False(t, metadata.FeedExpiresAt.Valid)
+}
+
+func TestGtfsDirectionIDToDB(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    gtfs.DirectionID
+		expected sql.NullInt64
+	}{
+		{
+			name:     "DirectionID_True maps to 1",
+			input:    gtfs.DirectionID_True,
+			expected: sql.NullInt64{Int64: 1, Valid: true},
+		},
+		{
+			name:     "DirectionID_False maps to 0",
+			input:    gtfs.DirectionID_False,
+			expected: sql.NullInt64{Int64: 0, Valid: true},
+		},
+		{
+			name:     "DirectionID_Empty/unknown maps to invalid",
+			input:    gtfs.DirectionID(0),
+			expected: sql.NullInt64{Valid: false},
+		},
+		{
+			name:     "arbitrary invalid enum maps to invalid",
+			input:    gtfs.DirectionID(99),
+			expected: sql.NullInt64{Valid: false},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := gtfsDirectionIDToDB(tt.input)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestBoolToInt(t *testing.T) {
+	assert.Equal(t, int64(1), boolToInt(true))
+	assert.Equal(t, int64(0), boolToInt(false))
+}
+
+func TestToNullInt64(t *testing.T) {
+	assert.Equal(t, sql.NullInt64{Valid: false}, toNullInt64(0))
+	assert.Equal(t, sql.NullInt64{Int64: 42, Valid: true}, toNullInt64(42))
+	assert.Equal(t, sql.NullInt64{Int64: -1, Valid: true}, toNullInt64(-1))
+}
+
+func TestPickFirstAvailable(t *testing.T) {
+	assert.Equal(t, "primary", pickFirstAvailable("primary", "fallback"))
+	assert.Equal(t, "fallback", pickFirstAvailable("", "fallback"))
+	assert.Equal(t, "", pickFirstAvailable("", ""))
+}
+
+func TestLatestAgencyExpiry(t *testing.T) {
+	serviceDate := time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC)
+
+	t.Run("empty agencies returns error", func(t *testing.T) {
+		_, err := latestAgencyExpiry(serviceDate, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot calculate feed expiry without an agency timezone")
+	})
+
+	t.Run("empty timezone returns error", func(t *testing.T) {
+		agencies := []Agency{
+			{ID: "agency_1", Timezone: "   "},
+		}
+		_, err := latestAgencyExpiry(serviceDate, agencies)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `agency "agency_1" has empty timezone`)
+	})
+
+	t.Run("invalid timezone returns error", func(t *testing.T) {
+		agencies := []Agency{
+			{ID: "agency_1", Timezone: "Invalid/Not_A_Timezone"},
+		}
+		_, err := latestAgencyExpiry(serviceDate, agencies)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `agency "agency_1" has invalid timezone`)
+	})
+
+	t.Run("single agency calculates end of day in its timezone", func(t *testing.T) {
+		agencies := []Agency{
+			{ID: "agency_1", Timezone: "America/Los_Angeles"},
+		}
+		expiry, err := latestAgencyExpiry(serviceDate, agencies)
+		require.NoError(t, err)
+
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		expected := time.Date(2025, 6, 15, 23, 59, 59, 0, loc)
+		assert.Equal(t, expected, expiry)
+	})
+
+	t.Run("multiple agencies picks latest UTC expiry", func(t *testing.T) {
+		// America/Los_Angeles (UTC-7 in summer) ends later in UTC than America/New_York (UTC-4 in summer)
+		agencies := []Agency{
+			{ID: "ny_agency", Timezone: "America/New_York"},
+			{ID: "la_agency", Timezone: "America/Los_Angeles"},
+			{ID: "ny_agency_dup", Timezone: "America/New_York"},
+		}
+		expiry, err := latestAgencyExpiry(serviceDate, agencies)
+		require.NoError(t, err)
+
+		locLA, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		expected := time.Date(2025, 6, 15, 23, 59, 59, 0, locLA)
+		assert.Equal(t, expected, expiry)
+	})
 }

@@ -64,6 +64,13 @@ type Manager struct {
 	// be resolved to any agency. Kept out of the merged view, but the metrics
 	// endpoint reports them as that feed's unmatched records.
 	feedUnattributedTrips map[string][]gtfs.Trip
+	// Per-feed agency each trip update was attributed to at ingestion, keyed
+	// by trip ID: its route's agency, else its static trip's, else the
+	// feed's first agency-ids entry. Trips without an agency have no entry.
+	feedTripAgency map[string]map[string]string // feedID -> tripID -> agencyID
+	// Per-feed time its trip data was produced: the trip-updates feed's
+	// header timestamp, else its fetch time.
+	feedTripDataTime map[string]time.Time
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
 	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
 	// No lock is required for reads.
@@ -76,6 +83,8 @@ type Manager struct {
 	// Per-feed time its vehicle data was produced: the vehicle feed's header
 	// timestamp, else its fetch time.
 	feedVehicleDataTime map[string]time.Time
+	// Per-feed vehicles kept after dropping out of the feed's latest update
+	feedRetainedVehicles map[string]map[vehicleKey]struct{} // feedID -> retained vehicle keys
 
 	// Per-feed last successfully applied vehicle feed timestamp
 	feedVehicleTimestamp map[string]uint64 // feedID -> timestamp
@@ -97,13 +106,17 @@ func (manager *Manager) clearFeedData(feedID string) {
 
 	manager.feedTrips[feedID] = nil
 	delete(manager.feedUnattributedTrips, feedID)
+	delete(manager.feedTripAgency, feedID)
+	delete(manager.feedTripDataTime, feedID)
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
 
-	delete(manager.feedVehicleTimestamp, feedID)
+	// Keep the last applied vehicle timestamp. Dropping it lets the next poll
+	// of the same frozen payload look new and reset the circuit breaker.
 	delete(manager.feedVehicleLastSeen, feedID)
 	delete(manager.feedVehicleAgency, feedID)
 	delete(manager.feedVehicleDataTime, feedID)
+	delete(manager.feedRetainedVehicles, feedID)
 
 	delete(manager.feedLastUpdate, feedID)
 
@@ -154,7 +167,10 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 		feedVehicleAgency:    make(map[string]map[vehicleKey]string),
 		feedVehicleDataTime:  make(map[string]time.Time),
+		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 		feedVehicleTimestamp: make(map[string]uint64),
+		feedTripAgency:       make(map[string]map[string]string),
+		feedTripDataTime:     make(map[string]time.Time),
 		Metrics:              config.Metrics,
 	}
 
@@ -342,9 +358,9 @@ func (manager *Manager) GetStopsForLocation(
 	stopCodeQuery string,
 	maxCount int,
 	routeTypes []int,
-) ([]gtfsdb.Stop, bool) {
-	if ctx.Err() != nil {
-		return []gtfsdb.Stop{}, false
+) ([]gtfsdb.Stop, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
 	}
 
 	if stopCodeQuery != "" {
@@ -355,9 +371,7 @@ func (manager *Manager) GetStopsForLocation(
 
 	stops, err := manager.queryStopsInBounds(ctx, bounds)
 	if err != nil {
-		reqLogger := logging.ForComponent(ctx, "gtfs_manager")
-		logging.LogError(reqLogger, "could not query stops within bounds", err)
-		return []gtfsdb.Stop{}, false
+		return nil, false, fmt.Errorf("query stops within bounds: %w", err)
 	}
 
 	var limitExceeded bool
@@ -383,27 +397,28 @@ func (manager *Manager) GetStopsForLocation(
 		}
 
 		routesForStops, err := manager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDs)
-		if err == nil {
-			stopRouteTypes := make(map[string][]int)
-			for _, r := range routesForStops {
-				stopRouteTypes[r.StopID] = append(stopRouteTypes[r.StopID], int(r.Type))
-			}
-			filteredStops := make([]gtfsdb.Stop, 0, len(stops))
-			for _, stop := range stops {
-				for _, rt := range stopRouteTypes[stop.ID] {
-					if slices.Contains(routeTypes, rt) {
-						filteredStops = append(filteredStops, stop)
-						break
-					}
+		if err != nil {
+			return nil, false, fmt.Errorf("query route types for stops: %w", err)
+		}
+		stopRouteTypes := make(map[string][]int)
+		for _, r := range routesForStops {
+			stopRouteTypes[r.StopID] = append(stopRouteTypes[r.StopID], int(r.Type))
+		}
+		filteredStops := make([]gtfsdb.Stop, 0, len(stops))
+		for _, stop := range stops {
+			for _, rt := range stopRouteTypes[stop.ID] {
+				if slices.Contains(routeTypes, rt) {
+					filteredStops = append(filteredStops, stop)
+					break
 				}
 			}
-			stops = filteredStops
 		}
+		stops = filteredStops
 
 		// Capped downstream, after stops with no service that date are dropped.
 	}
 
-	return stops, limitExceeded
+	return stops, limitExceeded, nil
 }
 
 // stopsMatchingCode resolves a stop-code query. Candidates are drawn from the whole
@@ -414,15 +429,13 @@ func (manager *Manager) stopsMatchingCode(
 	loc *LocationParams,
 	stopCode string,
 	maxCount int,
-) ([]gtfsdb.Stop, bool) {
+) ([]gtfsdb.Stop, bool, error) {
 	candidates, err := manager.GtfsDB.Queries.GetStopsByCode(ctx, nulls.String(stopCode))
 	if err != nil {
-		reqLogger := logging.ForComponent(ctx, "gtfs_manager")
-		logging.LogError(reqLogger, "could not query stops by code", err)
-		return nil, false
+		return nil, false, fmt.Errorf("query stops by code: %w", err)
 	}
 	if len(candidates) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	bounds := BoundsFromParams(CodeQueryLocation(loc))
@@ -434,7 +447,7 @@ func (manager *Manager) stopsMatchingCode(
 	}
 
 	if len(within) == 0 {
-		return []gtfsdb.Stop{closestStop(candidates, loc)}, false
+		return []gtfsdb.Stop{closestStop(candidates, loc)}, false, nil
 	}
 
 	if len(within) > maxCount {
@@ -444,9 +457,9 @@ func (manager *Manager) stopsMatchingCode(
 				utils.Distance(loc.Lat, loc.Lon, b.Lat, b.Lon),
 			)
 		})
-		return within[:maxCount], true
+		return within[:maxCount], true, nil
 	}
-	return within, false
+	return within, false, nil
 }
 
 // CodeQueryLocation applies the wider default radius used by stop-code queries,
@@ -687,7 +700,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	requestedBlockID := requestedTrip.BlockID.String
+	requestedBlockID := nulls.StringOrEmpty(requestedTrip.BlockID)
 
 	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
@@ -825,13 +838,16 @@ func (manager *Manager) IsServiceActiveOnDate(ctx context.Context, serviceID str
 }
 
 // GetSystemETag reads the system ETag from the database.
+// It returns a weak entity tag as required by RFC 9110 section 8.8.3,
+// because compression middleware serves the same validator for identity
+// and compressed representations.
 func (manager *Manager) GetSystemETag(ctx context.Context) string {
 	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
 	if err != nil || metadata.FileHash == "" {
 		return ""
 	}
 
-	return metadata.FileHash
+	return `W/"` + metadata.FileHash + `"`
 }
 
 // FeedExpiresAt reads the feed expiry time from the database.

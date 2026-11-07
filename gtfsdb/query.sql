@@ -677,7 +677,8 @@ ORDER BY
 
 -- name: GetRouteIDsForStops :many
 SELECT DISTINCT
-    routes.agency_id || '_' || routes.id AS route_id,
+    routes.id AS route_id,
+    routes.agency_id,
     stop_times.stop_id
 FROM
     stop_times
@@ -688,7 +689,8 @@ WHERE
 
 -- name: GetActiveRouteIDsForStopsOnDate :many
 SELECT DISTINCT
-    routes.agency_id || '_' || routes.id AS route_id,
+    routes.id AS route_id,
+    routes.agency_id,
     stop_times.stop_id
 FROM
     stop_times
@@ -1090,11 +1092,8 @@ SELECT
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
 WHERE st.stop_id = @stop_id
-  AND (
-    (st.arrival_time BETWEEN @window_start_nanos AND @window_end_nanos)
-        OR
-    (st.departure_time BETWEEN @window_start_nanos AND @window_end_nanos)
-    )
+  AND st.departure_time >= @window_start_nanos
+  AND st.arrival_time <= @window_end_nanos
 ORDER BY st.arrival_time;
 
 -- name: GetStopTimesForStopsInWindow :many
@@ -1111,11 +1110,8 @@ SELECT
     t.block_id
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
-WHERE (
-    (st.arrival_time BETWEEN @window_start_nanos AND @window_end_nanos)
-        OR
-    (st.departure_time BETWEEN @window_start_nanos AND @window_end_nanos)
-    )
+WHERE st.departure_time >= @window_start_nanos
+  AND st.arrival_time <= @window_end_nanos
   AND st.stop_id IN (sqlc.slice('stop_ids'))
 ORDER BY st.stop_id, st.arrival_time;
 

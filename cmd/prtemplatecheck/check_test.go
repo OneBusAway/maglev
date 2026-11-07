@@ -165,6 +165,34 @@ func TestCheckBody(t *testing.T) {
 			},
 		},
 		{
+			name: "response_comparison_kept_empty_suggests_deletion",
+			body: func(t *testing.T) string {
+				body := replaceOnce(t, filled, "## Response comparison (delete if no Java-served response changed)\n\nWritten by the author.", "## Response comparison (delete if no Java-served response changed)")
+				for _, label := range []string{
+					"Request URL(s)",
+					"Java server, feeds and date checked",
+					"Maglev before",
+					"Maglev after",
+					"Java",
+					"If Maglev intentionally differs from Java",
+				} {
+					body = setField(t, body, label, "")
+				}
+				return body
+			},
+			wantRules:    []string{ruleSection},
+			wantMentions: []string{"Response comparison", "is empty", "Delete it if no Java-served response changed, or fill it in."},
+		},
+		{
+			name: "response_comparison_heading_only_suggests_deletion",
+			body: func(t *testing.T) string {
+				without := removeSection(t, filled, "Response comparison")
+				return replaceOnce(t, without, "## Notes for reviewers", "## Response comparison\n\n## Notes for reviewers")
+			},
+			wantRules:    []string{ruleSection},
+			wantMentions: []string{"Response comparison", "is empty", "Delete it if no Java-served response changed, or fill it in."},
+		},
+		{
 			name: "response_fields_empty",
 			body: func(t *testing.T) string {
 				body := setField(t, filled, "Maglev after", "")
@@ -190,6 +218,75 @@ func TestCheckBody(t *testing.T) {
 			body: func(t *testing.T) string {
 				return setField(t, filled, "Maglev before", "\n<details>\n\n```json\n{\"code\": 200}\n```\n</details>")
 			},
+		},
+		{
+			name: "stray_paragraph_after_empty_field",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\nAn unrelated paragraph in the section.")
+			},
+			wantRules:    []string{ruleField},
+			wantMentions: []string{"Manual check"},
+		},
+		{
+			name: "filled_field_followed_by_stray_paragraph",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", " ran unit tests\n\nAn unrelated paragraph in the section.")
+			},
+		},
+		{
+			name: "field_value_unindented_code_fence_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n```\ncurl localhost:4000\n```")
+			},
+		},
+		{
+			name: "field_value_unindented_tilde_fence_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n~~~\ncurl localhost:4000\n~~~")
+			},
+		},
+		{
+			name: "field_value_details_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n<details>\nmanual check\n</details>")
+			},
+		},
+		{
+			name: "field_value_details_open_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Manual check", "\n\n<details open>\nmanual check\n</details>")
+			},
+		},
+		{
+			name: "field_value_markdown_image_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Maglev before", "\n\n![screenshot](https://example.com/before.png)")
+			},
+		},
+		{
+			name: "field_value_html_image_after_blank",
+			body: func(t *testing.T) string {
+				return setField(t, filled, "Maglev before", "\n\n<img width=\"600\" src=\"https://example.com/before.png\">")
+			},
+		},
+		{
+			name: "optional_section_empty_fields_with_stray_prose_reports_fields",
+			body: func(t *testing.T) string {
+				body := replaceOnce(t, filled, "## Response comparison (delete if no Java-served response changed)\n\nWritten by the author.", "## Response comparison (delete if no Java-served response changed)")
+				for _, label := range []string{
+					"Request URL(s)",
+					"Java server, feeds and date checked",
+					"Maglev before",
+					"Maglev after",
+					"Java",
+					"If Maglev intentionally differs from Java",
+				} {
+					body = setField(t, body, label, "")
+				}
+				return setField(t, body, "If Maglev intentionally differs from Java", "\n\nAn unrelated paragraph in the section.")
+			},
+			wantRules:    []string{ruleField, ruleField, ruleField, ruleField, ruleField},
+			wantMentions: []string{"Request URL(s)", "Java server, feeds and date checked", "Maglev before", "Maglev after", "Java"},
 		},
 		{
 			name: "checkbox_in_comment",
@@ -282,4 +379,82 @@ func TestParseTemplateRejectsBrokenTemplates(t *testing.T) {
 			assert.Error(t, err)
 		})
 	}
+}
+
+func TestCheckBody_OptionalSectionWithoutDeleteHint(t *testing.T) {
+	customTemplate := "<!-- maglev-pr-template:v1 -->\n\nFixes #\n\n## Custom (optional)\n\n- **Field:**\n\n## Checklist\n\n- [ ] Done\n"
+	rules, err := parseTemplate(customTemplate)
+	require.NoError(t, err)
+
+	// Present but empty: emits ruleSection with fallback message
+	bodyEmpty := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Custom (optional)\n\n- **Field:**\n\n## Checklist\n\n- [x] Done\n"
+	problems := checkBody(rules, bodyEmpty, false)
+	require.Len(t, problems, 1)
+	assert.Equal(t, ruleSection, problems[0].Rule)
+	assert.Equal(t, "Section **Custom** is empty.", problems[0].Message)
+
+	// Deleted: passes
+	bodyDeleted := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Checklist\n\n- [x] Done\n"
+	assert.Empty(t, checkBody(rules, bodyDeleted, false))
+}
+
+func TestCheckBody_FieldlessOptionalSectionWithDeleteHint(t *testing.T) {
+	customTemplate := "<!-- maglev-pr-template:v1 -->\n\nFixes #\n\n## Benchmarks (delete if no benchmarks were run)\n\n## Checklist\n\n- [ ] Done\n"
+	rules, err := parseTemplate(customTemplate)
+	require.NoError(t, err)
+
+	// Present but empty: suggests deletion with hint
+	bodyEmpty := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Benchmarks (delete if no benchmarks were run)\n\n## Checklist\n\n- [x] Done\n"
+	problems := checkBody(rules, bodyEmpty, false)
+	require.Len(t, problems, 1)
+	assert.Equal(t, ruleSection, problems[0].Rule)
+	assert.Equal(t, "Section **Benchmarks** is empty. Delete it if no benchmarks were run, or fill it in.", problems[0].Message)
+
+	// Present with content: passes
+	bodyContent := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Benchmarks (delete if no benchmarks were run)\n\nBenchmark results here.\n\n## Checklist\n\n- [x] Done\n"
+	assert.Empty(t, checkBody(rules, bodyContent, false))
+
+	// Deleted: passes
+	bodyDeleted := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Checklist\n\n- [x] Done\n"
+	assert.Empty(t, checkBody(rules, bodyDeleted, false))
+}
+
+func TestCheckBody_OptionalSectionWithCheckedCheckbox(t *testing.T) {
+	customTemplate := "<!-- maglev-pr-template:v1 -->\n\nFixes #\n\n## Custom (optional)\n\n- [ ] Verified\n- **If note:**\n\n## Checklist\n\n- [ ] Done\n"
+	rules, err := parseTemplate(customTemplate)
+	require.NoError(t, err)
+
+	// Checked checkbox counts as content even if conditional field is blank
+	bodyChecked := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Custom (optional)\n\n- [x] Verified\n- **If note:**\n\n## Checklist\n\n- [x] Done\n"
+	assert.Empty(t, checkBody(rules, bodyChecked, false))
+}
+
+func TestCheckBody_FieldlessOptionalSectionWithUncheckedCheckbox(t *testing.T) {
+	customTemplate := "<!-- maglev-pr-template:v1 -->\n\nFixes #\n\n## Benchmarks (delete if no benchmarks were run)\n\n- [ ] Run benchmark\n\n## Checklist\n\n- [ ] Done\n"
+	rules, err := parseTemplate(customTemplate)
+	require.NoError(t, err)
+
+	// Unchecked checkbox does not count as content
+	bodyUnchecked := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Benchmarks (delete if no benchmarks were run)\n\n- [ ] Run benchmark\n\n## Checklist\n\n- [x] Done\n"
+	problems := checkBody(rules, bodyUnchecked, false)
+	require.Len(t, problems, 1)
+	assert.Equal(t, ruleSection, problems[0].Rule)
+	assert.Equal(t, "Section **Benchmarks** is empty. Delete it if no benchmarks were run, or fill it in.", problems[0].Message)
+
+	// Checked checkbox counts as content
+	bodyChecked := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Benchmarks (delete if no benchmarks were run)\n\n- [x] Run benchmark\n\n## Checklist\n\n- [x] Done\n"
+	assert.Empty(t, checkBody(rules, bodyChecked, false))
+}
+
+func TestCheckBody_OptionalSectionWithRenamedField(t *testing.T) {
+	customTemplate := "<!-- maglev-pr-template:v1 -->\n\nFixes #\n\n## Custom (delete if not needed)\n\n- **Expected:**\n\n## Checklist\n\n- [ ] Done\n"
+	rules, err := parseTemplate(customTemplate)
+	require.NoError(t, err)
+
+	// Renamed/custom field with a value counts as content rather than reporting the section empty
+	bodyRenamed := "<!-- maglev-pr-template:v1 -->\n\nFixes #1\n\n## Custom (delete if not needed)\n\n- **Renamed:** value\n\n## Checklist\n\n- [x] Done\n"
+	problems := checkBody(rules, bodyRenamed, false)
+	require.Len(t, problems, 1)
+	assert.Equal(t, ruleField, problems[0].Rule)
+	assert.Equal(t, "**Custom**: \"Expected:\" is empty.", problems[0].Message)
 }
