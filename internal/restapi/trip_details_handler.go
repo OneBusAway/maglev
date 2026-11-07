@@ -274,7 +274,10 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		// status only when the schedule places it nowhere. So drop the untracked
 		// placeholder only when the trip is not scheduled to be running.
 		if status != nil && status.IsUntracked() {
-			scheduled, schedErr := api.tripScheduledToRunAt(ctx, trip, freqRows, serviceDate, currentTime)
+			// The serviceDate check above already returned 404 unless the
+			// trip's service runs that day.
+			serviceConfirmed := params.ServiceDate != nil
+			scheduled, schedErr := api.tripScheduledToRunAt(ctx, trip, freqRows, serviceDate, currentTime.Sub(serviceStart), serviceConfirmed)
 			if schedErr != nil {
 				api.serverErrorResponse(w, r, schedErr)
 				return
@@ -401,13 +404,16 @@ func (api *RestAPI) serviceActiveOn(ctx context.Context, serviceID string, servi
 	return slices.Contains(activeServiceIDs, serviceID), nil
 }
 
-// tripScheduledToRunAt reports whether trip's schedule has it running at currentTime on
-// serviceDate: its service runs that day and currentTime falls within its stop-time
-// span or, for a frequency-based trip, within a frequency window plus one run.
-func (api *RestAPI) tripScheduledToRunAt(ctx context.Context, trip gtfsdb.Trip, freqs []gtfsdb.Frequency, serviceDate, currentTime time.Time) (bool, error) {
-	offset := currentTime.Sub(servicedate.OffsetBase(serviceDate))
-	if !tripSpanCovers(trip, freqs, offset) {
+// tripScheduledToRunAt reports whether trip's schedule has it running at
+// scheduleOffset after the start of serviceDate: scheduleOffset falls within
+// its scheduled span and its service runs that day. serviceConfirmed skips the
+// calendar query when the caller has already checked the service.
+func (api *RestAPI) tripScheduledToRunAt(ctx context.Context, trip gtfsdb.Trip, freqs []gtfsdb.Frequency, serviceDate time.Time, scheduleOffset time.Duration, serviceConfirmed bool) (bool, error) {
+	if !tripSpanCovers(trip, freqs, scheduleOffset) {
 		return false, nil
+	}
+	if serviceConfirmed {
+		return true, nil
 	}
 	return api.serviceActiveOn(ctx, trip.ServiceID, serviceDate)
 }

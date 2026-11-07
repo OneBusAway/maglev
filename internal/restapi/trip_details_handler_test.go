@@ -313,14 +313,25 @@ func TestTripDetailsHandlerScheduledStatusWhileRunningUntracked(t *testing.T) {
 	agency := mustGetAgencies(t, api)[0]
 	tripID := utils.FormCombinedID(agency.ID, runningTripAt(t, api, arrivalsTestClock))
 
-	resp, model := callAPIHandler[TripDetailsResponse](t, api,
-		"/api/where/trip-details/"+tripID+".json?key=TEST&includeStatus=true")
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"service date from query time", ""},
+		{"explicit service date", "&serviceDate=" + arrivalsTestClock.Format(serviceDateLayout)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, model := callAPIHandler[TripDetailsResponse](t, api,
+				"/api/where/trip-details/"+tripID+".json?key=TEST&includeStatus=true"+tc.query)
 
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	require.NotNil(t, model.Data.Entry.Status, "a running trip has a schedule-derived status")
-	assert.False(t, model.Data.Entry.Status.Predicted)
-	assert.Equal(t, tripID, model.Data.Entry.Status.ActiveTripID)
-	assert.NotEmpty(t, model.Data.Entry.Status.ClosestStop)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			require.NotNil(t, model.Data.Entry.Status, "a running trip has a schedule-derived status")
+			assert.False(t, model.Data.Entry.Status.Predicted)
+			assert.Equal(t, tripID, model.Data.Entry.Status.ActiveTripID)
+			assert.NotEmpty(t, model.Data.Entry.Status.ClosestStop)
+		})
+	}
 }
 
 // tripInWindowButInactiveAt returns a trip whose stop-time span covers at but whose
