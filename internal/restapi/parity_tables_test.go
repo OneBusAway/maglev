@@ -36,8 +36,8 @@ var parityIgnoredColumns = map[string]bool{
 	"block_trip_index.created_at": true,
 }
 
-// parityColumnReplacements compares a foreign key to an autoincrement ID by
-// the referenced row's natural key, because the ID depends on insertion order.
+// parityColumnReplacements compares a foreign key to a rowid key by the
+// referenced row's natural key, because the rowid depends on insertion order.
 var parityColumnReplacements = map[string]string{
 	"block_trip_entry.block_trip_index_id": `(SELECT index_key FROM block_trip_index
 		WHERE block_trip_index.id = block_trip_entry.block_trip_index_id)`,
@@ -68,18 +68,44 @@ func TestParityTables(t *testing.T) {
 	}
 }
 
+func TestParitySchemaFindsRowidKeys(t *testing.T) {
+	db := createTestApiWithFeed(t, "../../testdata/raba.zip").GtfsManager.GtfsDB.DB
+	schema := loadParitySchema(t, db)
+
+	assert.Equal(t, "id", schema.rowidKeys["block_trip_index"], "an AUTOINCREMENT key aliases the rowid")
+	assert.Equal(t, "id", schema.rowidKeys["import_metadata"], "a plain INTEGER PRIMARY KEY aliases the rowid")
+	assert.NotContains(t, schema.rowidKeys, "stops", "a TEXT primary key is not a rowid key")
+	assert.NotContains(t, schema.rowidKeys, "stop_times", "a composite primary key is not a rowid key")
+	assert.Contains(t, schema.autoincrementTables, "block_trip_index")
+	assert.NotContains(t, schema.autoincrementTables, "import_metadata")
+}
+
 // paritySchema describes the keys that SQLite assigns, whose values depend on
 // insertion order.
 type paritySchema struct {
 	// autoincrementTables have an AUTOINCREMENT id, which the digest leaves out.
 	autoincrementTables []string
+	// rowidKeys maps each table whose primary key aliases the rowid to that
+	// key's column. That includes every AUTOINCREMENT table, and also a plain
+	// INTEGER PRIMARY KEY, which SQLite fills from the rowid when an insert
+	// leaves it out.
+	rowidKeys map[string]string
 }
 
 func loadParitySchema(t *testing.T, db *sql.DB) paritySchema {
 	t.Helper()
+	rowidKeys := map[string]string{}
+	for _, row := range queryStringRows(t, db, `SELECT m.name, p.name FROM sqlite_master m
+		JOIN pragma_table_info(m.name) p ON p.pk = 1 AND upper(p.type) = 'INTEGER'
+		WHERE m.type = 'table' AND m.sql NOT LIKE '%WITHOUT ROWID%'
+		AND (SELECT COUNT(*) FROM pragma_table_info(m.name) WHERE pk > 0) = 1`) {
+		table, keyColumn := row[0], row[1]
+		rowidKeys[table] = keyColumn
+	}
 	return paritySchema{
 		autoincrementTables: queryStrings(t, db, `SELECT name FROM sqlite_master
 			WHERE type = 'table' AND sql LIKE '%AUTOINCREMENT%'`),
+		rowidKeys: rowidKeys,
 	}
 }
 
@@ -121,19 +147,19 @@ func normalizedTableRows(t *testing.T, db *sql.DB, schema paritySchema, table st
 
 // parityColumns returns the expressions that select the table's columns,
 // minus its autoincrement key and import timestamps. It fails for a foreign
-// key to another table's autoincrement ID, whose value depends on insertion
+// key to another table's rowid key, whose value depends on insertion
 // order, unless parityColumnReplacements has an entry for that column.
 func parityColumns(t *testing.T, db *sql.DB, schema paritySchema, table string) []string {
 	t.Helper()
-	var autoincrementReferences []string
+	var rowidKeyReferences []string
 	for _, fk := range queryStringRows(t, db, `SELECT "from", "table", coalesce("to", '') FROM pragma_foreign_key_list(?)`, table) {
 		fromColumn, parentTable, toColumn := fk[0], fk[1], fk[2]
+		rowidKey, isRowidKeyTable := schema.rowidKeys[parentTable]
 		// A REFERENCES clause without a column name targets the primary key,
 		// and SQLite reports its "to" as NULL, which the query turns into "".
-		referencesAutoincrementKey := slices.Contains(schema.autoincrementTables, parentTable) &&
-			(toColumn == "" || toColumn == "id")
-		if referencesAutoincrementKey {
-			autoincrementReferences = append(autoincrementReferences, fromColumn)
+		referencesRowidKey := isRowidKeyTable && (toColumn == "" || toColumn == rowidKey)
+		if referencesRowidKey {
+			rowidKeyReferences = append(rowidKeyReferences, fromColumn)
 		}
 	}
 
@@ -148,8 +174,8 @@ func parityColumns(t *testing.T, db *sql.DB, schema paritySchema, table string) 
 			columns = append(columns, replacement)
 			continue
 		}
-		require.NotContains(t, autoincrementReferences, column,
-			"%s references an autoincrement ID; add it to parityColumnReplacements", key)
+		require.NotContains(t, rowidKeyReferences, column,
+			"%s references a rowid key; add it to parityColumnReplacements", key)
 		columns = append(columns, column)
 	}
 	return columns
