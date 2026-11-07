@@ -141,7 +141,10 @@ func downloadDir(config Config) string {
 
 // feedHash identifies a feed in import_metadata. With gtfstidy on, the stored
 // data comes from the tidied feed, so the setting is part of the identity:
-// turning it on or off causes a re-import.
+// turning it on or off causes a re-import. The mark records that tidy was on,
+// not that it succeeded: a feed whose tidy fails is stored under the same
+// hash, so the next reload skips it instead of parsing it again. Tidy is
+// retried when the feed changes.
 func feedHash(contentHash string, config Config) string {
 	if config.EnableGTFSTidy {
 		return contentHash + "+gtfstidy"
@@ -151,15 +154,14 @@ func feedHash(contentHash string, config Config) string {
 
 // parse reads the feed, runs gtfstidy when enabled, then parses and validates
 // it. The returned hash is that of the bytes it read, so it matches the stored
-// data even if the file changed since it was fetched, and it is marked as
-// tidied only if gtfstidy succeeded, so a failed tidy is retried next time.
+// data even if the file changed since it was fetched.
 func (f *feedFile) parse(ctx context.Context, config Config) (*gtfsdb.GtfsData, error) {
 	b, err := os.ReadFile(f.path)
 	if err != nil {
 		return nil, fmt.Errorf("error reading GTFS data: %w", err)
 	}
 	sum := sha256.Sum256(b)
-	hash := hex.EncodeToString(sum[:])
+	hash := feedHash(hex.EncodeToString(sum[:]), config)
 
 	if config.EnableGTFSTidy {
 		logger := slog.Default().With(slog.String("component", "gtfs_loader"))
@@ -169,7 +171,6 @@ func (f *feedFile) parse(ctx context.Context, config Config) (*gtfsdb.GtfsData, 
 			logging.LogError(logger, "Failed to tidy GTFS data, using original data", err)
 		} else {
 			b = tidiedData
-			hash = feedHash(hash, config)
 		}
 	}
 

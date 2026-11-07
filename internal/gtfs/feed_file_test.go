@@ -186,19 +186,24 @@ func TestFetchFeedFileRemovesStaleDownloads(t *testing.T) {
 	assert.True(t, os.IsNotExist(err))
 }
 
-// TestParseHashMarksTidyOnlyWhenItRan checks that a feed whose tidy failed is
-// stored under its plain hash, so the next reload doesn't match the tidied
-// hash and tries again.
-func TestParseHashMarksTidyOnlyWhenItRan(t *testing.T) {
+// TestReloadStaticSkipsParseWhenTidyFails checks that a feed whose tidy fails
+// is stored under the hash the next reload looks for, so it isn't parsed again.
+func TestReloadStaticSkipsParseWhenTidyFails(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // no gtfstidy binary, so tidying fails
-	path := models.GetFixturePath(t, "raba.zip")
-	config := Config{GtfsURL: path, EnableGTFSTidy: true}
+	counter := countLogMessages(t)
 
-	feed, err := fetchFeedFile(context.Background(), config)
+	manager, err := InitGTFSManager(context.Background(), Config{
+		GtfsURL:        models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath:   filepath.Join(t.TempDir(), "gtfs.db"),
+		Env:            appconf.Development,
+		EnableGTFSTidy: true,
+	})
 	require.NoError(t, err)
-	assert.Equal(t, rabaContentHash(t)+"+gtfstidy", feed.hash, "the check looks for a tidied import")
+	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
+	require.Equal(t, 1, counter.count("parsing_gtfs_data"))
 
-	data, err := feed.parse(context.Background(), config)
+	changed, err := manager.ReloadStatic(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, rabaContentHash(t), data.Hash, "an untidied import is stored under the plain hash")
+	assert.False(t, changed)
+	assert.Equal(t, 1, counter.count("parsing_gtfs_data"), "a feed whose tidy failed must not be parsed again")
 }
