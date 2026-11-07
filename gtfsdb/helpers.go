@@ -146,12 +146,11 @@ func createDB(config Config) (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Configure SQLite performance settings immediately after opening
 	ctx := context.Background()
-	err = configureSQLitePerformance(ctx, db)
+	err = enableWALMode(ctx, db)
 	if err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("error configuring SQLite performance: %w", err)
+		return nil, fmt.Errorf("error enabling SQLite WAL mode: %w", err)
 	}
 
 	err = performDatabaseMigration(ctx, db)
@@ -960,11 +959,11 @@ func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []Cr
 	return nil
 }
 
-// configureSQLitePerformance enables Write-Ahead Logging, which allows
+// enableWALMode enables Write-Ahead Logging, which allows
 // concurrent readers and a single writer. journal_mode=WAL is stored in the
 // database file, so one PRAGMA applies it to every connection. That is why it
 // stays a PRAGMA, while the connection-scoped settings ride the DSN.
-func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
+func enableWALMode(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
 		logger := slog.Default().With(slog.String("component", "sqlite_performance"))
 		logging.LogError(logger, "failed to enable SQLite WAL mode", err)
