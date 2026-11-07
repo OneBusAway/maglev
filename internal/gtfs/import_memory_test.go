@@ -88,6 +88,7 @@ func TestImportStageHandler(t *testing.T) {
 	logger.Debug("reading_gtfs_data")
 	logger.Debug("inserting_stops")
 	logger.Debug("inserting_stops_progress")
+	logger.Debug("precomputation_batch_written")
 	logger.Warn("GTFS feed has expired")
 
 	assert.Equal(t, []string{"reading_gtfs_data", "inserting_stops"}, stages.order,
@@ -171,6 +172,13 @@ func (r *importStageRecorder) handler(forward slog.Handler) slog.Handler {
 	return &importStageHandler{stages: r, forward: forward}
 }
 
+// repeatedImportMessages are Debug messages that the importer logs many times
+// inside one stage without a _progress or _count suffix. If they started a
+// stage, the rest of the enclosing stage would be reported under them.
+var repeatedImportMessages = map[string]bool{
+	"precomputation_batch_written": true,
+}
+
 type importStageHandler struct {
 	stages  *importStageRecorder
 	forward slog.Handler
@@ -192,7 +200,9 @@ func (h *importStageHandler) Handle(ctx context.Context, record slog.Record) err
 	}
 	// logging.LogOperation logs at Debug. Progress and count messages repeat
 	// inside a stage, so they don't start one.
-	isRepeatedMessage := strings.HasSuffix(record.Message, "_progress") || strings.HasSuffix(record.Message, "_count")
+	isRepeatedMessage := strings.HasSuffix(record.Message, "_progress") ||
+		strings.HasSuffix(record.Message, "_count") ||
+		repeatedImportMessages[record.Message]
 	if record.Level != slog.LevelDebug || isRepeatedMessage {
 		return nil
 	}
