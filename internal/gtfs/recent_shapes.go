@@ -44,14 +44,23 @@ func (c *recentShapes) get(shapeID string) ([]gtfsdb.GetShapePointsWithDistanceR
 	return element.Value.(recentShape).points, true
 }
 
-// add stores a shape that isn't cached yet and evicts the least recently used
-// ones until the total fits the budget. A shape larger than the whole budget
-// is kept on its own.
+// add stores a shape's points and evicts the least recently used shapes until
+// the total fits the budget. Adding a shape that is already cached replaces
+// its points. A shape larger than the whole budget is kept on its own.
 func (c *recentShapes) add(shapeID string, points []gtfsdb.GetShapePointsWithDistanceRow) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	points = slices.Clip(points)
-	c.entries[shapeID] = c.order.PushFront(recentShape{shapeID: shapeID, points: points})
+	// The query result was built by append and can have up to twice its length
+	// in spare capacity. Copying it lets that array be freed, so the memory
+	// kept matches the points the budget counts.
+	points = slices.Clone(points)
+	if element, ok := c.entries[shapeID]; ok {
+		c.totalPoints -= len(element.Value.(recentShape).points)
+		element.Value = recentShape{shapeID: shapeID, points: points}
+		c.order.MoveToFront(element)
+	} else {
+		c.entries[shapeID] = c.order.PushFront(recentShape{shapeID: shapeID, points: points})
+	}
 	c.totalPoints += len(points)
 	for c.totalPoints > c.maxPoints && c.order.Len() > 1 {
 		oldest := c.order.Remove(c.order.Back()).(recentShape)

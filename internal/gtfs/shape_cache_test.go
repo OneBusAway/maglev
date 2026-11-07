@@ -77,6 +77,33 @@ func TestRecentShapesEvictsLeastRecentlyUsedPoints(t *testing.T) {
 	assert.True(t, ok)
 }
 
+// TestRecentShapesReplacesAShapeAddedTwice checks that adding a cached shape
+// again replaces it rather than keeping a second copy that a later eviction
+// would remove together with the live entry.
+func TestRecentShapesReplacesAShapeAddedTwice(t *testing.T) {
+	cache := newRecentShapes(5)
+	cache.add("A", make([]gtfsdb.GetShapePointsWithDistanceRow, 2))
+	cache.add("A", make([]gtfsdb.GetShapePointsWithDistanceRow, 3))
+	assert.Equal(t, 1, cache.order.Len())
+	assert.Equal(t, 3, cache.totalPoints)
+
+	cache.add("B", make([]gtfsdb.GetShapePointsWithDistanceRow, 2))
+	points, ok := cache.get("A")
+	assert.True(t, ok)
+	assert.Len(t, points, 3)
+	assert.Equal(t, 5, cache.totalPoints)
+}
+
+// TestRecentShapesKeepsNoSpareCapacity checks that the cache copies a shape's
+// points, so the spare capacity of the query result is not kept in memory.
+func TestRecentShapesKeepsNoSpareCapacity(t *testing.T) {
+	cache := newRecentShapes(100)
+	cache.add("A", make([]gtfsdb.GetShapePointsWithDistanceRow, 3, 64))
+	points, ok := cache.get("A")
+	require.True(t, ok)
+	assert.Equal(t, 3, cap(points))
+}
+
 // shapeReadCountingDB counts reads of a shape's points, and fails them while
 // fail is set.
 type shapeReadCountingDB struct {
