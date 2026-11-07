@@ -27,15 +27,11 @@ func TestSQLitePerformancePragmasApplied(t *testing.T) {
 	}
 	client, err := NewClient(config)
 	require.NoError(t, err)
-	defer func() { _ = client.Close() }()
+	t.Cleanup(func() { _ = client.Close() })
 
 	ctx := context.Background()
 	const connectionCount = 3
-	for i := 0; i < connectionCount; i++ {
-		conn, err := client.DB.Conn(ctx)
-		require.NoError(t, err)
-		defer func() { _ = conn.Close() }()
-
+	for i, conn := range holdConnections(t, client.DB, connectionCount) {
 		var cacheSize, tempStore, busyTimeout int
 		var journalMode string
 		require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA cache_size").Scan(&cacheSize))
