@@ -22,7 +22,7 @@ func ParseGtfsStream(r io.ReaderAt, size int64, hash, source string) (*GtfsData,
 		return nil, fmt.Errorf("error parsing GTFS data: %w", err)
 	}
 
-	if err := validateAndFilterGTFSData(stream.Static, logger, stream.StopTimeCount); err != nil {
+	if err := validateAndFilterGTFSData(stream.Static, logger, streamedStopTimesProblem(stream)); err != nil {
 		return nil, fmt.Errorf("GTFS validation failed: %w", err)
 	}
 

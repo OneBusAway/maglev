@@ -332,7 +332,7 @@ func TestStreamedImportClearsMissingParentStation(t *testing.T) {
 	// go-gtfs already drops a parent it can't find, so put one back and
 	// validate again to reach the clearing that copies the streamed stops.
 	data.Static.Stops[0].Parent = &gtfs.Stop{Id: "ghost"}
-	require.NoError(t, validateAndFilterGTFSData(data.Static, nil, data.stream.StopTimeCount))
+	require.NoError(t, validateAndFilterGTFSData(data.Static, nil, streamedStopTimesProblem(data.stream)))
 	client := newTestClient(t)
 	_, err = client.StoreGtfsData(t.Context(), data)
 	require.NoError(t, err)

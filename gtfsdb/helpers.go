@@ -1225,15 +1225,45 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, trips []tripEnds, t
 // It ensures that required files are present and filters out structurally invalid trips.
 // Note: Orphaned entities (routes/stops/services with no remaining trips) are retained.
 func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
-	return validateAndFilterGTFSData(data, logger, func(tripIndex int) int {
-		return len(data.Trips[tripIndex].StopTimes)
+	return validateAndFilterGTFSData(data, logger, func(tripIndex int) string {
+		return inMemoryStopTimesProblem(data.Trips[tripIndex].StopTimes)
 	})
 }
 
+// noStopTimesProblem describes a trip without stop times.
+const noStopTimesProblem = "trip has no stop times"
+
+// inMemoryStopTimesProblem checks the stop times of a trip held in memory,
+// which may have been built by hand. A parsed feed never has a stop time
+// without a stop: go-gtfs drops the rows whose stop is unknown.
+func inMemoryStopTimesProblem(stopTimes []gtfs.ScheduledStopTime) string {
+	if len(stopTimes) == 0 {
+		return noStopTimesProblem
+	}
+	for _, stopTime := range stopTimes {
+		if stopTime.Stop == nil || stopTime.Stop.Id == "" {
+			return "stop time for trip references missing stop"
+		}
+	}
+	return ""
+}
+
+// streamedStopTimesProblem checks the stop times of a trip in a streamed
+// feed, whose stop times are not in memory.
+func streamedStopTimesProblem(stream *gtfs.StaticStream) func(tripIndex int) string {
+	return func(tripIndex int) string {
+		if stream.StopTimeCount(tripIndex) == 0 {
+			return noStopTimesProblem
+		}
+		return ""
+	}
+}
+
 // validateAndFilterGTFSData is ValidateAndFilterGTFSData for a feed whose stop
-// times may not be in memory: stopTimeCount gives the number of stop times of
-// the trip at an index in data.Trips.
-func validateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger, stopTimeCount func(tripIndex int) int) error {
+// times may not be in memory: stopTimesProblem describes what is wrong with
+// the stop times of the trip at an index in data.Trips, or returns "" when
+// the trip can be imported.
+func validateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger, stopTimesProblem func(tripIndex int) string) error {
 	if data == nil {
 		return fmt.Errorf("parsed GTFS data is nil")
 	}
@@ -1320,23 +1350,8 @@ func validateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger, stopTimeC
 			continue
 		}
 
-		// Ensure the trip has stop times
-		if stopTimeCount(i) == 0 {
-			logger.Warn("trip has no stop times, skipping trip", slog.String("trip_id", trip.ID))
-			continue
-		}
-
-		// Ensure stop times reference valid stops
-		hasInvalidStop := false
-		for _, st := range trip.StopTimes {
-			if st.Stop == nil || st.Stop.Id == "" {
-				logger.Warn("stop time for trip references missing stop, skipping trip", slog.String("trip_id", trip.ID))
-				hasInvalidStop = true
-				break
-			}
-		}
-
-		if hasInvalidStop {
+		if problem := stopTimesProblem(i); problem != "" {
+			logger.Warn(problem+", skipping trip", slog.String("trip_id", trip.ID))
 			continue
 		}
 
