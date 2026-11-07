@@ -215,6 +215,10 @@ once, at the feed boundary.
 | `trips.block_id` | `{trip agency}_{block_id}`. Empty stays empty. | The agency of the trip. |
 | `stop_times.trip_id`, `stop_times.stop_id`, `frequencies.trip_id` | The stored trip ID and stop ID. | Resolved in the same feed. |
 
+A trip with an empty `block_id` is its own block, as in Java (§2.2). The
+derived block tables and the `block/{id}` endpoint use the stored trip ID as
+the block ID. The `trips.block_id` column stays empty.
+
 A reference inside one feed resolves to the entity **of that feed**. A stop
 time `stop_id` and a trip `route_id` are references. This is the Java
 per-reader lookup. A reference to an ID that the feed does not define is a
@@ -380,13 +384,16 @@ All steps run inside the `ReloadStatic` envelope and the
    process exits. Java §8.9 makes the same decision.
 3. **Detect changes.** The new table `import_feeds` holds one row for each
    feed: `position`, `feed_id`, `source`, `hash`, `default_agency_id`. The
-   dataset fingerprint is a sha256 over the ordered rows plus the hash of the
-   consolidation file. Maglev stores the fingerprint in
-   `import_metadata.file_hash`. That column is already the system ETag. When
-   the fingerprint is unchanged, Maglev refreshes `feed_expires_at` only and
-   skips the import. A change to any feed, to the order, to a default agency
-   or to the consolidation file reimports everything. Incremental reimport
-   of one feed is out of scope (§11).
+   dataset fingerprint is a sha256 over the import format version, the
+   ordered rows and the hash of the consolidation file. The import format
+   version is a constant in the importer. Increment it for each importer
+   change that writes different content for the same inputs, for example a
+   new ID spelling. Maglev stores the fingerprint in `import_metadata.file_hash`. That
+   column is already the system ETag. When the fingerprint is unchanged,
+   Maglev refreshes `feed_expires_at` only and skips the import. A change to
+   the format version, to any feed, to the order, to a default agency or to
+   the consolidation file reimports everything. Incremental reimport of one
+   feed is out of scope (§11).
 4. **Parse and insert each feed, in one transaction.** Clear all tables
    once. For each feed: open its stream, resolve the default agency and the
    mappings, then insert agencies, routes, stops, calendar, trips, stop
@@ -402,7 +409,8 @@ All steps run inside the `ReloadStatic` envelope and the
    bounds, R-tree and FTS (through triggers), direction precompute. Delete
    `stop_agencies`. `stops.agency_id` replaces it.
 7. **Set the expiry.** `feed_expires_at` is the **earliest** expiry across
-   feeds. The warning fires when the calendar of the first agency ends.
+   feeds. The expiry warning uses `feed_expires_at`. It fires when the
+   first feed expires.
    `/metadata` and the health endpoint list the expiry of each feed.
 8. **Publish** the region bounds, the default-agency map (`feed_id` to
    agency), the ETag and the statistics, as today.
@@ -510,10 +518,10 @@ the validator from #1771 and #1772 are reused without change.
 ### 9.2 Application
 
 Maglev applies the rules at insert time, for each row. A stop whose stored
-ID is absorbed is not inserted. A stop time, a parent station or a transfer
-that names an absorbed ID gets the kept ID. A trip with fewer than two stop
-times after the rewrite is dropped. `TripEntriesFactory` does the same
-(#1777, #1808).
+ID is absorbed is not inserted. A stop time or a parent station that names
+an absorbed ID gets the kept ID. Transfers are not stored (§11). A trip with
+fewer than two stop times after the rewrite is dropped. `TripEntriesFactory`
+does the same (#1777, #1808).
 
 ### 9.3 Runtime
 
@@ -542,7 +550,9 @@ Phases B and C are most of the work. They deliver Java parity.
 3. Document `gtfs-rt-feeds[].agency-ids` as the namespace list. No code
    change yet.
 
-The importer still reads `feeds[0]`.
+The importer still reads `feeds[0]`. When the feed list or the manifest
+has more than one feed, Maglev writes a warning that names each feed that it
+does not load.
 
 ### Phase B: namespaced storage for one feed
 
@@ -550,7 +560,8 @@ The handler layer moves to "IDs as stored" while there is one namespace.
 Each pull request can be checked against the responses of today. Public IDs
 do not change for a single-agency feed.
 
-1. Schema: add `stops.agency_id` (NOT NULL, foreign key) and `import_feeds`.
+1. Schema: add `stops.agency_id` (NOT NULL, no foreign key: the default
+   agency can be absent from `agency.txt`, §4.2) and `import_feeds`.
    Drop `stop_agencies` and its backfill. Rewrite IDs in the stream row
    builders according to §4.1. Compute the dataset fingerprint according to
    §6 step 3. Regenerate the RABA parity golden files.
