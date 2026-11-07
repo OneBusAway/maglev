@@ -358,9 +358,9 @@ func (manager *Manager) GetStopsForLocation(
 	stopCodeQuery string,
 	maxCount int,
 	routeTypes []int,
-) ([]gtfsdb.Stop, bool) {
-	if ctx.Err() != nil {
-		return []gtfsdb.Stop{}, false
+) ([]gtfsdb.Stop, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
 	}
 
 	if stopCodeQuery != "" {
@@ -371,9 +371,7 @@ func (manager *Manager) GetStopsForLocation(
 
 	stops, err := manager.queryStopsInBounds(ctx, bounds)
 	if err != nil {
-		reqLogger := logging.ForComponent(ctx, "gtfs_manager")
-		logging.LogError(reqLogger, "could not query stops within bounds", err)
-		return []gtfsdb.Stop{}, false
+		return nil, false, fmt.Errorf("query stops within bounds: %w", err)
 	}
 
 	var limitExceeded bool
@@ -399,27 +397,28 @@ func (manager *Manager) GetStopsForLocation(
 		}
 
 		routesForStops, err := manager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDs)
-		if err == nil {
-			stopRouteTypes := make(map[string][]int)
-			for _, r := range routesForStops {
-				stopRouteTypes[r.StopID] = append(stopRouteTypes[r.StopID], int(r.Type))
-			}
-			filteredStops := make([]gtfsdb.Stop, 0, len(stops))
-			for _, stop := range stops {
-				for _, rt := range stopRouteTypes[stop.ID] {
-					if slices.Contains(routeTypes, rt) {
-						filteredStops = append(filteredStops, stop)
-						break
-					}
+		if err != nil {
+			return nil, false, fmt.Errorf("query route types for stops: %w", err)
+		}
+		stopRouteTypes := make(map[string][]int)
+		for _, r := range routesForStops {
+			stopRouteTypes[r.StopID] = append(stopRouteTypes[r.StopID], int(r.Type))
+		}
+		filteredStops := make([]gtfsdb.Stop, 0, len(stops))
+		for _, stop := range stops {
+			for _, rt := range stopRouteTypes[stop.ID] {
+				if slices.Contains(routeTypes, rt) {
+					filteredStops = append(filteredStops, stop)
+					break
 				}
 			}
-			stops = filteredStops
 		}
+		stops = filteredStops
 
 		// Capped downstream, after stops with no service that date are dropped.
 	}
 
-	return stops, limitExceeded
+	return stops, limitExceeded, nil
 }
 
 // stopsMatchingCode resolves a stop-code query. Candidates are drawn from the whole
@@ -430,15 +429,13 @@ func (manager *Manager) stopsMatchingCode(
 	loc *LocationParams,
 	stopCode string,
 	maxCount int,
-) ([]gtfsdb.Stop, bool) {
+) ([]gtfsdb.Stop, bool, error) {
 	candidates, err := manager.GtfsDB.Queries.GetStopsByCode(ctx, nulls.String(stopCode))
 	if err != nil {
-		reqLogger := logging.ForComponent(ctx, "gtfs_manager")
-		logging.LogError(reqLogger, "could not query stops by code", err)
-		return nil, false
+		return nil, false, fmt.Errorf("query stops by code: %w", err)
 	}
 	if len(candidates) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	bounds := BoundsFromParams(CodeQueryLocation(loc))
@@ -450,7 +447,7 @@ func (manager *Manager) stopsMatchingCode(
 	}
 
 	if len(within) == 0 {
-		return []gtfsdb.Stop{closestStop(candidates, loc)}, false
+		return []gtfsdb.Stop{closestStop(candidates, loc)}, false, nil
 	}
 
 	if len(within) > maxCount {
@@ -460,9 +457,9 @@ func (manager *Manager) stopsMatchingCode(
 				utils.Distance(loc.Lat, loc.Lon, b.Lat, b.Lon),
 			)
 		})
-		return within[:maxCount], true
+		return within[:maxCount], true, nil
 	}
-	return within, false
+	return within, false, nil
 }
 
 // CodeQueryLocation applies the wider default radius used by stop-code queries,

@@ -99,7 +99,11 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	var stops []gtfsdb.Stop
 	var limitExceeded bool
 	if !outOfRange {
-		stops, limitExceeded = api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
+		stops, limitExceeded, err = api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 	}
 
 	results := []models.Stop{}
