@@ -76,18 +76,13 @@ func (manager *Manager) buildAlertFeedsByAgency(feedIDs []string, previous *merg
 // read in configuration order, so when two feeds publish the same alert the
 // one listed first wins, as does the first copy within one feed.
 func (manager *Manager) collectAlertEntitiesByAgency(feedIDs []string) map[string][]*gtfsrt.FeedEntity {
-	feedRanks := manager.feedConfigRanks(feedIDs)
-	orderedFeedIDs := slices.Clone(feedIDs)
-	slices.SortFunc(orderedFeedIDs, func(a, b string) int {
-		return feedRanks[a] - feedRanks[b]
-	})
 	fallbackAgencies := manager.feedFallbackAgencies()
 
 	collector := alertEntityCollector{
 		entitiesByAgency: make(map[string][]*gtfsrt.FeedEntity),
 		seen:             make(map[agencyEntityKey]bool),
 	}
-	for _, feedID := range orderedFeedIDs {
+	for _, feedID := range manager.feedIDsInConfigOrder(feedIDs) {
 		for _, alert := range manager.feedAlerts[feedID] {
 			collector.add(alert, exportAgencyID(alert, fallbackAgencies[feedID]))
 		}
