@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
 )
@@ -105,9 +106,34 @@ func parityResponse(t *testing.T, api *RestAPI, path string) any {
 	return roundDecimals(body)
 }
 
-// roundDecimals rounds every non-integer number to 12 significant digits.
-// Computed values such as distanceAlongBlock differ in the last bits between
-// amd64 and arm64, where Go fuses multiply-adds. Integers are kept exactly.
+func TestRoundDecimals(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"40.68037212345", "40.680372"},
+		{"1749740400000.5", "1749740400000.5"},
+		{"12.5000004", "12.5"},
+		{"2.0", "2"},
+		{"1749740400000", "1749740400000"},
+	}
+	for _, test := range tests {
+		t.Run(test.input, func(t *testing.T) {
+			assert.Equal(t, json.Number(test.expected), roundDecimals(json.Number(test.input)))
+		})
+	}
+}
+
+// parityDecimalPlaces is how many decimal places roundDecimals keeps. Six
+// places is about 0.1 m of latitude, and one micrometer of distance.
+const parityDecimalPlaces = 6
+
+// roundDecimals rounds every non-integer number to parityDecimalPlaces
+// decimal places and drops trailing zeros. Computed values such as
+// distanceAlongBlock differ in the last bits between amd64 and arm64, where
+// Go fuses multiply-adds. A fixed number of places, unlike significant
+// digits, keeps every integer digit of a large value. Integers are kept
+// exactly.
 func roundDecimals(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -121,11 +147,17 @@ func roundDecimals(value any) any {
 	case json.Number:
 		if strings.ContainsAny(typed.String(), ".eE") {
 			if f, err := typed.Float64(); err == nil {
-				return json.Number(strconv.FormatFloat(f, 'g', 12, 64))
+				return json.Number(formatFixedDecimals(f))
 			}
 		}
 	}
 	return value
+}
+
+func formatFixedDecimals(f float64) string {
+	formatted := strconv.FormatFloat(f, 'f', parityDecimalPlaces, 64)
+	formatted = strings.TrimRight(formatted, "0")
+	return strings.TrimSuffix(formatted, ".")
 }
 
 // sortReferences orders each reference list by ID, then by content. The lists
