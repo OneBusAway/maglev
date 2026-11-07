@@ -156,18 +156,13 @@ func (manager *Manager) storeConfiguredFeed(ctx context.Context, logger *slog.Lo
 	}
 	defer feed.cleanup()
 
-	imported, err := manager.GtfsDB.HasImported(ctx, feed.hash, manager.config.GtfsURL)
+	skipped, err := manager.GtfsDB.SkipIfImported(ctx, feed.hash, manager.config.GtfsURL)
 	if err != nil {
 		logging.LogError(logger, "Error checking whether GTFS data is already imported", err,
 			slog.String("source", manager.config.GtfsURL))
 		return false, err
 	}
-	if imported {
-		if err := manager.GtfsDB.RefreshFeedExpiry(ctx); err != nil {
-			logging.LogError(logger, "Error refreshing feed expiry", err)
-			return false, err
-		}
-		logging.LogOperation(logger, "gtfs_data_unchanged_skipping_parse", slog.String("hash", feed.hash))
+	if skipped {
 		return false, nil
 	}
 

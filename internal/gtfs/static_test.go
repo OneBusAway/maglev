@@ -113,7 +113,7 @@ func TestReloadStaticUnchangedFeedRefreshesExpiry(t *testing.T) {
 	changed, err := manager.ReloadStatic(context.Background())
 	require.NoError(t, err)
 	assert.False(t, changed)
-	assert.Equal(t, 1, counter.count("gtfs_data_unchanged_skipping_parse"))
+	assert.Equal(t, 1, counter.count("gtfs_data_unchanged_skipping_import"))
 	assert.Equal(t, want, manager.FeedExpiresAt(context.Background()))
 }
 
@@ -148,9 +148,9 @@ func TestReloadStaticUnchangedFeedExpiryFailure(t *testing.T) {
 	assert.Equal(t, 1, counter.count("parsing_gtfs_data"), "a failed refresh must not parse the feed")
 }
 
-// TestReloadStaticHasImportedError checks that a reload reports a failure to
+// TestReloadStaticSkipIfImportedError checks that a reload reports a failure to
 // read import_metadata instead of treating the feed as new.
-func TestReloadStaticHasImportedError(t *testing.T) {
+func TestReloadStaticSkipIfImportedError(t *testing.T) {
 	manager := initManagerWithFileDB(t)
 
 	_, err := manager.GtfsDB.DB.Exec(`DROP TABLE import_metadata`)

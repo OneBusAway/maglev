@@ -208,9 +208,11 @@ func (c *Client) withTransaction(ctx context.Context, tx *sql.Tx, label string, 
 	return nil
 }
 
-// HasImported reports whether the database already holds the feed with this
-// hash from this source, so a caller can skip parsing it.
-func (c *Client) HasImported(ctx context.Context, hash, source string) (bool, error) {
+// SkipIfImported reports whether the database already holds the feed with
+// this hash from this source, so a caller can skip parsing and storing it.
+// When it does, it refreshes the feed's derived metadata, as StoreGtfsData
+// does for an unchanged feed.
+func (c *Client) SkipIfImported(ctx context.Context, hash, source string) (bool, error) {
 	metadata, err := c.Queries.GetImportMetadata(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -218,19 +220,28 @@ func (c *Client) HasImported(ctx context.Context, hash, source string) (bool, er
 	if err != nil {
 		return false, fmt.Errorf("error checking import metadata: %w", err)
 	}
-	return isSameFeed(metadata, hash, source), nil
+	return c.skipUnchangedFeed(ctx, metadata, hash, source)
 }
 
-// isSameFeed reports whether import_metadata describes the feed with this hash
-// from this source.
-func isSameFeed(metadata ImportMetadatum, hash, source string) bool {
-	return metadata.FileHash == hash && metadata.FileSource == source
+// skipUnchangedFeed is the one rule for a feed the database already holds.
+// When import_metadata describes the feed with this hash from this source, it
+// refreshes the derived metadata and reports true; otherwise it does nothing.
+func (c *Client) skipUnchangedFeed(ctx context.Context, metadata ImportMetadatum, hash, source string) (bool, error) {
+	if metadata.FileHash != hash || metadata.FileSource != source {
+		return false, nil
+	}
+	if err := c.refreshFeedExpiry(ctx); err != nil {
+		return false, err
+	}
+	logger := slog.Default().With(slog.String("component", "gtfs_importer"))
+	logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import", slog.String("hash", hash[:8]))
+	return true, nil
 }
 
-// RefreshFeedExpiry recomputes feed_expires_at from the stored calendar. It
+// refreshFeedExpiry recomputes feed_expires_at from the stored calendar. It
 // runs when a feed is found unchanged, so existing databases pick up
 // corrections to the expiry calculation on upgrade without a re-import.
-func (c *Client) RefreshFeedExpiry(ctx context.Context) error {
+func (c *Client) refreshFeedExpiry(ctx context.Context) error {
 	err := c.withTransaction(ctx, nil, "refresh_feed_expiry", func(tx *sql.Tx) error {
 		return updateFeedExpiresAtFromCalendar(ctx, c.Queries.WithTx(tx))
 	})
@@ -259,13 +270,11 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	existingMetadata, err := c.Queries.GetImportMetadata(ctx)
 	if err == nil {
 		hasExisting = true
-		// We have existing metadata, check if hash matches
-		if isSameFeed(existingMetadata, data.Hash, data.Source) {
-			if err := c.RefreshFeedExpiry(ctx); err != nil {
-				return false, err
-			}
-			logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import",
-				slog.String("hash", data.Hash[:8]))
+		skipped, err := c.skipUnchangedFeed(ctx, existingMetadata, data.Hash, data.Source)
+		if err != nil {
+			return false, err
+		}
+		if skipped {
 			return false, nil
 		}
 	} else if err != sql.ErrNoRows {
