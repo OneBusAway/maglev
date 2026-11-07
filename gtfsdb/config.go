@@ -58,15 +58,16 @@ func (c Config) SafeBatchSize(fieldsPerRow int) int {
 const connectionCacheKiB = 2000
 
 // connectionBusyTimeoutMs is how long, in milliseconds, a connection waits for
-// a lock held by another connection before it returns SQLITE_BUSY. The CGo
-// driver sets this value by default; the pure-Go driver sets it in its DSN so
-// that both drivers behave the same.
+// a lock held by another connection before it returns SQLITE_BUSY. Both
+// drivers set it in their DSN, so they behave the same even if a driver's own
+// default changes.
 const connectionBusyTimeoutMs = 5000
 
-// DSN returns the connection string for path with foreign key enforcement and
-// the page cache size set. Both are connection-scoped and not persistent, so
-// setting them via PRAGMA on a single connection leaves the rest of the pool
-// without them; they have to ride the DSN. Each driver file spells the
+// DSN returns the connection string for path with foreign key enforcement,
+// the page cache size and the busy timeout set. All three are
+// connection-scoped and not persistent, so setting them via PRAGMA on a single
+// connection leaves the rest of the pool without them; they have to ride the
+// DSN. Each driver file spells the
 // settings in its own connectionParams.
 func DSN(path string) string {
 	return dsn(path, connectionCacheKiB)

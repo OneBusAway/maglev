@@ -16,9 +16,11 @@ import (
 // connection settings that each driver's DSN adds, and checks that they join a
 // path that already has a query with "&" instead of "?".
 func TestDSNAppendsConnectionSettingsWithCorrectSeparator(t *testing.T) {
-	params := "_foreign_keys=on&_cache_size=-2000"
+	cacheSize := strconv.Itoa(-connectionCacheKiB)
+	busyTimeout := strconv.Itoa(connectionBusyTimeoutMs)
+	params := "_foreign_keys=on&_cache_size=" + cacheSize + "&_busy_timeout=" + busyTimeout
 	if DriverName == "sqlite" {
-		params = "_pragma=foreign_keys(1)&_pragma=cache_size(-2000)&_pragma=busy_timeout(" + strconv.Itoa(connectionBusyTimeoutMs) + ")"
+		params = "_pragma=foreign_keys(1)&_pragma=cache_size(" + cacheSize + ")&_pragma=busy_timeout(" + busyTimeout + ")"
 	}
 
 	assert.Equal(t, "test.db?"+params, DSN("test.db"))
