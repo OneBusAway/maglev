@@ -249,18 +249,17 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		requestedVehicle = v
 	}
 
+	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
 	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
-		reqLogger.Warn("GetFrequenciesForTrip failed",
-			"trip_id", tripID,
-			"error", err.Error())
-		freqRows = nil
+		api.serverErrorResponse(w, r, err)
+		return
 	}
 
 	var schedule *models.Schedule
 	var status *models.TripStatus
 	var statusExtras *tripStatusExtras
-	statusFreqMap := map[string][]gtfsdb.Frequency{}
+	statusFreqMap := map[string][]gtfsdb.Frequency{trip.ID: freqRows}
 
 	if params.IncludeStatus {
 		var statusErr error
