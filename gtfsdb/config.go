@@ -48,9 +48,13 @@ func (c Config) SafeBatchSize(fieldsPerRow int) int {
 	return sqliteMaxVariables / fieldsPerRow
 }
 
+// maxOpenConnections is the most connections the pool of a file database
+// opens at once (configureConnectionPool).
+const maxOpenConnections = 25
+
 // connectionCacheKiB is the SQLite page cache of each pooled connection, in
-// KiB. The pool has up to 25 connections (configureConnectionPool), so this
-// bounds SQLite's page cache at 25 times this value, about 50 MB. It equals
+// KiB. The pool has up to maxOpenConnections connections, so this bounds
+// SQLite's page cache at maxOpenConnections times this value. It equals
 // SQLite's built-in default and is set explicitly so that the bound doesn't
 // depend on how a driver's SQLite was compiled. A larger cache didn't lower
 // latency under the k6 load test, because the operating system already caches
@@ -67,8 +71,7 @@ const connectionBusyTimeoutMs = 5000
 // the page cache size and the busy timeout set. All three are
 // connection-scoped and not persistent, so setting them via PRAGMA on a single
 // connection leaves the rest of the pool without them; they have to ride the
-// DSN. Each driver file spells the
-// settings in its own connectionParams.
+// DSN. Each driver file spells the settings in its own connectionParams.
 func DSN(path string) string {
 	return dsn(path, connectionCacheKiB)
 }

@@ -982,8 +982,8 @@ func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
 //     connection to a :memory: database creates a separate database instance, so we
 //     must limit to 1 connection to maintain data integrity.
 //
-//   - File databases: MaxOpenConns=25 to allow concurrent access. SQLite with WAL mode
-//     supports concurrent readers and a single writer.
+//   - File databases: up to maxOpenConnections connections to allow concurrent
+//     access. SQLite with WAL mode supports concurrent readers and a single writer.
 //
 // For production deployments with high concurrency requirements, consider using a
 // file-based database instead of :memory: to take advantage of concurrent connections.
@@ -994,8 +994,7 @@ func configureConnectionPool(db *sql.DB, config Config) {
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
 	} else {
-		// Set maximum number of open connections to 25
-		db.SetMaxOpenConns(25)
+		db.SetMaxOpenConns(maxOpenConnections)
 
 		// Set maximum number of idle connections to 5
 		db.SetMaxIdleConns(5)
