@@ -413,10 +413,12 @@ func (api *RestAPI) tripScheduledToRunAt(ctx context.Context, trip gtfsdb.Trip, 
 }
 
 // tripSpanCovers reports whether offset (since the service-day start) falls in the
-// trip's scheduled span, widened to its frequency windows when it has any.
+// trip's scheduled span. For a frequency-based trip that span is each frequency
+// window plus one run; the template stop times give only the run's length, since
+// they may be relative to the window rather than real times of day.
 func tripSpanCovers(trip gtfsdb.Trip, freqs []gtfsdb.Frequency, offset time.Duration) bool {
-	if tripWindowOverlapsRange(trip, offset, offset) {
-		return true
+	if len(freqs) == 0 {
+		return tripWindowOverlapsRange(trip, offset, offset)
 	}
 	if !trip.MinArrivalTime.Valid || !trip.MaxDepartureTime.Valid {
 		return false

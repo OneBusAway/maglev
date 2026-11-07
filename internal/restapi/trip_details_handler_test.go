@@ -842,27 +842,35 @@ func TestTripDetailsHandlerAcceptsTripIDWithSpaces(t *testing.T) {
 }
 
 func TestTripSpanCovers(t *testing.T) {
-	trip := gtfsdb.Trip{
+	absoluteTemplate := gtfsdb.Trip{
 		MinArrivalTime:   nulls.Int64(int64(6 * time.Hour)),
 		MaxDepartureTime: nulls.Int64(int64(6*time.Hour + 30*time.Minute)),
+	}
+	relativeTemplate := gtfsdb.Trip{
+		MinArrivalTime:   nulls.Int64(0),
+		MaxDepartureTime: nulls.Int64(int64(30 * time.Minute)),
 	}
 	freqs := []gtfsdb.Frequency{{StartTime: int64(6 * time.Hour), EndTime: int64(10 * time.Hour)}}
 
 	tests := []struct {
 		name   string
+		trip   gtfsdb.Trip
 		freqs  []gtfsdb.Frequency
 		offset time.Duration
 		want   bool
 	}{
-		{"within stop-time span", nil, 6*time.Hour + 10*time.Minute, true},
-		{"after stop-time span, no frequencies", nil, 8 * time.Hour, false},
-		{"within frequency window", freqs, 8 * time.Hour, true},
-		{"last frequency run still underway", freqs, 10*time.Hour + 20*time.Minute, true},
-		{"after last frequency run", freqs, 10*time.Hour + 40*time.Minute, false},
+		{"within stop-time span", absoluteTemplate, nil, 6*time.Hour + 10*time.Minute, true},
+		{"after stop-time span, no frequencies", absoluteTemplate, nil, 8 * time.Hour, false},
+		{"within frequency window", absoluteTemplate, freqs, 8 * time.Hour, true},
+		{"last frequency run still underway", absoluteTemplate, freqs, 10*time.Hour + 20*time.Minute, true},
+		{"after last frequency run", absoluteTemplate, freqs, 10*time.Hour + 40*time.Minute, false},
+		{"relative template times, outside window", relativeTemplate, freqs, 10 * time.Minute, false},
+		{"relative template times, within window", relativeTemplate, freqs, 8 * time.Hour, true},
+		{"relative template times, last run underway", relativeTemplate, freqs, 10*time.Hour + 20*time.Minute, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, tripSpanCovers(trip, tc.freqs, tc.offset))
+			assert.Equal(t, tc.want, tripSpanCovers(tc.trip, tc.freqs, tc.offset))
 		})
 	}
 }
