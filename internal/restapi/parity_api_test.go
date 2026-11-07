@@ -65,7 +65,7 @@ func TestParityAPI(t *testing.T) {
 	api := createTestApiWithFeedAndClock(t, "../../testdata/raba.zip", clock.NewMockClock(parityTime))
 
 	t.Run("default-order", func(t *testing.T) {
-		runParityEndpoints(t, api, endpoints, *updateParity, false)
+		runParityEndpoints(t, api, endpoints, parityPass{writeGolden: *updateParity})
 	})
 
 	// With this pragma SQLite returns the rows of a query without ORDER BY in
@@ -76,17 +76,25 @@ func TestParityAPI(t *testing.T) {
 	_, err := api.GtfsManager.GtfsDB.DB.Exec("PRAGMA reverse_unordered_selects=ON")
 	require.NoError(t, err)
 	t.Run("reversed-unordered-selects", func(t *testing.T) {
-		runParityEndpoints(t, api, endpoints, false, true)
+		runParityEndpoints(t, api, endpoints, parityPass{skipOrderDependent: true})
 	})
 }
 
-func runParityEndpoints(t *testing.T, api *RestAPI, endpoints []parityEndpoint, write, skipOrderDependent bool) {
+// parityPass says how one run over the endpoints treats the golden files.
+type parityPass struct {
+	// writeGolden rewrites the golden files instead of comparing with them.
+	writeGolden bool
+	// skipOrderDependent skips parityOrderDependentEndpoints.
+	skipOrderDependent bool
+}
+
+func runParityEndpoints(t *testing.T, api *RestAPI, endpoints []parityEndpoint, pass parityPass) {
 	for _, endpoint := range endpoints {
 		t.Run(endpoint.name, func(t *testing.T) {
-			if issue, known := parityOrderDependentEndpoints[endpoint.name]; known && skipOrderDependent {
+			if issue, known := parityOrderDependentEndpoints[endpoint.name]; known && pass.skipOrderDependent {
 				t.Skipf("depends on unordered row order: %s", issue)
 			}
-			assertParityGolden(t, filepath.Join("api", endpoint.name+".json"), parityResponse(t, api, endpoint.path), write)
+			assertParityGolden(t, filepath.Join("api", endpoint.name+".json"), parityResponse(t, api, endpoint.path), pass.writeGolden)
 		})
 	}
 }
