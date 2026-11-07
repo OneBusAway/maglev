@@ -51,17 +51,35 @@ type tableDigest struct {
 func TestParityTables(t *testing.T) {
 	db := createTestApiWithFeed(t, "../../testdata/raba.zip").GtfsManager.GtfsDB.DB
 
+	schema := loadParitySchema(t, db)
 	tables := parityTables(t, db)
+	rowsByTable := map[string][]string{}
 	digests := map[string]tableDigest{}
 	for _, table := range tables {
-		rows := normalizedTableRows(t, db, table)
+		rows := normalizedTableRows(t, db, schema, table)
+		rowsByTable[table] = rows
 		sum := sha256.Sum256([]byte(strings.Join(rows, "\n")))
 		digests[table] = tableDigest{Rows: len(rows), SHA256: hex.EncodeToString(sum[:])}
 	}
 
 	if !assertParityGolden(t, "tables.json", digests, *updateParity) {
-		dir := writeParityDumps(t, db, tables)
+		dir := writeParityDumps(t, rowsByTable)
 		t.Logf("normalized rows written to %s; run the same test on main and diff the two directories", dir)
+	}
+}
+
+// paritySchema describes the keys that SQLite assigns, whose values depend on
+// insertion order.
+type paritySchema struct {
+	// autoincrementTables have an AUTOINCREMENT id, which the digest leaves out.
+	autoincrementTables []string
+}
+
+func loadParitySchema(t *testing.T, db *sql.DB) paritySchema {
+	t.Helper()
+	return paritySchema{
+		autoincrementTables: queryStrings(t, db, `SELECT name FROM sqlite_master
+			WHERE type = 'table' AND sql LIKE '%AUTOINCREMENT%'`),
 	}
 }
 
@@ -75,9 +93,9 @@ func parityTables(t *testing.T, db *sql.DB) []string {
 
 // normalizedTableRows returns the table's rows as sorted JSON arrays, without
 // autoincrement keys and import timestamps.
-func normalizedTableRows(t *testing.T, db *sql.DB, table string) []string {
+func normalizedTableRows(t *testing.T, db *sql.DB, schema paritySchema, table string) []string {
 	t.Helper()
-	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(parityColumns(t, db, table), ", "), table)
+	query := fmt.Sprintf("SELECT %s FROM %s", strings.Join(parityColumns(t, db, schema, table), ", "), table)
 	rows, err := db.Query(query)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
@@ -105,19 +123,24 @@ func normalizedTableRows(t *testing.T, db *sql.DB, table string) []string {
 // minus its autoincrement key and import timestamps. It fails for a foreign
 // key to another table's autoincrement ID, whose value depends on insertion
 // order, unless parityColumnReplacements has an entry for that column.
-func parityColumns(t *testing.T, db *sql.DB, table string) []string {
+func parityColumns(t *testing.T, db *sql.DB, schema paritySchema, table string) []string {
 	t.Helper()
-	autoincrementTables := queryStrings(t, db, `SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE '%AUTOINCREMENT%'`)
-	// A REFERENCES clause without a column name targets the primary key, and
-	// SQLite reports its "to" as NULL.
-	autoincrementReferences := queryStrings(t, db, `SELECT fk."from" FROM pragma_foreign_key_list(?) fk
-		WHERE (fk."to" = 'id' OR fk."to" IS NULL)
-		AND fk."table" IN (SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE '%AUTOINCREMENT%')`, table)
+	var autoincrementReferences []string
+	for _, fk := range queryStringRows(t, db, `SELECT "from", "table", coalesce("to", '') FROM pragma_foreign_key_list(?)`, table) {
+		fromColumn, parentTable, toColumn := fk[0], fk[1], fk[2]
+		// A REFERENCES clause without a column name targets the primary key,
+		// and SQLite reports its "to" as NULL, which the query turns into "".
+		referencesAutoincrementKey := slices.Contains(schema.autoincrementTables, parentTable) &&
+			(toColumn == "" || toColumn == "id")
+		if referencesAutoincrementKey {
+			autoincrementReferences = append(autoincrementReferences, fromColumn)
+		}
+	}
 
 	var columns []string
 	for _, column := range queryStrings(t, db, `SELECT name FROM pragma_table_info(?)`, table) {
 		key := table + "." + column
-		isAutoincrementKey := column == "id" && slices.Contains(autoincrementTables, table)
+		isAutoincrementKey := column == "id" && slices.Contains(schema.autoincrementTables, table)
 		if isAutoincrementKey || parityIgnoredColumns[key] {
 			continue
 		}
@@ -130,6 +153,29 @@ func parityColumns(t *testing.T, db *sql.DB, table string) []string {
 		columns = append(columns, column)
 	}
 	return columns
+}
+
+// queryStringRows returns the rows of a query whose columns are all text.
+func queryStringRows(t *testing.T, db *sql.DB, query string, args ...any) [][]string {
+	t.Helper()
+	rows, err := db.Query(query, args...)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	columns, err := rows.Columns()
+	require.NoError(t, err)
+	var result [][]string
+	for rows.Next() {
+		values := make([]string, len(columns))
+		pointers := make([]any, len(columns))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		require.NoError(t, rows.Scan(pointers...))
+		result = append(result, values)
+	}
+	require.NoError(t, rows.Err())
+	return result
 }
 
 func queryStrings(t *testing.T, db *sql.DB, query string, args ...any) []string {
@@ -169,12 +215,11 @@ func assertParityGolden(t *testing.T, name string, actual any, write bool) bool 
 
 // writeParityDumps writes each table's normalized rows to a new directory
 // that outlives the test, so the rows can be diffed against another run.
-func writeParityDumps(t *testing.T, db *sql.DB, tables []string) string {
+func writeParityDumps(t *testing.T, rowsByTable map[string][]string) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "maglev-parity-")
 	require.NoError(t, err)
-	for _, table := range tables {
-		rows := normalizedTableRows(t, db, table)
+	for table, rows := range rowsByTable {
 		path := filepath.Join(dir, table+".jsonl")
 		require.NoError(t, os.WriteFile(path, []byte(strings.Join(rows, "\n")+"\n"), 0o644))
 	}
