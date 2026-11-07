@@ -131,7 +131,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	sortArrivalsByBestTime(result.Arrivals)
 
 	// Java looks up nearby stops whether or not the window has arrivals.
-	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
+	nearbyStopIDs, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 
 	// Nothing scheduled in the window: skip the reference lookups, but keep
 	// the stop's alerts and neighbours, which don't depend on arrivals.
@@ -170,7 +174,10 @@ func (api *RestAPI) addStopSituations(ctx context.Context, references *models.Re
 	return situationIDsFromRefs(acc.situations.refs)
 }
 
-func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) []string {
+// getNearbyStopIDs returns the combined IDs of the other stops within 100m,
+// or an empty slice when there are none. A failed spatial query returns an
+// error so that the caller doesn't report a broken lookup as an isolated stop.
+func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) ([]string, error) {
 	// Mirrors Java: StopWithArrivalsAndDeparturesBeanServiceImpl calls
 	// NearbyStopsBeanService with radius=100 m and no count limit
 	// (StopWithArrivalsAndDeparturesBeanServiceImpl.java:74-75 +
@@ -180,9 +187,9 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 	const nearbyRadiusMeters = 100
 	const nearbyLimit = 0 // 0 = no cap
 	loc := &internalgtfs.LocationParams{Lat: lat, Lon: lon, Radius: nearbyRadiusMeters}
-	nearbyIDs := api.GtfsManager.GetStopIDsWithinBounds(ctx, loc, nearbyLimit)
-	if len(nearbyIDs) == 0 {
-		return nil
+	nearbyIDs, err := api.GtfsManager.GetStopIDsWithinBounds(ctx, loc, nearbyLimit)
+	if err != nil {
+		return nil, err
 	}
 
 	// Exclude the current stop from nearby results
@@ -193,7 +200,7 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 		}
 	}
 	if len(candidateIDs) == 0 {
-		return nil
+		return []string{}, nil
 	}
 
 	reqLogger := logging.ForComponent(ctx, "http_server")
@@ -221,5 +228,5 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 		}
 		nearbyStopIDs = append(nearbyStopIDs, utils.FormCombinedID(agency, sid))
 	}
-	return nearbyStopIDs
+	return nearbyStopIDs, nil
 }

@@ -1416,7 +1416,8 @@ func findRABAStopWithNeighbour(t *testing.T, api *RestAPI, ctx context.Context) 
 	require.NoError(t, err)
 	require.NotEmpty(t, candidates, "precondition: RABA should have stops near Redding")
 	for _, c := range candidates {
-		nearby := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
+		nearby, err := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
+		require.NoError(t, err)
 		if len(nearby) > 0 {
 			return c
 		}
@@ -1433,7 +1434,8 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
+	result, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
+	require.NoError(t, err)
 
 	require.NotEmpty(t, result, "expected ≥1 nearby stop within 100m")
 	for _, combinedID := range result {
@@ -1450,12 +1452,27 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
+	result, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
+	require.NoError(t, err)
 
 	for _, combinedID := range result {
 		_, codeID, _ := utils.ExtractAgencyIDAndCodeID(combinedID)
 		assert.NotEqual(t, currentStop.ID, codeID, "current stop should be excluded from nearby results")
 	}
+}
+
+// A failed spatial query must surface as an error, not as an isolated stop.
+func TestGetNearbyStopIDs_ReturnsQueryError(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	stop := testdata.Stop4062
+	result, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, "4062", "25")
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, result)
 }
 
 func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
@@ -1915,7 +1932,9 @@ func findIsolatedStopWithArrivals(t *testing.T, api *RestAPI, candidates []gtfsd
 	t.Helper()
 	ctx := context.Background()
 	for i, c := range candidates {
-		if len(getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "25")) != 0 {
+		nearby, err := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "25")
+		require.NoError(t, err)
+		if len(nearby) != 0 {
 			continue
 		}
 		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
