@@ -23,15 +23,17 @@ import (
 // maxStaticFeedBytes is the largest static feed Maglev downloads.
 const maxStaticFeedBytes = 200 * 1024 * 1024
 
-// feedFile is a copy of the static GTFS zip on local disk, private to one
-// import, and the SHA-256 of its content. The import reads it more than once,
-// so it must not change underneath; a private copy guarantees that even when
-// the configured feed is a local file that someone overwrites.
+// feedFile is a static GTFS zip on local disk and the SHA-256 of its content.
+// The import reads it more than once, so it must not change underneath. A
+// download is a private copy from the start. A local feed is read where it
+// is until parse copies it, so a reload that finds it already imported only
+// hashes it.
 type feedFile struct {
 	path        string
 	contentHash string
-	// open is the copy, kept open from the moment it is written so the
-	// import streams from it without reopening it by name.
+	// open is the private copy, kept open from the moment it is written so
+	// the import streams from it without reopening it by name. It is nil for
+	// a local feed that hasn't been copied.
 	open *os.File
 }
 
@@ -40,32 +42,65 @@ func (f *feedFile) importHash(config Config) string {
 	return feedHash(f.contentHash, config)
 }
 
-// close closes and removes the copy.
+// close closes and removes the private copy, if there is one.
 func (f *feedFile) close() {
+	if f.open == nil {
+		return
+	}
 	_ = f.open.Close()
 	_ = os.Remove(f.path)
 }
 
-// fetchFeedFile copies the configured feed, local or remote, into a file next
-// to the database while hashing it, without holding the feed in memory. Call
-// close when done.
+// fetchFeedFile hashes the configured feed without holding it in memory. A
+// local feed is read where it is; a remote one is downloaded next to the
+// database and hashed on the way. Call close when done.
 func fetchFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 	logger := slog.Default().With(slog.String("component", "gtfs_loader"))
 	logging.LogOperation(logger, "reading_gtfs_data", slog.String("source", config.GtfsURL))
 
-	if config.isLocalFile() {
-		source, err := os.Open(config.GtfsURL)
-		if err != nil {
-			return nil, fmt.Errorf("error reading local GTFS file: %w", err)
-		}
-		defer func() { _ = source.Close() }()
-		feed, _, err := copyToFeedFile(config, source)
-		if err != nil {
-			return nil, fmt.Errorf("error reading local GTFS file: %w", err)
-		}
-		return feed, nil
+	if !config.isLocalFile() {
+		return downloadFeedFile(ctx, config)
 	}
-	return downloadFeedFile(ctx, config)
+	contentHash, err := hashFile(config.GtfsURL)
+	if err != nil {
+		return nil, fmt.Errorf("error reading local GTFS file: %w", err)
+	}
+	return &feedFile{path: config.GtfsURL, contentHash: contentHash}, nil
+}
+
+func hashFile(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// makePrivate replaces a local feed with a private copy next to the database,
+// hashed on the way, so the feed can't change under the stream and the stored
+// hash describes the stored data. A download is private already.
+func (f *feedFile) makePrivate(config Config) error {
+	if f.open != nil {
+		return nil
+	}
+	source, err := os.Open(f.path)
+	if err != nil {
+		return fmt.Errorf("error reading local GTFS file: %w", err)
+	}
+	defer func() { _ = source.Close() }()
+
+	private, _, err := copyToFeedFile(config, source)
+	if err != nil {
+		return fmt.Errorf("error reading local GTFS file: %w", err)
+	}
+	*f = *private
+	return nil
 }
 
 func downloadFeedFile(ctx context.Context, config Config) (*feedFile, error) {
@@ -242,10 +277,15 @@ func feedHash(contentHash string, config Config) string {
 	return contentHash
 }
 
-// parse parses the feed as a stream, so its stop times and shapes are read
-// from the file while they are stored; the file stays open until close. With
+// parse parses the feed as a stream from its private copy, so its stop times
+// and shapes are read from the file while they are stored; the file stays
+// open until close. With
 // gtfstidy on, the tidied feed is streamed from memory.
 func (f *feedFile) parse(ctx context.Context, config Config) (*gtfsdb.GtfsData, error) {
+	if err := f.makePrivate(config); err != nil {
+		return nil, err
+	}
+
 	var data *gtfsdb.GtfsData
 	var err error
 	if config.EnableGTFSTidy {

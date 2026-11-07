@@ -34,12 +34,40 @@ func rabaContentHash(t *testing.T) string {
 func TestFetchFeedFileLocal(t *testing.T) {
 	dbDir := t.TempDir()
 	path := models.GetFixturePath(t, "raba.zip")
-	feed, err := fetchFeedFile(context.Background(), Config{GtfsURL: path, GTFSDataPath: filepath.Join(dbDir, "gtfs.db")})
+	config := Config{GtfsURL: path, GTFSDataPath: filepath.Join(dbDir, "gtfs.db")}
+	feed, err := fetchFeedFile(context.Background(), config)
 	require.NoError(t, err)
 	defer feed.close()
 
-	assert.Equal(t, dbDir, filepath.Dir(feed.path), "a local feed is copied next to the database")
+	assert.Equal(t, path, feed.path, "a local feed is hashed where it is")
 	assert.Equal(t, rabaContentHash(t), feed.contentHash)
+	entries, err := os.ReadDir(dbDir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "a local feed isn't copied until it is imported")
+
+	require.NoError(t, feed.makePrivate(config))
+	assert.Equal(t, dbDir, filepath.Dir(feed.path), "an imported local feed is copied next to the database")
+	assert.Equal(t, rabaContentHash(t), feed.contentHash)
+	assert.FileExists(t, path, "the configured feed is left in place")
+}
+
+// TestLocalFeedNamedLikeADownloadIsKept checks that importing a local feed
+// next to the database doesn't remove it, even if its name looks like a feed
+// download.
+func TestLocalFeedNamedLikeADownloadIsKept(t *testing.T) {
+	raba, err := os.ReadFile(models.GetFixturePath(t, "raba.zip"))
+	require.NoError(t, err)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gtfs-static-njt.zip")
+	require.NoError(t, os.WriteFile(path, raba, 0o600))
+	config := Config{GtfsURL: path, GTFSDataPath: filepath.Join(dir, "gtfs.db")}
+
+	feed, err := fetchFeedFile(context.Background(), config)
+	require.NoError(t, err)
+	defer feed.close()
+	_, err = feed.parse(context.Background(), config)
+	require.NoError(t, err)
+	assert.FileExists(t, path)
 }
 
 func TestFetchFeedFileDownload(t *testing.T) {
@@ -236,6 +264,7 @@ func TestFetchFeedFileRemovesStaleDownloads(t *testing.T) {
 			feed, err := fetchFeedFile(context.Background(), config)
 			require.NoError(t, err)
 			defer feed.close()
+			require.NoError(t, feed.makePrivate(config))
 			_, err = os.Stat(stale)
 			assert.True(t, os.IsNotExist(err), "a download this owner left behind is removed")
 			assert.FileExists(t, othersDownload, "another owner's download is left alone")
@@ -243,7 +272,7 @@ func TestFetchFeedFileRemovesStaleDownloads(t *testing.T) {
 	}
 }
 
-func TestFetchFeedFileLocalErrors(t *testing.T) {
+func TestFeedFileLocalErrors(t *testing.T) {
 	dir := t.TempDir()
 	tests := []struct {
 		name, gtfsURL, dataPath, wantErr string
@@ -263,14 +292,27 @@ func TestFetchFeedFileLocalErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := fetchFeedFile(context.Background(), Config{GtfsURL: tt.gtfsURL, GTFSDataPath: tt.dataPath})
-			assert.ErrorContains(t, err, tt.wantErr)
+			config := Config{GtfsURL: tt.gtfsURL, GTFSDataPath: tt.dataPath}
+			assert.ErrorContains(t, fetchAndParse(t, config), tt.wantErr)
 
 			entries, err := os.ReadDir(dir)
 			require.NoError(t, err)
 			assert.Empty(t, entries, "a failed copy leaves nothing behind")
 		})
 	}
+}
+
+// fetchAndParse fetches and parses the configured feed, and returns the first
+// error.
+func fetchAndParse(t *testing.T, config Config) error {
+	t.Helper()
+	feed, err := fetchFeedFile(context.Background(), config)
+	if err != nil {
+		return err
+	}
+	defer feed.close()
+	_, err = feed.parse(context.Background(), config)
+	return err
 }
 
 // newMemoryDB returns an empty in-memory database to import into.
@@ -331,6 +373,7 @@ func TestParsedFeedFileIsClosedAndRemoved(t *testing.T) {
 	config := Config{GtfsURL: models.GetFixturePath(t, "raba.zip"), GTFSDataPath: filepath.Join(t.TempDir(), "gtfs.db")}
 	feed, err := fetchFeedFile(context.Background(), config)
 	require.NoError(t, err)
+	require.NoError(t, feed.makePrivate(config))
 
 	// Removing the copy by name doesn't stop the import reading it.
 	require.NoError(t, os.Remove(feed.path))
