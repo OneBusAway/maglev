@@ -219,28 +219,11 @@ func feedHash(contentHash string, config Config) string {
 }
 
 // parse reads the feed, runs gtfstidy when enabled, then parses and validates
-// it. A local feed is hashed again from the bytes read, so the stored hash
-// matches the stored data even if the file changed since it was fetched.
+// it.
 func (f *feedFile) parse(ctx context.Context, config Config) (*gtfsdb.GtfsData, error) {
-	b, err := os.ReadFile(f.path)
+	b, hash, err := f.read(ctx, config)
 	if err != nil {
-		return nil, fmt.Errorf("error reading GTFS data: %w", err)
-	}
-	hash := f.hash
-	if !f.private {
-		sum := sha256.Sum256(b)
-		hash = feedHash(hex.EncodeToString(sum[:]), config)
-	}
-
-	if config.EnableGTFSTidy {
-		logger := slog.Default().With(slog.String("component", "gtfs_loader"))
-		logging.LogOperation(logger, "gtfstidy_enabled_processing_gtfs_data")
-		tidiedData, err := tidyGTFSData(ctx, b, logger)
-		if err != nil {
-			logging.LogError(logger, "Failed to tidy GTFS data, using original data", err)
-		} else {
-			b = tidiedData
-		}
+		return nil, err
 	}
 
 	data, err := gtfsdb.ParseGtfsDataWithHash(b, hash, config.GtfsURL)
@@ -252,4 +235,34 @@ func (f *feedFile) parse(ctx context.Context, config Config) (*gtfsdb.GtfsData, 
 		return nil, fmt.Errorf("invalid GTFS agency timezone: %w", err)
 	}
 	return data, nil
+}
+
+// read returns the feed's bytes to import, tidied when gtfstidy is on and
+// succeeds, and the hash to store them under. gtfstidy reads the file itself,
+// so a tidied feed is never held in memory untidied.
+//
+// An untidied local feed is hashed again from the bytes read, so the stored
+// hash matches the stored data even if the file changed since it was fetched.
+// A tidied local feed keeps the fetched hash; if the file changed in between,
+// the next reload sees a new hash and imports it again.
+func (f *feedFile) read(ctx context.Context, config Config) ([]byte, string, error) {
+	if config.EnableGTFSTidy {
+		logger := slog.Default().With(slog.String("component", "gtfs_loader"))
+		logging.LogOperation(logger, "gtfstidy_enabled_processing_gtfs_data")
+		tidiedData, err := tidyGTFSFile(ctx, f.path, logger)
+		if err == nil {
+			return tidiedData, f.hash, nil
+		}
+		logging.LogError(logger, "Failed to tidy GTFS data, using original data", err)
+	}
+
+	b, err := os.ReadFile(f.path)
+	if err != nil {
+		return nil, "", fmt.Errorf("error reading GTFS data: %w", err)
+	}
+	if f.private {
+		return b, f.hash, nil
+	}
+	sum := sha256.Sum256(b)
+	return b, feedHash(hex.EncodeToString(sum[:]), config), nil
 }
