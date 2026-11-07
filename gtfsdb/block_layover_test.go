@@ -329,15 +329,22 @@ func TestBuildBlockLayoverIndex_TiesIgnoreRowOrder(t *testing.T) {
 
 // seedBlockTrips inserts the trips a block_layover row can point to. Foreign
 // keys are off while it does, so the test doesn't need the routes and
-// calendar rows the trips would otherwise reference.
+// calendar rows the trips would otherwise reference. PRAGMA foreign_keys
+// applies to one connection only, so every statement runs on the same
+// pinned connection from the pool.
 func seedBlockTrips(t *testing.T, client *Client, blockID string, tripIDs ...string) {
 	t.Helper()
-	_, err := client.DB.Exec(`PRAGMA foreign_keys = OFF`)
+	ctx := context.Background()
+	conn, err := client.DB.Conn(ctx)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`)
 	require.NoError(t, err)
 	for _, tripID := range tripIDs {
-		_, err = client.DB.Exec(`INSERT INTO trips (id, route_id, service_id, block_id) VALUES (?, 'R1', 'SVC-WEEKDAY', ?)`, tripID, blockID)
+		_, err = conn.ExecContext(ctx, `INSERT INTO trips (id, route_id, service_id, block_id) VALUES (?, 'R1', 'SVC-WEEKDAY', ?)`, tripID, blockID)
 		require.NoError(t, err)
 	}
-	_, err = client.DB.Exec(`PRAGMA foreign_keys = ON`)
+	_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
 	require.NoError(t, err)
 }
