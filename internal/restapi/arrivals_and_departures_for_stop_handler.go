@@ -130,11 +130,14 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// Sort after buildArrival so predicted times are already filled in.
 	sortArrivalsByBestTime(result.Arrivals)
 
-	// Nothing scheduled in the window: skip the reference and nearby-stop
-	// lookups, but keep the stop's alerts, which don't depend on arrivals.
+	// Java looks up nearby stops whether or not the window has arrivals.
+	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
+
+	// Nothing scheduled in the window: skip the reference lookups, but keep
+	// the stop's alerts and neighbours, which don't depend on arrivals.
 	if !result.Matched {
 		situationIDs := api.addStopSituations(ctx, references, acc, stopCode, stopAgencyID)
-		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nil, situationIDs, stopID, api.Clock)
+		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nearbyStopIDs, situationIDs, stopID, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
@@ -153,8 +156,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 
 	topLevelSituationIDs := api.addStopSituations(ctx, references, acc, stopCode, stopAgencyID)
-
-	nearbyStopIDs := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
 	response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nearbyStopIDs, topLevelSituationIDs, stopID, api.Clock)
 	api.sendResponse(w, r, response)
 }

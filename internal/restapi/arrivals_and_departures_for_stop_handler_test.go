@@ -1926,3 +1926,20 @@ func findIsolatedStopWithArrivals(t *testing.T, api *RestAPI, candidates []gtfsd
 	}
 	return nil
 }
+
+// Java looks up nearby stops whether or not the window has arrivals, so a stop
+// keeps its neighbours when nothing is scheduled. RABA runs no service at 03:00.
+func TestArrivalsAndDeparturesForStopHandler_NoArrivalsStillListsNearbyStops(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+
+	const stopWithNeighbour = "1000" // Masonic Transfer Center
+	overnight := time.Date(2025, 6, 13, 3, 0, 0, 0, arrivalsTestClock.Location())
+	params := url.Values{"time": {fmt.Sprint(overnight.UnixMilli())}}
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(utils.FormCombinedID("25", stopWithNeighbour), params))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures, "precondition: no service at 03:00")
+	assert.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
+}
