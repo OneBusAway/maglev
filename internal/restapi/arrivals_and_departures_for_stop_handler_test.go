@@ -207,6 +207,19 @@ func TestArrivalsAndDeparturesForStopHandlerEndToEnd(t *testing.T) {
 
 // TestArrivalsAndDeparturesForStopHandler_StopCodeFallback tests that arrivals_and_departures_for_stop_handler
 // falls back to the raw stop entity id for code when the stop code is not supplied in the feed.
+func TestArrivalsAndDeparturesForStopHandler_TimeZeroReturnsEmpty(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{"time": {"0"}}))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	assert.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"time=0 queries epoch 0 (1970) and must return no arrivals")
+}
+
 func TestArrivalsAndDeparturesForStopHandler_StopCodeFallback(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
@@ -337,6 +350,7 @@ func TestArrivalsAndDeparturesForStopHandlerTimeParams(t *testing.T) {
 	}{
 		{"minutesAfter and minutesBefore", url.Values{"minutesAfter": {"60"}, "minutesBefore": {"10"}}},
 		{"absolute time param", url.Values{"time": {fmt.Sprintf("%d", specificTimeMs)}}},
+		{"datetime format param", url.Values{"time": {"2025-06-13_08-00-00"}}},
 	}
 
 	for _, tt := range tests {
@@ -348,6 +362,37 @@ func TestArrivalsAndDeparturesForStopHandlerTimeParams(t *testing.T) {
 			assert.Equal(t, arrivalsTestStopID, model.Data.Entry.StopID)
 			assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
 		})
+	}
+}
+
+// time accepts yyyy-MM-dd_HH-mm-ss in the agency timezone, like Java. The
+// arrivals must cluster around the requested hour, proving the value was read
+// as a datetime rather than ignored in favor of the clock.
+func TestArrivalsAndDeparturesForStopAcceptsDateTimeFormat(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{
+			"minutesBefore": {"60"},
+			"minutesAfter":  {"240"},
+			"time":          {"2025-06-13_08-00-00"},
+		}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, model.Data.FieldErrors)
+
+	arrivals := model.Data.Entry.ArrivalsAndDepartures
+	require.NotEmpty(t, arrivals, "Friday 08:00 must have scheduled service on the fixture")
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	windowStart := time.Date(2025, 6, 13, 7, 0, 0, 0, loc).UnixMilli()
+	windowEnd := time.Date(2025, 6, 13, 12, 0, 0, 0, loc).UnixMilli()
+	for _, a := range arrivals {
+		scheduled := a.ScheduledArrivalTime.UnixMilli()
+		assert.GreaterOrEqual(t, scheduled, windowStart, "arrival scheduled before the requested window")
+		assert.LessOrEqual(t, scheduled, windowEnd, "arrival scheduled after the requested window")
 	}
 }
 
@@ -521,7 +566,7 @@ func TestParseArrivalsAndDeparturesParams_InvalidValues(t *testing.T) {
 	require.NotNil(t, errs)
 	assert.Equal(t, "must be a valid integer", errs["minutesAfter"][0])
 	assert.Equal(t, "must be a valid integer", errs["minutesBefore"][0])
-	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["time"][0])
+	assert.Equal(t, `Invalid field value for field "time".`, errs["time"][0])
 }
 
 func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
@@ -534,6 +579,8 @@ func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
 		params url.Values
 	}{
 		{"invalid time", url.Values{"time": {"invalid"}}},
+		{"date-only time rejects matching Java", url.Values{"time": {"2026-10-30"}}},
+		{"negative time", url.Values{"time": {"-1000"}}},
 		{"invalid minutesAfter", url.Values{"minutesAfter": {"invalid"}}},
 		{"invalid frequencyMinutesBefore", url.Values{"frequencyMinutesBefore": {"invalid"}}},
 		{"invalid frequencyMinutesAfter", url.Values{"frequencyMinutesAfter": {"invalid"}}},
@@ -543,8 +590,12 @@ func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, _ := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(arrivalsTestStopID, tt.params))
+			resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(arrivalsTestStopID, tt.params))
 			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			if tt.params.Has("time") {
+				assert.Contains(t, model.Data.FieldErrors, "time")
+				assert.Equal(t, `Invalid field value for field "time".`, model.Data.FieldErrors["time"][0])
+			}
 		})
 	}
 }
