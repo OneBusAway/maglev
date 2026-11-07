@@ -2,6 +2,7 @@ package gtfsdb
 
 import (
 	"fmt"
+	"strings"
 
 	"maglev.onebusaway.org/internal/appconf"
 )
@@ -61,3 +62,22 @@ const connectionCacheKiB = 2000
 // driver sets this value by default; the pure-Go driver sets it in its DSN so
 // that both drivers behave the same.
 const connectionBusyTimeoutMs = 5000
+
+// DSN returns the connection string for path with foreign key enforcement and
+// the page cache size set. Both are connection-scoped and not persistent, so
+// setting them via PRAGMA on a single connection leaves the rest of the pool
+// without them; they have to ride the DSN. Each driver file spells the
+// settings in its own connectionParams.
+func DSN(path string) string {
+	return dsn(path, connectionCacheKiB)
+}
+
+// dsn returns the connection string for path with a page cache of cacheKiB
+// KiB. Tests use it to set a cache size that differs from SQLite's default.
+func dsn(path string, cacheKiB int) string {
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	return path + separator + connectionParams(cacheKiB)
+}
