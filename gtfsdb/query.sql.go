@@ -2607,6 +2607,8 @@ FROM
     JOIN agencies a ON r.agency_id = a.id
 WHERE
     a.id = ?
+ORDER BY
+    r.rowid
 `
 
 func (q *Queries) GetRouteIDsForAgency(ctx context.Context, id string) ([]string, error) {
@@ -2788,6 +2790,8 @@ FROM
     routes
 WHERE
     routes.agency_id = ?
+ORDER BY
+    routes.rowid
 `
 
 type GetRoutesForAgencyRow struct {
@@ -3792,6 +3796,8 @@ FROM
     stop_agencies
 WHERE
     agency_id = ?
+ORDER BY
+    stop_id
 `
 
 func (q *Queries) GetStopIDsForAgency(ctx context.Context, agencyID string) ([]string, error) {
