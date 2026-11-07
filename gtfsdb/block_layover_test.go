@@ -327,7 +327,64 @@ func TestBuildBlockLayoverIndex_TiesIgnoreRowOrder(t *testing.T) {
 	}
 }
 
-// blockLayoverRow holds the block_layover columns the tie tests compare.
+// TestBuildBlockLayoverIndex_OrdersTripsByFirstArrival covers a trip that
+// arrives at its first stop well before it departs. The block is ordered by
+// first arrival, as trips.min_arrival_time orders it in the block queries,
+// not by first departure.
+func TestBuildBlockLayoverIndex_OrdersTripsByFirstArrival(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	route := &gtfs.Route{Id: "R1"}
+	svc := &gtfs.Service{Id: "SVC-WEEKDAY"}
+	terminalStop := &gtfs.Stop{Id: "TERMINAL"}
+	northStop := &gtfs.Stop{Id: "NORTH"}
+	otherStop := &gtfs.Stop{Id: "OTHER"}
+
+	// X arrives at TERMINAL at 10:20 and departs at 10:40. Y starts at
+	// NORTH at 10:30. By first arrival X comes before Y, so A's layover at
+	// TERMINAL leads into X. By first departure Y would come between A and
+	// X, and the block would have no layover.
+	trips := []gtfs.ScheduledTrip{
+		{
+			ID: "trip-A", Route: route, Service: svc, BlockID: "BLOCK-ARRIVAL",
+			StopTimes: []gtfs.ScheduledStopTime{
+				{Stop: otherStop, StopSequence: 1, ArrivalTime: 9 * time.Hour, DepartureTime: 9 * time.Hour},
+				{Stop: terminalStop, StopSequence: 2, ArrivalTime: 10 * time.Hour, DepartureTime: 10 * time.Hour},
+			},
+		},
+		{
+			ID: "trip-X", Route: route, Service: svc, BlockID: "BLOCK-ARRIVAL",
+			StopTimes: []gtfs.ScheduledStopTime{
+				{Stop: terminalStop, StopSequence: 1, ArrivalTime: 10*time.Hour + 20*time.Minute, DepartureTime: 10*time.Hour + 40*time.Minute},
+				{Stop: northStop, StopSequence: 2, ArrivalTime: 11 * time.Hour, DepartureTime: 11 * time.Hour},
+			},
+		},
+		{
+			ID: "trip-Y", Route: route, Service: svc, BlockID: "BLOCK-ARRIVAL",
+			StopTimes: []gtfs.ScheduledStopTime{
+				{Stop: northStop, StopSequence: 1, ArrivalTime: 10*time.Hour + 30*time.Minute, DepartureTime: 10*time.Hour + 30*time.Minute},
+				{Stop: northStop, StopSequence: 2, ArrivalTime: 11 * time.Hour, DepartureTime: 11 * time.Hour},
+			},
+		},
+	}
+
+	seedBlockTrips(t, client, "BLOCK-ARRIVAL", "trip-A", "trip-X", "trip-Y")
+
+	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), &gtfs.Static{Trips: trips}, nil))
+
+	want := []blockLayoverRow{{
+		nextTripID: "trip-X",
+		routeID:    "R1",
+		stopID:     "TERMINAL",
+		start:      int64(10 * time.Hour),
+		end:        int64(10*time.Hour + 20*time.Minute),
+	}}
+	assert.Equal(t, want, queryBlockLayovers(t, client, "BLOCK-ARRIVAL"))
+}
+
+// blockLayoverRow holds the block_layover columns the ordering tests compare.
 type blockLayoverRow struct {
 	nextTripID, routeID, stopID string
 	start, end                  int64
