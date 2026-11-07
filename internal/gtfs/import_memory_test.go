@@ -35,6 +35,11 @@ import (
 //
 //	go test -c -o /tmp/gtfs.test -tags="perftest sqlite_fts5 sqlite_math_functions" ./internal/gtfs/
 //	cd internal/gtfs && MAGLEV_PERF_FEED=testdata/perf/njt.zip /tmp/gtfs.test -test.run '^TestImportMemory$' -test.v
+//
+// A stage's peak heap includes garbage from earlier stages that the collector
+// has not freed yet, so a stage that follows a large one can show some of
+// that garbage as its own. Compare each stage with the same stage in another
+// run, and expect part of a change's effect to show up in the next stage.
 func TestImportMemory(t *testing.T) {
 	feedPath := models.GetFixturePath(t, "perf/trimet.zip")
 	if feed := os.Getenv("MAGLEV_PERF_FEED"); feed != "" {
@@ -51,9 +56,10 @@ func TestImportMemory(t *testing.T) {
 
 	previousLogger := slog.Default()
 	stages := newImportStageRecorder()
-	// Warnings go straight to stderr. Forwarding them to previousLogger's
-	// handler would deadlock: slog's built-in handler writes through the log
-	// package, which SetDefault points back at this handler.
+	// Warnings go straight to stderr. previousLogger's handler is slog's
+	// built-in one, which writes through the log package, and SetDefault
+	// points the log package back at this handler at Info level. A warning
+	// forwarded there would come back as an Info record and be dropped.
 	slog.SetDefault(slog.New(stages.handler(slog.NewTextHandler(os.Stderr, nil))))
 	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 
