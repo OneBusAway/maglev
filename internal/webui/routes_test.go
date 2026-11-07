@@ -15,15 +15,23 @@ func TestIndexRouteServesOnlyRoot(t *testing.T) {
 	mux := http.NewServeMux()
 	webUI.SetWebUIRoutes(mux)
 
-	for path, want := range map[string]int{
-		"/":                    http.StatusOK,
-		"/foo":                 http.StatusNotFound,
-		"/api/where/stop/1.pb": http.StatusNotFound,
-	} {
-		rr := httptest.NewRecorder()
-		mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
-		if rr.Code != want {
-			t.Errorf("GET %s: got %d, want %d", path, rr.Code, want)
-		}
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+	}{
+		{name: "root", path: "/", wantStatus: http.StatusOK},
+		{name: "unknown top-level path", path: "/foo/bar", wantStatus: http.StatusNotFound},
+		{name: "unknown API path", path: "/api/where/nonexistent.json", wantStatus: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, tt.path, nil))
+			if rr.Code != tt.wantStatus {
+				t.Errorf("GET %s: got %d, want %d", tt.path, rr.Code, tt.wantStatus)
+			}
+		})
 	}
 }
