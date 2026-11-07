@@ -980,27 +980,24 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 // same ID, or the IDs resolve to nothing. Everything that derives one derives
 // the other, so the two cannot drift apart.
 // situationRef pairs an alert with the situation ID that both list entries and
-// situation references use to refer to it. FeedAgencyID travels with the alert
+// situation references use to refer to it. The FeedAlert travels with the alert
 // so allAffects can fall back to the feed's first configured agency.
 type situationRef struct {
-	ID           string
-	Alert        gtfs.Alert
-	FeedAgencyID string
+	ID    string
+	Alert internalgtfs.FeedAlert
 }
 
 // situationRefsFromAlerts drops alerts with no ID and pairs the rest with the
 // situation ID used to refer to them.
 func situationRefsFromAlerts(alerts []internalgtfs.FeedAlert, agencyID string) []situationRef {
 	refs := make([]situationRef, 0, len(alerts))
-	for _, feedAlert := range alerts {
-		alert := feedAlert.Alert
+	for _, alert := range alerts {
 		if alert.ID == "" {
 			continue
 		}
 		refs = append(refs, situationRef{
-			ID:           situationID(alert.ID, agencyIDForAlert(alert, agencyID)),
-			Alert:        alert,
-			FeedAgencyID: feedAlert.FeedAgencyID,
+			ID:    internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert.Alert, agencyID)),
+			Alert: alert,
 		})
 	}
 	return refs
@@ -1024,7 +1021,7 @@ func dedupeSituationRefs(refs []situationRef) []situationRef {
 
 // agencyIDForAlert returns the agency whose prefix an alert's situation ID
 // carries, preferring the alert's own informed entity over the caller's agency.
-//
+
 // One alert is reachable by more than one path: a stop served by another
 // agency's route matches the same alert through both the route and the stop, and
 // each path knows a different agency. Scoping the ID to the caller's agency
@@ -1032,29 +1029,12 @@ func dedupeSituationRefs(refs []situationRef) []situationRef {
 // situationIds would resolve to whichever one it happened to be built from.
 // The informed entity is the only source that does not vary by lookup path.
 func agencyIDForAlert(alert gtfs.Alert, fallbackAgencyID string) string {
-	for _, entity := range alert.InformedEntities {
-		if entity.AgencyID != nil && *entity.AgencyID != "" {
-			return *entity.AgencyID
-		}
+	if agencyID := internalgtfs.AlertAgencyID(alert); agencyID != "" {
+		return agencyID
 	}
 	return fallbackAgencyID
 }
 
-// situationID returns the combined-form ID for an alert.
-//
-// Prefixing is idempotent, not unconditional: a GTFS-RT feed exported by an OBA
-// instance already carries the agency prefix on its alert IDs — Puget Sound
-// ships "1_92239" — and prefixing again would publish "1_1_92239", which
-// resolves against nothing a client has seen. Upstream reports "1_92239".
-func situationID(alertID, agencyID string) string {
-	if agencyID == "" || strings.HasPrefix(alertID, agencyID+"_") {
-		return alertID
-	}
-	return utils.FormCombinedID(agencyID, alertID)
-}
-
-// situationCollector deduplicates the alerts referenced by list entries so the
-// response emits one situation reference per distinct situation ID.
 type situationCollector struct {
 	seen map[string]struct{}
 	refs []situationRef
@@ -1094,7 +1074,7 @@ func (api *RestAPI) situationReferences(ctx context.Context, refs []situationRef
 
 	alerts := make([]internalgtfs.FeedAlert, 0, len(refs))
 	for _, ref := range refs {
-		alerts = append(alerts, internalgtfs.FeedAlert{Alert: ref.Alert, FeedAgencyID: ref.FeedAgencyID})
+		alerts = append(alerts, ref.Alert)
 	}
 
 	reqLogger := logging.ForComponent(ctx, "http_server")
