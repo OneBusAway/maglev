@@ -20,12 +20,6 @@ import (
 // weekday services run.
 var parityTime = time.Date(2025, 6, 12, 15, 0, 0, 0, time.UTC)
 
-// parityOrderDependentEndpoints lists endpoints whose response is known to
-// change with SQLite's unordered row order, each with the issue that tracks
-// it, so the reversed-order pass can skip them until it is fixed. None is
-// known today.
-var parityOrderDependentEndpoints = map[string]string{}
-
 type parityEndpoint struct {
 	name string
 	path string
@@ -73,7 +67,7 @@ func TestParityAPI(t *testing.T) {
 	_, err := api.GtfsManager.GtfsDB.DB.Exec("PRAGMA reverse_unordered_selects=ON")
 	require.NoError(t, err)
 	t.Run("reversed-unordered-selects", func(t *testing.T) {
-		runParityEndpoints(t, api, endpoints, parityPass{skipOrderDependent: true})
+		runParityEndpoints(t, api, endpoints, parityPass{writeGolden: false})
 	})
 }
 
@@ -81,16 +75,11 @@ func TestParityAPI(t *testing.T) {
 type parityPass struct {
 	// writeGolden rewrites the golden files instead of comparing with them.
 	writeGolden bool
-	// skipOrderDependent skips parityOrderDependentEndpoints.
-	skipOrderDependent bool
 }
 
 func runParityEndpoints(t *testing.T, api *RestAPI, endpoints []parityEndpoint, pass parityPass) {
 	for _, endpoint := range endpoints {
 		t.Run(endpoint.name, func(t *testing.T) {
-			if issue, known := parityOrderDependentEndpoints[endpoint.name]; known && pass.skipOrderDependent {
-				t.Skipf("depends on unordered row order: %s", issue)
-			}
 			assertParityGolden(t, filepath.Join("api", endpoint.name+".json"), parityResponse(t, api, endpoint.path), pass.writeGolden)
 		})
 	}
