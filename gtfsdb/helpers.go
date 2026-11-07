@@ -38,6 +38,10 @@ type GtfsData struct {
 	stream *gtfs.StaticStream
 }
 
+// errNotParsed rejects a GtfsData built by hand: only one made by
+// ParseGtfsStream or ParseGtfsData holds the stream StoreGtfsData reads.
+var errNotParsed = errors.New("GTFS data to import must come from ParseGtfsStream or ParseGtfsData")
+
 // FeedIdentity names a feed in import_metadata: the hash it is stored under
 // and the source it came from.
 type FeedIdentity struct {
@@ -275,6 +279,10 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	} else if err != sql.ErrNoRows {
 		// Some other error occurred
 		return false, fmt.Errorf("error checking import metadata: %w", err)
+	}
+
+	if data.stream == nil {
+		return false, errNotParsed
 	}
 
 	logging.LogOperation(logger, "retrieved_static_data", slog.Int("warnings", len(data.Static.Warnings)))
