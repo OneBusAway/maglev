@@ -1895,19 +1895,34 @@ func TestArrivalsAndDeparturesForStopHandler_IsolatedStopEmitsEmptyNearbyStopIDs
 	candidates, err := api.GtfsManager.GetStopsInBounds(ctx,
 		&internalgtfs.LocationParams{Lat: 40.589123, Lon: -122.390830, Radius: 5000}, 200)
 	require.NoError(t, err)
-	var isolated *gtfsdb.Stop
-	for i, c := range candidates {
-		if len(getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "25")) == 0 {
-			isolated = &candidates[i]
-			break
-		}
-	}
+	isolated := findIsolatedStopWithArrivals(t, api, candidates)
 	if isolated == nil {
-		t.Skip("every RABA stop has a neighbour within 100m — test fixture too dense")
+		t.Skip("no isolated RABA stop has an arrival in the default window")
 	}
 
 	resp, model := callAPIHandler[map[string]any](t, api, arrivalsAndDeparturesURL(utils.FormCombinedID("25", isolated.ID)))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	entry := model["data"].(map[string]any)["entry"].(map[string]any)
+	require.NotEmpty(t, entry["arrivalsAndDepartures"])
 	assert.Equal(t, []any{}, entry["nearbyStopIds"])
+}
+
+// findIsolatedStopWithArrivals returns the first candidate that has no other
+// stop within 100m and at least one arrival in the default window. The
+// arrivals requirement makes the handler take its matched path, which is the
+// one that looks up nearby stops.
+func findIsolatedStopWithArrivals(t *testing.T, api *RestAPI, candidates []gtfsdb.Stop) *gtfsdb.Stop {
+	t.Helper()
+	ctx := context.Background()
+	for i, c := range candidates {
+		if len(getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "25")) != 0 {
+			continue
+		}
+		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+			arrivalsAndDeparturesURL(utils.FormCombinedID("25", c.ID)))
+		if resp.StatusCode == http.StatusOK && len(model.Data.Entry.ArrivalsAndDepartures) > 0 {
+			return &candidates[i]
+		}
+	}
+	return nil
 }
