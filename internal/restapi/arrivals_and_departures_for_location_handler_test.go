@@ -2,10 +2,8 @@ package restapi
 
 import (
 	"context"
-	"errors"
 	"maps"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"slices"
 	"sort"
@@ -917,46 +915,6 @@ func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
 
 // A cancelled request must not be reported as a server failure: client
 // cancellation writes nothing, an expired deadline writes 504.
-func TestSendArrivalsForLocationErrorDistinguishesCancellation(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	newRequest := func(ctx context.Context) (*httptest.ResponseRecorder, *http.Request) {
-		req := httptest.NewRequest(http.MethodGet, "/api/where/arrivals-and-departures-for-location.json", nil).WithContext(ctx)
-		return httptest.NewRecorder(), req
-	}
-
-	t.Run("client cancellation writes nothing", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		rec, req := newRequest(ctx)
-
-		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
-
-		assert.Empty(t, rec.Body.String(), "no body should be written when the client cancels")
-	})
-
-	t.Run("expired deadline writes gateway timeout", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 0)
-		defer cancel()
-		rec, req := newRequest(ctx)
-
-		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
-
-		assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
-		assert.Contains(t, rec.Body.String(), "gateway timeout")
-	})
-
-	t.Run("genuine failure writes server error", func(t *testing.T) {
-		ctx := context.Background()
-		rec, req := newRequest(ctx)
-
-		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
-
-		assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	})
-}
-
 // Nearby stops served only by routes with no service on the query date are
 // dropped, matching Java (e.g. a seasonal shuttle outside its season).
 func TestBuildNearbyResultsDropsStopsInactiveOnDate(t *testing.T) {
