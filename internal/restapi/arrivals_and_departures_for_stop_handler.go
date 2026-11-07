@@ -112,11 +112,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		FrequencyAfter:  params.FrequencyAfter,
 	}, acc)
 	if err != nil {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 
@@ -126,11 +122,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// A route can serve this stop and still have every arrival fall outside
 	// the window. Those route alerts belong on the entry anyway.
 	if err := api.addRouteAlertsForRetainedStops(ctx, []string{stopID}, acc.situations); err != nil {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 
@@ -148,11 +140,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		primaryAgency:    &agency,
 	}, acc)
 	if err != nil {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 

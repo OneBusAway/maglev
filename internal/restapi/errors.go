@@ -172,3 +172,13 @@ func (api *RestAPI) clientCanceledResponse(w http.ResponseWriter, r *http.Reques
 		)
 	}
 }
+
+// canceledOrServerErrorResponse distinguishes the client hanging up from a
+// genuine server-side failure, so a cancelled request is not reported as a 500.
+func (api *RestAPI) canceledOrServerErrorResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		api.clientCanceledResponse(w, r, ctx.Err())
+		return
+	}
+	api.serverErrorResponse(w, r, err)
+}
