@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"iter"
 	"log/slog"
 	"regexp"
 	"slices"
@@ -194,10 +195,9 @@ const testBatchSize = 2
 
 // insertShapesInBatches runs insertInBatches with testBatchSize in a
 // transaction on a new in-memory database, which is rolled back on error.
-// rows is an iter.Seq.
 // The transaction starts with a background context, so a cancelled ctx is
 // seen by insertInBatches and not by BeginTx.
-func insertShapesInBatches(t *testing.T, ctx context.Context, insert batchInsert[CreateShapeParams], rows func(yield func(CreateShapeParams) bool)) (int, error) {
+func insertShapesInBatches(t *testing.T, ctx context.Context, insert batchInsert[CreateShapeParams], rows iter.Seq[CreateShapeParams]) (int, error) {
 	t.Helper()
 	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
 	require.NoError(t, err)
@@ -219,7 +219,7 @@ func shapeRow(shapeID string, sequence int64) CreateShapeParams {
 
 // countYields wraps the rows sequence and adds one to *count for each row it
 // yields.
-func countYields[T any](rows func(yield func(T) bool), count *int) func(yield func(T) bool) {
+func countYields[T any](rows iter.Seq[T], count *int) iter.Seq[T] {
 	return func(yield func(T) bool) {
 		for row := range rows {
 			*count++
@@ -256,14 +256,56 @@ func TestInsertInBatchesShapes(t *testing.T) {
 	assert.Equal(t, 5.0, points[1].Lat)
 }
 
-func TestShapeRowsStopsWhenAsked(t *testing.T) {
+// TestRowIteratorsStopWhenAsked stops each row iterator partway through its
+// second parent, so the early return on a false yield is covered.
+func TestRowIteratorsStopWhenAsked(t *testing.T) {
+	stop := &gtfs.Stop{Id: "S"}
+	trips := []gtfs.ScheduledTrip{
+		{ID: "T1", StopTimes: []gtfs.ScheduledStopTime{{Stop: stop, StopSequence: 1}, {Stop: stop, StopSequence: 2}, {Stop: stop, StopSequence: 3}}},
+		{ID: "T2", StopTimes: []gtfs.ScheduledStopTime{{Stop: stop, StopSequence: 1}, {Stop: stop, StopSequence: 2}, {Stop: stop, StopSequence: 3}}},
+	}
 	shapes := []gtfs.Shape{{ID: "A", Points: make([]gtfs.ShapePoint, 3)}, {ID: "B", Points: make([]gtfs.ShapePoint, 3)}}
-	var seen []string
-	for row := range shapeRows(shapes) {
-		seen = append(seen, fmt.Sprintf("%s/%d", row.ShapeID, row.ShapePtSequence))
-		if len(seen) == 4 {
+	const rowsToRead = 4
+	tests := []struct {
+		name     string
+		readRows func() []string
+		want     []string
+	}{
+		{
+			name: "stop times",
+			readRows: func() []string {
+				return labelFirstRows(stopTimeRows(trips), rowsToRead, func(row CreateStopTimeParams) string {
+					return fmt.Sprintf("%s/%d", row.TripID, row.StopSequence)
+				})
+			},
+			want: []string{"T1/1", "T1/2", "T1/3", "T2/1"},
+		},
+		{
+			name: "shapes",
+			readRows: func() []string {
+				return labelFirstRows(shapeRows(shapes), rowsToRead, func(row CreateShapeParams) string {
+					return fmt.Sprintf("%s/%d", row.ShapeID, row.ShapePtSequence)
+				})
+			},
+			want: []string{"A/0", "A/1", "A/2", "B/0"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.readRows())
+		})
+	}
+}
+
+// labelFirstRows reads up to count rows and then stops the iterator,
+// returning the label of each row it read.
+func labelFirstRows[T any](rows iter.Seq[T], count int, label func(T) string) []string {
+	var labels []string
+	for row := range rows {
+		labels = append(labels, label(row))
+		if len(labels) == count {
 			break
 		}
 	}
-	assert.Equal(t, []string{"A/0", "A/1", "A/2", "B/0"}, seen)
+	return labels
 }
