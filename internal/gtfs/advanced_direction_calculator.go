@@ -353,14 +353,18 @@ func (adc *AdvancedDirectionCalculator) directionFromOrientations(orientations [
 }
 
 // shapePoints reads a shape's points from the database, through recentShapes
-// when the calculator has one. Concurrent lookups of one shape share a single
-// read.
+// when the calculator has one. Cache hits return before singleflight, which
+// only merges concurrent reads of a shape that isn't cached.
 func (adc *AdvancedDirectionCalculator) shapePoints(ctx context.Context, shapeID string) ([]gtfsdb.GetShapePointsWithDistanceRow, error) {
 	if adc.recentShapes == nil {
 		return adc.queries.GetShapePointsWithDistance(ctx, shapeID)
 	}
+	if points, ok := adc.recentShapes.get(shapeID); ok {
+		return points, nil
+	}
 	loaded, err, _ := adc.shapeLoads.Do(shapeID, func() (any, error) {
-		if points, ok := adc.recentShapes.get(shapeID); ok {
+		// A read that finished after the get above has already cached the shape.
+		if points, ok := adc.recentShapes.peek(shapeID); ok {
 			return points, nil
 		}
 		points, err := adc.queries.GetShapePointsWithDistance(ctx, shapeID)

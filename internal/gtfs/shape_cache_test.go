@@ -129,9 +129,13 @@ func TestPrecomputeReadsEachShapeOnce(t *testing.T) {
 	client := directionTestClient(t, buildDirectionFeed(t, []string{"0", "900", "2000", "3000"}, increasingDirectionShape))
 	db := &shapeReadCountingDB{DBTX: client.DB}
 
-	require.NoError(t, NewDirectionPrecomputer(gtfsdb.New(db), client.DB).PrecomputeAllDirections(context.Background()))
+	precomputer := NewDirectionPrecomputer(gtfsdb.New(db), client.DB)
+	require.NoError(t, precomputer.PrecomputeAllDirections(context.Background()))
 
 	assert.EqualValues(t, 1, db.reads.Load())
+	stats := precomputer.calculator.recentShapes.lookupStats()
+	assert.Equal(t, 1, stats.reads)
+	assert.LessOrEqual(t, stats.hits+stats.reads, stats.lookups)
 	for stopID, expected := range map[string]string{"S1": "E", "S2": "E", "S3": "NE", "S4": "N"} {
 		stop, err := client.Queries.GetStop(context.Background(), stopID)
 		require.NoError(t, err)
@@ -140,7 +144,8 @@ func TestPrecomputeReadsEachShapeOnce(t *testing.T) {
 }
 
 // TestShapePointsReadErrorIsNotCached checks that a failed read is retried on
-// the next lookup instead of being remembered.
+// the next lookup instead of being remembered, and that the cache counts
+// only the successful read.
 func TestShapePointsReadErrorIsNotCached(t *testing.T) {
 	client := directionTestClient(t, buildDirectionFeed(t, []string{"0", "900", "2000", "3000"}, increasingDirectionShape))
 	db := &shapeReadCountingDB{DBTX: client.DB}
@@ -156,4 +161,11 @@ func TestShapePointsReadErrorIsNotCached(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, points, len(increasingDirectionShape))
 	assert.EqualValues(t, 2, db.reads.Load())
+
+	// The third lookup is a hit and doesn't read. The failed read isn't
+	// counted as one.
+	_, err = calculator.shapePoints(context.Background(), "SH1")
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, db.reads.Load())
+	assert.Equal(t, shapeCacheStats{lookups: 3, hits: 1, reads: 1}, calculator.recentShapes.lookupStats())
 }

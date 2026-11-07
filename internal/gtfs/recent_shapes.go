@@ -14,12 +14,20 @@ import (
 // a whole feed's shapes in memory. The budget counts points rather than
 // shapes, because shape sizes vary by orders of magnitude between feeds.
 type recentShapes struct {
-	mu           sync.Mutex
-	maxPoints    int
-	totalPoints  int
-	order        *list.List // front is most recently used
-	entries      map[string]*list.Element
-	hits, misses int
+	mu          sync.Mutex
+	maxPoints   int
+	totalPoints int
+	order       *list.List // front is most recently used
+	entries     map[string]*list.Element
+	stats       shapeCacheStats
+}
+
+// shapeCacheStats counts how a cache's lookups were served. A lookup that is
+// neither a hit nor a read shared another lookup's read, or its read failed.
+type shapeCacheStats struct {
+	lookups int // calls to get
+	hits    int // lookups that found their shape cached
+	reads   int // shapes stored by add, one for each successful read
 }
 
 type recentShape struct {
@@ -31,15 +39,31 @@ func newRecentShapes(maxPoints int) *recentShapes {
 	return &recentShapes{maxPoints: maxPoints, order: list.New(), entries: map[string]*list.Element{}}
 }
 
+// get returns a shape's points if they are cached, and counts the lookup.
 func (c *recentShapes) get(shapeID string) ([]gtfsdb.GetShapePointsWithDistanceRow, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.stats.lookups++
+	points, ok := c.findLocked(shapeID)
+	if ok {
+		c.stats.hits++
+	}
+	return points, ok
+}
+
+// peek is get without counting, for checking again inside a lookup that get
+// has already counted.
+func (c *recentShapes) peek(shapeID string) ([]gtfsdb.GetShapePointsWithDistanceRow, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.findLocked(shapeID)
+}
+
+func (c *recentShapes) findLocked(shapeID string) ([]gtfsdb.GetShapePointsWithDistanceRow, bool) {
 	element, ok := c.entries[shapeID]
 	if !ok {
-		c.misses++
 		return nil, false
 	}
-	c.hits++
 	c.order.MoveToFront(element)
 	return element.Value.(recentShape).points, true
 }
@@ -62,6 +86,7 @@ func (c *recentShapes) add(shapeID string, points []gtfsdb.GetShapePointsWithDis
 		c.entries[shapeID] = c.order.PushFront(recentShape{shapeID: shapeID, points: points})
 	}
 	c.totalPoints += len(points)
+	c.stats.reads++
 	for c.totalPoints > c.maxPoints && c.order.Len() > 1 {
 		oldest := c.order.Remove(c.order.Back()).(recentShape)
 		delete(c.entries, oldest.shapeID)
@@ -69,9 +94,9 @@ func (c *recentShapes) add(shapeID string, points []gtfsdb.GetShapePointsWithDis
 	}
 }
 
-// stats returns how many lookups found their shape cached and how many didn't.
-func (c *recentShapes) stats() (hits, misses int) {
+// lookupStats returns the lookup counts so far.
+func (c *recentShapes) lookupStats() shapeCacheStats {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.hits, c.misses
+	return c.stats
 }

@@ -214,15 +214,16 @@ func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) err
 	}
 
 	duration := time.Since(startTime)
-	shapeHits, shapeMisses := dp.calculator.recentShapes.stats()
+	shapeStats := dp.calculator.recentShapes.lookupStats()
 	logging.LogOperation(dp.logger, "precomputing_stop_directions_completed",
 		slog.Duration("duration_ms", duration),
 		slog.Int("total_stops", len(stops)),
 		slog.Int("successful", successCount),
 		slog.Int("skipped", skippedCount),
 		slog.Int("errors", errorCount),
-		slog.Int("shape_cache_hits", shapeHits),
-		slog.Int("shape_reads", shapeMisses))
+		slog.Int("shape_lookups", shapeStats.lookups),
+		slog.Int("shape_cache_hits", shapeStats.hits),
+		slog.Int("shape_reads", shapeStats.reads))
 
 	return nil
 }
