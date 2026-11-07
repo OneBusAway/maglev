@@ -102,18 +102,43 @@ func TestFetchFeedFileServerUnreachable(t *testing.T) {
 	assert.ErrorContains(t, err, "error downloading GTFS data")
 }
 
-func TestDownloadDir(t *testing.T) {
+func TestNewDownloadLocation(t *testing.T) {
+	inMemory := downloadLocation{dir: os.TempDir(), prefix: "gtfs-static-pid" + strconv.Itoa(os.Getpid()) + "-"}
 	tests := []struct {
-		name, dataPath, want string
+		name, dataPath string
+		want           downloadLocation
 	}{
-		{"no database path", "", ""},
-		{"in-memory database", ":memory:", ""},
-		{"database file", "/data/gtfs.db", "/data"},
+		{"no database path", "", inMemory},
+		{"in-memory database", ":memory:", inMemory},
+		{"shared in-memory URI", "file::memory:?cache=shared", inMemory},
+		{"in-memory mode URI", "file:gtfs.db?mode=memory", inMemory},
+		{"database file", "/data/gtfs.db", downloadLocation{"/data", "gtfs-static-gtfs.db-"}},
+		{"relative database file", "gtfs.db", downloadLocation{".", "gtfs-static-gtfs.db-"}},
+		{"database URI", "file:/data/gtfs.db?cache=shared", downloadLocation{"/data", "gtfs-static-gtfs.db-"}},
+		{"relative database URI", "file:data/gtfs.db", downloadLocation{"data", "gtfs-static-gtfs.db-"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, downloadDir(Config{GTFSDataPath: tt.dataPath}))
+			assert.Equal(t, tt.want, newDownloadLocation(Config{GTFSDataPath: tt.dataPath}))
 		})
+	}
+}
+
+func TestDownloadLocationOwns(t *testing.T) {
+	location := downloadLocation{dir: ".", prefix: "gtfs-static-gtfs.db-"}
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"gtfs-static-gtfs.db-123.zip", true},
+		{"gtfs-static-gtfs.db-.zip", false},
+		{"gtfs-static-gtfs.db-old-123.zip", false},
+		{"gtfs-static-other.db-123.zip", false},
+		{"gtfs-static-gtfs.db-123.zip.part", false},
+		{"gtfs-static-123.zip", false},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, location.owns(tt.name), tt.name)
 	}
 }
 
@@ -176,14 +201,17 @@ func TestFetchFeedFileRemovesStaleDownloads(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	dbDir := t.TempDir()
-	stale := filepath.Join(dbDir, "gtfs-static-123.zip")
+	stale := filepath.Join(dbDir, "gtfs-static-gtfs.db-123.zip")
 	require.NoError(t, os.WriteFile(stale, []byte("left by a crash"), 0o600))
+	othersDownload := filepath.Join(dbDir, "gtfs-static-other.db-456.zip")
+	require.NoError(t, os.WriteFile(othersDownload, []byte("in use by another process"), 0o600))
 
 	feed, err := fetchFeedFile(context.Background(), Config{GtfsURL: server.URL, GTFSDataPath: filepath.Join(dbDir, "gtfs.db")})
 	require.NoError(t, err)
 	defer feed.cleanup()
 	_, err = os.Stat(stale)
-	assert.True(t, os.IsNotExist(err))
+	assert.True(t, os.IsNotExist(err), "a download left by this database's process is removed")
+	assert.FileExists(t, othersDownload, "another database's download is left alone")
 }
 
 // TestReloadStaticSkipsParseWhenTidyFails checks that a feed whose tidy fails

@@ -9,8 +9,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,10 +30,6 @@ type feedFile struct {
 	hash    string
 	cleanup func()
 }
-
-// downloadPattern names feed downloads, so ones left behind by a crash can be
-// found and removed.
-const downloadPattern = "gtfs-static-*.zip"
 
 // fetchFeedFile puts the configured feed in a local file and hashes it,
 // without holding the feed in memory. A local feed is read where it is; a
@@ -84,8 +82,7 @@ func downloadFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 		return nil, fmt.Errorf("failed to download GTFS data: received HTTP status %s", resp.Status)
 	}
 
-	removeStaleDownloads(downloadDir(config))
-	file, err := os.CreateTemp(downloadDir(config), downloadPattern)
+	file, err := newDownloadLocation(config).create()
 	if err != nil {
 		return nil, fmt.Errorf("error creating file for GTFS download: %w", err)
 	}
@@ -118,25 +115,86 @@ func newStaticHTTPClient() *http.Client {
 	return &http.Client{Timeout: 5 * time.Minute, Transport: transport}
 }
 
-// removeStaleDownloads deletes feed downloads that a crashed process never
-// cleaned up. Reloads are serialized, so none of them is still in use.
-func removeStaleDownloads(dir string) {
-	if dir == "" {
-		dir = os.TempDir()
+// Feed downloads are named downloadPrefix, then their owner, then "-" and the
+// random digits os.CreateTemp adds, then downloadSuffix. The owner part lets a
+// process find the downloads it left behind in a crash without touching
+// anyone else's.
+const (
+	downloadPrefix = "gtfs-static-"
+	downloadSuffix = ".zip"
+)
+
+// sqliteMemoryDatabase is the name SQLite gives an in-memory database.
+const sqliteMemoryDatabase = ":memory:"
+
+// downloadLocation is where a process keeps its feed downloads, and the name
+// prefix that marks them as its own.
+type downloadLocation struct {
+	dir    string
+	prefix string
+}
+
+// newDownloadLocation keeps downloads on the same disk as the database, rather
+// than in a temporary directory that may be held in memory (tmpfs), and names
+// them after the database file, so processes whose databases share a
+// directory leave each other's downloads alone. With an in-memory database,
+// downloads go to the temporary directory and are named after the process.
+func newDownloadLocation(config Config) downloadLocation {
+	dbFile, onDisk := databaseFile(config.GTFSDataPath)
+	if !onDisk {
+		owner := "pid" + strconv.Itoa(os.Getpid())
+		return downloadLocation{dir: os.TempDir(), prefix: downloadPrefix + owner + "-"}
 	}
-	stale, _ := filepath.Glob(filepath.Join(dir, downloadPattern))
-	for _, path := range stale {
-		_ = os.Remove(path)
+	return downloadLocation{dir: filepath.Dir(dbFile), prefix: downloadPrefix + filepath.Base(dbFile) + "-"}
+}
+
+// databaseFile returns the file that holds the database at dataPath, a path
+// or a SQLite "file:" URI, and reports whether the database is on disk at
+// all rather than in memory.
+func databaseFile(dataPath string) (string, bool) {
+	if !strings.HasPrefix(dataPath, "file:") {
+		inMemory := dataPath == "" || strings.HasPrefix(dataPath, sqliteMemoryDatabase)
+		return dataPath, !inMemory
+	}
+	uri, err := url.Parse(dataPath)
+	if err != nil {
+		return "", false
+	}
+	path := uri.Path
+	if path == "" {
+		path = uri.Opaque
+	}
+	inMemory := path == "" || path == sqliteMemoryDatabase || uri.Query().Get("mode") == "memory"
+	return path, !inMemory
+}
+
+// create removes the downloads this owner left behind, then creates a new one.
+func (l downloadLocation) create() (*os.File, error) {
+	l.removeStale()
+	return os.CreateTemp(l.dir, l.prefix+"*"+downloadSuffix)
+}
+
+// removeStale deletes downloads this owner left behind in a crash. An owner's
+// reloads are serialized, so none of them is still in use.
+func (l downloadLocation) removeStale() {
+	entries, _ := os.ReadDir(l.dir)
+	for _, entry := range entries {
+		if entry.Type().IsRegular() && l.owns(entry.Name()) {
+			_ = os.Remove(filepath.Join(l.dir, entry.Name()))
+		}
 	}
 }
 
-// downloadDir keeps a download on the same disk as the database, rather than
-// in a temporary directory that may be held in memory (tmpfs).
-func downloadDir(config Config) string {
-	if config.GTFSDataPath == "" || strings.HasPrefix(config.GTFSDataPath, ":memory:") {
-		return ""
+// owns reports whether name is one of this owner's downloads. The random part
+// must be all digits, so another owner whose name merely starts with this one
+// (gtfs.db-old next to gtfs.db) doesn't match.
+func (l downloadLocation) owns(name string) bool {
+	random, found := strings.CutPrefix(name, l.prefix)
+	if !found {
+		return false
 	}
-	return filepath.Dir(config.GTFSDataPath)
+	random, found = strings.CutSuffix(random, downloadSuffix)
+	return found && random != "" && strings.Trim(random, "0123456789") == ""
 }
 
 // feedHash identifies a feed in import_metadata. With gtfstidy on, the stored
