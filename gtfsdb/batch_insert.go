@@ -91,7 +91,7 @@ func insertInBatches[T any](ctx context.Context, tx *sql.Tx, batchSize int, inse
 			_, err = tx.ExecContext(ctx, insert.query(rowsInBatch), args...) // NOSONAR
 		}
 		if err != nil {
-			return fmt.Errorf("failed to insert %s batch: %w", insert.table, err)
+			return fmt.Errorf("failed to insert %s batch (rows %d-%d): %w", insert.table, inserted+1, inserted+rowsInBatch, err)
 		}
 		if (inserted+rowsInBatch)/insert.progressInterval > inserted/insert.progressInterval {
 			logProgress(inserted + rowsInBatch)

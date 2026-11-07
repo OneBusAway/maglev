@@ -80,7 +80,7 @@ func TestInsertInBatchesReportsStatementErrors(t *testing.T) {
 		wantErr string
 	}{
 		{name: "prepare fails on a full batch", rows: []CreateShapeParams{shapeRow("A", 0), shapeRow("A", 1)}, wantErr: "failed to prepare no_such_table batch"},
-		{name: "exec fails on a partial batch", rows: []CreateShapeParams{shapeRow("A", 0)}, wantErr: "failed to insert no_such_table batch"},
+		{name: "exec fails on a partial batch", rows: []CreateShapeParams{shapeRow("A", 0)}, wantErr: "failed to insert no_such_table batch (rows 1-1)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,7 +101,7 @@ func TestInsertInBatchesStopsAtFailedBatch(t *testing.T) {
 	}
 	var yields int
 	inserted, err := insertShapesInBatches(t, context.Background(), shapeInsert, countYields(slices.Values(rows), &yields))
-	assert.ErrorContains(t, err, "failed to insert shapes batch")
+	assert.ErrorContains(t, err, "failed to insert shapes batch (rows 3-4)")
 	assert.Equal(t, testBatchSize, inserted, "only the first batch is inserted")
 	assert.Equal(t, 2*testBatchSize, yields, "rows after the failed batch must not be read")
 }
