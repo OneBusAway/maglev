@@ -80,8 +80,8 @@
       }
     },
     "gtfs-static-feeds": {
-      "type": "array",
-      "description": "Static GTFS feeds, in load order. Cannot be combined with gtfs-static-feed. Only the first feed is imported for now.",
+      "type": ["array", "null"],
+      "description": "Static GTFS feeds, in load order. Cannot be combined with gtfs-static-feed. Only the first feed is imported for now. null counts as absent.",
       "items": { "$ref": "#/definitions/staticFeed" },
       "minItems": 1
     },
