@@ -8,7 +8,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
-// Unknown API paths, such as GTFS-RT exports this server doesn't serve yet, must 404
+// Unknown API paths, such as a GTFS-RT export this server doesn't serve, must 404
 // with the JSON envelope rather than fall through to the web UI's landing page.
 func TestUnknownAPIPathReturnsJSONNotFound(t *testing.T) {
 	api := createTestApi(t)
@@ -16,7 +16,7 @@ func TestUnknownAPIPathReturnsJSONNotFound(t *testing.T) {
 
 	for _, path := range []string{
 		"/api/where/nonexistent.json?key=TEST",
-		"/api/gtfs_realtime/alerts-for-agency/25.pb?key=TEST",
+		"/api/gtfs_realtime/nonexistent-for-agency/25.pb?key=TEST",
 	} {
 		t.Run(path, func(t *testing.T) {
 			resp, model := callAPIHandler[models.ResponseModel](t, api, path)
