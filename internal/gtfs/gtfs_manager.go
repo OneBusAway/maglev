@@ -97,6 +97,11 @@ type Manager struct {
 
 	// Tracks the last successful update time per feed
 	feedLastUpdate map[string]time.Time
+
+	// Tracks the last successful service-alerts fetch per feed, so a failing
+	// service-alerts sub-feed ages out on its own clock even while sibling
+	// sub-feeds keep resetting the feed-wide staleness timer.
+	feedAlertLastSuccess map[string]time.Time
 }
 
 // clearFeedData removes stale data for a specific feed when the staleness threshold is crossed
@@ -121,6 +126,26 @@ func (manager *Manager) clearFeedData(feedID string) {
 	delete(manager.feedLastUpdate, feedID)
 
 	manager.rebuildMergedRealtimeLocked()
+}
+
+// clearStaleAlerts clears a feed's stored service alerts when its
+// service-alerts sub-feed has kept failing for longer than
+// staleFeedThreshold while a sibling sub-feed keeps succeeding. A partial
+// success resets the feed-wide staleness timer, so without this the last
+// good alerts — including ones the agency cancelled — would be served
+// forever. Returns true when alert data was cleared.
+func (manager *Manager) clearStaleAlerts(feedID string) bool {
+	manager.realTimeMutex.Lock()
+	defer manager.realTimeMutex.Unlock()
+
+	last, ok := manager.feedAlertLastSuccess[feedID]
+	if !ok || len(manager.feedAlerts[feedID]) == 0 || time.Since(last) <= staleFeedThreshold {
+		return false
+	}
+
+	manager.feedAlerts[feedID] = nil
+	manager.rebuildMergedRealtimeLocked()
+	return true
 }
 
 // IsReady returns true if the GTFS data is fully initialized and indexed.
