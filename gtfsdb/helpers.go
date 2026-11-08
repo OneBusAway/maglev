@@ -39,12 +39,14 @@ func ParseGtfsData(b []byte, source string) (*GtfsData, error) {
 	hash := sha256.Sum256(b)
 	hashStr := hex.EncodeToString(hash[:])
 
+	logger := slog.Default().With(slog.String("component", "gtfs_parser"))
+	logging.LogOperation(logger, "parsing_gtfs_data", slog.Int("bytes", len(b)))
 	staticData, err := gtfs.ParseStatic(b, gtfs.ParseStaticOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("error parsing GTFS data: %w", err)
 	}
 
-	if err := ValidateAndFilterGTFSData(staticData, slog.Default()); err != nil {
+	if err := ValidateAndFilterGTFSData(staticData, logger); err != nil {
 		return nil, fmt.Errorf("GTFS validation failed: %w", err)
 	}
 
@@ -1419,8 +1421,15 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 				continue
 			}
 
+			// Trips are ordered by the arrival time at their first stop, the
+			// same start time as trips.min_arrival_time in the block queries.
+			// Trips that start at the same time are ordered by ID, so the
+			// layovers don't depend on the order of the rows in the feed.
 			slices.SortFunc(trips, func(a, b *gtfs.ScheduledTrip) int {
-				return cmp.Compare(a.StopTimes[0].DepartureTime, b.StopTimes[0].DepartureTime)
+				return cmp.Or(
+					cmp.Compare(a.StopTimes[0].ArrivalTime, b.StopTimes[0].ArrivalTime),
+					cmp.Compare(a.ID, b.ID),
+				)
 			})
 
 			for i := 0; i < len(trips)-1; i++ {
