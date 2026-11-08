@@ -583,7 +583,8 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
       "url": "...",
       "default-agency-id": "40",
       "agency-id-mappings": { "ST": "40" },
-      "headers": { "Authorization": "Bearer ..." }
+      "auth-header-name": "Authorization",
+      "auth-header-value": "Bearer ..."
     }
   ],
   "gtfs-rt-feeds": [

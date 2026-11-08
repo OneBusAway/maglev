@@ -171,7 +171,10 @@
       "description": "Path to TLS private key file. When set together with tls-cert-path, the server serves HTTPS."
     }
   },
-  "not": { "required": ["gtfs-static-feed", "gtfs-static-feeds"] },
+  "not": {
+    "required": ["gtfs-static-feed", "gtfs-static-feeds"],
+    "properties": { "gtfs-static-feeds": { "type": "array" } }
+  },
   "definitions": {
     "staticFeed": {
       "type": "object",
