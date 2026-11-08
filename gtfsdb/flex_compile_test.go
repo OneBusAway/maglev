@@ -257,9 +257,7 @@ func parseFixtureZip(t *testing.T, path string) *gtfs.Static {
 	t.Helper()
 	bytes, err := os.ReadFile(path)
 	require.NoError(t, err)
-	parsed, err := ParseGtfsData(bytes, path)
-	require.NoError(t, err)
-	return parsed.Static
+	return parseInMemory(t, bytes)
 }
 
 func rulesForService(rules []CompiledRule, serviceID string) []CompiledRule {
@@ -334,9 +332,7 @@ func TestCompileOnDemand_RealMichiganFeeds(t *testing.T) {
 		assert.Equal(t, map[string][]string{"CC_Ironton_Ferry_East": {"CC3"}, "CC_Ironton_Ferry_West": {"CC3"}}, compiled.StopServices)
 	})
 	t.Run("zero stops", func(t *testing.T) {
-		parsed, err := ParseGtfsData(flexfixtures.ZipBytes(t, flexfixtures.ZeroStopsFiles()), "flex-zero-stops")
-		require.NoError(t, err)
-		compiled := CompileOnDemand(parsed.Static)
+		compiled := CompileOnDemand(parseInMemory(t, flexfixtures.ZipBytes(t, flexfixtures.ZeroStopsFiles())))
 		require.Len(t, compiled.Services, 2)
 		assert.Equal(t, ServiceKindZoneToZone, compiled.Services[0].Kind)
 		assert.Equal(t, ServiceKindZoneToZone, compiled.Services[1].Kind)
@@ -346,9 +342,7 @@ func TestCompileOnDemand_RealMichiganFeeds(t *testing.T) {
 }
 
 func TestCompileOnDemand_GroupDeviatedFixture(t *testing.T) {
-	parsed, err := ParseGtfsData(flexfixtures.ZipBytes(t, flexfixtures.GroupDeviatedFiles()), "flex-group-deviated")
-	require.NoError(t, err)
-	compiled := CompileOnDemand(parsed.Static)
+	compiled := CompileOnDemand(parseInMemory(t, flexfixtures.ZipBytes(t, flexfixtures.GroupDeviatedFiles())))
 
 	require.Equal(t, []CompiledService{
 		{ID: "hermann", AgencyID: "gd", RouteID: "hermann", Kind: ServiceKindDeviatedRoute},

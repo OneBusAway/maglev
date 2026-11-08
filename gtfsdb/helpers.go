@@ -477,12 +477,13 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	if err := feedRows.err; err != nil {
 		return false, fmt.Errorf("unable to read stop times: %w", err)
 	}
-	if err := c.storeFlexStopTimes(ctx, feedRows.flexStatic(data.Static), qtx); err != nil {
+	flexStatic := feedRows.flexStatic(data.Static)
+	if err := c.storeFlexStopTimes(ctx, flexStatic, qtx); err != nil {
 		return false, fmt.Errorf("unable to create flex stop times: %w", err)
 	}
 
 	logging.LogOperation(logger, "compiling_on_demand_services")
-	compiled := CompileOnDemand(data.Static)
+	compiled := CompileOnDemand(flexStatic)
 	if err := c.storeOnDemand(ctx, compiled, qtx); err != nil {
 		return false, fmt.Errorf("unable to store on-demand services: %w", err)
 	}
