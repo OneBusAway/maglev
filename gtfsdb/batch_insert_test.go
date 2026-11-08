@@ -243,7 +243,7 @@ func TestInsertInBatchesShapes(t *testing.T) {
 	}
 	var inserted int
 	err = client.withTransaction(context.Background(), nil, "test", func(tx *sql.Tx) error {
-		inserted, err = insertInBatches(context.Background(), tx, 2, shapeInsert, shapeRows(shapes))
+		inserted, err = insertInBatches(context.Background(), tx, 2, shapeInsert, shapePoints(shapes))
 		return err
 	})
 	require.NoError(t, err)
@@ -256,56 +256,15 @@ func TestInsertInBatchesShapes(t *testing.T) {
 	assert.Equal(t, 5.0, points[1].Lat)
 }
 
-// TestRowIteratorsStopWhenAsked stops each row iterator partway through its
-// second parent, so the early return on a false yield is covered.
-func TestRowIteratorsStopWhenAsked(t *testing.T) {
-	stop := &gtfs.Stop{Id: "S"}
-	trips := []gtfs.ScheduledTrip{
-		{ID: "T1", StopTimes: []gtfs.ScheduledStopTime{{Stop: stop, StopSequence: 1}, {Stop: stop, StopSequence: 2}, {Stop: stop, StopSequence: 3}}},
-		{ID: "T2", StopTimes: []gtfs.ScheduledStopTime{{Stop: stop, StopSequence: 1}, {Stop: stop, StopSequence: 2}, {Stop: stop, StopSequence: 3}}},
-	}
-	shapes := []gtfs.Shape{{ID: "A", Points: make([]gtfs.ShapePoint, 3)}, {ID: "B", Points: make([]gtfs.ShapePoint, 3)}}
-	const rowsToRead = 4
-	tests := []struct {
-		name     string
-		readRows func() []string
-		want     []string
-	}{
-		{
-			name: "stop times",
-			readRows: func() []string {
-				return labelFirstRows(stopTimeRows(trips), rowsToRead, func(row CreateStopTimeParams) string {
-					return fmt.Sprintf("%s/%d", row.TripID, row.StopSequence)
-				})
-			},
-			want: []string{"T1/1", "T1/2", "T1/3", "T2/1"},
-		},
-		{
-			name: "shapes",
-			readRows: func() []string {
-				return labelFirstRows(shapeRows(shapes), rowsToRead, func(row CreateShapeParams) string {
-					return fmt.Sprintf("%s/%d", row.ShapeID, row.ShapePtSequence)
-				})
-			},
-			want: []string{"A/0", "A/1", "A/2", "B/0"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.readRows())
-		})
-	}
-}
-
-// labelFirstRows reads up to count rows and then stops the iterator,
-// returning the label of each row it read.
-func labelFirstRows[T any](rows iter.Seq[T], count int, label func(T) string) []string {
-	var labels []string
-	for row := range rows {
-		labels = append(labels, label(row))
-		if len(labels) == count {
-			break
+// shapePoints converts shapes to rows, numbering each shape's points from 0.
+func shapePoints(shapes []gtfs.Shape) iter.Seq[CreateShapeParams] {
+	return func(yield func(CreateShapeParams) bool) {
+		for _, shape := range shapes {
+			for idx, point := range shape.Points {
+				if !yield(shapePointParams(shape.ID, idx, point)) {
+					return
+				}
+			}
 		}
 	}
-	return labels
 }

@@ -1,10 +1,10 @@
 package gtfs
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -23,32 +23,54 @@ import (
 // maxStaticFeedBytes is the largest static feed Maglev downloads.
 const maxStaticFeedBytes = 200 * 1024 * 1024
 
-// feedFile is a static GTFS zip on local disk. hash identifies it in
-// import_metadata when it is imported as configured.
+// feedFile is a static GTFS zip on local disk and the SHA-256 of its content.
+// The import reads it more than once, so it must not change underneath. A
+// download is a private copy from the start. A local feed is read where it
+// is until parse copies it, so a reload that finds it already imported only
+// hashes it.
 type feedFile struct {
-	path string
-	hash string
-	// private is set for a download, which nothing but this import can
-	// change, so hash still describes it when it is parsed.
-	private bool
-	cleanup func()
+	path        string
+	contentHash string
+	// open is the private copy, kept open from the moment it is written so
+	// the import streams from it without reopening it by name. It is nil for
+	// a local feed that hasn't been copied.
+	open *os.File
 }
 
-// fetchFeedFile puts the configured feed in a local file and hashes it,
-// without holding the feed in memory. A local feed is read where it is; a
-// remote feed is downloaded next to the database. Call cleanup when done.
+// importHash is the hash an import of this feed is stored under.
+func (f *feedFile) importHash(config Config) string {
+	return feedHash(f.contentHash, config)
+}
+
+// identity names an import of this feed in import_metadata.
+func (f *feedFile) identity(config Config) gtfsdb.FeedIdentity {
+	return gtfsdb.FeedIdentity{Hash: f.importHash(config), Source: config.GtfsURL}
+}
+
+// close closes and removes the private copy, if there is one.
+func (f *feedFile) close() {
+	if f.open == nil {
+		return
+	}
+	_ = f.open.Close()
+	_ = os.Remove(f.path)
+}
+
+// fetchFeedFile hashes the configured feed without holding it in memory. A
+// local feed is read where it is; a remote one is downloaded next to the
+// database and hashed on the way. Call close when done.
 func fetchFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 	logger := slog.Default().With(slog.String("component", "gtfs_loader"))
 	logging.LogOperation(logger, "reading_gtfs_data", slog.String("source", config.GtfsURL))
 
-	if config.isLocalFile() {
-		contentHash, err := hashFile(config.GtfsURL)
-		if err != nil {
-			return nil, fmt.Errorf("error reading local GTFS file: %w", err)
-		}
-		return &feedFile{path: config.GtfsURL, hash: feedHash(contentHash, config), cleanup: func() {}}, nil
+	if !config.isLocalFile() {
+		return downloadFeedFile(ctx, config)
 	}
-	return downloadFeedFile(ctx, config)
+	contentHash, err := hashFile(config.GtfsURL)
+	if err != nil {
+		return nil, fmt.Errorf("error reading local GTFS file: %w", err)
+	}
+	return &feedFile{path: config.GtfsURL, contentHash: contentHash}, nil
 }
 
 func hashFile(path string) (string, error) {
@@ -63,6 +85,27 @@ func hashFile(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// makePrivate replaces a local feed with a private copy next to the database,
+// hashed on the way, so the feed can't change under the stream and the stored
+// hash describes the stored data. A download is private already.
+func (f *feedFile) makePrivate(config Config) error {
+	if f.open != nil {
+		return nil
+	}
+	source, err := os.Open(f.path)
+	if err != nil {
+		return fmt.Errorf("error reading local GTFS file: %w", err)
+	}
+	defer func() { _ = source.Close() }()
+
+	private, _, err := copyToFeedFile(config, source)
+	if err != nil {
+		return fmt.Errorf("error reading local GTFS file: %w", err)
+	}
+	*f = *private
+	return nil
 }
 
 func downloadFeedFile(ctx context.Context, config Config) (*feedFile, error) {
@@ -85,28 +128,32 @@ func downloadFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 		return nil, fmt.Errorf("failed to download GTFS data: received HTTP status %s", resp.Status)
 	}
 
-	file, err := newDownloadLocation(config).create()
+	feed, written, err := copyToFeedFile(config, io.LimitReader(resp.Body, maxStaticFeedBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("error creating file for GTFS download: %w", err)
-	}
-	remove := func() { _ = os.Remove(file.Name()) }
-
-	hasher := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(file, hasher), io.LimitReader(resp.Body, maxStaticFeedBytes+1))
-	if err := errors.Join(copyErr, file.Close()); err != nil {
-		remove()
 		return nil, fmt.Errorf("error reading GTFS data: %w", err)
 	}
 	if written > maxStaticFeedBytes {
-		remove()
+		feed.close()
 		return nil, fmt.Errorf("static GTFS response exceeds size limit of %d bytes", maxStaticFeedBytes)
 	}
-	return &feedFile{
-		path:    file.Name(),
-		hash:    feedHash(hex.EncodeToString(hasher.Sum(nil)), config),
-		private: true,
-		cleanup: remove,
-	}, nil
+	return feed, nil
+}
+
+// copyToFeedFile writes r to a new feed file and hashes it on the way. The
+// file stays open for the import.
+func copyToFeedFile(config Config, r io.Reader) (*feedFile, int64, error) {
+	file, err := newDownloadLocation(config).create()
+	if err != nil {
+		return nil, 0, err
+	}
+	hasher := sha256.New()
+	written, err := io.Copy(io.MultiWriter(file, hasher), r)
+	if err != nil {
+		_ = file.Close()
+		_ = os.Remove(file.Name())
+		return nil, 0, err
+	}
+	return &feedFile{path: file.Name(), contentHash: hex.EncodeToString(hasher.Sum(nil)), open: file}, written, nil
 }
 
 // Timeouts for downloading a static feed. The overall timeout allows for a
@@ -235,15 +282,22 @@ func feedHash(contentHash string, config Config) string {
 	return contentHash
 }
 
-// parse reads the feed, runs gtfstidy when enabled, then parses and validates
-// it.
+// parse parses the feed as a stream from its private copy, so its stop times
+// and shapes are read from the file while they are stored; the file stays
+// open until close. With
+// gtfstidy on, the tidied feed is streamed from memory.
 func (f *feedFile) parse(ctx context.Context, config Config) (*gtfsdb.GtfsData, error) {
-	b, hash, err := f.read(ctx, config)
-	if err != nil {
+	if err := f.makePrivate(config); err != nil {
 		return nil, err
 	}
 
-	data, err := gtfsdb.ParseGtfsDataWithHash(b, hash, config.GtfsURL)
+	var data *gtfsdb.GtfsData
+	var err error
+	if config.EnableGTFSTidy {
+		data, err = f.parseTidied(ctx, config)
+	} else {
+		data, err = f.parseFile(config)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -254,32 +308,21 @@ func (f *feedFile) parse(ctx context.Context, config Config) (*gtfsdb.GtfsData, 
 	return data, nil
 }
 
-// read returns the feed's bytes to import, tidied when gtfstidy is on and
-// succeeds, and the hash to store them under. gtfstidy reads the file itself,
-// so a tidied feed is never held in memory untidied.
-//
-// An untidied local feed is hashed again from the bytes read, so the stored
-// hash matches the stored data even if the file changed since it was fetched.
-// A tidied local feed keeps the fetched hash; if the file changed in between,
-// the next reload sees a new hash and imports it again.
-func (f *feedFile) read(ctx context.Context, config Config) ([]byte, string, error) {
-	if config.EnableGTFSTidy {
-		logger := slog.Default().With(slog.String("component", "gtfs_loader"))
-		logging.LogOperation(logger, "gtfstidy_enabled_processing_gtfs_data")
-		tidiedData, err := tidyGTFSFile(ctx, f.path, logger)
-		if err == nil {
-			return tidiedData, f.hash, nil
-		}
-		logging.LogError(logger, "Failed to tidy GTFS data, using original data", err)
-	}
-
-	b, err := os.ReadFile(f.path)
+func (f *feedFile) parseFile(config Config) (*gtfsdb.GtfsData, error) {
+	info, err := f.open.Stat()
 	if err != nil {
-		return nil, "", fmt.Errorf("error reading GTFS data: %w", err)
+		return nil, fmt.Errorf("error reading GTFS data: %w", err)
 	}
-	if f.private {
-		return b, f.hash, nil
+	return gtfsdb.ParseGtfsStream(f.open, info.Size(), f.identity(config))
+}
+
+func (f *feedFile) parseTidied(ctx context.Context, config Config) (*gtfsdb.GtfsData, error) {
+	logger := slog.Default().With(slog.String("component", "gtfs_loader"))
+	logging.LogOperation(logger, "gtfstidy_enabled_processing_gtfs_data")
+	tidiedData, err := tidyGTFSFile(ctx, f.path, logger)
+	if err != nil {
+		logging.LogError(logger, "Failed to tidy GTFS data, using original data", err)
+		return f.parseFile(config)
 	}
-	sum := sha256.Sum256(b)
-	return b, feedHash(hex.EncodeToString(sum[:]), config), nil
+	return gtfsdb.ParseGtfsStream(bytes.NewReader(tidiedData), int64(len(tidiedData)), f.identity(config))
 }

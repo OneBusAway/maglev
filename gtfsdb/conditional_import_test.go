@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
@@ -331,7 +332,7 @@ func TestSkipIfImported(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 
-	imported, err := client.SkipIfImported(t.Context(), "hash", "source")
+	imported, err := client.SkipIfImported(t.Context(), FeedIdentity{Hash: "hash", Source: "source"})
 	require.NoError(t, err)
 	assert.False(t, imported, "an empty database holds no feed")
 
@@ -350,8 +351,21 @@ func TestSkipIfImported(t *testing.T) {
 		{parsed.Hash, "other-source", false},
 		{"other-hash", "source", false},
 	} {
-		imported, err := client.SkipIfImported(t.Context(), tt.hash, tt.source)
+		imported, err := client.SkipIfImported(t.Context(), FeedIdentity{Hash: tt.hash, Source: tt.source})
 		require.NoError(t, err)
 		assert.Equal(t, tt.want, imported, "%s from %s", tt.hash, tt.source)
 	}
+}
+
+// TestStoreGtfsDataRejectsUnparsedData checks that importing a GtfsData built
+// by hand, without the stream its stop times come from, fails instead of
+// panicking.
+func TestStoreGtfsDataRejectsUnparsedData(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	changed, err := client.StoreGtfsData(t.Context(), &GtfsData{Static: &gtfs.Static{}, Hash: "hash", Source: "source"})
+	assert.ErrorIs(t, err, errNotParsed)
+	assert.False(t, changed)
 }
