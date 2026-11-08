@@ -183,7 +183,12 @@
       }
     },
     { "not": { "required": ["gtfs-bundle-inputs-url", "gtfs-static-feed"] } },
-    { "not": { "required": ["gtfs-bundle-inputs-url", "gtfs-static-feeds"] } }
+    {
+      "not": {
+        "required": ["gtfs-bundle-inputs-url", "gtfs-static-feeds"],
+        "properties": { "gtfs-static-feeds": { "type": "array" } }
+      }
+    }
   ],
   "definitions": {
     "staticFeed": {
