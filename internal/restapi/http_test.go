@@ -214,6 +214,12 @@ func mustGetStops(t testing.TB, api *RestAPI) []gtfsdb.Stop {
 // into its own in-memory database, so it leaves the shared fixture untouched.
 func createTestApiWithFeed(t testing.TB, feedPath string) *RestAPI {
 	t.Helper()
+	return createTestApiWithFeedAndClock(t, feedPath, clock.RealClock{})
+}
+
+// createTestApiWithFeedAndClock is createTestApiWithFeed with a custom clock.
+func createTestApiWithFeedAndClock(t testing.TB, feedPath string, c clock.Clock) *RestAPI {
+	t.Helper()
 
 	gtfsConfig := gtfs.Config{
 		GtfsURL:      feedPath,
@@ -232,7 +238,7 @@ func createTestApiWithFeed(t testing.TB, feedPath string) *RestAPI {
 		GtfsConfig:          gtfsConfig,
 		GtfsManager:         gtfsManager,
 		DirectionCalculator: gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries),
-		Clock:               clock.RealClock{},
+		Clock:               c,
 	}
 
 	api := NewRestAPI(application)
