@@ -547,26 +547,26 @@ func (manager *Manager) queryStopsInBounds(ctx context.Context, bounds utils.Coo
 // GetRoutesForLocation retrieves routes serving stops near a given location using the spatial index.
 // When query is non-empty, it is matched against a text index of route short and long names
 // (at most maxCount+1 candidates by relevance), and only candidates with a stop in bounds are kept.
+// A failed text search or bounds query is returned as an error, so the handler
+// can answer 500 instead of serving a database failure as an empty 200 that
+// clients cannot tell apart from "no routes here".
 func (manager *Manager) GetRoutesForLocation(
 	ctx context.Context,
 	loc *LocationParams,
 	query string,
 	maxCount int,
-) ([]gtfsdb.Route, bool) {
-	reqLogger := logging.ForComponent(ctx, "gtfs_manager")
-
+) ([]gtfsdb.Route, bool, error) {
 	var candidateRouteIDs []string
 	if query != "" {
 		// Spec: at most maxCount+1 text-index candidates are considered, then filtered by location.
 		candidates, err := manager.SearchRoutes(ctx, query, maxCount+1)
 		if err != nil {
-			logging.LogError(reqLogger, "route text search failed", err)
-			return []gtfsdb.Route{}, false
+			return nil, false, fmt.Errorf("route text search failed: %w", err)
 		}
 		// An empty candidate set must short-circuit here: an empty RouteIDs slice means
 		// "no filter" in queryRoutesInBounds, which would wrongly return every in-bounds route.
 		if len(candidates) == 0 {
-			return []gtfsdb.Route{}, false
+			return []gtfsdb.Route{}, false, nil
 		}
 		candidateRouteIDs = make([]string, len(candidates))
 		for i, candidate := range candidates {
@@ -577,11 +577,10 @@ func (manager *Manager) GetRoutesForLocation(
 	bounds := BoundsFromParams(loc)
 	routes, limitExceeded, err := manager.queryRoutesInBounds(ctx, bounds, loc.Lat, loc.Lon, maxCount, candidateRouteIDs)
 	if err != nil {
-		logging.LogError(reqLogger, "could not query routes within bounds", err)
-		return []gtfsdb.Route{}, false
+		return nil, false, fmt.Errorf("could not query routes within bounds: %w", err)
 	}
 
-	return routes, limitExceeded
+	return routes, limitExceeded, nil
 }
 
 // maxRoutesFetchedForShuffle bounds how many in-bounds route matches are pulled
