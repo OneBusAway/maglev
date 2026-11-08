@@ -115,7 +115,7 @@ func TestWhereResponses_StayAdditiveOnNonFlexFeed(t *testing.T) {
 			// createTestApiWithClock); this test fires 20 sequential requests
 			// against one shared RestAPI/limiter, which would otherwise trip
 			// the per-key rate limiter well before all endpoints are hit.
-			resp, err := http.Get(server.URL + tt.endpoint + separator + "key=org.onebusaway.iphone")
+			resp, err := http.Get(server.URL + tt.endpoint + separator + "key=TEST")
 			require.NoError(t, err)
 			defer func() { _ = resp.Body.Close() }()
 			body, err := io.ReadAll(resp.Body)
