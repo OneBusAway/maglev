@@ -146,12 +146,11 @@ func createDB(config Config) (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Configure SQLite performance settings immediately after opening
 	ctx := context.Background()
-	err = configureSQLitePerformance(ctx, db)
+	err = enableWALMode(ctx, db)
 	if err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("error configuring SQLite performance: %w", err)
+		return nil, fmt.Errorf("error enabling SQLite WAL mode: %w", err)
 	}
 
 	err = performDatabaseMigration(ctx, db)
@@ -960,37 +959,16 @@ func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []Cr
 	return nil
 }
 
-// configureSQLitePerformance applies PRAGMA settings to optimize SQLite performance
-// for bulk GTFS data imports and queries.
-func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
-	pragmas := []struct {
-		name        string
-		description string
-	}{
-		// Increase cache size to 64MB (negative value means KB)
-		{"PRAGMA cache_size=-64000", "Set cache size to 64MB"},
-		// Store temp tables and indices in memory for faster operations
-		{"PRAGMA temp_store=MEMORY", "Store temporary data in memory"},
-		// Enable Write-Ahead Logging to allow concurrent readers and a single writer
-		{"PRAGMA journal_mode=WAL", "Enable WAL mode"},
+// enableWALMode enables Write-Ahead Logging, which allows
+// concurrent readers and a single writer. journal_mode=WAL is stored in the
+// database file, so one PRAGMA applies it to every connection. That is why it
+// stays a PRAGMA, while the connection-scoped settings ride the DSN.
+func enableWALMode(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
+		logger := slog.Default().With(slog.String("component", "sqlite_performance"))
+		logging.LogError(logger, "failed to enable SQLite WAL mode", err)
+		return fmt.Errorf("failed to enable WAL mode: %w", err)
 	}
-
-	logger := slog.Default().With(slog.String("component", "sqlite_performance"))
-
-	for _, pragma := range pragmas {
-		_, err := db.ExecContext(ctx, pragma.name)
-		if err != nil {
-			logging.LogError(logger, "failed to set SQLite pragma", err, slog.String("pragma", pragma.description))
-			return fmt.Errorf("failed to execute %s: %w", pragma.name, err)
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-	}
-
-	logging.LogOperation(logger, "sqlite_performance_settings_applied",
-		slog.Int("pragma_count", len(pragmas)))
-
 	return nil
 }
 
@@ -1003,8 +981,8 @@ func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
 //     connection to a :memory: database creates a separate database instance, so we
 //     must limit to 1 connection to maintain data integrity.
 //
-//   - File databases: MaxOpenConns=25 to allow concurrent access. SQLite with WAL mode
-//     supports concurrent readers and a single writer.
+//   - File databases: up to maxOpenConnections connections to allow concurrent
+//     access. SQLite with WAL mode supports concurrent readers and a single writer.
 //
 // For production deployments with high concurrency requirements, consider using a
 // file-based database instead of :memory: to take advantage of concurrent connections.
@@ -1015,8 +993,7 @@ func configureConnectionPool(db *sql.DB, config Config) {
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
 	} else {
-		// Set maximum number of open connections to 25
-		db.SetMaxOpenConns(25)
+		db.SetMaxOpenConns(maxOpenConnections)
 
 		// Set maximum number of idle connections to 5
 		db.SetMaxIdleConns(5)
