@@ -19,6 +19,7 @@ type ArrivalAndDepartureParams struct {
 	MinutesAfter  int
 	MinutesBefore int
 	Time          *time.Time
+	TimeParam     string
 	TripID        string
 	ServiceDate   *time.Time
 	VehicleID     string
@@ -73,12 +74,11 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 	}
 
 	// Validate time
-	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
-		if timeMs, ok := utils.ParseEpochMillis(timeStr); ok {
-			timeParam := time.UnixMilli(timeMs)
-			params.Time = &timeParam
-		} else {
-			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
+	params.TimeParam, fieldErrors = utils.ParseArrivalTimeParam(r.URL.Query().Get("time"), fieldErrors)
+	if params.TimeParam != "" {
+		if ms, ok := utils.ParseEpochMillis(params.TimeParam); ok {
+			t := time.UnixMilli(ms)
+			params.Time = &t
 		}
 	}
 
@@ -126,9 +126,9 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 			localized := params.ServiceDate.In(loc[0])
 			params.ServiceDate = &localized
 		}
-		if params.Time != nil {
-			localized := params.Time.In(loc[0])
-			params.Time = &localized
+		if params.TimeParam != "" {
+			resolved := utils.ResolveArrivalTime(params.TimeParam, loc[0], time.Time{})
+			params.Time = &resolved
 		}
 	}
 
@@ -204,9 +204,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		localized := params.ServiceDate.In(loc)
 		params.ServiceDate = &localized
 	}
-	if params.Time != nil {
-		localized := params.Time.In(loc)
-		params.Time = &localized
+	if params.TimeParam != "" {
+		resolved := utils.ResolveArrivalTime(params.TimeParam, loc, api.Clock.Now())
+		params.Time = &resolved
 	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
