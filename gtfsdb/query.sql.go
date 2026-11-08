@@ -157,7 +157,7 @@ func (q *Queries) ClearStopAgencies(ctx context.Context) error {
 }
 
 const clearStopConsolidations = `-- name: ClearStopConsolidations :exec
-DELETE FROM stop_consolidations
+DELETE FROM stop_consolidations WHERE TRUE
 `
 
 func (q *Queries) ClearStopConsolidations(ctx context.Context) error {
@@ -5423,7 +5423,7 @@ SELECT
 FROM
     stop_consolidations
 ORDER BY
-    absorbed_id
+    absorbed_id ASC
 `
 
 func (q *Queries) ListStopConsolidations(ctx context.Context) ([]StopConsolidation, error) {

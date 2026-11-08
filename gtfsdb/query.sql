@@ -1578,7 +1578,7 @@ SELECT
 FROM
     stop_consolidations
 ORDER BY
-    absorbed_id;
+    absorbed_id ASC;
 
 -- name: ClearStopConsolidations :exec
-DELETE FROM stop_consolidations;
+DELETE FROM stop_consolidations WHERE TRUE;
