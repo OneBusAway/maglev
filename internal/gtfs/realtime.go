@@ -206,7 +206,7 @@ type vehicleFeedTimestampDecision struct {
 // without blocking a later correction. Unchanged and older plausible headers
 // stay rejected, including after clearFeedData keeps the watermark.
 func decideVehicleFeedTimestamp(prev uint64, createdAt, now time.Time) vehicleFeedTimestampDecision {
-	if createdAt.IsZero() {
+	if isMissingHeaderTime(createdAt) {
 		return vehicleFeedTimestampDecision{apply: true, watermark: prev, reason: vehicleFeedAccept}
 	}
 
@@ -610,7 +610,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				slog.Uint64("last_applied_timestamp", manager.feedVehicleTimestamp[feedID]),
 			)
 		default:
-			if decision.apply && !vehicleData.CreatedAt.IsZero() {
+			if decision.apply && !isMissingHeaderTime(vehicleData.CreatedAt) {
 				manager.feedVehicleTimestamp[feedID] = decision.watermark
 			}
 		}
@@ -1122,10 +1122,17 @@ func (manager *Manager) recordVehicleDataTime(feedID string, headerTime time.Tim
 	if manager.feedVehicleDataTime == nil {
 		manager.feedVehicleDataTime = make(map[string]time.Time)
 	}
-	if headerTime.IsZero() {
+	if isMissingHeaderTime(headerTime) {
 		headerTime = time.Now()
 	}
 	manager.feedVehicleDataTime[feedID] = headerTime
+}
+
+// isMissingHeaderTime reports whether a feed header carried no usable
+// timestamp. go-gtfs maps an explicit timestamp of 0 to the Unix epoch rather
+// than the zero time.Time, so both count as missing.
+func isMissingHeaderTime(headerTime time.Time) bool {
+	return headerTime.IsZero() || headerTime.Unix() == 0
 }
 
 // copyVehicleAgency carries a vehicle's agency, if it has one, from src to dst.
