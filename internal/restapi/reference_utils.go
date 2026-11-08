@@ -384,6 +384,7 @@ func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []mode
 // the database, and emitting Java-parity consequence entries.
 func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.Alert) []models.Situation {
 	situations := make([]models.Situation, 0, len(alerts))
+	logger := logging.ForComponent(ctx, "http_server")
 
 	// Pre-collect candidate IDs for batch database lookup to avoid N+1 queries.
 	var routeCandidateIDs []string
@@ -425,6 +426,10 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 			for _, id := range agencyIDs {
 				knownAgencies[id] = struct{}{}
 			}
+		} else {
+			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+				logger.Error("failed to fetch agencies for situation reference", "error", err)
+			}
 		}
 
 		if len(routeCandidateIDs) > 0 {
@@ -433,6 +438,10 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 			if routes, err := utils.QueryInBatches(ctx, uniqueRouteIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs); err == nil {
 				for _, r := range routes {
 					routeAgencyMap[r.ID] = r.AgencyID
+				}
+			} else {
+				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+					logger.Error("failed to fetch routes for situation reference", "error", err)
 				}
 			}
 		}
@@ -445,6 +454,10 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 					if _, exists := stopAgencyMap[row.StopID]; !exists {
 						stopAgencyMap[row.StopID] = row.ID
 					}
+				}
+			} else {
+				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+					logger.Error("failed to fetch stops for situation reference", "error", err)
 				}
 			}
 		}
@@ -473,7 +486,15 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 								tripAgencyMap[t.ID] = agency
 							}
 						}
+					} else {
+						if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+							logger.Error("failed to fetch missing routes for situation reference", "error", err)
+						}
 					}
+				}
+			} else {
+				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+					logger.Error("failed to fetch trips for situation reference", "error", err)
 				}
 			}
 		}
