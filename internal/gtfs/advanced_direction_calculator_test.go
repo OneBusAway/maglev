@@ -557,8 +557,9 @@ func shapeRow(lat, lon float64, seq int64) gtfsdb.GetShapePointsWithDistanceRow 
 func newCachedCalc(t *testing.T, shapes map[string][]gtfsdb.GetShapePointsWithDistanceRow) *AdvancedDirectionCalculator {
 	t.Helper()
 	calc := NewAdvancedDirectionCalculator(nil)
-	if err := calc.SetShapeCache(shapes); err != nil {
-		t.Fatalf("SetShapeCache: %v", err)
+	calc.recentShapes = newRecentShapes(math.MaxInt)
+	for shapeID, points := range shapes {
+		calc.recentShapes.add(shapeID, points)
 	}
 	return calc
 }
