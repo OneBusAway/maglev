@@ -1416,7 +1416,8 @@ func findRABAStopWithNeighbour(t *testing.T, api *RestAPI, ctx context.Context) 
 	require.NoError(t, err)
 	require.NotEmpty(t, candidates, "precondition: RABA should have stops near Redding")
 	for _, c := range candidates {
-		nearby := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
+		nearby, err := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
+		require.NoError(t, err)
 		if len(nearby) > 0 {
 			return c
 		}
@@ -1433,7 +1434,8 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
+	result, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
+	require.NoError(t, err)
 
 	require.NotEmpty(t, result, "expected ≥1 nearby stop within 100m")
 	for _, combinedID := range result {
@@ -1450,12 +1452,27 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
+	result, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
+	require.NoError(t, err)
 
 	for _, combinedID := range result {
 		_, codeID, _ := utils.ExtractAgencyIDAndCodeID(combinedID)
 		assert.NotEqual(t, currentStop.ID, codeID, "current stop should be excluded from nearby results")
 	}
+}
+
+// A failed spatial query must surface as an error, not as an isolated stop.
+func TestGetNearbyStopIDs_ReturnsQueryError(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	stop := testdata.Stop4062
+	result, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, "4062", "25")
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, result)
 }
 
 func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
@@ -1883,4 +1900,37 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 	require.Equal(t, http.StatusOK, model.Code)
 	require.Len(t, model.Data.Entry.ArrivalsAndDepartures, 1)
 	assert.Equal(t, utils.FormCombinedID(agencyPrimary, tripPrimary), model.Data.Entry.ArrivalsAndDepartures[0].TripID)
+}
+
+// An isolated stop has no other stop within 100m. Java emits "nearbyStopIds": []
+// for it; null makes OBAKit reject the whole response. The arrivals precondition
+// keeps the request on the handler's matched path.
+func TestArrivalsAndDeparturesForStopHandler_IsolatedStopEmitsEmptyNearbyStopIDs(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+
+	const isolatedStop = "9045" // Cedars Rd at Branstetter Ln (FS)
+	resp, model := callAPIHandler[map[string]any](t, api, arrivalsAndDeparturesURL(utils.FormCombinedID("25", isolatedStop)))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	entry := model["data"].(map[string]any)["entry"].(map[string]any)
+	require.NotEmpty(t, entry["arrivalsAndDepartures"], "precondition: stop 9045 has an arrival at arrivalsTestClock")
+	assert.Equal(t, []any{}, entry["nearbyStopIds"])
+}
+
+// Java looks up nearby stops whether or not the window has arrivals, so a stop
+// keeps its neighbours when nothing is scheduled. RABA runs no service at 03:00.
+func TestArrivalsAndDeparturesForStopHandler_NoArrivalsStillListsNearbyStops(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+
+	const stopWithNeighbour = "1000" // Masonic Transfer Center
+	overnight := time.Date(2025, 6, 13, 3, 0, 0, 0, arrivalsTestClock.Location())
+	params := url.Values{"time": {fmt.Sprint(overnight.UnixMilli())}}
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(utils.FormCombinedID("25", stopWithNeighbour), params))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures, "precondition: no service at 03:00")
+	assert.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
 }

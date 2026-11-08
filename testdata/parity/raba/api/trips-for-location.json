@@ -1,0 +1,352 @@
+{
+  "code": 200,
+  "currentTime": 1749740400000,
+  "data": {
+    "limitExceeded": false,
+    "list": [
+      {
+        "frequency": null,
+        "serviceDate": 1749711600000,
+        "situationIds": [],
+        "tripId": "25_0d10793d-765a-4b5a-892c-1ce4b41265f4"
+      },
+      {
+        "frequency": null,
+        "serviceDate": 1749711600000,
+        "situationIds": [],
+        "tripId": "25_4bcbf76b-9279-40b3-9168-6a488f6e9f80"
+      },
+      {
+        "frequency": null,
+        "serviceDate": 1749711600000,
+        "situationIds": [],
+        "tripId": "25_6b0a93e5-a9f8-4c61-9955-5fb3509788d9"
+      },
+      {
+        "frequency": null,
+        "serviceDate": 1749711600000,
+        "situationIds": [],
+        "tripId": "25_Route17-Westbound-MonFri-0"
+      },
+      {
+        "frequency": null,
+        "serviceDate": 1749711600000,
+        "situationIds": [],
+        "tripId": "25_a13ae708-c9fd-4871-ac33-5c00d24aa2ed"
+      },
+      {
+        "frequency": null,
+        "serviceDate": 1749711600000,
+        "situationIds": [],
+        "tripId": "25_dc447d8b-b47e-4540-a995-4db5c311c195"
+      },
+      {
+        "frequency": null,
+        "serviceDate": 1749711600000,
+        "situationIds": [],
+        "tripId": "25_dcd9e9b6-e261-4020-87f7-b65bf6b34e87"
+      },
+      {
+        "frequency": null,
+        "serviceDate": 1749711600000,
+        "situationIds": [],
+        "tripId": "25_t_404_b_18260_tn_0"
+      },
+      {
+        "frequency": null,
+        "serviceDate": 1749711600000,
+        "situationIds": [],
+        "tripId": "25_t_74122_b_18260_tn_2"
+      },
+      {
+        "frequency": null,
+        "serviceDate": 1749711600000,
+        "situationIds": [],
+        "tripId": "25_t_74134_b_18260_tn_2"
+      },
+      {
+        "frequency": null,
+        "serviceDate": 1749711600000,
+        "situationIds": [],
+        "tripId": "25_t_887274_b_18260_tn_1"
+      }
+    ],
+    "outOfRange": false,
+    "references": {
+      "agencies": [
+        {
+          "disclaimer": "",
+          "email": "",
+          "fareUrl": "",
+          "id": "25",
+          "lang": "en",
+          "name": "Redding Area Bus Authority",
+          "phone": "530-241-2877",
+          "privateService": false,
+          "timezone": "America/Los_Angeles",
+          "url": "http://www.rabaride.com/"
+        }
+      ],
+      "routes": [
+        {
+          "agencyId": "25",
+          "color": "55d1b0",
+          "description": "",
+          "id": "25_151",
+          "longName": "Route 1",
+          "nullSafeShortName": "1",
+          "shortName": "1",
+          "textColor": "000000",
+          "type": 3,
+          "url": "https://rabaride.com/Document%20Center/Services/Bus/Route01.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "1bb1f6",
+          "description": "",
+          "id": "25_153",
+          "longName": "Route 3",
+          "nullSafeShortName": "3",
+          "shortName": "3",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route03.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "bdadd1",
+          "description": "",
+          "id": "25_154",
+          "longName": "Route 4",
+          "nullSafeShortName": "4",
+          "shortName": "4",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://rabaride.com/Document%20Center/Services/Bus/Route04.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "1886c7",
+          "description": "",
+          "id": "25_157",
+          "longName": "Route 7",
+          "nullSafeShortName": "7",
+          "shortName": "7",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route07.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "93ea5f",
+          "description": "",
+          "id": "25_159",
+          "longName": "Route 11",
+          "nullSafeShortName": "11",
+          "shortName": "11",
+          "textColor": "000000",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route11.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "8c08b1",
+          "description": "",
+          "id": "25_160",
+          "longName": "Route 14",
+          "nullSafeShortName": "14",
+          "shortName": "14",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route14.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "00dffb",
+          "description": "",
+          "id": "25_161",
+          "longName": "Route 299X",
+          "nullSafeShortName": "299X",
+          "shortName": "299X",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://rabaride.com/services/burney_express.php"
+        },
+        {
+          "agencyId": "25",
+          "color": "fbef00",
+          "description": "",
+          "id": "25_1885",
+          "longName": "Shasta View/Shasta College",
+          "nullSafeShortName": "17",
+          "shortName": "17",
+          "textColor": "0e0e0e",
+          "type": 3,
+          "url": "https://cms3.revize.com/revize/reddingbusauthority/17.pdf"
+        },
+        {
+          "agencyId": "25",
+          "color": "F84DF7",
+          "description": "",
+          "id": "25_44X",
+          "longName": "Shingletown Flex",
+          "nullSafeShortName": "44X",
+          "shortName": "44X",
+          "textColor": "000000",
+          "type": 3,
+          "url": ""
+        }
+      ],
+      "situations": [],
+      "stopTimes": [],
+      "stops": [],
+      "trips": [
+        {
+          "blockId": "25_402",
+          "directionId": "0",
+          "id": "25_0d10793d-765a-4b5a-892c-1ce4b41265f4",
+          "peakOffpeak": 0,
+          "routeId": "25_154",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_b9yw",
+          "timeZone": "",
+          "tripHeadsign": "",
+          "tripShortName": ""
+        },
+        {
+          "blockId": "25_401",
+          "directionId": "0",
+          "id": "25_4bcbf76b-9279-40b3-9168-6a488f6e9f80",
+          "peakOffpeak": 0,
+          "routeId": "25_154",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_b9yw",
+          "timeZone": "",
+          "tripHeadsign": "",
+          "tripShortName": ""
+        },
+        {
+          "blockId": "25_44",
+          "directionId": "0",
+          "id": "25_6b0a93e5-a9f8-4c61-9955-5fb3509788d9",
+          "peakOffpeak": 0,
+          "routeId": "25_44X",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_8e3f",
+          "timeZone": "",
+          "tripHeadsign": "",
+          "tripShortName": ""
+        },
+        {
+          "blockId": "25_17",
+          "directionId": "1",
+          "id": "25_Route17-Westbound-MonFri-0",
+          "peakOffpeak": 0,
+          "routeId": "25_1885",
+          "routeShortName": "",
+          "serviceId": "25_c_868_b_79978_d_31",
+          "shapeId": "25_p_4556",
+          "timeZone": "",
+          "tripHeadsign": "Westbound",
+          "tripShortName": "Downtown Terminal"
+        },
+        {
+          "blockId": "25_403",
+          "directionId": "1",
+          "id": "25_a13ae708-c9fd-4871-ac33-5c00d24aa2ed",
+          "peakOffpeak": 0,
+          "routeId": "25_154",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_evsv",
+          "timeZone": "",
+          "tripHeadsign": "",
+          "tripShortName": ""
+        },
+        {
+          "blockId": "25_3",
+          "directionId": "1",
+          "id": "25_dc447d8b-b47e-4540-a995-4db5c311c195",
+          "peakOffpeak": 0,
+          "routeId": "25_153",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_vjut",
+          "timeZone": "",
+          "tripHeadsign": "South Redding",
+          "tripShortName": "South Redding"
+        },
+        {
+          "blockId": "25_1",
+          "directionId": "1",
+          "id": "25_dcd9e9b6-e261-4020-87f7-b65bf6b34e87",
+          "peakOffpeak": 0,
+          "routeId": "25_151",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_t580",
+          "timeZone": "",
+          "tripHeadsign": "Shasta Lake",
+          "tripShortName": "Shasta Lake"
+        },
+        {
+          "blockId": "25_299",
+          "directionId": "0",
+          "id": "25_t_404_b_18260_tn_0",
+          "peakOffpeak": 0,
+          "routeId": "25_161",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_p_2639",
+          "timeZone": "",
+          "tripHeadsign": "Burney",
+          "tripShortName": "Burney"
+        },
+        {
+          "blockId": "25_14",
+          "directionId": "0",
+          "id": "25_t_74122_b_18260_tn_2",
+          "peakOffpeak": 0,
+          "routeId": "25_160",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_r73t",
+          "timeZone": "",
+          "tripHeadsign": "Central Redding Loop - Clockwise Loop",
+          "tripShortName": "Clockwise Loop"
+        },
+        {
+          "blockId": "25_11",
+          "directionId": "1",
+          "id": "25_t_74134_b_18260_tn_2",
+          "peakOffpeak": 0,
+          "routeId": "25_159",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_zat9",
+          "timeZone": "",
+          "tripHeadsign": "Central Redding Loop - Counter Clockwise",
+          "tripShortName": "Counter Clockwise"
+        },
+        {
+          "blockId": "25_7",
+          "directionId": "1",
+          "id": "25_t_887274_b_18260_tn_1",
+          "peakOffpeak": 0,
+          "routeId": "25_157",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_p_788081",
+          "timeZone": "",
+          "tripHeadsign": "Southbound",
+          "tripShortName": "Downtown Terminal"
+        }
+      ]
+    }
+  },
+  "text": "OK",
+  "version": 2
+}
