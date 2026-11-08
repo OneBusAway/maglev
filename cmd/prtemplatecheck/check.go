@@ -87,6 +87,7 @@ type section struct {
 	checkboxes []checkbox
 	// fieldOpen is set while lines may still belong to the last field.
 	fieldOpen bool
+	sawBlank  bool
 }
 
 type field struct {
@@ -302,23 +303,58 @@ func (s *section) addLine(line string, inFence bool) {
 		if f := fieldPattern.FindStringSubmatch(line); f != nil {
 			s.fields = append(s.fields, field{label: strings.TrimSpace(f[1]), hasValue: strings.TrimSpace(f[2]) != ""})
 			s.fieldOpen = true
+			s.sawBlank = false
 			return
 		}
 		if box := checkboxPattern.FindStringSubmatch(line); box != nil {
 			s.checkboxes = append(s.checkboxes, checkbox{text: collapseSpaces(box[2]), checked: box[1] != " "})
 			s.fieldOpen = false
+			s.sawBlank = false
 			return
 		}
 	}
+	if !hasText {
+		if s.fieldOpen {
+			s.sawBlank = true
+		}
+		return
+	}
 	// A value can start on the lines after its label, such as a pasted code
-	// block or a <details> block under "Manual check:".
-	if s.fieldOpen && hasText {
+	// block or a <details> block under "Manual check:". Once a blank line
+	// separates the field from following text, only indented content or a
+	// block (code fence, details, screenshot) continues the field; a stray
+	// unindented paragraph closes the field and counts as prose.
+	if s.fieldOpen {
+		if s.sawBlank {
+			if isBlockContinuation(line, inFence) {
+				s.fields[len(s.fields)-1].hasValue = true
+				s.sawBlank = false
+				return
+			}
+			s.fieldOpen = false
+			s.hasProse = true
+			return
+		}
 		s.fields[len(s.fields)-1].hasValue = true
 		return
 	}
 	if hasText {
 		s.hasProse = true
 	}
+}
+
+// isBlockContinuation reports whether line continues an open field after a
+// blank line. Indented text, lines within a code fence, <details> tags, and
+// markdown or HTML screenshots all continue the field.
+func isBlockContinuation(line string, inFence bool) bool {
+	if inFence || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+		return true
+	}
+	trimmed := strings.TrimSpace(line)
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(lower, "<details") ||
+		strings.HasPrefix(trimmed, "![") ||
+		strings.HasPrefix(lower, "<img")
 }
 
 func (s *section) fieldHasValue(label string) bool {

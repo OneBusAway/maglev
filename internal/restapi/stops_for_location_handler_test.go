@@ -434,6 +434,55 @@ func TestStopsForLocationHandlerRouteTypeErrorLimit(t *testing.T) {
 	assert.Contains(t, routeTypeErrors[0], "Invalid field value for field", "Error should use standard generic message")
 }
 
+func TestStopsForLocationHandlerRouteTypeInvalidTokens(t *testing.T) {
+	tests := []struct {
+		name      string
+		routeType string
+	}{
+		{
+			name:      "trailing letters after digit",
+			routeType: "3abc",
+		},
+		{
+			name:      "alphanumeric identifier",
+			routeType: "bus",
+		},
+		{
+			name:      "trailing letters in list",
+			routeType: "1,2,bad3",
+		},
+		{
+			name:      "trailing underscore",
+			routeType: "3_extra",
+		},
+		{
+			name:      "64-bit integer overflow exceeding int32",
+			routeType: "99999999999",
+		},
+		{
+			name:      "int32 max plus one",
+			routeType: "2147483648",
+		},
+		{
+			name:      "int32 min minus one",
+			routeType: "-2147483649",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			url := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&routeType=" + tt.routeType
+			resp, model := callAPIHandler[StopsResponse](t, api, url)
+
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			routeTypeErrors := model.Data.FieldErrors["routeType"]
+			require.Len(t, routeTypeErrors, 1, "Should return a single error for invalid routeType")
+			assert.Contains(t, routeTypeErrors[0], "Invalid field value for field", "Error should use standard generic message")
+		})
+	}
+}
+
 func TestStopsForLocationHandlerRouteTypeTooManyTokens(t *testing.T) {
 	tokens := make([]string, 150)
 	for i := range tokens {
@@ -746,7 +795,7 @@ func TestStopsForLocationAcceptsDocumentedTimeFormats(t *testing.T) {
 	}{
 		{name: "epoch millis", timeParam: serviceDateEpochMs, expectStops: true},
 		{name: "date and time", timeParam: "2025-06-13_14-00-00", expectStops: true},
-		{name: "date only", timeParam: "2025-06-13", expectStops: true},
+		{name: "date only", timeParam: "2025-06-13", expectStops: false},
 		{name: "malformed", timeParam: "garbage", expectStops: false},
 		{name: "absent", timeParam: "", expectStops: false},
 	}
@@ -812,13 +861,14 @@ func TestStopsForLocationUsesAgencyDateForCurrentTime(t *testing.T) {
 		return stopIDs
 	}
 
-	// Both routes to the fallback have to land on the agency's date.
+	// Each route to the fallback has to land on the agency's date.
 	tests := []struct {
 		name      string
 		timeParam string
 	}{
 		{name: "absent", timeParam: ""},
 		{name: "malformed", timeParam: "garbage"},
+		{name: "zero epoch", timeParam: "0"},
 		{name: "negative epoch", timeParam: "-5"},
 	}
 

@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,8 +46,8 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			for _, rtStr := range routeTypeStrs {
 				rtStr = strings.TrimSpace(rtStr)
 				if rtStr != "" {
-					var rt int
-					if _, err := fmt.Sscanf(rtStr, "%d", &rt); err != nil {
+					rt, err := strconv.ParseInt(rtStr, 10, 32)
+					if err != nil {
 						if fieldErrors == nil {
 							fieldErrors = make(map[string][]string)
 						}
@@ -56,7 +57,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 							}
 						}
 					} else {
-						routeTypes = append(routeTypes, rt)
+						routeTypes = append(routeTypes, int(rt))
 					}
 				}
 			}
@@ -98,7 +99,11 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	var stops []gtfsdb.Stop
 	var limitExceeded bool
 	if !outOfRange {
-		stops, limitExceeded = api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
+		stops, limitExceeded, err = api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 	}
 
 	results := []models.Stop{}
@@ -311,7 +316,7 @@ func (api *RestAPI) queryTimeForStops(ctx context.Context, timeParam string, age
 		return api.Clock.Now()
 	}
 
-	_, parsedTime, _, ok := utils.ParseTimeParameter(timeParam, location, api.Clock)
+	_, parsedTime, _, ok := utils.ParseTimeParameterOrNow(timeParam, location, api.Clock)
 	if !ok {
 		return api.Clock.Now().In(location)
 	}

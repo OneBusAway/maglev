@@ -19,6 +19,24 @@ import (
 	"maglev.onebusaway.org/internal/models"
 )
 
+// TestGetStopsForLocationContextError ensures terminated requests return their
+// context error before attempting to access the database.
+func TestGetStopsForLocationContextError(t *testing.T) {
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	expired, cancelDeadline := context.WithDeadline(t.Context(), time.Time{})
+	defer cancelDeadline()
+	for _, ctx := range []context.Context{canceled, expired} {
+		t.Run(ctx.Err().Error(), func(t *testing.T) {
+			manager := &Manager{}
+			stops, limitExceeded, err := manager.GetStopsForLocation(ctx, &LocationParams{}, "", 10, nil)
+			assert.ErrorIs(t, err, ctx.Err())
+			assert.Empty(t, stops)
+			assert.False(t, limitExceeded)
+		})
+	}
+}
+
 func TestManager_GetAgencies(t *testing.T) {
 	// Use shared component to avoid reloading DB
 	manager, _ := getSharedTestComponents(t)
@@ -561,6 +579,18 @@ func TestManager_DataFreshnessTracking(t *testing.T) {
 	feedTimes["feed-1"] = time.Now().Add(time.Hour)
 	feedTimes2 := manager.GetFeedUpdateTimes()
 	assert.Equal(t, now, feedTimes2["feed-1"])
+}
+
+func TestManager_GetSystemETag(t *testing.T) {
+	manager, _ := getSharedTestComponents(t)
+	require.NotNil(t, manager)
+
+	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, metadata.FileHash)
+
+	etag := manager.GetSystemETag(context.Background())
+	assert.Equal(t, `W/"`+metadata.FileHash+`"`, etag, "system ETag must match stored FileHash formatted as a weak quoted entity tag")
 }
 
 // createTestManagerWithGTFSFiles creates an in-memory GTFS Manager loaded from a synthetic GTFS zip.

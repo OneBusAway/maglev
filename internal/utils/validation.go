@@ -2,6 +2,7 @@ package utils
 
 import (
 	"errors"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -64,7 +65,7 @@ func ValidateQuery(query string) error {
 
 // ValidateLatitude validates latitude values
 func ValidateLatitude(lat float64) error {
-	if lat < -90.0 || lat > 90.0 {
+	if math.IsNaN(lat) || math.IsInf(lat, 0) || lat < -90.0 || lat > 90.0 {
 		return errors.New("latitude must be between -90 and 90")
 	}
 	return nil
@@ -72,7 +73,7 @@ func ValidateLatitude(lat float64) error {
 
 // ValidateLongitude validates longitude values
 func ValidateLongitude(lon float64) error {
-	if lon < -180.0 || lon > 180.0 {
+	if math.IsNaN(lon) || math.IsInf(lon, 0) || lon < -180.0 || lon > 180.0 {
 		return errors.New("longitude must be between -180 and 180")
 	}
 	return nil
@@ -80,7 +81,7 @@ func ValidateLongitude(lon float64) error {
 
 // ValidateRadius validates radius values for location searches
 func ValidateRadius(radius float64) error {
-	if radius < 0 {
+	if math.IsNaN(radius) || math.IsInf(radius, 0) || radius < 0 {
 		return errors.New("radius must be non-negative")
 	}
 
@@ -90,7 +91,7 @@ func ValidateRadius(radius float64) error {
 
 // ValidateSpan validates latitude/longitude span values
 func ValidateSpan(span float64) error {
-	if span < 0 {
+	if math.IsNaN(span) || math.IsInf(span, 0) || span < 0 {
 		return errors.New("span must be non-negative")
 	}
 
