@@ -134,19 +134,9 @@ func TestBuildBlockLayoverIndex_BoundsMatchJava(t *testing.T) {
 	}
 	staticData := &gtfs.Static{Trips: trips}
 
-	// Seed the trips table so the block_layover FK on next_trip_id resolves.
-	// Disable FK enforcement during setup so we can avoid seeding the full
-	// routes/calendar chain — this test only exercises layover bounds math.
-	_, err = client.DB.Exec(`PRAGMA foreign_keys = OFF`)
-	require.NoError(t, err)
-	_, err = client.DB.Exec(`INSERT INTO trips (id, route_id, service_id, block_id) VALUES
-		('trip-A', 'R1', 'SVC-WEEKDAY', 'BLOCK-1'),
-		('trip-B', 'R1', 'SVC-WEEKDAY', 'BLOCK-1')`)
-	require.NoError(t, err)
-	_, err = client.DB.Exec(`PRAGMA foreign_keys = ON`)
-	require.NoError(t, err)
+	seedBlockTrips(t, client, "BLOCK-1", "trip-A", "trip-B")
 
-	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), staticData, nil))
+	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), tripEndsOf(staticData.Trips), nil))
 
 	var start, end int64
 	var recordedStopID, recordedNextTripID string
@@ -205,16 +195,9 @@ func TestBuildBlockLayoverIndex_SkipsOverlappingTrips(t *testing.T) {
 	}
 	staticData := &gtfs.Static{Trips: trips}
 
-	_, err = client.DB.Exec(`PRAGMA foreign_keys = OFF`)
-	require.NoError(t, err)
-	_, err = client.DB.Exec(`INSERT INTO trips (id, route_id, service_id, block_id) VALUES
-		('trip-A', 'R1', 'SVC-WEEKDAY', 'BLOCK-OVERLAP'),
-		('trip-B', 'R1', 'SVC-WEEKDAY', 'BLOCK-OVERLAP')`)
-	require.NoError(t, err)
-	_, err = client.DB.Exec(`PRAGMA foreign_keys = ON`)
-	require.NoError(t, err)
+	seedBlockTrips(t, client, "BLOCK-OVERLAP", "trip-A", "trip-B")
 
-	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), staticData, nil))
+	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), tripEndsOf(staticData.Trips), nil))
 
 	var count int
 	err = client.DB.QueryRow(
@@ -275,4 +258,215 @@ func TestGetActiveLayoverBlockIDsForRoute_MatchesWindow(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Empty(t, wrongService)
+}
+
+// TestBuildBlockLayoverIndex_TiesIgnoreRowOrder covers two trips in one block
+// that start at the same time. The layovers must not depend on which of them
+// comes first in the feed.
+func TestBuildBlockLayoverIndex_TiesIgnoreRowOrder(t *testing.T) {
+	svc := &gtfs.Service{Id: "SVC-WEEKDAY"}
+	terminalStop := &gtfs.Stop{Id: "TERMINAL"}
+	otherStop := &gtfs.Stop{Id: "OTHER"}
+
+	trip := func(id, routeID string, firstStop *gtfs.Stop, start, end time.Duration) gtfs.ScheduledTrip {
+		return gtfs.ScheduledTrip{
+			ID: id, Route: &gtfs.Route{Id: routeID}, Service: svc, BlockID: "BLOCK-TIE",
+			StopTimes: []gtfs.ScheduledStopTime{
+				{Stop: firstStop, StopSequence: 1, ArrivalTime: start, DepartureTime: start},
+				{Stop: terminalStop, StopSequence: 2, ArrivalTime: end, DepartureTime: end},
+			},
+		}
+	}
+	// B and C are loops on different routes. Both leave TERMINAL at 10:30.
+	// B returns at 11:00 and C at 11:10. A arrives before them and D leaves
+	// after them, so the order of B and C decides which trip each of the
+	// two layovers leads into or comes from.
+	tripA := trip("trip-A", "R-A", otherStop, 9*time.Hour, 10*time.Hour)
+	tripB := trip("trip-B", "R-B", terminalStop, 10*time.Hour+30*time.Minute, 11*time.Hour)
+	tripC := trip("trip-C", "R-C", terminalStop, 10*time.Hour+30*time.Minute, 11*time.Hour+10*time.Minute)
+	tripD := trip("trip-D", "R-D", terminalStop, 11*time.Hour+30*time.Minute, 12*time.Hour)
+
+	tests := []struct {
+		name  string
+		trips []gtfs.ScheduledTrip
+	}{
+		{"B before C", []gtfs.ScheduledTrip{tripA, tripB, tripC, tripD}},
+		{"C before B", []gtfs.ScheduledTrip{tripA, tripC, tripB, tripD}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = client.Close() })
+
+			seedBlockTrips(t, client, "BLOCK-TIE", "trip-A", "trip-B", "trip-C", "trip-D")
+
+			require.NoError(t, client.buildBlockLayoverIndex(context.Background(), tripEndsOf(tt.trips), nil))
+
+			// trip-B sorts before trip-C, so A's layover leads into B on
+			// route R-B, and D's layover follows C's 11:10 return. B and C
+			// overlap, so neither B→C nor C→B is a layover.
+			want := []blockLayoverRow{
+				{
+					nextTripID: "trip-B",
+					routeID:    "R-B",
+					stopID:     "TERMINAL",
+					start:      int64(10 * time.Hour),
+					end:        int64(10*time.Hour + 30*time.Minute),
+				},
+				{
+					nextTripID: "trip-D",
+					routeID:    "R-D",
+					stopID:     "TERMINAL",
+					start:      int64(11*time.Hour + 10*time.Minute),
+					end:        int64(11*time.Hour + 30*time.Minute),
+				},
+			}
+			assert.Equal(t, want, queryBlockLayovers(t, client, "BLOCK-TIE"))
+		})
+	}
+}
+
+// TestBuildBlockLayoverIndex_OrdersTripsByFirstArrival covers a trip that
+// arrives at its first stop well before it departs. The block is ordered by
+// first arrival, as trips.min_arrival_time orders it in the block queries,
+// not by first departure.
+func TestBuildBlockLayoverIndex_OrdersTripsByFirstArrival(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	route := &gtfs.Route{Id: "R1"}
+	svc := &gtfs.Service{Id: "SVC-WEEKDAY"}
+	terminalStop := &gtfs.Stop{Id: "TERMINAL"}
+	northStop := &gtfs.Stop{Id: "NORTH"}
+	otherStop := &gtfs.Stop{Id: "OTHER"}
+
+	// X arrives at TERMINAL at 10:20 and departs at 10:40. Y starts at
+	// NORTH at 10:30. By first arrival X comes before Y, so A's layover at
+	// TERMINAL leads into X. By first departure Y would come between A and
+	// X, and the block would have no layover.
+	trips := []gtfs.ScheduledTrip{
+		{
+			ID: "trip-A", Route: route, Service: svc, BlockID: "BLOCK-ARRIVAL",
+			StopTimes: []gtfs.ScheduledStopTime{
+				{Stop: otherStop, StopSequence: 1, ArrivalTime: 9 * time.Hour, DepartureTime: 9 * time.Hour},
+				{Stop: terminalStop, StopSequence: 2, ArrivalTime: 10 * time.Hour, DepartureTime: 10 * time.Hour},
+			},
+		},
+		{
+			ID: "trip-X", Route: route, Service: svc, BlockID: "BLOCK-ARRIVAL",
+			StopTimes: []gtfs.ScheduledStopTime{
+				{Stop: terminalStop, StopSequence: 1, ArrivalTime: 10*time.Hour + 20*time.Minute, DepartureTime: 10*time.Hour + 40*time.Minute},
+				{Stop: northStop, StopSequence: 2, ArrivalTime: 11 * time.Hour, DepartureTime: 11 * time.Hour},
+			},
+		},
+		{
+			ID: "trip-Y", Route: route, Service: svc, BlockID: "BLOCK-ARRIVAL",
+			StopTimes: []gtfs.ScheduledStopTime{
+				{Stop: northStop, StopSequence: 1, ArrivalTime: 10*time.Hour + 30*time.Minute, DepartureTime: 10*time.Hour + 30*time.Minute},
+				{Stop: northStop, StopSequence: 2, ArrivalTime: 11 * time.Hour, DepartureTime: 11 * time.Hour},
+			},
+		},
+	}
+
+	seedBlockTrips(t, client, "BLOCK-ARRIVAL", "trip-A", "trip-X", "trip-Y")
+
+	require.NoError(t, client.buildBlockLayoverIndex(context.Background(), tripEndsOf(trips), nil))
+
+	want := []blockLayoverRow{{
+		nextTripID: "trip-X",
+		routeID:    "R1",
+		stopID:     "TERMINAL",
+		start:      int64(10 * time.Hour),
+		end:        int64(10*time.Hour + 20*time.Minute),
+	}}
+	assert.Equal(t, want, queryBlockLayovers(t, client, "BLOCK-ARRIVAL"))
+}
+
+// blockLayoverRow holds the block_layover columns the ordering tests compare.
+type blockLayoverRow struct {
+	nextTripID, routeID, stopID string
+	start, end                  int64
+}
+
+// queryBlockLayovers returns the layovers of blockID in time order.
+func queryBlockLayovers(t *testing.T, client *Client, blockID string) []blockLayoverRow {
+	t.Helper()
+	rows, err := client.DB.Query(`SELECT next_trip_id, route_id, layover_stop_id, layover_start, layover_end
+		FROM block_layover WHERE block_id = ?
+		ORDER BY layover_start, next_trip_id`, blockID)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	var layovers []blockLayoverRow
+	for rows.Next() {
+		var l blockLayoverRow
+		require.NoError(t, rows.Scan(&l.nextTripID, &l.routeID, &l.stopID, &l.start, &l.end))
+		layovers = append(layovers, l)
+	}
+	require.NoError(t, rows.Err())
+	return layovers
+}
+
+// seedBlockTrips inserts the trips a block_layover row can point to. Foreign
+// keys are off while it does, so the test doesn't need the routes and
+// calendar rows the trips would otherwise reference. PRAGMA foreign_keys
+// applies to one connection only, so every statement runs on the same
+// pinned connection from the pool.
+func seedBlockTrips(t *testing.T, client *Client, blockID string, tripIDs ...string) {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := client.DB.Conn(ctx)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`)
+	require.NoError(t, err)
+	for _, tripID := range tripIDs {
+		_, err = conn.ExecContext(ctx, `INSERT INTO trips (id, route_id, service_id, block_id) VALUES (?, 'R1', 'SVC-WEEKDAY', ?)`, tripID, blockID)
+		require.NoError(t, err)
+	}
+	_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`)
+	require.NoError(t, err)
+}
+
+func TestTripEndsOf(t *testing.T) {
+	route := &gtfs.Route{Id: "R1"}
+	svc := &gtfs.Service{Id: "S1"}
+	stop := func(id string) *gtfs.Stop { return &gtfs.Stop{Id: id} }
+	trips := []gtfs.ScheduledTrip{
+		{ID: "no-stop-times", Route: route, Service: svc},
+		{ID: "one-stop", Route: route, Service: svc, BlockID: "B1", StopTimes: []gtfs.ScheduledStopTime{
+			{Stop: stop("A"), ArrivalTime: time.Hour, DepartureTime: time.Hour + time.Minute},
+		}},
+		{ID: "three-stops", Route: route, Service: svc, StopTimes: []gtfs.ScheduledStopTime{
+			{Stop: stop("A"), ArrivalTime: 2 * time.Hour, DepartureTime: 2*time.Hour + time.Minute},
+			{Stop: stop("B"), ArrivalTime: 3 * time.Hour, DepartureTime: 3 * time.Hour},
+			{Stop: stop("C"), ArrivalTime: 4 * time.Hour, DepartureTime: 4*time.Hour + 5*time.Minute},
+		}},
+	}
+
+	assert.Equal(t, []tripEnds{
+		{tripID: "one-stop", routeID: "R1", serviceID: "S1", blockID: "B1",
+			firstStopID: "A", firstArrival: time.Hour, firstDeparture: time.Hour + time.Minute,
+			lastStopID: "A", lastDeparture: time.Hour + time.Minute},
+		{tripID: "three-stops", routeID: "R1", serviceID: "S1",
+			firstStopID: "A", firstArrival: 2 * time.Hour, firstDeparture: 2*time.Hour + time.Minute,
+			lastStopID: "C", lastDeparture: 4*time.Hour + 5*time.Minute},
+	}, tripEndsOf(trips))
+}
+
+// tripEndsOf returns the ends of every trip that has stop times, in trip
+// order, the way a streamed import collects them.
+func tripEndsOf(trips []gtfs.ScheduledTrip) []tripEnds {
+	ends := make([]tripEnds, 0, len(trips))
+	for i := range trips {
+		stopTimes := trips[i].StopTimes
+		if len(stopTimes) == 0 {
+			continue
+		}
+		ends = append(ends, newTripEnds(&trips[i], stopTimes[0], stopTimes[len(stopTimes)-1]))
+	}
+	return ends
 }
