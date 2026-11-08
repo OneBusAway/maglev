@@ -76,8 +76,8 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parentID := ""
-	if nulls.StringOrEmpty(stop.ParentStation) != "" {
-		parentID = utils.FormCombinedID(agencyID, nulls.StringOrEmpty(stop.ParentStation))
+	if parentStation := nulls.StringOrEmpty(stop.ParentStation); parentStation != "" {
+		parentID = utils.FormCombinedID(agencyID, parentStation)
 	}
 
 	stopData := &models.Stop{
@@ -123,8 +123,8 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if nulls.StringOrEmpty(stop.ParentStation) != "" {
-			parentRefs, parentRoutesMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, []string{nulls.StringOrEmpty(stop.ParentStation)})
+		if parentStation := nulls.StringOrEmpty(stop.ParentStation); parentStation != "" {
+			parentRefs, parentRoutesMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, []string{parentStation})
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return

@@ -1,0 +1,1612 @@
+{
+  "code": 200,
+  "currentTime": 1749740400000,
+  "data": {
+    "entry": {
+      "routeId": "25_161",
+      "scheduleDate": 1749711600000,
+      "serviceIds": [
+        "25_c_1658_b_18260_d_31"
+      ],
+      "stopTripGroupings": [
+        {
+          "directionId": "0",
+          "stopIds": [
+            "25_2000",
+            "25_6024",
+            "25_8004",
+            "25_29902",
+            "25_8005",
+            "25_29903",
+            "25_8006",
+            "25_29901",
+            "25_8007",
+            "25_29904"
+          ],
+          "tripHeadsigns": [
+            "Burney"
+          ],
+          "tripIds": [
+            "25_t_404_b_18260_tn_0",
+            "25_t_405_b_18260_tn_0",
+            "25_t_53248_b_18260_tn_0"
+          ],
+          "tripsWithStopTimes": [
+            {
+              "stopTimes": [
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 37500,
+                  "departureEnabled": true,
+                  "departureTime": 37500,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_2000",
+                  "tripId": "25_t_404_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 38100,
+                  "departureEnabled": true,
+                  "departureTime": 38100,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_6024",
+                  "tripId": "25_t_404_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 38700,
+                  "departureEnabled": true,
+                  "departureTime": 38700,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8004",
+                  "tripId": "25_t_404_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 39420,
+                  "departureEnabled": true,
+                  "departureTime": 39420,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29902",
+                  "tripId": "25_t_404_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 39420,
+                  "departureEnabled": true,
+                  "departureTime": 39420,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8005",
+                  "tripId": "25_t_404_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 40500,
+                  "departureEnabled": true,
+                  "departureTime": 40500,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29903",
+                  "tripId": "25_t_404_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 41100,
+                  "departureEnabled": true,
+                  "departureTime": 41100,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8006",
+                  "tripId": "25_t_404_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 42420,
+                  "departureEnabled": true,
+                  "departureTime": 42420,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29901",
+                  "tripId": "25_t_404_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 42600,
+                  "departureEnabled": true,
+                  "departureTime": 42600,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8007",
+                  "tripId": "25_t_404_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 42600,
+                  "departureEnabled": true,
+                  "departureTime": 42600,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29904",
+                  "tripId": "25_t_404_b_18260_tn_0"
+                }
+              ],
+              "tripId": "25_t_404_b_18260_tn_0"
+            },
+            {
+              "stopTimes": [
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 63300,
+                  "departureEnabled": true,
+                  "departureTime": 63300,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_2000",
+                  "tripId": "25_t_405_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 63900,
+                  "departureEnabled": true,
+                  "departureTime": 63900,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_6024",
+                  "tripId": "25_t_405_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 64500,
+                  "departureEnabled": true,
+                  "departureTime": 64500,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8004",
+                  "tripId": "25_t_405_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 65220,
+                  "departureEnabled": true,
+                  "departureTime": 65220,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29902",
+                  "tripId": "25_t_405_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 65220,
+                  "departureEnabled": true,
+                  "departureTime": 65220,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8005",
+                  "tripId": "25_t_405_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 66300,
+                  "departureEnabled": true,
+                  "departureTime": 66300,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29903",
+                  "tripId": "25_t_405_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 66900,
+                  "departureEnabled": true,
+                  "departureTime": 66900,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8006",
+                  "tripId": "25_t_405_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 68220,
+                  "departureEnabled": true,
+                  "departureTime": 68220,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29901",
+                  "tripId": "25_t_405_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 68400,
+                  "departureEnabled": true,
+                  "departureTime": 68400,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8007",
+                  "tripId": "25_t_405_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 68400,
+                  "departureEnabled": true,
+                  "departureTime": 68400,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29904",
+                  "tripId": "25_t_405_b_18260_tn_0"
+                }
+              ],
+              "tripId": "25_t_405_b_18260_tn_0"
+            },
+            {
+              "stopTimes": [
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 51900,
+                  "departureEnabled": true,
+                  "departureTime": 51900,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_2000",
+                  "tripId": "25_t_53248_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 52500,
+                  "departureEnabled": true,
+                  "departureTime": 52500,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_6024",
+                  "tripId": "25_t_53248_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 53100,
+                  "departureEnabled": true,
+                  "departureTime": 53100,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8004",
+                  "tripId": "25_t_53248_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 53820,
+                  "departureEnabled": true,
+                  "departureTime": 53820,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29902",
+                  "tripId": "25_t_53248_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 53820,
+                  "departureEnabled": true,
+                  "departureTime": 53820,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8005",
+                  "tripId": "25_t_53248_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 54900,
+                  "departureEnabled": true,
+                  "departureTime": 54900,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29903",
+                  "tripId": "25_t_53248_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 55500,
+                  "departureEnabled": true,
+                  "departureTime": 55500,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8006",
+                  "tripId": "25_t_53248_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 56820,
+                  "departureEnabled": true,
+                  "departureTime": 56820,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29901",
+                  "tripId": "25_t_53248_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 57000,
+                  "departureEnabled": true,
+                  "departureTime": 57000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8007",
+                  "tripId": "25_t_53248_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 57000,
+                  "departureEnabled": true,
+                  "departureTime": 57000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29904",
+                  "tripId": "25_t_53248_b_18260_tn_0"
+                }
+              ],
+              "tripId": "25_t_53248_b_18260_tn_0"
+            }
+          ]
+        },
+        {
+          "directionId": "1",
+          "stopIds": [
+            "25_29904",
+            "25_8007",
+            "25_29901",
+            "25_8006",
+            "25_29903",
+            "25_8005",
+            "25_29902",
+            "25_8004",
+            "25_6024",
+            "25_2000"
+          ],
+          "tripHeadsigns": [
+            "Redding"
+          ],
+          "tripIds": [
+            "25_t_402_b_18260_tn_0",
+            "25_t_403_b_18260_tn_0",
+            "25_t_61140_b_18260_tn_0"
+          ],
+          "tripsWithStopTimes": [
+            {
+              "stopTimes": [
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 20400,
+                  "departureEnabled": true,
+                  "departureTime": 20400,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29904",
+                  "tripId": "25_t_402_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 20400,
+                  "departureEnabled": true,
+                  "departureTime": 20400,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8007",
+                  "tripId": "25_t_402_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 20580,
+                  "departureEnabled": true,
+                  "departureTime": 20580,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29901",
+                  "tripId": "25_t_402_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 21900,
+                  "departureEnabled": true,
+                  "departureTime": 21900,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8006",
+                  "tripId": "25_t_402_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 22500,
+                  "departureEnabled": true,
+                  "departureTime": 22500,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29903",
+                  "tripId": "25_t_402_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 22500,
+                  "departureEnabled": true,
+                  "departureTime": 22500,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8005",
+                  "tripId": "25_t_402_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 23400,
+                  "departureEnabled": true,
+                  "departureTime": 23400,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29902",
+                  "tripId": "25_t_402_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 24300,
+                  "departureEnabled": true,
+                  "departureTime": 24300,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8004",
+                  "tripId": "25_t_402_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 24900,
+                  "departureEnabled": true,
+                  "departureTime": 24900,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_6024",
+                  "tripId": "25_t_402_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 25500,
+                  "departureEnabled": true,
+                  "departureTime": 25500,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_2000",
+                  "tripId": "25_t_402_b_18260_tn_0"
+                }
+              ],
+              "tripId": "25_t_402_b_18260_tn_0"
+            },
+            {
+              "stopTimes": [
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 43800,
+                  "departureEnabled": true,
+                  "departureTime": 43800,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29904",
+                  "tripId": "25_t_403_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 43800,
+                  "departureEnabled": true,
+                  "departureTime": 43800,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8007",
+                  "tripId": "25_t_403_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 43980,
+                  "departureEnabled": true,
+                  "departureTime": 43980,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29901",
+                  "tripId": "25_t_403_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 45300,
+                  "departureEnabled": true,
+                  "departureTime": 45300,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8006",
+                  "tripId": "25_t_403_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 45900,
+                  "departureEnabled": true,
+                  "departureTime": 45900,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29903",
+                  "tripId": "25_t_403_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 45900,
+                  "departureEnabled": true,
+                  "departureTime": 45900,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8005",
+                  "tripId": "25_t_403_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 46800,
+                  "departureEnabled": true,
+                  "departureTime": 46800,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29902",
+                  "tripId": "25_t_403_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 47700,
+                  "departureEnabled": true,
+                  "departureTime": 47700,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8004",
+                  "tripId": "25_t_403_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 48300,
+                  "departureEnabled": true,
+                  "departureTime": 48300,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_6024",
+                  "tripId": "25_t_403_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 48900,
+                  "departureEnabled": true,
+                  "departureTime": 48900,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_2000",
+                  "tripId": "25_t_403_b_18260_tn_0"
+                }
+              ],
+              "tripId": "25_t_403_b_18260_tn_0"
+            },
+            {
+              "stopTimes": [
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 57000,
+                  "departureEnabled": true,
+                  "departureTime": 57000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29904",
+                  "tripId": "25_t_61140_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 57000,
+                  "departureEnabled": true,
+                  "departureTime": 57000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8007",
+                  "tripId": "25_t_61140_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 57180,
+                  "departureEnabled": true,
+                  "departureTime": 57180,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29901",
+                  "tripId": "25_t_61140_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 58500,
+                  "departureEnabled": true,
+                  "departureTime": 58500,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8006",
+                  "tripId": "25_t_61140_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 59100,
+                  "departureEnabled": true,
+                  "departureTime": 59100,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29903",
+                  "tripId": "25_t_61140_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 59100,
+                  "departureEnabled": true,
+                  "departureTime": 59100,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8005",
+                  "tripId": "25_t_61140_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 60000,
+                  "departureEnabled": true,
+                  "departureTime": 60000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_29902",
+                  "tripId": "25_t_61140_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 60900,
+                  "departureEnabled": true,
+                  "departureTime": 60900,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_8004",
+                  "tripId": "25_t_61140_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 61500,
+                  "departureEnabled": true,
+                  "departureTime": 61500,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_6024",
+                  "tripId": "25_t_61140_b_18260_tn_0"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 62100,
+                  "departureEnabled": true,
+                  "departureTime": 62100,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "stopId": "25_2000",
+                  "tripId": "25_t_61140_b_18260_tn_0"
+                }
+              ],
+              "tripId": "25_t_61140_b_18260_tn_0"
+            }
+          ]
+        }
+      ]
+    },
+    "references": {
+      "agencies": [
+        {
+          "disclaimer": "",
+          "email": "",
+          "fareUrl": "",
+          "id": "25",
+          "lang": "en",
+          "name": "Redding Area Bus Authority",
+          "phone": "530-241-2877",
+          "privateService": false,
+          "timezone": "America/Los_Angeles",
+          "url": "http://www.rabaride.com/"
+        }
+      ],
+      "routes": [
+        {
+          "agencyId": "25",
+          "color": "00dffb",
+          "description": "",
+          "id": "25_161",
+          "longName": "Route 299X",
+          "nullSafeShortName": "299X",
+          "shortName": "299X",
+          "textColor": "ffffff",
+          "type": 3,
+          "url": "https://rabaride.com/services/burney_express.php"
+        }
+      ],
+      "situations": [],
+      "stopTimes": [
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 20400,
+          "departureEnabled": true,
+          "departureTime": 20400,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29904",
+          "tripId": "25_t_402_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 20400,
+          "departureEnabled": true,
+          "departureTime": 20400,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8007",
+          "tripId": "25_t_402_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 20580,
+          "departureEnabled": true,
+          "departureTime": 20580,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29901",
+          "tripId": "25_t_402_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 21900,
+          "departureEnabled": true,
+          "departureTime": 21900,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8006",
+          "tripId": "25_t_402_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 22500,
+          "departureEnabled": true,
+          "departureTime": 22500,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29903",
+          "tripId": "25_t_402_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 22500,
+          "departureEnabled": true,
+          "departureTime": 22500,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8005",
+          "tripId": "25_t_402_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 23400,
+          "departureEnabled": true,
+          "departureTime": 23400,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29902",
+          "tripId": "25_t_402_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 24300,
+          "departureEnabled": true,
+          "departureTime": 24300,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8004",
+          "tripId": "25_t_402_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 24900,
+          "departureEnabled": true,
+          "departureTime": 24900,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_6024",
+          "tripId": "25_t_402_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 25500,
+          "departureEnabled": true,
+          "departureTime": 25500,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_2000",
+          "tripId": "25_t_402_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 37500,
+          "departureEnabled": true,
+          "departureTime": 37500,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_2000",
+          "tripId": "25_t_404_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 38100,
+          "departureEnabled": true,
+          "departureTime": 38100,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_6024",
+          "tripId": "25_t_404_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 38700,
+          "departureEnabled": true,
+          "departureTime": 38700,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8004",
+          "tripId": "25_t_404_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 39420,
+          "departureEnabled": true,
+          "departureTime": 39420,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29902",
+          "tripId": "25_t_404_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 39420,
+          "departureEnabled": true,
+          "departureTime": 39420,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8005",
+          "tripId": "25_t_404_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 40500,
+          "departureEnabled": true,
+          "departureTime": 40500,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29903",
+          "tripId": "25_t_404_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 41100,
+          "departureEnabled": true,
+          "departureTime": 41100,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8006",
+          "tripId": "25_t_404_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 42420,
+          "departureEnabled": true,
+          "departureTime": 42420,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29901",
+          "tripId": "25_t_404_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 42600,
+          "departureEnabled": true,
+          "departureTime": 42600,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29904",
+          "tripId": "25_t_404_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 42600,
+          "departureEnabled": true,
+          "departureTime": 42600,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8007",
+          "tripId": "25_t_404_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 43800,
+          "departureEnabled": true,
+          "departureTime": 43800,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29904",
+          "tripId": "25_t_403_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 43800,
+          "departureEnabled": true,
+          "departureTime": 43800,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8007",
+          "tripId": "25_t_403_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 43980,
+          "departureEnabled": true,
+          "departureTime": 43980,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29901",
+          "tripId": "25_t_403_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 45300,
+          "departureEnabled": true,
+          "departureTime": 45300,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8006",
+          "tripId": "25_t_403_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 45900,
+          "departureEnabled": true,
+          "departureTime": 45900,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29903",
+          "tripId": "25_t_403_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 45900,
+          "departureEnabled": true,
+          "departureTime": 45900,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8005",
+          "tripId": "25_t_403_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 46800,
+          "departureEnabled": true,
+          "departureTime": 46800,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29902",
+          "tripId": "25_t_403_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 47700,
+          "departureEnabled": true,
+          "departureTime": 47700,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8004",
+          "tripId": "25_t_403_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 48300,
+          "departureEnabled": true,
+          "departureTime": 48300,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_6024",
+          "tripId": "25_t_403_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 48900,
+          "departureEnabled": true,
+          "departureTime": 48900,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_2000",
+          "tripId": "25_t_403_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 51900,
+          "departureEnabled": true,
+          "departureTime": 51900,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_2000",
+          "tripId": "25_t_53248_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 52500,
+          "departureEnabled": true,
+          "departureTime": 52500,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_6024",
+          "tripId": "25_t_53248_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 53100,
+          "departureEnabled": true,
+          "departureTime": 53100,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8004",
+          "tripId": "25_t_53248_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 53820,
+          "departureEnabled": true,
+          "departureTime": 53820,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29902",
+          "tripId": "25_t_53248_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 53820,
+          "departureEnabled": true,
+          "departureTime": 53820,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8005",
+          "tripId": "25_t_53248_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 54900,
+          "departureEnabled": true,
+          "departureTime": 54900,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29903",
+          "tripId": "25_t_53248_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 55500,
+          "departureEnabled": true,
+          "departureTime": 55500,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8006",
+          "tripId": "25_t_53248_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 56820,
+          "departureEnabled": true,
+          "departureTime": 56820,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29901",
+          "tripId": "25_t_53248_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 57000,
+          "departureEnabled": true,
+          "departureTime": 57000,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29904",
+          "tripId": "25_t_53248_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 57000,
+          "departureEnabled": true,
+          "departureTime": 57000,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29904",
+          "tripId": "25_t_61140_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 57000,
+          "departureEnabled": true,
+          "departureTime": 57000,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8007",
+          "tripId": "25_t_53248_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 57000,
+          "departureEnabled": true,
+          "departureTime": 57000,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8007",
+          "tripId": "25_t_61140_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 57180,
+          "departureEnabled": true,
+          "departureTime": 57180,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29901",
+          "tripId": "25_t_61140_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 58500,
+          "departureEnabled": true,
+          "departureTime": 58500,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8006",
+          "tripId": "25_t_61140_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 59100,
+          "departureEnabled": true,
+          "departureTime": 59100,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29903",
+          "tripId": "25_t_61140_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 59100,
+          "departureEnabled": true,
+          "departureTime": 59100,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8005",
+          "tripId": "25_t_61140_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 60000,
+          "departureEnabled": true,
+          "departureTime": 60000,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29902",
+          "tripId": "25_t_61140_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 60900,
+          "departureEnabled": true,
+          "departureTime": 60900,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8004",
+          "tripId": "25_t_61140_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 61500,
+          "departureEnabled": true,
+          "departureTime": 61500,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_6024",
+          "tripId": "25_t_61140_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 62100,
+          "departureEnabled": true,
+          "departureTime": 62100,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_2000",
+          "tripId": "25_t_61140_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 63300,
+          "departureEnabled": true,
+          "departureTime": 63300,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_2000",
+          "tripId": "25_t_405_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 63900,
+          "departureEnabled": true,
+          "departureTime": 63900,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_6024",
+          "tripId": "25_t_405_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 64500,
+          "departureEnabled": true,
+          "departureTime": 64500,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8004",
+          "tripId": "25_t_405_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 65220,
+          "departureEnabled": true,
+          "departureTime": 65220,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29902",
+          "tripId": "25_t_405_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 65220,
+          "departureEnabled": true,
+          "departureTime": 65220,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8005",
+          "tripId": "25_t_405_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 66300,
+          "departureEnabled": true,
+          "departureTime": 66300,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29903",
+          "tripId": "25_t_405_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 66900,
+          "departureEnabled": true,
+          "departureTime": 66900,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8006",
+          "tripId": "25_t_405_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 68220,
+          "departureEnabled": true,
+          "departureTime": 68220,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29901",
+          "tripId": "25_t_405_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 68400,
+          "departureEnabled": true,
+          "departureTime": 68400,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_29904",
+          "tripId": "25_t_405_b_18260_tn_0"
+        },
+        {
+          "arrivalEnabled": true,
+          "arrivalTime": 68400,
+          "departureEnabled": true,
+          "departureTime": 68400,
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "stopHeadsign": "",
+          "stopId": "25_8007",
+          "tripId": "25_t_405_b_18260_tn_0"
+        }
+      ],
+      "stops": [
+        {
+          "code": "2000",
+          "direction": "",
+          "id": "25_2000",
+          "lat": 40.58317,
+          "locationType": 0,
+          "lon": -122.392586,
+          "name": "Downtown Passenger Terminal",
+          "parent": "",
+          "routeIds": [
+            "25_151",
+            "25_153",
+            "25_154",
+            "25_157",
+            "25_6446",
+            "25_159",
+            "25_160",
+            "25_15",
+            "25_1885",
+            "25_3779",
+            "25_44X",
+            "25_24",
+            "25_161"
+          ],
+          "staticRouteIds": [
+            "25_151",
+            "25_153",
+            "25_154",
+            "25_157",
+            "25_6446",
+            "25_159",
+            "25_160",
+            "25_15",
+            "25_1885",
+            "25_3779",
+            "25_44X",
+            "25_24",
+            "25_161"
+          ],
+          "wheelchairBoarding": "ACCESSIBLE"
+        },
+        {
+          "code": "29901",
+          "direction": "",
+          "id": "25_29901",
+          "lat": 40.87931,
+          "locationType": 0,
+          "lon": -121.674805,
+          "name": "SR 299/Elm ",
+          "parent": "",
+          "routeIds": [
+            "25_161"
+          ],
+          "staticRouteIds": [
+            "25_161"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "29902",
+          "direction": "",
+          "id": "25_29902",
+          "lat": 40.703853,
+          "locationType": 0,
+          "lon": -122.095899,
+          "name": "SR 299/CAL Fire Diddy Wells Station #74",
+          "parent": "",
+          "routeIds": [
+            "25_161"
+          ],
+          "staticRouteIds": [
+            "25_161"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "29903",
+          "direction": "",
+          "id": "25_29903",
+          "lat": 40.803703,
+          "locationType": 0,
+          "lon": -121.939862,
+          "name": "SR 299 @ Hill Country Health and Wellness Center",
+          "parent": "",
+          "routeIds": [
+            "25_161"
+          ],
+          "staticRouteIds": [
+            "25_161"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "29904",
+          "direction": "",
+          "id": "25_29904",
+          "lat": 40.937346,
+          "locationType": 0,
+          "lon": -121.606,
+          "name": "SR 89 @ SR 299 Park and Ride Lot",
+          "parent": "",
+          "routeIds": [
+            "25_161"
+          ],
+          "staticRouteIds": [
+            "25_161"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "6024",
+          "direction": "",
+          "id": "25_6024",
+          "lat": 40.625122,
+          "locationType": 0,
+          "lon": -122.317674,
+          "name": "Shasta College",
+          "parent": "",
+          "routeIds": [
+            "25_157",
+            "25_1885",
+            "25_44X",
+            "25_161"
+          ],
+          "staticRouteIds": [
+            "25_157",
+            "25_1885",
+            "25_44X",
+            "25_161"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "8004",
+          "direction": "",
+          "id": "25_8004",
+          "lat": 40.638178,
+          "locationType": 0,
+          "lon": -122.242527,
+          "name": "Bella Vista (SR 299 @ My-T Fine Foods)",
+          "parent": "",
+          "routeIds": [
+            "25_161"
+          ],
+          "staticRouteIds": [
+            "25_161"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "8005",
+          "direction": "",
+          "id": "25_8005",
+          "lat": 40.793616,
+          "locationType": 0,
+          "lon": -121.943014,
+          "name": "SR 299 @ Round Mountain Garden",
+          "parent": "",
+          "routeIds": [
+            "25_161"
+          ],
+          "staticRouteIds": [
+            "25_161"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "8006",
+          "direction": "",
+          "id": "25_8006",
+          "lat": 40.842069,
+          "locationType": 0,
+          "lon": -121.924014,
+          "name": "Montgomery Creek (SR 299 @ Montgomery Creek Library)",
+          "parent": "",
+          "routeIds": [
+            "25_161"
+          ],
+          "staticRouteIds": [
+            "25_161"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "8007",
+          "direction": "",
+          "id": "25_8007",
+          "lat": 40.888921,
+          "locationType": 0,
+          "lon": -121.65358,
+          "name": "Burney (SR 299 @ Burney Sporting Goods)",
+          "parent": "",
+          "routeIds": [
+            "25_161"
+          ],
+          "staticRouteIds": [
+            "25_161"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        }
+      ],
+      "trips": [
+        {
+          "blockId": "25_299",
+          "directionId": "1",
+          "id": "25_t_402_b_18260_tn_0",
+          "peakOffpeak": 0,
+          "routeId": "25_161",
+          "routeShortName": "Redding",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_p_2671",
+          "timeZone": "",
+          "tripHeadsign": "Redding",
+          "tripShortName": "Redding"
+        },
+        {
+          "blockId": "25_299",
+          "directionId": "1",
+          "id": "25_t_403_b_18260_tn_0",
+          "peakOffpeak": 0,
+          "routeId": "25_161",
+          "routeShortName": "Redding",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_p_2671",
+          "timeZone": "",
+          "tripHeadsign": "Redding",
+          "tripShortName": "Redding"
+        },
+        {
+          "blockId": "25_299",
+          "directionId": "0",
+          "id": "25_t_404_b_18260_tn_0",
+          "peakOffpeak": 0,
+          "routeId": "25_161",
+          "routeShortName": "Burney",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_p_2639",
+          "timeZone": "",
+          "tripHeadsign": "Burney",
+          "tripShortName": "Burney"
+        },
+        {
+          "blockId": "25_299",
+          "directionId": "0",
+          "id": "25_t_405_b_18260_tn_0",
+          "peakOffpeak": 0,
+          "routeId": "25_161",
+          "routeShortName": "Burney",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_p_2639",
+          "timeZone": "",
+          "tripHeadsign": "Burney",
+          "tripShortName": "Burney"
+        },
+        {
+          "blockId": "25_299",
+          "directionId": "0",
+          "id": "25_t_53248_b_18260_tn_0",
+          "peakOffpeak": 0,
+          "routeId": "25_161",
+          "routeShortName": "Burney",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_p_2639",
+          "timeZone": "",
+          "tripHeadsign": "Burney",
+          "tripShortName": "Burney"
+        },
+        {
+          "blockId": "25_299",
+          "directionId": "1",
+          "id": "25_t_61140_b_18260_tn_0",
+          "peakOffpeak": 0,
+          "routeId": "25_161",
+          "routeShortName": "Redding",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_p_2671",
+          "timeZone": "",
+          "tripHeadsign": "Redding",
+          "tripShortName": "Redding"
+        }
+      ]
+    }
+  },
+  "text": "OK",
+  "version": 2
+}

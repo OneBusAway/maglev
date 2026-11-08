@@ -590,7 +590,6 @@ func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedVehicleTimestamp: make(map[string]uint64),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
-		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 	}
 
 	cfg := RTFeedConfig{
@@ -2046,7 +2045,6 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedVehicleTimestamp: make(map[string]uint64),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
-		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 	}
 
 	// 1. Test partial success (OR logic): Trip updates succeed, Vehicle positions fail
