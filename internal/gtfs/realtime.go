@@ -206,7 +206,7 @@ type vehicleFeedTimestampDecision struct {
 // without blocking a later correction. Unchanged and older plausible headers
 // stay rejected, including after clearFeedData keeps the watermark.
 func decideVehicleFeedTimestamp(prev uint64, createdAt, now time.Time) vehicleFeedTimestampDecision {
-	if createdAt.IsZero() {
+	if isMissingHeaderTime(createdAt) {
 		return vehicleFeedTimestampDecision{apply: true, watermark: prev, reason: vehicleFeedAccept}
 	}
 
@@ -610,7 +610,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				slog.Uint64("last_applied_timestamp", manager.feedVehicleTimestamp[feedID]),
 			)
 		default:
-			if decision.apply && !vehicleData.CreatedAt.IsZero() {
+			if decision.apply && !isMissingHeaderTime(vehicleData.CreatedAt) {
 				manager.feedVehicleTimestamp[feedID] = decision.watermark
 			}
 		}
@@ -916,9 +916,9 @@ type tripAttribution struct {
 
 // attributeTrips gives each trip of a feed update one agency: the agency of
 // its route, else of its static trip's route, else, in a feed with
-// agency-ids, the feed's first agency. A missing route_id is filled from the
-// static trip. In a feed with agency-ids, trips of other agencies are
-// dropped.
+// agency-ids, the feed's first agency. A missing or unknown route_id is
+// replaced by the static trip's route, as for vehicles (#1716). In a feed
+// with agency-ids, trips of other agencies are dropped.
 func (manager *Manager) attributeTrips(ctx context.Context, trips []gtfs.Trip, feedCfg RTFeedConfig) (tripAttribution, error) {
 	routeIDs := make(map[string]struct{})
 	collectTripRouteIDs(routeIDs, trips)
@@ -947,14 +947,16 @@ func (manager *Manager) attributeTrips(ctx context.Context, trips []gtfs.Trip, f
 	return tripAttribution{kept: kept, unattributed: unattributed, agencies: agencies}, nil
 }
 
-// withStaticTripRoutes returns the trips with each missing route_id filled
-// from the static trip. The slice is copied first, because the parsed feed
-// owns it.
+// withStaticTripRoutes returns the trips with each missing or unknown
+// route_id replaced by the static trip's route, the same rule vehicles get
+// in withRouteAgency (#1716). A trip whose route_id is known keeps it, and a
+// trip absent from static data keeps its ingested route_id. The slice is
+// copied first, because the parsed feed owns it.
 func withStaticTripRoutes(trips []gtfs.Trip, routesByTripID map[string]staticTripRoute) []gtfs.Trip {
 	filled := slices.Clone(trips)
 	for i := range filled {
 		route, ok := routesByTripID[filled[i].ID.ID]
-		if ok && filled[i].ID.RouteID == "" {
+		if ok && filled[i].ID.RouteID != route.routeID {
 			filled[i].ID.RouteID = route.routeID
 		}
 	}
@@ -1120,10 +1122,17 @@ func (manager *Manager) recordVehicleDataTime(feedID string, headerTime time.Tim
 	if manager.feedVehicleDataTime == nil {
 		manager.feedVehicleDataTime = make(map[string]time.Time)
 	}
-	if headerTime.IsZero() {
+	if isMissingHeaderTime(headerTime) {
 		headerTime = time.Now()
 	}
 	manager.feedVehicleDataTime[feedID] = headerTime
+}
+
+// isMissingHeaderTime reports whether a feed header carried no usable
+// timestamp. go-gtfs maps an explicit timestamp of 0 to the Unix epoch rather
+// than the zero time.Time, so both count as missing.
+func isMissingHeaderTime(headerTime time.Time) bool {
+	return headerTime.IsZero() || headerTime.Unix() == 0
 }
 
 // copyVehicleAgency carries a vehicle's agency, if it has one, from src to dst.

@@ -121,8 +121,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 	// Extract unique block IDs directly from the scheduled rows
 	uniqueBlockIDsMap := make(map[string]bool)
 	for _, row := range scheduleRows {
-		if row.BlockID.Valid && nulls.StringOrEmpty(row.BlockID) != "" {
-			uniqueBlockIDsMap[nulls.StringOrEmpty(row.BlockID)] = true
+		if blockID := nulls.StringOrEmpty(row.BlockID); blockID != "" {
+			uniqueBlockIDsMap[blockID] = true
 		}
 	}
 
@@ -151,7 +151,8 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 			}
 			// Group trips by block ID. The underlying query inherently sorts by min_arrival_time ASC.
 			for _, bt := range blockTrips {
-				activeServiceBlockTripsMap[nulls.StringOrEmpty(bt.BlockID)] = append(activeServiceBlockTripsMap[nulls.StringOrEmpty(bt.BlockID)], bt)
+				blockID := nulls.StringOrEmpty(bt.BlockID)
+				activeServiceBlockTripsMap[blockID] = append(activeServiceBlockTripsMap[blockID], bt)
 			}
 		}
 	}
@@ -526,12 +527,13 @@ func blockBoundaries(
 	isFirstInTrip := row.MinArrivalTime.Valid && row.ArrivalTime == row.MinArrivalTime.Int64
 	isLastInTrip := row.MaxDepartureTime.Valid && row.DepartureTime == row.MaxDepartureTime.Int64
 
-	if !row.BlockID.Valid || nulls.StringOrEmpty(row.BlockID) == "" {
+	blockID := nulls.StringOrEmpty(row.BlockID)
+	if blockID == "" {
 		return isFirstInTrip, isLastInTrip
 	}
 
 	// If the trip belongs to a block, refine the boundaries to the block level.
-	bTrips, exists := activeServiceBlockTripsMap[nulls.StringOrEmpty(row.BlockID)]
+	bTrips, exists := activeServiceBlockTripsMap[blockID]
 	if !exists || len(bTrips) == 0 {
 		return isFirstInTrip, isLastInTrip
 	}
@@ -663,7 +665,8 @@ func pluralityHeadsign(
 // recordHeadsignVote tallies weight votes for a headsign under the route's direction
 // bucket; blank headsigns cast no vote.
 func recordHeadsignVote(acc *routeDirectionAccumulators, dir routeDirection, headsign sql.NullString, weight int) {
-	if !headsign.Valid || headsign.String == "" {
+	headsignText := nulls.StringOrEmpty(headsign)
+	if headsignText == "" {
 		return
 	}
 
@@ -677,7 +680,7 @@ func recordHeadsignVote(acc *routeDirectionAccumulators, dir routeDirection, hea
 	if acc.headsignCounts[dir.combinedRouteID][dir.directionID] == nil {
 		acc.headsignCounts[dir.combinedRouteID][dir.directionID] = make(map[string]int)
 	}
-	acc.headsignCounts[dir.combinedRouteID][dir.directionID][headsign.String] += weight
+	acc.headsignCounts[dir.combinedRouteID][dir.directionID][headsignText] += weight
 }
 
 // serviceDayFromQueryDate resolves a schedule date parameter to a service date.
