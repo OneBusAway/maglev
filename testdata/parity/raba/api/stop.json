@@ -1,0 +1,59 @@
+{
+  "code": 200,
+  "currentTime": 1749740400000,
+  "data": {
+    "entry": {
+      "code": "1033",
+      "direction": "E",
+      "id": "25_1033",
+      "lat": 40.680372,
+      "locationType": 0,
+      "lon": -122.363588,
+      "name": "Shasta Dam Blvd at Median Ave",
+      "parent": "",
+      "routeIds": [
+        "25_151"
+      ],
+      "staticRouteIds": [
+        "25_151"
+      ],
+      "wheelchairBoarding": "UNKNOWN"
+    },
+    "references": {
+      "agencies": [
+        {
+          "disclaimer": "",
+          "email": "",
+          "fareUrl": "",
+          "id": "25",
+          "lang": "en",
+          "name": "Redding Area Bus Authority",
+          "phone": "530-241-2877",
+          "privateService": false,
+          "timezone": "America/Los_Angeles",
+          "url": "http://www.rabaride.com/"
+        }
+      ],
+      "routes": [
+        {
+          "agencyId": "25",
+          "color": "55d1b0",
+          "description": "",
+          "id": "25_151",
+          "longName": "Route 1",
+          "nullSafeShortName": "1",
+          "shortName": "1",
+          "textColor": "000000",
+          "type": 3,
+          "url": "https://rabaride.com/Document%20Center/Services/Bus/Route01.pdf"
+        }
+      ],
+      "situations": [],
+      "stopTimes": [],
+      "stops": [],
+      "trips": []
+    }
+  },
+  "text": "OK",
+  "version": 2
+}

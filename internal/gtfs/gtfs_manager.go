@@ -510,7 +510,7 @@ func (manager *Manager) GetStopIDsWithinBounds(
 	ctx context.Context,
 	loc *LocationParams,
 	maxCount int,
-) []string {
+) ([]string, error) {
 	bounds := BoundsFromParams(loc)
 	ids, err := manager.GtfsDB.Queries.GetStopIDsWithinBounds(ctx, gtfsdb.GetStopIDsWithinBoundsParams{
 		MinLat: bounds.MinLat,
@@ -519,14 +519,12 @@ func (manager *Manager) GetStopIDsWithinBounds(
 		MaxLon: bounds.MaxLon,
 	})
 	if err != nil {
-		reqLogger := logging.ForComponent(ctx, "gtfs_manager")
-		logging.LogError(reqLogger, "could not query stop IDs within bounds", err)
-		return nil
+		return nil, fmt.Errorf("could not query stop IDs within bounds: %w", err)
 	}
 	if maxCount > 0 && len(ids) > maxCount {
 		ids = ids[:maxCount]
 	}
-	return ids
+	return ids, nil
 }
 
 // queryStopsInBounds retrieves all active stops within the given geographic bounds
