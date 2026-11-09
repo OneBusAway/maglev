@@ -130,6 +130,8 @@ To load the static feeds that obacloud publishes, replace the static feed key wi
 }
 ```
 
+Maglev reads the manifest once, at startup, and retries a failed fetch with backoff before it gives up. The daily static reload downloads the feed URLs the manifest listed at startup, so restart Maglev to pick up a changed manifest. A query string in the manifest URL, such as a signature, is redacted in logs and in `-dump-config` output.
+
 **Note:** The `-f` flag is mutually exclusive with other command-line flags. If you use `-f`, all other configuration flags will be ignored. The system will return an error if you try to use both.
 
 **Dump Current Configuration:**
