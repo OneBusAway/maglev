@@ -1067,7 +1067,7 @@ func TestRetainRoute_EmptyCombinedID(t *testing.T) {
 }
 
 func TestArrivalsAndDeparturesForLocationHandler_MultiDayWindow(t *testing.T) {
-	api := createTestApi(t)
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
 	defer api.Shutdown()
 
 	resp, model := callArrivalsForLocation(t, api, url.Values{

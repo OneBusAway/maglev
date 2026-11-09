@@ -299,15 +299,30 @@ func groupAgenciesByTimezone(locations map[string]*time.Location) (map[string]*t
 	return groups, slices.Sorted(maps.Keys(groups))
 }
 
-// arrivalDayRange computes the inclusive [minDay, maxDay] service day offsets
-// needed to cover [now - before, now + after]. Trips can run past midnight (e.g.
-// 25:30), so dayOffset - 1 is always included to capture after-midnight trips from
-// the previous service day, and dayOffset + 1 captures trips starting on the next day.
-func arrivalDayRange(before, after time.Duration) (int, int) {
-	const day = 24 * time.Hour
-	minDay := -int(before/day) - 1
-	maxDay := int(after/day) + 1
+// arrivalDayRange computes the inclusive [minDay, maxDay] service day offsets,
+// relative to the query time's service day, whose stop_times must be scanned to
+// cover [windowStart, windowEnd]. Callers pass the window the day queries use,
+// including frequency minutes, so a frequency window reaching past midnight is
+// not cut short. Trips can run past midnight (e.g. 25:30), so the earliest day
+// that can contribute is the window start's own service day minus one: a trip
+// like 24:30 runs on an earlier service date yet can still fall inside the
+// window. The latest contributing day is the window end's own service day: a
+// trip starting after that day cannot arrive inside the window. Day boundaries
+// are read from the wall clock in loc, so DST shifts and agency timezones that
+// push part of the window across midnight are covered.
+func arrivalDayRange(queryTime, windowStart, windowEnd time.Time, loc *time.Location) (int, int) {
+	queryDay := servicedate.Of(queryTime.In(loc))
+	minDay := dayOffset(queryDay, servicedate.Of(windowStart.In(loc))) - 1
+	maxDay := dayOffset(queryDay, servicedate.Of(windowEnd.In(loc)))
 	return minDay, maxDay
+}
+
+// dayOffset returns n so that reference.AddDays(n) equals d. Both days are
+// compared as UTC calendar days, which stays exact across DST transitions.
+func dayOffset(reference, d servicedate.Date) int {
+	ref := time.Date(reference.Year, reference.Month, reference.Day, 12, 0, 0, 0, time.UTC)
+	day := time.Date(d.Year, d.Month, d.Day, 12, 0, 0, 0, time.UTC)
+	return int(day.Sub(ref) / (24 * time.Hour))
 }
 
 // collectGroupWindow gathers the stop_times across the service days covering the
@@ -317,7 +332,9 @@ func arrivalDayRange(before, after time.Duration) (int, int) {
 func (api *RestAPI) collectGroupWindow(ctx context.Context, in stopArrivalsInput, routeAgencyMap map[string]string, group *timezoneGroup, isPrimaryGroup bool) ([]activeStopTime, error) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	var groupRows []activeStopTime
-	minDay, maxDay := arrivalDayRange(in.Before, in.After)
+	windowStart := in.QueryTime.Add(-max(in.Before, in.FrequencyBefore))
+	windowEnd := in.QueryTime.Add(max(in.After, in.FrequencyAfter))
+	minDay, maxDay := arrivalDayRange(in.QueryTime, windowStart, windowEnd, group.location)
 	for dayOffset := minDay; dayOffset <= maxDay; dayOffset++ {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -604,8 +621,10 @@ func groupStopsByAgency(stops []gtfsdb.Stop, agencies *stopAgencyIndex, queryTim
 // query-row order within a day.
 func (api *RestAPI) loadBatchedStopTimes(ctx context.Context, in multiStopArrivalsInput, groups []agencyGroup, activeByDate map[string]map[string]bool) ([]batchedActiveStopTime, error) {
 	var allActive []batchedActiveStopTime
-	minDay, maxDay := arrivalDayRange(in.Before, in.After)
+	windowStart := in.QueryTime.Add(-max(in.Before, in.FrequencyBefore))
+	windowEnd := in.QueryTime.Add(max(in.After, in.FrequencyAfter))
 	for _, group := range groups {
+		minDay, maxDay := arrivalDayRange(in.QueryTime, windowStart, windowEnd, group.location)
 		for dayOffset := minDay; dayOffset <= maxDay; dayOffset++ {
 			if err := api.appendBatchedStopTimesForDay(ctx, group, dayOffset, in, activeByDate, &allActive); err != nil {
 				return nil, err
