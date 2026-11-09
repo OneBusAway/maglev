@@ -116,11 +116,7 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	}
 
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
-	consolidatedStops, err := loadConsolidatedStopIDs(ctx, manager.GtfsDB)
-	if err != nil {
-		return false, err
-	}
-	manager.consolidatedStops.Store(&consolidatedStops)
+	manager.refreshConsolidatedStops(ctx, logger)
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
@@ -146,6 +142,19 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	manager.logFeedExpiry(ctx, logger)
 
 	return changed, nil
+}
+
+// refreshConsolidatedStops reloads the absorbed-to-canonical stop map that
+// realtime translation uses. Translation is best effort, so a failed read
+// keeps the previous map rather than failing a reload whose import already
+// succeeded.
+func (manager *Manager) refreshConsolidatedStops(ctx context.Context, logger *slog.Logger) {
+	consolidatedStops, err := loadConsolidatedStopIDs(ctx, manager.GtfsDB)
+	if err != nil {
+		logging.LogError(logger, "Error loading consolidated stops; keeping the previous map", err)
+		return
+	}
+	manager.consolidatedStops.Store(&consolidatedStops)
 }
 
 // storeConfiguredFeed fetches the configured feed and, unless the database

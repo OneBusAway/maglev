@@ -101,6 +101,26 @@ func TestStopConsolidation_TranslationSurvivesSkippedImport(t *testing.T) {
 	assert.Equal(t, consolidatedStopIDs{"5027": "5008"}, *restarted.consolidatedStops.Load())
 }
 
+// A failed read of the consolidation map must not undo the rest of a
+// reload: the region bounds are still swapped in, the reload still
+// succeeds, and realtime keeps the map it had.
+func TestStopConsolidation_ReloadSurvivesFailedMapLoad(t *testing.T) {
+	manager, err := newConsolidationManager(t, writeConsolidationFile(t, rabaConsolidation))
+	require.NoError(t, err)
+
+	manager.staticMutex.Lock()
+	manager.regionBounds = nil
+	manager.staticMutex.Unlock()
+	_, err = manager.GtfsDB.DB.Exec(`DROP TABLE stop_consolidations`)
+	require.NoError(t, err)
+
+	_, err = manager.ReloadStatic(context.Background())
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, manager.GetRegionBounds())
+	assert.Equal(t, consolidatedStopIDs{"5027": "5008"}, *manager.consolidatedStops.Load())
+}
+
 func encodeStopAlertFeed(t *testing.T, stopID string) []byte {
 	t.Helper()
 	feed := &gtfsrt.FeedMessage{
