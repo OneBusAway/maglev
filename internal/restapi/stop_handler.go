@@ -28,16 +28,18 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	stop, err := api.getStopOrCanonicalStop(ctx, stopID)
+	resolved, err := api.getStopOrCanonicalStop(ctx, agencyID, stopID)
 	if err != nil {
 		api.dbErrorResponse(w, r, err)
 		return
 	}
+	stop := resolved.stop
 	if stop.ID == "" {
 		api.sendNotFound(w, r)
 		return
 	}
 	stopID = stop.ID
+	agencyID = resolved.agencyID
 
 	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStop(ctx, stopID)
 	if err != nil {
@@ -58,26 +60,11 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 		uniqueAgencyIDs[route.AgencyID] = true
 	}
 
-	// Validate the requested agency namespace
-	if len(routes) > 0 {
-		if !uniqueAgencyIDs[agencyID] {
-			// Stop exists, but is not served by the requested agency namespace.
-			api.sendNotFound(w, r)
-			return
-		}
-	} else {
-		// If the stop has no routes, we allow it to be retrieved under any valid agency namespace
-		// because Maglev stops do not have a dedicated agency_id column in the schema.
-		// Just ensure the requested agency actually exists.
-		agency, err := api.GtfsManager.FindAgency(ctx, agencyID)
-		if err != nil {
-			api.serverErrorResponse(w, r, err)
-			return
-		}
-		if agency == nil {
-			api.sendNotFound(w, r)
-			return
-		}
+	// An absorbed stop's agency comes from the consolidation file, which
+	// already matched the requested ID, so only a direct lookup is checked
+	// against the requested agency namespace.
+	if !resolved.absorbed && !api.isInAgencyNamespace(w, r, agencyID, uniqueAgencyIDs) {
+		return
 	}
 
 	parentID := ""
@@ -180,21 +167,65 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	api.sendResponse(w, r, response)
 }
 
+// isInAgencyNamespace reports whether a stop may be served under the
+// requested agency, sending not found when it may not. A stop with routes
+// belongs to its routes' agencies. A stop with no routes may be served under
+// any agency that exists, because Maglev stops do not have a dedicated
+// agency_id column in the schema.
+func (api *RestAPI) isInAgencyNamespace(w http.ResponseWriter, r *http.Request, agencyID string, routeAgencyIDs map[string]bool) bool {
+	if len(routeAgencyIDs) > 0 {
+		if !routeAgencyIDs[agencyID] {
+			api.sendNotFound(w, r)
+			return false
+		}
+		return true
+	}
+	agency, err := api.GtfsManager.FindAgency(r.Context(), agencyID)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return false
+	}
+	if agency == nil {
+		api.sendNotFound(w, r)
+		return false
+	}
+	return true
+}
+
+// resolvedStop is the stop a stop/{id} request names, and the agency that
+// names it in the response.
+type resolvedStop struct {
+	stop     gtfsdb.Stop
+	agencyID string
+	// absorbed reports that stop consolidation absorbed the requested stop
+	// into stop, so the consolidation file gave agencyID.
+	absorbed bool
+}
+
 // getStopOrCanonicalStop returns the stop, or, when stop consolidation
-// absorbed it into a stored stop, that canonical stop, as Java's stop
-// endpoint does.
-func (api *RestAPI) getStopOrCanonicalStop(ctx context.Context, stopID string) (gtfsdb.Stop, error) {
+// absorbed agencyID_stopID into a stored stop, that canonical stop under
+// the agency the file gives it, as Java's stop endpoint does: production
+// returns 1_16140 for stop/29_40.
+func (api *RestAPI) getStopOrCanonicalStop(ctx context.Context, agencyID, stopID string) (resolvedStop, error) {
 	queries := api.GtfsManager.GtfsDB.Queries
 	stop, err := queries.GetStop(ctx, stopID)
 	if !errors.Is(err, sql.ErrNoRows) {
-		return stop, err
+		return resolvedStop{stop: stop, agencyID: agencyID}, err
 	}
-	canonicalID, lookupErr := queries.GetConsolidatedStopCanonicalID(ctx, stopID)
+	canonical, lookupErr := queries.GetConsolidatedStopCanonical(ctx, gtfsdb.GetConsolidatedStopCanonicalParams{
+		AbsorbedID:   stopID,
+		RuleAbsorbed: utils.FormCombinedID(agencyID, stopID),
+	})
 	if errors.Is(lookupErr, sql.ErrNoRows) {
-		return stop, err
+		return resolvedStop{}, err
 	}
 	if lookupErr != nil {
-		return stop, lookupErr
+		return resolvedStop{}, lookupErr
 	}
-	return queries.GetStop(ctx, canonicalID.String)
+	canonicalAgencyID, err := utils.ExtractAgencyID(canonical.RuleCanonical)
+	if err != nil {
+		return resolvedStop{}, err
+	}
+	stop, err = queries.GetStop(ctx, canonical.CanonicalID.String)
+	return resolvedStop{stop: stop, agencyID: canonicalAgencyID, absorbed: true}, err
 }

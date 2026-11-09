@@ -47,8 +47,8 @@ func consolidationFeed(t *testing.T) *GtfsData {
 		stops[data.Static.Stops[i].Id] = &data.Static.Stops[i]
 	}
 	data.StopReplacements = map[string]StopReplacement{
-		"moved":   {RuleCanonical: "a_canonical", Canonical: stops["canonical"]},
-		"dropped": {RuleCanonical: "x_gone"},
+		"moved":   {RuleAbsorbed: "a_moved", RuleCanonical: "a_canonical", Canonical: stops["canonical"]},
+		"dropped": {RuleAbsorbed: "a_dropped", RuleCanonical: "x_gone"},
 	}
 	return data
 }
@@ -90,6 +90,7 @@ func TestStoreGtfsData_ConsolidatesStops(t *testing.T) {
 		require.Len(t, rows, 2)
 		assert.Equal(t, "dropped", rows[0].AbsorbedID)
 		assert.False(t, rows[0].CanonicalID.Valid)
+		assert.Equal(t, "a_dropped", rows[0].RuleAbsorbed)
 		assert.Equal(t, "x_gone", rows[0].RuleCanonical)
 		assert.Equal(t, "moved", rows[1].AbsorbedID)
 		assert.Equal(t, "canonical", rows[1].CanonicalID.String)

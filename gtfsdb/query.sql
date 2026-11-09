@@ -1546,13 +1546,14 @@ INSERT INTO
     stop_consolidations (
         absorbed_id,
         canonical_id,
+        rule_absorbed,
         rule_canonical,
         absorbed_name,
         absorbed_lat,
         absorbed_lon
     )
 VALUES
-    (?, ?, ?, ?, ?, ?);
+    (?, ?, ?, ?, ?, ?, ?);
 
 -- name: ListStopConsolidations :many
 SELECT
@@ -1570,11 +1571,13 @@ DELETE FROM trips
 WHERE
     id = ?;
 
--- name: GetConsolidatedStopCanonicalID :one
+-- name: GetConsolidatedStopCanonical :one
 SELECT
-    canonical_id
+    canonical_id,
+    rule_canonical
 FROM
     stop_consolidations
 WHERE
     absorbed_id = ?
+    AND rule_absorbed = ?
     AND canonical_id IS NOT NULL;

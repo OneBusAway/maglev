@@ -771,18 +771,20 @@ INSERT INTO
     stop_consolidations (
         absorbed_id,
         canonical_id,
+        rule_absorbed,
         rule_canonical,
         absorbed_name,
         absorbed_lat,
         absorbed_lon
     )
 VALUES
-    (?, ?, ?, ?, ?, ?)
+    (?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateStopConsolidationParams struct {
 	AbsorbedID    string
 	CanonicalID   sql.NullString
+	RuleAbsorbed  string
 	RuleCanonical string
 	AbsorbedName  sql.NullString
 	AbsorbedLat   sql.NullFloat64
@@ -793,6 +795,7 @@ func (q *Queries) CreateStopConsolidation(ctx context.Context, arg CreateStopCon
 	_, err := q.exec(ctx, q.createStopConsolidationStmt, createStopConsolidation,
 		arg.AbsorbedID,
 		arg.CanonicalID,
+		arg.RuleAbsorbed,
 		arg.RuleCanonical,
 		arg.AbsorbedName,
 		arg.AbsorbedLat,
@@ -2160,21 +2163,33 @@ func (q *Queries) GetCalendarDateExceptionsForServiceID(ctx context.Context, ser
 	return items, nil
 }
 
-const getConsolidatedStopCanonicalID = `-- name: GetConsolidatedStopCanonicalID :one
+const getConsolidatedStopCanonical = `-- name: GetConsolidatedStopCanonical :one
 SELECT
-    canonical_id
+    canonical_id,
+    rule_canonical
 FROM
     stop_consolidations
 WHERE
     absorbed_id = ?
+    AND rule_absorbed = ?
     AND canonical_id IS NOT NULL
 `
 
-func (q *Queries) GetConsolidatedStopCanonicalID(ctx context.Context, absorbedID string) (sql.NullString, error) {
-	row := q.queryRow(ctx, q.getConsolidatedStopCanonicalIDStmt, getConsolidatedStopCanonicalID, absorbedID)
-	var canonical_id sql.NullString
-	err := row.Scan(&canonical_id)
-	return canonical_id, err
+type GetConsolidatedStopCanonicalParams struct {
+	AbsorbedID   string
+	RuleAbsorbed string
+}
+
+type GetConsolidatedStopCanonicalRow struct {
+	CanonicalID   sql.NullString
+	RuleCanonical string
+}
+
+func (q *Queries) GetConsolidatedStopCanonical(ctx context.Context, arg GetConsolidatedStopCanonicalParams) (GetConsolidatedStopCanonicalRow, error) {
+	row := q.queryRow(ctx, q.getConsolidatedStopCanonicalStmt, getConsolidatedStopCanonical, arg.AbsorbedID, arg.RuleAbsorbed)
+	var i GetConsolidatedStopCanonicalRow
+	err := row.Scan(&i.CanonicalID, &i.RuleCanonical)
+	return i, err
 }
 
 const getFeedEndDate = `-- name: GetFeedEndDate :one
@@ -5398,7 +5413,7 @@ func (q *Queries) ListRoutes(ctx context.Context) ([]Route, error) {
 
 const listStopConsolidations = `-- name: ListStopConsolidations :many
 SELECT
-    absorbed_id, canonical_id, rule_canonical, absorbed_name, absorbed_lat, absorbed_lon
+    absorbed_id, canonical_id, rule_absorbed, rule_canonical, absorbed_name, absorbed_lat, absorbed_lon
 FROM
     stop_consolidations
 ORDER BY
@@ -5417,6 +5432,7 @@ func (q *Queries) ListStopConsolidations(ctx context.Context) ([]StopConsolidati
 		if err := rows.Scan(
 			&i.AbsorbedID,
 			&i.CanonicalID,
+			&i.RuleAbsorbed,
 			&i.RuleCanonical,
 			&i.AbsorbedName,
 			&i.AbsorbedLat,

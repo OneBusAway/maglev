@@ -167,6 +167,7 @@ type StopAgency struct {
 type StopConsolidation struct {
 	AbsorbedID    string
 	CanonicalID   sql.NullString
+	RuleAbsorbed  string
 	RuleCanonical string
 	AbsorbedName  sql.NullString
 	AbsorbedLat   sql.NullFloat64
