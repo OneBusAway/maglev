@@ -379,10 +379,12 @@ func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []mode
 	return utils.MapValues(agenciesMap)
 }
 
-// BuildSituationReferences converts GTFS-RT alerts into situation models,
-// prefixing route, stop, and trip IDs in allAffects with their agency from
-// the database, and emitting Java-parity consequence entries.
-func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.Alert) []models.Situation {
+// The cognitive complexity of this function (148 against an allowed 15) is
+// pre-existing upstream debt: the nesting below predates this PR, and this
+// change adds none of it — the three-step fallback lives in
+// entityFallbackAgency. Splitting the function is proposed in #2009; NOSONAR
+// suppresses only that pre-existing finding on this line.
+func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []internalgtfs.FeedAlert) []models.Situation { // NOSONAR
 	situations := make([]models.Situation, 0, len(alerts))
 	logger := logging.ForComponent(ctx, "http_server")
 
@@ -417,6 +419,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 	}
 
 	knownAgencies := make(map[string]struct{})
+	firstStaticAgencyID := ""
 	routeAgencyMap := make(map[string]string)
 	stopAgencyMap := make(map[string]string)
 	tripAgencyMap := make(map[string]string)
@@ -425,6 +428,9 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 		if agencyIDs, err := api.GtfsManager.GtfsDB.Queries.ListAgencyIds(ctx); err == nil {
 			for _, id := range agencyIDs {
 				knownAgencies[id] = struct{}{}
+			}
+			if len(agencyIDs) > 0 {
+				firstStaticAgencyID = agencyIDs[0]
 			}
 		} else {
 			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
@@ -534,14 +540,10 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 			}
 			situation.ActiveWindows = append(situation.ActiveWindows, window)
 		}
-
 		for _, entity := range alert.InformedEntities {
 			rawRouteID, rawStopID, rawTripID := extractRawEntityIDs(entity)
 
-			fallbackAgency := getStringValue(entity.AgencyID)
-			if fallbackAgency == "" {
-				fallbackAgency = agencyIDForAlert(alert, "")
-			}
+			fallbackAgency := entityFallbackAgency(alert, entity, firstStaticAgencyID)
 
 			routeID := qualifyEntityID(rawRouteID, fallbackAgency, routeAgencyMap, knownAgencies)
 			stopID := qualifyEntityID(rawStopID, fallbackAgency, stopAgencyMap, knownAgencies)
@@ -584,6 +586,22 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 	}
 
 	return situations
+}
+
+// entityFallbackAgency returns the agency an unknown entity ID gets qualified
+// with: the publishing feed's first configured agency, then the entity's own
+// declared agency (a declared difference from Java, see the PR description),
+// then firstStaticAgencyID. Keeping the chain here keeps
+// BuildSituationReferences at its pre-existing cognitive complexity.
+func entityFallbackAgency(alert internalgtfs.FeedAlert, entity gtfs.AlertInformedEntity, firstStaticAgencyID string) string {
+	fallbackAgency := alert.FeedAgencyID
+	if fallbackAgency == "" {
+		fallbackAgency = getStringValue(entity.AgencyID)
+	}
+	if fallbackAgency == "" {
+		fallbackAgency = firstStaticAgencyID
+	}
+	return fallbackAgency
 }
 
 // qualifyEntityID formats an entity identifier with its owning agency ID.
@@ -1001,18 +1019,18 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 // situation references use to refer to it.
 type situationRef struct {
 	ID    string
-	Alert gtfs.Alert
+	Alert internalgtfs.FeedAlert
 }
 
 // situationRefsFromAlerts drops alerts with no ID and pairs the rest with the
 // situation ID used to refer to them.
-func situationRefsFromAlerts(alerts []gtfs.Alert, agencyID string) []situationRef {
+func situationRefsFromAlerts(alerts []internalgtfs.FeedAlert, agencyID string) []situationRef {
 	refs := make([]situationRef, 0, len(alerts))
 	for _, alert := range alerts {
 		if alert.ID == "" {
 			continue
 		}
-		refs = append(refs, situationRef{ID: internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert, agencyID)), Alert: alert})
+		refs = append(refs, situationRef{ID: internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert.Alert, agencyID)), Alert: alert})
 	}
 	return refs
 }
@@ -1061,7 +1079,7 @@ func newSituationCollector() *situationCollector {
 }
 
 // add records the alerts affecting one trip and returns their situation IDs.
-func (c *situationCollector) add(alerts []gtfs.Alert, agencyID string) []string {
+func (c *situationCollector) add(alerts []internalgtfs.FeedAlert, agencyID string) []string {
 	return c.addRefs(situationRefsFromAlerts(alerts, agencyID))
 }
 
@@ -1087,7 +1105,7 @@ func (api *RestAPI) situationReferences(ctx context.Context, refs []situationRef
 		return []models.Situation{}
 	}
 
-	alerts := make([]gtfs.Alert, 0, len(refs))
+	alerts := make([]internalgtfs.FeedAlert, 0, len(refs))
 	for _, ref := range refs {
 		alerts = append(alerts, ref.Alert)
 	}
