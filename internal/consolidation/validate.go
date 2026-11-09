@@ -135,7 +135,7 @@ func absorbsOtherStops(rule Rule) bool {
 // checkStops reports stops missing from the loaded feeds and absorbed
 // stops far from their canonical stop. Distance is checked only on the line
 // that last absorbs a stop, since that line's canonical stop is the one
-// Apply uses.
+// Apply uses. A stop repeated on one line is checked once.
 func checkStops(file *File, stops map[StopID]Location, claims map[StopID]claim) []Warning {
 	var warnings []Warning
 	for _, rule := range file.Rules {
@@ -146,7 +146,7 @@ func checkStops(file *File, stops map[StopID]Location, claims map[StopID]claim) 
 		if !canonicalLoaded {
 			warnings = append(warnings, Warning{Kind: MissingCanonical, Line: rule.Line, Stop: rule.Canonical})
 		}
-		for _, absorbedID := range rule.Absorbed {
+		for _, absorbedID := range distinctAbsorbed(rule) {
 			if absorbedID == rule.Canonical {
 				continue
 			}
@@ -165,4 +165,18 @@ func checkStops(file *File, stops map[StopID]Location, claims map[StopID]claim) 
 		}
 	}
 	return warnings
+}
+
+// distinctAbsorbed returns a rule's absorbed stops in file order, without
+// the repeats on its line.
+func distinctAbsorbed(rule Rule) []StopID {
+	seen := make(map[StopID]bool, len(rule.Absorbed))
+	distinct := make([]StopID, 0, len(rule.Absorbed))
+	for _, absorbed := range rule.Absorbed {
+		if !seen[absorbed] {
+			seen[absorbed] = true
+			distinct = append(distinct, absorbed)
+		}
+	}
+	return distinct
 }
