@@ -237,7 +237,7 @@ func TestValidateAndFilterGTFSData_ForeignKeys_Filtering(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error since all trips are filtered, got nil")
 				}
-				if !strings.Contains(err.Error(), "all trips were filtered out") {
+				if !strings.Contains(err.Error(), "every trip was filtered out") {
 					t.Errorf("unexpected error message: %v", err)
 				}
 			} else {
