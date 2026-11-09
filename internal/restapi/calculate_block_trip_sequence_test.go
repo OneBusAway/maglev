@@ -3,6 +3,7 @@ package restapi
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"fmt"
 	"math"
 	"slices"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -185,4 +187,46 @@ func TestArrivalBlockTripSequenceDiffersFromTripStatus(t *testing.T) {
 		"the arrival reports its own trip's position in the block")
 	assert.EqualValues(t, api.calculateBlockTripSequence(ctx, firstTripID, serviceDate), tripStatus["blockTripSequence"],
 		"the status reports the active trip's position in the block")
+}
+
+type rowQueryCountingDB struct {
+	gtfsdb.DBTX
+	rowQueries int
+}
+
+func (db *rowQueryCountingDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	db.rowQueries++
+	return db.DBTX.QueryRowContext(ctx, query, args...)
+}
+
+func TestActiveTripBlockSequence_QueriesOncePerRequest(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	tripID := mustGetTrip(t, api).ID
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, time.UTC)
+
+	originalQueries := api.GtfsManager.GtfsDB.Queries
+	t.Cleanup(func() { api.GtfsManager.GtfsDB.Queries = originalQueries })
+	countingDB := &rowQueryCountingDB{DBTX: api.GtfsManager.GtfsDB.DB}
+	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(countingDB)
+
+	tests := []struct {
+		name         string
+		ctx          context.Context
+		secondCallDB bool
+	}{
+		{name: "a request-scoped cache reuses the first result", ctx: WithSnapshotCache(context.Background(), newSnapshotCache()), secondCallDB: false},
+		{name: "without a cache each call queries", ctx: context.Background(), secondCallDB: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			first := api.activeTripBlockSequence(tt.ctx, tripID, serviceDate)
+			afterFirstCall := countingDB.rowQueries
+			require.Positive(t, afterFirstCall)
+
+			second := api.activeTripBlockSequence(tt.ctx, tripID, serviceDate)
+			assert.Equal(t, first, second)
+			assert.Equal(t, tt.secondCallDB, countingDB.rowQueries > afterFirstCall)
+		})
+	}
 }

@@ -268,7 +268,7 @@ func (api *RestAPI) BuildTripStatus(
 		status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
 		// Java's TripStatusBeanServiceImpl reports the active trip's sequence.
 		if snap.ActiveTripID != tripID {
-			status.BlockTripSequence = api.calculateBlockTripSequence(ctx, snap.ActiveTripID, serviceDate)
+			status.BlockTripSequence = api.activeTripBlockSequence(ctx, snap.ActiveTripID, serviceDate)
 		}
 		status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
 		if snap.ActiveTripTotalDistance > 0 {
@@ -861,6 +861,22 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 		return 0
 	}
 	return seq
+}
+
+// activeTripBlockSequence is calculateBlockTripSequence, memoized in the
+// request's snapshot cache when it has one.
+func (api *RestAPI) activeTripBlockSequence(ctx context.Context, tripID string, serviceDate time.Time) int {
+	cache := snapshotCacheFrom(ctx)
+	if cache == nil {
+		return api.calculateBlockTripSequence(ctx, tripID, serviceDate)
+	}
+	key := activeTripSequenceKey{tripID: tripID, serviceDateUnix: serviceDate.UnixNano()}
+	if sequence, ok := cache.activeTripSequences[key]; ok {
+		return sequence
+	}
+	sequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
+	cache.activeTripSequences[key] = sequence
+	return sequence
 }
 
 // blockTripSequence returns the zero-based index of a trip within its block's
