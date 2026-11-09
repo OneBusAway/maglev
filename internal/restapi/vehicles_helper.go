@@ -10,6 +10,7 @@ import (
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -151,14 +152,6 @@ func (api *RestAPI) BuildVehicleStatus(
 	}
 }
 
-func GetVehicleActiveTripID(vehicle *gtfs.Vehicle) string {
-	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
-		return ""
-	}
-
-	return vehicle.Trip.ID.ID
-}
-
 // wallClockSinceMidnightNs returns nanoseconds from local midnight to t using its
 // wall-clock fields, so the value is unaffected by DST offset changes.
 func wallClockSinceMidnightNs(t time.Time) int64 {
@@ -174,7 +167,7 @@ func wallClockSinceMidnightNs(t time.Time) int64 {
 // nominalTripID when there is no block or no better match.
 func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID string, referenceTime time.Time) string {
 	nominalTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, nominalTripID)
-	if err != nil || !nominalTrip.BlockID.Valid || nominalTrip.BlockID.String == "" {
+	if err != nil || nulls.StringOrEmpty(nominalTrip.BlockID) == "" {
 		return nominalTripID
 	}
 

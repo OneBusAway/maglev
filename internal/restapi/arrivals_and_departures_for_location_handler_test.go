@@ -79,7 +79,14 @@ func TestArrivalsAndDeparturesForLocationValidation(t *testing.T) {
 		{"date-only time", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "time": {"2025-06-13"}}, []string{"time"}},
 		{"zero maxCount", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "maxCount": {"0"}}, []string{"maxCount"}},
 		{"negative minutesBefore", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "minutesBefore": {"-5"}}, []string{"minutesBefore"}},
+		{"invalid frequencyMinutesBefore", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesBefore": {"invalid"}}, []string{"frequencyMinutesBefore"}},
+		{"invalid frequencyMinutesAfter", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesAfter": {"invalid"}}, []string{"frequencyMinutesAfter"}},
+		{"negative frequencyMinutesBefore", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesBefore": {"-1"}}, []string{"frequencyMinutesBefore"}},
+		{"negative frequencyMinutesAfter", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesAfter": {"-1"}}, []string{"frequencyMinutesAfter"}},
 		{"non-numeric routeType", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"bus"}}, []string{"routeType"}},
+		{"overflow routeType positive", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"99999999999"}}, []string{"routeType"}},
+		{"overflow routeType int32 max plus one", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"2147483648"}}, []string{"routeType"}},
+		{"overflow routeType int32 min minus one", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"-2147483649"}}, []string{"routeType"}},
 		{"non-boolean emptyReturnsNotFound", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "emptyReturnsNotFound": {"maybe"}}, []string{"emptyReturnsNotFound"}},
 	}
 
@@ -128,6 +135,38 @@ func TestArrivalsAndDeparturesForLocationAcceptsDateTimeFormat(t *testing.T) {
 		scheduled := a.ScheduledArrivalTime.UnixMilli()
 		assert.GreaterOrEqual(t, scheduled, windowStart, "arrival scheduled before the requested window")
 		assert.LessOrEqual(t, scheduled, windowEnd, "arrival scheduled after the requested window")
+	}
+}
+
+// Java treats time=0 as "not supplied" (SystemTime.currentTimeMillis). With a
+// mock clock pinned to a fixture service day, omitted time and time=0 must
+// return the same non-empty results — not the empty set for 1970-01-01.
+func TestArrivalsAndDeparturesForLocationTimeZeroMatchesOmitted(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	respOmit, omit := callArrivalsForLocation(t, api)
+	respZero, zero := callArrivalsForLocation(t, api, url.Values{"time": {"0"}})
+
+	require.Equal(t, http.StatusOK, respOmit.StatusCode)
+	require.Equal(t, http.StatusOK, respZero.StatusCode)
+	assert.Empty(t, omit.Data.FieldErrors)
+	assert.Empty(t, zero.Data.FieldErrors)
+
+	omitEntry := omit.Data.Entry
+	zeroEntry := zero.Data.Entry
+	require.NotEmpty(t, omitEntry.ArrivalsAndDepartures, "fixture date must have arrivals when time is omitted")
+	require.NotEmpty(t, zeroEntry.ArrivalsAndDepartures, "time=0 must use now, not 1970-01-01")
+
+	assert.Equal(t, omitEntry.StopIDs, zeroEntry.StopIDs)
+	assert.Equal(t, omitEntry.NearbyStopIDs, zeroEntry.NearbyStopIDs)
+	require.Equal(t, len(omitEntry.ArrivalsAndDepartures), len(zeroEntry.ArrivalsAndDepartures))
+	for i := range omitEntry.ArrivalsAndDepartures {
+		a, b := omitEntry.ArrivalsAndDepartures[i], zeroEntry.ArrivalsAndDepartures[i]
+		assert.Equal(t, a.TripID, b.TripID, "arrival[%d].TripID", i)
+		assert.Equal(t, a.StopID, b.StopID, "arrival[%d].StopID", i)
+		assert.Equal(t, a.ServiceDate, b.ServiceDate, "arrival[%d].ServiceDate", i)
+		assert.Equal(t, a.ScheduledArrivalTime, b.ScheduledArrivalTime, "arrival[%d].ScheduledArrivalTime", i)
 	}
 }
 
@@ -210,6 +249,38 @@ func TestArrivalsAndDeparturesForLocationIncludesStopAlertsWithoutArrivals(t *te
 		return situation.ID == wantSituationID
 	})
 	assert.True(t, referenced, "the stop alert must resolve in references.situations")
+}
+
+func TestArrivalsAndDeparturesForLocationIncludesAgencyAlertsWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	agencyID := testdata.Raba.ID
+	const alertID = "location-no-arrivals-agency-alert"
+	api.GtfsManager.AddAlertForTest(gtfs.Alert{
+		ID:               alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agencyID}},
+		Header:           []gtfs.AlertText{{Text: "Agency alert without arrivals", Language: "en"}},
+	})
+
+	quietTime := time.Date(2025, 6, 13, 3, 0, 0, 0, arrivalsTestClock.Location())
+	resp, model := callArrivalsForLocation(t, api, url.Values{
+		"time":          {strconv.FormatInt(quietTime.UnixMilli(), 10)},
+		"minutesBefore": {"0"},
+		"minutesAfter":  {"0"},
+	})
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the quiet-time query must have no arrivals")
+
+	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+	assert.Contains(t, model.Data.Entry.SituationIDs, wantSituationID)
+	referenced := slices.ContainsFunc(model.Data.References.Situations, func(situation models.Situation) bool {
+		return situation.ID == wantSituationID
+	})
+	assert.True(t, referenced, "the agency alert must resolve in references.situations")
 }
 
 // stopIds come nearest first so maxCount truncation drops the farthest
@@ -819,27 +890,52 @@ func TestArrivalsAndDeparturesForLocationKeepsAlertsWithoutArrivals(t *testing.T
 }
 
 func TestRetainedStopCodes(t *testing.T) {
-	assert.Equal(t, []string{"4062", "4063"}, retainedStopCodes([]string{
-		"25_4062",
-		"not-a-combined-id",
-		"25_4062",
-		"25_",
-		"40_4063",
-		"",
-	}, nil))
-	assert.Empty(t, retainedStopCodes(nil, nil))
-
 	idx := &stopAgencyIndex{
 		byStopID: map[string]string{
 			"s1": "AGENCY_ONE",
-			"s2": "AGENCY_ONE",
+			"s2": "",
 		},
 		fallbackAgencyID: "AGENCY_ONE",
 	}
 	assert.Equal(t, []string{"s1", "s2"}, retainedStopCodes([]string{
 		"AGENCY_ONE_s1",
+		"not-a-combined-id",
+		"OTHER_s1",
+		"AGENCY_ONE_s1",
+		"AGENCY_ONE_",
+		"AGENCY_ONE_unknown",
 		"AGENCY_ONE_s2",
+		"",
 	}, idx))
+	assert.Empty(t, retainedStopCodes(nil, nil))
+}
+
+func TestRetainIndexedRoute(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		agencyID   string
+		combinedID string
+		wantMatch  bool
+	}{
+		{name: "matching agency", agencyID: "AGENCY_ONE", combinedID: "AGENCY_ONE_ROUTE_100", wantMatch: true},
+		{name: "wrong agency", agencyID: "OTHER", combinedID: "AGENCY_ONE_ROUTE_100"},
+		{name: "empty combined ID"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			acc := newArrivalsAccumulator("AGENCY_ONE")
+			refAcc := newArrivalsAccumulator("AGENCY_ONE")
+			route := &gtfsdb.Route{ID: "ROUTE_100", AgencyID: tc.agencyID}
+			acc.routes[route.ID] = route
+
+			retainRoute(refAcc, tc.combinedID, buildCombinedRouteIndex(acc, nil))
+
+			if tc.wantMatch {
+				assert.Same(t, route, refAcc.routes[route.ID])
+			} else {
+				assert.Empty(t, refAcc.routes)
+			}
+		})
+	}
 }
 
 func TestAddRouteAlertsForRetainedStopsSkipsBadIDs(t *testing.T) {
@@ -852,7 +948,8 @@ func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := api.addRouteAlertsForRetainedStops(ctx, []string{arrivalsTestStopID}, newSituationCollector(), nil)
+	agencies := &stopAgencyIndex{byStopID: map[string]string{"4062": "25"}}
+	err := api.addRouteAlertsForRetainedStops(ctx, []string{arrivalsTestStopID}, newSituationCollector(), agencies)
 	require.Error(t, err)
 }
 
@@ -960,11 +1057,46 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	})
 
 	situations := newSituationCollector()
-	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{arrivalsTestStopID}, situations, nil))
+	agencies := &stopAgencyIndex{byStopID: map[string]string{"4062": "25"}}
+	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{arrivalsTestStopID}, situations, agencies))
 
 	ids := situationIDsFromRefs(situations.refs)
 	assert.Contains(t, ids, utils.FormCombinedID(agencyID, alertID))
 	assert.NotContains(t, ids, utils.FormCombinedID("a", alertID))
+}
+
+func TestStopReferenceAgencies_CanonicalStopWinsCombinedIDCollision(t *testing.T) {
+	acc := newArrivalsAccumulator("")
+	acc.stopIDs["TWO_s3b"] = true
+	acc.stopIDs["s3b"] = true
+	recordStatusStop(acc, "AGENCY_TWO_s3b", "AGENCY_TWO")
+	recordStatusStop(acc, "AGENCY_THREE_s3b", "AGENCY_THREE")
+
+	agencies := stopReferenceAgencies(arrivalsReferencesInput{
+		stopAgencies: map[string]string{"TWO_s3b": "AGENCY", "s3b": "AGENCY_ONE"},
+	}, acc)
+	assert.Equal(t, []string{"AGENCY"}, agencies["TWO_s3b"])
+	assert.ElementsMatch(t, []string{"AGENCY_ONE", "AGENCY_THREE"}, agencies["s3b"])
+}
+
+func TestRetainedAccumulator_UsesOnlyKeptTripStatus(t *testing.T) {
+	acc := newArrivalsAccumulator("")
+	recordStatusStop(acc, "AGENCY_ONE_stop", "AGENCY_ONE")
+	recordStatusStop(acc, "AGENCY_TWO_stop", "AGENCY_TWO")
+	trip := &gtfsdb.Trip{ID: "active_trip", RouteID: "active_route"}
+	route := &gtfsdb.Route{ID: "active_route", AgencyID: "AGENCY_ONE"}
+	acc.trips[trip.ID] = trip
+	acc.routes[route.ID] = route
+
+	arrivals := []models.ArrivalAndDeparture{{TripStatus: &models.TripStatus{
+		NextStop:     "AGENCY_ONE_stop",
+		ActiveTripID: "AGENCY_ONE_active_trip",
+	}}}
+	retained := retainedAccumulator(arrivals, nil, nil, acc, newSituationCollector(), &stopAgencyIndex{})
+
+	assert.Equal(t, map[string][]string{"stop": {"AGENCY_ONE"}}, stopReferenceAgencies(arrivalsReferencesInput{}, retained))
+	assert.Same(t, trip, retained.trips[trip.ID])
+	assert.Same(t, route, retained.routes[route.ID])
 }
 
 func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.T) {
@@ -977,14 +1109,16 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 			"ROUTE_200,AGENCY_TWO,200,Route 200,3\n",
 		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
 			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
-		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
-			"s1a,Stop 1A,37.6000,-122.4000\n" +
-			"s1b,Stop 1B,37.6100,-122.4000\n" +
-			"s2,Stop 2,37.7749,-122.4194\n" +
-			"s2b,Stop 2B,37.7849,-122.4194\n" +
-			"s3,Stop 3,37.7750,-122.4195\n" +
-			"s3b,Stop 3B,37.7850,-122.4195\n" +
-			"s4,Stop 4,37.7748,-122.4194\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station\n" +
+			"s1a,Stop 1A,37.6000,-122.4000,0,\n" +
+			"s1b,Stop 1B,37.6100,-122.4000,0,\n" +
+			"s2,Stop 2,37.7749,-122.4194,0,\n" +
+			"s2b,Stop 2B,37.7849,-122.4194,0,\n" +
+			"s3,Stop 3,37.7750,-122.4195,0,\n" +
+			"s3b,Stop 3B,37.7850,-122.4195,0,parent_s3b\n" +
+			"s4,Stop 4,37.7748,-122.4194,0,\n" +
+			"parent_s3b,Station 3B,37.8050,-122.4195,1,\n" +
+			"boarding_s3b,Boarding area 3B,37.8050,-122.4195,4,s3b\n",
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
 			"ROUTE_100,svc1,t1,Headsign 1,0,b1\n" +
 			"ROUTE_100,svc1,t2,Headsign 2,0,b1\n" +
@@ -994,6 +1128,7 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 			"t1,08:05:00,08:05:00,s1b,2\n" +
 			"t2,08:10:00,08:10:00,s2,1\n" +
 			"t2,08:20:00,08:20:00,s2b,2\n" +
+			"t2,08:25:00,08:25:00,s3b,3\n" +
 			"t3,08:12:00,08:12:00,s3,1\n" +
 			"t3,08:14:00,08:14:00,s4,2\n" +
 			"t3,08:22:00,08:22:00,s3b,3\n",
@@ -1004,6 +1139,17 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 	api := createTestApiWithGTFSFixture(t, mockClock, "underscore-agency-location.zip", files)
 	defer api.Shutdown()
 
+	parents, _, err := api.missingParentStopsWithAgencies(context.Background(), []models.Stop{{
+		ID:     "AGENCY_ONE_boarding_s3b",
+		Parent: "AGENCY_ONE_s3b",
+	}}, map[string]string{"AGENCY_ONE_boarding_s3b": "AGENCY_ONE"})
+	require.NoError(t, err)
+	require.Len(t, parents, 2)
+	assert.Equal(t, "AGENCY_ONE_s3b", parents[0].ID)
+	assert.Equal(t, "AGENCY_ONE_parent_s3b", parents[0].Parent)
+	assert.Equal(t, "AGENCY_ONE_parent_s3b", parents[1].ID)
+	assert.Empty(t, parents[1].Parent)
+
 	bareRoute := "ROUTE_100"
 	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
 		ID: "ALERT_1",
@@ -1013,12 +1159,12 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 		Header: []gtfs.AlertText{{Text: "Alert on Route 100", Language: "en"}},
 	})
 
-	locationURL := func(tm time.Time) string {
+	locationURL := func(tm time.Time, radius string) string {
 		return "/api/where/arrivals-and-departures-for-location.json?" + url.Values{
 			"key":           {"TEST"},
 			"lat":           {"37.7749"},
 			"lon":           {"-122.4194"},
-			"radius":        {"1000"},
+			"radius":        {radius},
 			"minutesBefore": {"15"},
 			"minutesAfter":  {"15"},
 			"time":          {strconv.FormatInt(tm.UnixMilli(), 10)},
@@ -1026,7 +1172,7 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 	}
 
 	// 1. Query at 08:00 when active block trip t1 is running before t2:
-	resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api, locationURL(testTime0800))
+	resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api, locationURL(testTime0800, "1000"))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	entry := model.Data.Entry
@@ -1106,10 +1252,10 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 
 	// 2. Query at 08:15 when t2 is active and its next stop s2b is outside the search radius.
 	// Bounding box has 2 AGENCY_TWO stops (s3, s4) vs 1 AGENCY_ONE stop (s2), making AGENCY_TWO
-	// the fallback agency. acc.stopAgencies must attribute s2b to AGENCY_ONE instead of falling back.
+	// the fallback agency. The status reference must still use AGENCY_ONE for s2b.
 	testTime0815 := time.Date(2024, 6, 15, 8, 15, 0, 0, time.FixedZone("PDT", -7*3600))
 	mockClock.Set(testTime0815)
-	resp2, model2 := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api, locationURL(testTime0815))
+	resp2, model2 := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api, locationURL(testTime0815, "1000"))
 	require.Equal(t, http.StatusOK, resp2.StatusCode)
 
 	arrivals2ByTrip := make(map[string]models.ArrivalAndDeparture, len(model2.Data.Entry.ArrivalsAndDepartures))
@@ -1127,9 +1273,37 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 		stops2ByID[s.ID] = s
 	}
 	stop2bRef, ok2b := stops2ByID["AGENCY_ONE_s2b"]
-	require.True(t, ok2b, "references.stops must retain next stop AGENCY_ONE_s2b via acc.stopAgencies")
+	require.True(t, ok2b, "references.stops must retain next stop AGENCY_ONE_s2b")
 	assert.Equal(t, "Stop 2B", stop2bRef.Name)
 	assert.NotContains(t, stops2ByID, "AGENCY_TWO_s2b", "must not fall back to dominant box agency AGENCY_TWO")
+
+	// At 08:21 both trips name the shared stop s3b under their own route agency.
+	// The search also lists s3b under its canonical stop agency, AGENCY_ONE.
+	testTime0821 := testTime0800.Add(21 * time.Minute)
+	mockClock.Set(testTime0821)
+	sharedResp, shared := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api, locationURL(testTime0821, "1200"))
+	require.Equal(t, http.StatusOK, sharedResp.StatusCode)
+	assert.Contains(t, shared.Data.Entry.StopIDs, "AGENCY_ONE_s3b")
+	assert.NotContains(t, shared.Data.Entry.StopIDs, "AGENCY_TWO_s3b")
+	statusNextStops := make(map[string]string)
+	for _, arrival := range shared.Data.Entry.ArrivalsAndDepartures {
+		require.NotNil(t, arrival.TripStatus)
+		statusNextStops[arrival.TripID] = arrival.TripStatus.NextStop
+	}
+	assert.Equal(t, "AGENCY_ONE_s3b", statusNextStops["AGENCY_ONE_t2"])
+	assert.Equal(t, "AGENCY_TWO_s3b", statusNextStops["AGENCY_TWO_t3"])
+	sharedStopRefs := make(map[string]int)
+	sharedParents := make(map[string]string)
+	for _, stop := range shared.Data.References.Stops {
+		sharedStopRefs[stop.ID]++
+		sharedParents[stop.ID] = stop.Parent
+	}
+	assert.Equal(t, 1, sharedStopRefs["AGENCY_ONE_s3b"])
+	assert.Equal(t, 1, sharedStopRefs["AGENCY_TWO_s3b"])
+	assert.Equal(t, "AGENCY_ONE_parent_s3b", sharedParents["AGENCY_ONE_s3b"])
+	assert.Equal(t, "AGENCY_TWO_parent_s3b", sharedParents["AGENCY_TWO_s3b"])
+	assert.Equal(t, 1, sharedStopRefs["AGENCY_ONE_parent_s3b"])
+	assert.Equal(t, 1, sharedStopRefs["AGENCY_TWO_parent_s3b"])
 
 	// Verify references.agencies retains both agencies with underscores
 	require.NotEmpty(t, model.Data.References.Agencies)
@@ -1147,94 +1321,4 @@ func TestArrivalsAndDeparturesForLocation_UnderscoreAgencyReferences(t *testing.
 
 	// Verify route alerts for retained stops resolve when the agency has an underscore
 	assert.Contains(t, entry.SituationIDs, utils.FormCombinedID("AGENCY_ONE", "ALERT_1"))
-}
-
-func TestRetainTripStatusEntities_ActiveTripDifferentRouteAgency(t *testing.T) {
-	refAcc := newArrivalsAccumulator("")
-	acc := newArrivalsAccumulator("")
-
-	activeTrip := &gtfsdb.Trip{ID: "active_1", RouteID: "route_other"}
-	activeRoute := &gtfsdb.Route{ID: "route_other", AgencyID: "AGENCY_OTHER"}
-	acc.trips[activeTrip.ID] = activeTrip
-	acc.routes[activeRoute.ID] = activeRoute
-
-	agencies := &stopAgencyIndex{fallbackAgencyID: "AGENCY_FALLBACK"}
-	tripIndex := buildCombinedTripIndex(acc, agencies)
-	require.Contains(t, tripIndex, "AGENCY_OTHER_active_1")
-	require.NotContains(t, tripIndex, "AGENCY_SCHEDULED_active_1")
-
-	status := &models.TripStatus{
-		ActiveTripID: "AGENCY_SCHEDULED_active_1",
-		NextStop:     "AGENCY_OTHER_stop_next",
-		ClosestStop:  "AGENCY_OTHER_stop_close",
-	}
-
-	stopIndex := map[string]string{
-		"AGENCY_OTHER_stop_next":  "stop_next",
-		"AGENCY_OTHER_stop_close": "stop_close",
-	}
-
-	retainTripStatusEntities(refAcc, acc, status, stopIndex, tripIndex, "AGENCY_FALLBACK", "AGENCY_SCHEDULED")
-
-	assert.Equal(t, "AGENCY_SCHEDULED_active_1", status.ActiveTripID, "emitted ActiveTripID must remain unchanged")
-	assert.Contains(t, refAcc.trips, "active_1", "refAcc.trips must retain active trip despite route agency difference")
-	assert.Contains(t, refAcc.routes, "route_other", "refAcc.routes must retain active trip route")
-	assert.True(t, refAcc.stopIDs["stop_next"])
-	assert.True(t, refAcc.stopIDs["stop_close"])
-}
-
-func TestStartTripStatusAtServiceStart(t *testing.T) {
-	serviceStart := time.Unix(100000, 0)
-	queryTime := serviceStart.Add(10 * time.Minute)
-
-	baseFreq := gtfsdb.Frequency{
-		TripID:      "base_trip",
-		StartTime:   0,
-		EndTime:     3600,
-		HeadwaySecs: 600,
-	}
-	activeFreq := gtfsdb.Frequency{
-		TripID:      "active_trip",
-		StartTime:   0,
-		EndTime:     3600,
-		HeadwaySecs: 300,
-	}
-
-	freqMap := map[string][]gtfsdb.Frequency{
-		"base_trip":   {baseFreq},
-		"active_trip": {activeFreq},
-	}
-
-	// Case 1: Nil frequency returns early without modifying
-	statusNil := &models.TripStatus{}
-	startTripStatusAtServiceStart(statusNil, freqMap, "AGENCY_ONE", "base_trip", serviceStart, queryTime)
-	assert.Nil(t, statusNil.Frequency)
-	assert.Equal(t, serviceStart.UnixMilli(), statusNil.ServiceDate.Time.UnixMilli())
-
-	// Case 2: Underscore agency prefix on ActiveTripID resolves active trip frequency
-	statusWithActive := &models.TripStatus{
-		ActiveTripID: "AGENCY_ONE_active_trip",
-		Frequency:    &models.Frequency{},
-	}
-	startTripStatusAtServiceStart(statusWithActive, freqMap, "AGENCY_ONE", "base_trip", serviceStart, queryTime)
-	require.NotNil(t, statusWithActive.Frequency)
-	assert.Equal(t, 300*time.Second, statusWithActive.Frequency.Headway.Duration)
-
-	// Case 3: ActiveTripID not in freqMap falls back to scheduled tripID frequency
-	statusFallback := &models.TripStatus{
-		ActiveTripID: "AGENCY_ONE_unknown_active",
-		Frequency:    &models.Frequency{},
-	}
-	startTripStatusAtServiceStart(statusFallback, freqMap, "AGENCY_ONE", "base_trip", serviceStart, queryTime)
-	require.NotNil(t, statusFallback.Frequency)
-	assert.Equal(t, 600*time.Second, statusFallback.Frequency.Headway.Duration)
-
-	// Case 4: Fallback to ExtractAgencyIDAndCodeID when agencyID does not match prefix
-	statusAgencyFallback := &models.TripStatus{
-		ActiveTripID: "DIFF_active_trip",
-		Frequency:    &models.Frequency{},
-	}
-	startTripStatusAtServiceStart(statusAgencyFallback, freqMap, "AGENCY_ONE", "base_trip", serviceStart, queryTime)
-	require.NotNil(t, statusAgencyFallback.Frequency)
-	assert.Equal(t, 300*time.Second, statusAgencyFallback.Frequency.Headway.Duration)
 }

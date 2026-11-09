@@ -25,15 +25,13 @@ type arrivalsForLocationParams struct {
 	TimeParam            string
 	Before               time.Duration
 	After                time.Duration
+	FrequencyBefore      time.Duration
+	FrequencyAfter       time.Duration
 	MaxCount             int
 	RouteTypes           []int
 	EmptyReturnsNotFound bool
 	IncludeReferences    bool
 }
-
-// locationDateTimeLayout is the only datetime format the time parameter
-// accepts besides epoch millis.
-const locationDateTimeLayout = "2006-01-02_15-04-05"
 
 // maxRouteTypeValues bounds how many routeType values one request may send, so
 // a pathological query string cannot expand the per-route filter unboundedly.
@@ -71,8 +69,12 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// The service date is a local calendar date, so datetime values resolve in
 	// the fallback agency's timezone. The format was validated during parsing,
-	// so this resolution cannot fail.
-	params.QueryTime = resolveLocationQueryTime(params, agencies, api.Clock.Now())
+	// so this resolution cannot fail. Java treats time=0 as "not supplied" (now).
+	timeParam := params.TimeParam
+	if ms, ok := utils.ParseEpochMillis(timeParam); ok && ms == 0 {
+		timeParam = ""
+	}
+	params.QueryTime = utils.ResolveArrivalTime(timeParam, agencies.fallbackLocation, api.Clock.Now())
 
 	// Nearest stop first: truncation below drops entries from the end, so the
 	// farthest stops must sort last.
@@ -80,12 +82,14 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	acc := newArrivalsAccumulator("")
 	pending, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
-		Stops:      stops,
-		Agencies:   agencies,
-		QueryTime:  params.QueryTime,
-		Before:     params.Before,
-		After:      params.After,
-		RouteTypes: params.RouteTypes,
+		Stops:           stops,
+		Agencies:        agencies,
+		QueryTime:       params.QueryTime,
+		Before:          params.Before,
+		After:           params.After,
+		FrequencyBefore: params.FrequencyBefore,
+		FrequencyAfter:  params.FrequencyAfter,
+		RouteTypes:      params.RouteTypes,
 	}, acc)
 	if err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
@@ -230,41 +234,14 @@ func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combined
 	return nil
 }
 
-// resolveRetainedStopID resolves a combined stop ID back to its bare ID.
-// It checks stopIndex first, strips fallbackAgencyID if present, and falls
-// back to ExtractAgencyIDAndCodeID when stopIndex is nil or does not match.
-func resolveRetainedStopID(combinedID string, stopIndex map[string]string, fallbackAgencyID string) string {
-	if stopIndex != nil {
-		if bareID, ok := stopIndex[combinedID]; ok {
-			return bareID
-		}
-	}
-	if fallbackAgencyID != "" {
-		prefix := fallbackAgencyID + "_"
-		if strings.HasPrefix(combinedID, prefix) {
-			if bareID := strings.TrimPrefix(combinedID, prefix); bareID != "" {
-				return bareID
-			}
-		}
-	}
-	if _, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedID); err == nil {
-		return bareID
-	}
-	return ""
-}
-
 // retainedStopCodes returns each bare stop id in combinedIDs once, in order.
 // A value that does not match a known stop is skipped.
 func retainedStopCodes(combinedIDs []string, agencies *stopAgencyIndex) []string {
-	stopIndex := buildCombinedStopIndex(nil, agencies)
-	fallbackAgencyID := ""
-	if agencies != nil {
-		fallbackAgencyID = agencies.fallbackAgencyID
-	}
+	stopIndex := buildCombinedStopIndex(agencies)
 	codes := make([]string, 0, len(combinedIDs))
 	seen := make(map[string]struct{}, len(combinedIDs))
 	for _, id := range combinedIDs {
-		bareID := resolveRetainedStopID(id, stopIndex, fallbackAgencyID)
+		bareID := stopIndex[id]
 		if bareID == "" {
 			continue
 		}
@@ -318,39 +295,23 @@ func retainedAccumulator(
 	refAcc.situations = newSituationCollector()
 	refAcc.situations.addRefs(entrySituations.refs)
 	refAcc.situations.addRefs(acc.situations.refs)
-	if acc != nil && acc.stopAgencies != nil {
-		for stopID, agency := range acc.stopAgencies {
-			refAcc.stopAgencies[stopID] = agency
-		}
-	}
 
-	stopIndex := buildCombinedStopIndex(acc, agencies)
+	stopIndex := buildCombinedStopIndex(agencies)
 	tripIndex := buildCombinedTripIndex(acc, agencies)
 	routeIndex := buildCombinedRouteIndex(acc, agencies)
 
-	fallbackAgencyID := ""
-	if agencies != nil {
-		fallbackAgencyID = agencies.fallbackAgencyID
-	}
-
 	for _, id := range stopIDs {
-		retainStop(refAcc, id, stopIndex, fallbackAgencyID)
+		retainStop(refAcc, id, stopIndex)
 	}
 	for _, n := range nearby {
-		retainStop(refAcc, n.StopID, stopIndex, fallbackAgencyID)
+		retainStop(refAcc, n.StopID, stopIndex)
 	}
 
 	for _, a := range arrivals {
-		retainStop(refAcc, a.StopID, stopIndex, fallbackAgencyID)
+		retainStop(refAcc, a.StopID, stopIndex)
 		retainTrip(refAcc, acc, a.TripID, tripIndex)
 		retainRoute(refAcc, a.RouteID, routeIndex)
-		scheduledAgencyID := fallbackAgencyID
-		if trip, ok := tripIndex[a.TripID]; ok {
-			if aID := agencyForTrip(trip, acc, agencies); aID != "" {
-				scheduledAgencyID = aID
-			}
-		}
-		retainTripStatusEntities(refAcc, acc, a.TripStatus, stopIndex, tripIndex, fallbackAgencyID, scheduledAgencyID)
+		retainTripStatusEntities(refAcc, acc, a.TripStatus, tripIndex)
 	}
 
 	return refAcc
@@ -363,29 +324,14 @@ func retainTripStatusEntities(
 	refAcc *arrivalsAccumulator,
 	acc *arrivalsAccumulator,
 	status *models.TripStatus,
-	stopIndex map[string]string,
 	tripIndex map[string]*gtfsdb.Trip,
-	fallbackAgencyID string,
-	scheduledAgencyID string,
 ) {
 	if status == nil {
 		return
 	}
-	retainStop(refAcc, status.NextStop, stopIndex, fallbackAgencyID)
-	retainStop(refAcc, status.ClosestStop, stopIndex, fallbackAgencyID)
-	if status.ActiveTripID == "" {
-		return
-	}
-	if acc != nil {
-		bareActiveTripID := extractBareEntityID(status.ActiveTripID, scheduledAgencyID)
-		if bareActiveTripID != "" {
-			if trip, ok := acc.trips[bareActiveTripID]; ok {
-				refAcc.trips[trip.ID] = trip
-				if route, ok := acc.routes[trip.RouteID]; ok {
-					refAcc.routes[route.ID] = route
-				}
-				return
-			}
+	for _, stopID := range []string{status.NextStop, status.ClosestStop} {
+		if ref, ok := acc.statusStops[stopID]; ok {
+			refAcc.statusStops[stopID] = ref
 		}
 	}
 	retainTrip(refAcc, acc, status.ActiveTripID, tripIndex)
@@ -393,8 +339,8 @@ func retainTripStatusEntities(
 
 // retainStop records a combined stop ID under the bare ID appendStopReferences
 // looks it up by. A malformed or empty ID is skipped.
-func retainStop(refAcc *arrivalsAccumulator, combinedStopID string, stopIndex map[string]string, fallbackAgencyID string) {
-	if bareID := resolveRetainedStopID(combinedStopID, stopIndex, fallbackAgencyID); bareID != "" {
+func retainStop(refAcc *arrivalsAccumulator, combinedStopID string, stopIndex map[string]string) {
+	if bareID := stopIndex[combinedStopID]; bareID != "" {
 		refAcc.stopIDs[bareID] = true
 	}
 }
@@ -419,7 +365,7 @@ func retainTrip(refAcc *arrivalsAccumulator, acc *arrivalsAccumulator, combinedT
 // retainRoute carries a combined route ID's entity over from acc, under the
 // same contract as retainTrip.
 func retainRoute(refAcc *arrivalsAccumulator, combinedRouteID string, routeIndex map[string]*gtfsdb.Route) {
-	if routeIndex == nil {
+	if combinedRouteID == "" {
 		return
 	}
 	if route, ok := routeIndex[combinedRouteID]; ok {
@@ -427,51 +373,21 @@ func retainRoute(refAcc *arrivalsAccumulator, combinedRouteID string, routeIndex
 	}
 }
 
-func agencyForStop(bareID string, acc *arrivalsAccumulator, agencies *stopAgencyIndex) string {
-	if agencies != nil {
-		if agencyID, ok := agencies.byStopID[bareID]; ok && agencyID != "" {
-			return agencyID
-		}
-	}
-	if acc != nil && acc.stopAgencies != nil {
-		if agencyID, ok := acc.stopAgencies[bareID]; ok && agencyID != "" {
-			return agencyID
-		}
-	}
-	if agencies != nil {
-		return agencies.fallbackAgencyID
-	}
-	return ""
-}
-
 // buildCombinedStopIndex maps each stop's combined ID to its bare ID.
 // If multiple stops map to the same combined ID, the lexicographically
 // smallest bare ID is retained.
-func buildCombinedStopIndex(acc *arrivalsAccumulator, agencies *stopAgencyIndex) map[string]string {
+func buildCombinedStopIndex(agencies *stopAgencyIndex) map[string]string {
 	if agencies == nil {
 		return nil
 	}
-	stopSet := make(map[string]struct{}, len(agencies.byStopID))
+	index := make(map[string]string, len(agencies.byStopID))
 	for bareID := range agencies.byStopID {
-		stopSet[bareID] = struct{}{}
-	}
-	if acc != nil {
-		for bareID := range acc.stopIDs {
-			stopSet[bareID] = struct{}{}
+		combinedID := utils.FormCombinedID(agencies.agencyIDFor(bareID), bareID)
+		if combinedID == "" {
+			continue
 		}
-	}
-	bareIDs := make([]string, 0, len(stopSet))
-	for bareID := range stopSet {
-		bareIDs = append(bareIDs, bareID)
-	}
-	sort.Strings(bareIDs)
-
-	index := make(map[string]string, len(bareIDs))
-	for _, bareID := range bareIDs {
-		agencyID := agencyForStop(bareID, acc, agencies)
-		comb := utils.FormCombinedID(agencyID, bareID)
-		if _, exists := index[comb]; !exists {
-			index[comb] = bareID
+		if existing := index[combinedID]; existing == "" || bareID < existing {
+			index[combinedID] = bareID
 		}
 	}
 	return index
@@ -688,10 +604,7 @@ func (api *RestAPI) combinedIDsForNearbyStops(ctx context.Context, bareIDs []str
 		return nil, err
 	}
 	for _, row := range agencyRows {
-		if _, exists := combinedByBare[row.StopID]; !exists {
-			combinedByBare[row.StopID] = utils.FormCombinedID(row.ID, row.StopID)
-		}
-		if _, exists := agencies.byStopID[row.StopID]; !exists {
+		if agencies.byStopID[row.StopID] == "" {
 			agencies.byStopID[row.StopID] = row.ID
 		}
 		if _, exists := agencies.locations[row.ID]; !exists {
@@ -699,13 +612,7 @@ func (api *RestAPI) combinedIDsForNearbyStops(ctx context.Context, bareIDs []str
 		}
 	}
 	for _, bareID := range bareIDs {
-		if _, exists := combinedByBare[bareID]; !exists {
-			agencyID := agencies.agencyIDFor(bareID)
-			combinedByBare[bareID] = utils.FormCombinedID(agencyID, bareID)
-			if _, exists := agencies.byStopID[bareID]; !exists && agencyID != "" {
-				agencies.byStopID[bareID] = agencyID
-			}
-		}
+		combinedByBare[bareID] = utils.FormCombinedID(agencies.agencyIDFor(bareID), bareID)
 	}
 	return combinedByBare, nil
 }
@@ -932,10 +839,7 @@ type stopAgencyIndex struct {
 }
 
 func (s *stopAgencyIndex) agencyIDFor(stopID string) string {
-	if agencyID, ok := s.byStopID[stopID]; ok && agencyID != "" {
-		return agencyID
-	}
-	return s.fallbackAgencyID
+	return resolveStopAgency(stopID, s.byStopID, s.fallbackAgencyID)
 }
 
 func (s *stopAgencyIndex) locationFor(stopID string) *time.Location {
@@ -950,8 +854,10 @@ func (s *stopAgencyIndex) locationFor(stopID string) *time.Location {
 // nothing still get a sensible namespace and service day.
 func (api *RestAPI) agenciesForStops(ctx context.Context, stops []gtfsdb.Stop) (*stopAgencyIndex, error) {
 	stopIDs := make([]string, 0, len(stops))
+	byStopID := make(map[string]string, len(stops))
 	for _, stop := range stops {
 		stopIDs = append(stopIDs, stop.ID)
+		byStopID[stop.ID] = ""
 	}
 
 	rows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, stopIDs)
@@ -960,7 +866,7 @@ func (api *RestAPI) agenciesForStops(ctx context.Context, stops []gtfsdb.Stop) (
 	}
 
 	index := &stopAgencyIndex{
-		byStopID:         make(map[string]string, len(rows)),
+		byStopID:         byStopID,
 		locations:        make(map[string]*time.Location),
 		fallbackLocation: time.UTC,
 	}
@@ -969,7 +875,7 @@ func (api *RestAPI) agenciesForStops(ctx context.Context, stops []gtfsdb.Stop) (
 	for _, row := range rows {
 		// The query orders by stop then agency, so the first agency for a stop
 		// served by several is stable across requests.
-		if _, exists := index.byStopID[row.StopID]; !exists {
+		if index.byStopID[row.StopID] == "" {
 			index.byStopID[row.StopID] = row.ID
 		}
 		counts[row.ID]++
@@ -1018,6 +924,8 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 		QueryTime:         api.Clock.Now(),
 		Before:            5 * time.Minute,
 		After:             35 * time.Minute,
+		FrequencyBefore:   defaultFrequencyBefore,
+		FrequencyAfter:    defaultFrequencyAfter,
 		MaxCount:          models.DefaultMaxCountForArrivalsForLocation,
 		IncludeReferences: true,
 	}
@@ -1048,38 +956,19 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 
 	params.Before = parseMinutesValue(queryParams, "minutesBefore", params.Before, maxArrivalWindow, addError)
 	params.After = parseMinutesValue(queryParams, "minutesAfter", params.After, maxArrivalWindow, addError)
+	params.FrequencyBefore = parseMinutesValue(queryParams, "frequencyMinutesBefore", params.FrequencyBefore, maxArrivalWindow, addError)
+	params.FrequencyAfter = parseMinutesValue(queryParams, "frequencyMinutesAfter", params.FrequencyAfter, maxArrivalWindow, addError)
 	// Only epoch millis and yyyy-MM-dd_HH-mm-ss are accepted. In particular
 	// signed values and date-only values fail here, at parse time, so a bad
 	// time reports 400 even when the stop search finds nothing. The datetime
 	// itself resolves after agencies are known; see the handler.
-	params.TimeParam = queryParams.Get("time")
-	if params.TimeParam != "" {
-		if _, ok := utils.ParseEpochMillis(params.TimeParam); !ok {
-			if _, err := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, time.UTC); err != nil {
-				addError("time", `Invalid field value for field "time".`)
-			}
-		}
-	}
+	params.TimeParam, fieldErrors = utils.ParseArrivalTimeParam(queryParams.Get("time"), fieldErrors)
 	params.MaxCount = parseArrivalsForLocationMaxCount(queryParams, addError)
 	params.RouteTypes = parseRouteTypesParam(queryParams, addError)
 	params.EmptyReturnsNotFound, fieldErrors = utils.ParseBoolParam(queryParams, "emptyReturnsNotFound", false, fieldErrors)
 	params.IncludeReferences, fieldErrors = ShouldIncludeReferences(r, fieldErrors)
 
 	return params, fieldErrors
-}
-
-// resolveLocationQueryTime turns the validated time parameter into the query
-// instant. Epoch millis are absolute; datetime values read in the fallback
-// agency's timezone. An empty value falls back to now.
-func resolveLocationQueryTime(params arrivalsForLocationParams, agencies *stopAgencyIndex, now time.Time) time.Time {
-	if params.TimeParam == "" {
-		return now
-	}
-	if ms, ok := utils.ParseEpochMillis(params.TimeParam); ok {
-		return time.UnixMilli(ms)
-	}
-	parsed, _ := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, agencies.fallbackLocation)
-	return parsed
 }
 
 func parseArrivalsForLocationMaxCount(queryParams map[string][]string, addError func(string, string)) int {
@@ -1114,12 +1003,12 @@ func parseRouteTypesParam(queryParams map[string][]string, addError func(string,
 		if token == "" {
 			continue
 		}
-		routeType, err := strconv.Atoi(token)
+		routeType, err := strconv.ParseInt(token, 10, 32)
 		if err != nil {
 			addError("routeType", "must be a comma-delimited list of integers")
 			return nil
 		}
-		routeTypes = append(routeTypes, routeType)
+		routeTypes = append(routeTypes, int(routeType))
 	}
 	return routeTypes
 }

@@ -69,7 +69,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	timeParam := r.URL.Query().Get("time")
-	_, currentTime, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation, api.Clock)
+	_, currentTime, fieldErrors, success := utils.ParseTimeParameterOrNow(timeParam, currentLocation, api.Clock)
 	if !success {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -321,7 +321,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			// BuildTripStatus still reports local midnight. The entry reports the
 			// service-day start, so keep status.serviceDate on that same instant.
 			if status != nil {
-				startTripStatusAtServiceStart(status, freqMap, activeAgencyID, tripID, servicedate.OffsetBase(activeServiceDate), currentTime)
+				startTripStatusAtServiceStart(status, freqMap, tripID, servicedate.OffsetBase(activeServiceDate), currentTime)
 			}
 		}
 
@@ -407,7 +407,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 				status = nil
 			}
 			if status != nil {
-				startTripStatusAtServiceStart(status, freqMap, agencyID, baseTripID, servicedate.OffsetBase(serviceDate), currentTime)
+				startTripStatusAtServiceStart(status, freqMap, baseTripID, servicedate.OffsetBase(serviceDate), currentTime)
 			}
 		}
 
@@ -549,7 +549,7 @@ func tripsForRouteBlockAnchors(
 // compareTripsForRouteBlockSpans orders spans by block, start time, and trip
 // ID. Batched query results are individually sorted but must be merged here.
 func compareTripsForRouteBlockSpans(a, b gtfsdb.GetTripSpansForBlocksRow) int {
-	if byBlock := strings.Compare(a.BlockID.String, b.BlockID.String); byBlock != 0 {
+	if byBlock := strings.Compare(nulls.StringOrEmpty(a.BlockID), nulls.StringOrEmpty(b.BlockID)); byBlock != 0 {
 		return byBlock
 	}
 	if a.MinArrivalTime.Int64 < b.MinArrivalTime.Int64 {
@@ -650,7 +650,7 @@ func (api *RestAPI) buildBlockTripForRoute(
 			bt.BlockID.Valid &&
 			bt.MinArrivalTime.Valid &&
 			bt.MaxDepartureTime.Valid {
-			key := bt.BlockID.String
+			key := nulls.StringOrEmpty(bt.BlockID)
 			blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
 				ID:               bt.ID,
 				MinArrivalTime:   bt.MinArrivalTime.Int64,
@@ -700,7 +700,7 @@ func resolveInterlinedEntryTripID(
 	blockTripForRoute map[string][]blockTripEntry,
 	routeAgencyMap map[string]string,
 ) (result interlinedTripResolution, ok bool) {
-	entries := blockTripForRoute[fetchedTrip.BlockID.String]
+	entries := blockTripForRoute[nulls.StringOrEmpty(fetchedTrip.BlockID)]
 	if len(entries) == 0 {
 		return interlinedTripResolution{}, false
 	}
@@ -1093,7 +1093,8 @@ func (api *RestAPI) routeZones(
 func tripsByBlock(trips []gtfsdb.GetTripsByBlockIDsRow) map[string][]gtfsdb.GetTripsByBlockIDsRow {
 	byBlock := make(map[string][]gtfsdb.GetTripsByBlockIDsRow)
 	for _, trip := range trips {
-		byBlock[trip.BlockID.String] = append(byBlock[trip.BlockID.String], trip)
+		blockID := nulls.StringOrEmpty(trip.BlockID)
+		byBlock[blockID] = append(byBlock[blockID], trip)
 	}
 	return byBlock
 }
@@ -1172,9 +1173,7 @@ func (api *RestAPI) routeBlocksAndTripsInService(ctx context.Context, routeID st
 			return nil, nil, err
 		}
 		for _, blockID := range indexedBlocks {
-			if blockID.Valid {
-				blockIDs = append(blockIDs, blockID.String)
-			}
+			blockIDs = append(blockIDs, nulls.StringOrEmpty(blockID))
 		}
 	}
 
@@ -1390,13 +1389,13 @@ func (api *RestAPI) fillRoutesAndAgencies(ctx context.Context, sets *tripReferen
 		sets.routes[route.ID] = models.NewRoute(
 			utils.FormCombinedID(route.AgencyID, route.ID),
 			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String)
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor))
 
 		api.addAgencyReference(ctx, sets, route.AgencyID)
 	}
@@ -1466,11 +1465,11 @@ func newTripReference(trip gtfsdb.Trip) models.Trip {
 		ID:            trip.ID,
 		RouteID:       trip.RouteID,
 		ServiceID:     trip.ServiceID,
-		TripHeadsign:  trip.TripHeadsign.String,
-		TripShortName: trip.TripShortName.String,
+		TripHeadsign:  nulls.StringOrEmpty(trip.TripHeadsign),
+		TripShortName: nulls.StringOrEmpty(trip.TripShortName),
 		DirectionID:   strconv.FormatInt(trip.DirectionID.Int64, 10),
-		BlockID:       trip.BlockID.String,
-		ShapeID:       trip.ShapeID.String,
+		BlockID:       nulls.StringOrEmpty(trip.BlockID),
+		ShapeID:       nulls.StringOrEmpty(trip.ShapeID),
 	}
 }
 
