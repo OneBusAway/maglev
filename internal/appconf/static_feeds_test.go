@@ -67,6 +67,11 @@ func TestLoadFromFile_StaticFeedKeys(t *testing.T) {
 			wantURLs:      []string{defaultStaticFeedURL},
 		},
 		{
+			name:          "null singular key is rejected",
+			staticFeedKey: `"gtfs-static-feed": null,`,
+			wantErr:       "gtfs-static-feed cannot be null",
+		},
+		{
 			name:          "both keys are rejected",
 			staticFeedKey: `"gtfs-static-feed": {"url": "https://example.com/a.zip"}, "gtfs-static-feeds": [{"url": "https://example.com/b.zip"}],`,
 			wantErr:       "gtfs-static-feed and gtfs-static-feeds cannot both be set",

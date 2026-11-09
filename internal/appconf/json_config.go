@@ -546,6 +546,21 @@ func (j *JSONConfig) applyStaticAuthEnvOverrides() error {
 	return nil
 }
 
+// rejectNullLegacyStaticFeed reports an error when the config sets
+// gtfs-static-feed to null. Decoding turns null into a nil pointer, which
+// would read as an absent key and load the default feed, so the raw
+// document is checked. The schema rejects the same value.
+func rejectNullLegacyStaticFeed(data []byte) error {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return err
+	}
+	if value, ok := keys[legacyStaticFeedKey]; ok && string(value) == "null" {
+		return fmt.Errorf("%s cannot be null; remove the key to use the default feed", legacyStaticFeedKey)
+	}
+	return nil
+}
+
 // LoadFromFile loads configuration from a JSON file
 func LoadFromFile(path string) (*JSONConfig, error) {
 	logger := slog.Default().With("config_file", path)
@@ -578,6 +593,9 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 	var config JSONConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON config: %w", err)
+	}
+	if err := rejectNullLegacyStaticFeed(data); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 	if err := config.normalizeStaticFeeds(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
