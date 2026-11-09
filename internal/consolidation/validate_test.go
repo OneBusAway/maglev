@@ -55,6 +55,16 @@ func TestValidate(t *testing.T) {
 			want: []consolidation.Warning{{Kind: consolidation.DuplicateRule, Line: 2, Stop: id("2_b"), OtherLine: 1}},
 		},
 		{
+			name: "same stop repeated on one line",
+			file: "1_a 3_c 3_c 9_z 9_z\n",
+			want: []consolidation.Warning{
+				{Kind: consolidation.DuplicateRule, Line: 1, Stop: id("3_c"), OtherLine: 1},
+				{Kind: consolidation.DuplicateRule, Line: 1, Stop: id("9_z"), OtherLine: 1},
+				{Kind: consolidation.FarApart, Line: 1, Stop: id("3_c"), Meters: 200},
+				{Kind: consolidation.MissingAbsorbed, Line: 1, Stop: id("9_z")},
+			},
+		},
+		{
 			name: "stop claimed by two canonicals",
 			file: "1_a 2_b\n1_d 2_b\n",
 			want: []consolidation.Warning{{Kind: consolidation.ConflictingCanonical, Line: 2, Stop: id("2_b"), OtherLine: 1}},
