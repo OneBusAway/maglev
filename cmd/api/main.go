@@ -70,6 +70,7 @@ func main() {
 	flag.StringVar(&protectedApiKeysFlag, "protected-api-keys", "", "Comma separated API keys for protected endpoints (default: GTFS_PROTECTED_API_KEYS, or a test key in development and test)")
 	flag.IntVar(&cfg.RateLimit, "rate-limit", 100, "Requests per second across the entire service (global shared bucket; exempt keys bypass it)")
 	flag.StringVar(&gtfsCfg.GtfsURL, "gtfs-url", "https://www.soundtransit.org/GTFS-rail/40_gtfs.zip", "URL for a static GTFS zip file")
+	flag.StringVar(&gtfsCfg.StopConsolidationURL, "stop-consolidation-url", "", "Optional URL or path for a Java OneBusAway stop consolidation file")
 	flag.StringVar(&gtfsCfg.StaticAuthHeaderKey, "gtfs-static-auth-header-name", "", "Optional header name for static GTFS feed auth")
 	flag.StringVar(&gtfsCfg.StaticAuthHeaderValue, "gtfs-static-auth-header-value", "", "Optional header value for static GTFS feed auth")
 	flag.StringVar(&cliFeedTripUpdatesURL, "trip-updates-url", "https://api.pugetsound.onebusaway.org/api/gtfs_realtime/trip-updates-for-agency/40.pb?key=org.onebusaway.iphone", "URL for a GTFS-RT trip updates feed")
@@ -130,9 +131,10 @@ func main() {
 			LogFormat:        "text",
 			RateLimit:        cfg.RateLimit,
 			GtfsStaticFeed: appconf.GtfsStaticFeed{
-				URL:             gtfsCfg.GtfsURL,
-				AuthHeaderName:  gtfsCfg.StaticAuthHeaderKey,
-				AuthHeaderValue: gtfsCfg.StaticAuthHeaderValue,
+				URL:                  gtfsCfg.GtfsURL,
+				StopConsolidationURL: gtfsCfg.StopConsolidationURL,
+				AuthHeaderName:       gtfsCfg.StaticAuthHeaderKey,
+				AuthHeaderValue:      gtfsCfg.StaticAuthHeaderValue,
 			},
 			GtfsRtFeeds: []appconf.GtfsRtFeed{
 				{
