@@ -357,17 +357,7 @@ func blocklessTripFeedZip(t *testing.T) []byte {
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nT1,08:00:00,08:00:00,S1,1\nT1,08:10:00,08:10:00,S2,2\n",
 	}
 
-	buf := new(bytes.Buffer)
-	w := zip.NewWriter(buf)
-	for name, content := range files {
-		f, err := w.Create(name)
-		require.NoError(t, err)
-		_, err = f.Write([]byte(content))
-		require.NoError(t, err)
-	}
-	require.NoError(t, w.Close())
-
-	return buf.Bytes()
+	return writeGTFSZip(t, files)
 }
 
 func TestStoreGtfsData_BlocklessTripStoresNullBlockID(t *testing.T) {
