@@ -41,14 +41,14 @@ func zipFiles(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-func TestStreamedImportSkipsTripsWithoutStopTimes(t *testing.T) {
+func TestStreamedImportSkipsTripsWithFewerThanTwoStopTimes(t *testing.T) {
 	feed := zipFiles(t, map[string]string{
 		"agency.txt":     "agency_id,agency_name,agency_url,agency_timezone\na,A,http://a,America/Los_Angeles\n",
 		"routes.txt":     "route_id,agency_id,route_type\nr,a,3\n",
 		"calendar.txt":   "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\ns,1,1,1,1,1,0,0,20240101,20251231\n",
 		"stops.txt":      "stop_id,stop_name,stop_lat,stop_lon\nst1,One,47.6,-122.3\nst2,Two,47.7,-122.4\n",
-		"trips.txt":      "route_id,service_id,trip_id\nr,s,with_stops\nr,s,without_stops\n",
-		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nwith_stops,08:00:00,08:00:00,st1,1\nwith_stops,08:10:00,08:10:00,st2,2\n",
+		"trips.txt":      "route_id,service_id,trip_id\nr,s,with_stops\nr,s,without_stops\nr,s,one_stop\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nwith_stops,08:00:00,08:00:00,st1,1\nwith_stops,08:10:00,08:10:00,st2,2\none_stop,09:00:00,09:00:00,st1,1\n",
 	})
 	data, err := ParseGtfsStream(bytes.NewReader(feed), int64(len(feed)), FeedIdentity{Hash: strings.Repeat("a", 64), Source: "source"})
 	require.NoError(t, err)

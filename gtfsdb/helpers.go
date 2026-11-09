@@ -1222,15 +1222,20 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 	})
 }
 
-// noStopTimesProblem describes a trip without stop times.
-const noStopTimesProblem = "trip has no stop times"
+// minStopTimesPerTrip is the fewest stop times Java's TripEntriesFactory
+// keeps a trip with.
+const minStopTimesPerTrip = 2
+
+// tooFewStopTimesProblem describes a trip with fewer stop times than
+// minStopTimesPerTrip.
+const tooFewStopTimesProblem = "trip has fewer than two stop times"
 
 // inMemoryStopTimesProblem checks the stop times of a trip held in memory,
 // which may have been built by hand. A parsed feed never has a stop time
 // without a stop: go-gtfs drops the rows whose stop is unknown.
 func inMemoryStopTimesProblem(stopTimes []gtfs.ScheduledStopTime) string {
-	if len(stopTimes) == 0 {
-		return noStopTimesProblem
+	if len(stopTimes) < minStopTimesPerTrip {
+		return tooFewStopTimesProblem
 	}
 	for _, stopTime := range stopTimes {
 		if stopTime.Stop == nil || stopTime.Stop.Id == "" {
@@ -1244,8 +1249,8 @@ func inMemoryStopTimesProblem(stopTimes []gtfs.ScheduledStopTime) string {
 // feed, whose stop times are not in memory.
 func streamedStopTimesProblem(stream *gtfs.StaticStream) func(tripIndex int) string {
 	return func(tripIndex int) string {
-		if stream.StopTimeCount(tripIndex) == 0 {
-			return noStopTimesProblem
+		if stream.StopTimeCount(tripIndex) < minStopTimesPerTrip {
+			return tooFewStopTimesProblem
 		}
 		return ""
 	}
