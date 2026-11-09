@@ -61,13 +61,13 @@ func TestParseMinutesValue(t *testing.T) {
 			expected: 2000 * time.Minute,
 		},
 		{
-			name:     "accepts value at maxDurationMinutes (35791)",
+			name:     "accepts value at maxArrivalWindowMinutes (35791)",
 			params:   url.Values{"minutesAfter": {"35791"}},
 			key:      "minutesAfter",
 			expected: 35791 * time.Minute,
 		},
 		{
-			name:     "bounds value above maxDurationMinutes to 35791",
+			name:     "bounds value above maxArrivalWindowMinutes to 35791",
 			params:   url.Values{"minutesAfter": {"36000"}},
 			key:      "minutesAfter",
 			expected: 35791 * time.Minute,

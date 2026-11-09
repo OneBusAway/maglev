@@ -42,8 +42,8 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 		if minutesAfter, err := strconv.ParseInt(minutesAfterStr, 10, 32); err == nil {
 			if minutesAfter < 0 {
 				fieldErrors["minutesAfter"] = []string{"must be a non-negative integer"}
-			} else if minutesAfter > maxDurationMinutes {
-				params.MinutesAfter = maxDurationMinutes
+			} else if minutesAfter > maxArrivalWindowMinutes {
+				params.MinutesAfter = maxArrivalWindowMinutes
 			} else {
 				params.MinutesAfter = int(minutesAfter)
 			}
@@ -57,8 +57,8 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 		if minutesBefore, err := strconv.ParseInt(minutesBeforeStr, 10, 32); err == nil {
 			if minutesBefore < 0 {
 				fieldErrors["minutesBefore"] = []string{"must be a non-negative integer"}
-			} else if minutesBefore > maxDurationMinutes {
-				params.MinutesBefore = maxDurationMinutes
+			} else if minutesBefore > maxArrivalWindowMinutes {
+				params.MinutesBefore = maxArrivalWindowMinutes
 			} else {
 				params.MinutesBefore = int(minutesBefore)
 			}

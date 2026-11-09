@@ -785,8 +785,8 @@ func TestParseArrivalAndDepartureParams_LargeValues(t *testing.T) {
 	overflowReq := httptest.NewRequest("GET", "/test?minutesAfter=153722868&minutesBefore=153722868", nil)
 	overflowParams, overflowErrs := parseArrivalAndDepartureParams(overflowReq)
 	assert.Empty(t, overflowErrs)
-	assert.Equal(t, maxDurationMinutes, overflowParams.MinutesAfter)
-	assert.Equal(t, maxDurationMinutes, overflowParams.MinutesBefore)
+	assert.Equal(t, maxArrivalWindowMinutes, overflowParams.MinutesAfter)
+	assert.Equal(t, maxArrivalWindowMinutes, overflowParams.MinutesBefore)
 }
 
 func TestArrivalAndDepartureForStopHandlerWithMalformedID(t *testing.T) {
