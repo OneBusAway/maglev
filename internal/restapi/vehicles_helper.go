@@ -3,7 +3,6 @@ package restapi
 import (
 	"context"
 	"database/sql"
-	"maglev.onebusaway.org/internal/nulls"
 	"math"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -167,7 +167,7 @@ func wallClockSinceMidnightNs(t time.Time) int64 {
 // nominalTripID when there is no block or no better match.
 func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID string, referenceTime time.Time) string {
 	nominalTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, nominalTripID)
-	if err != nil || !nominalTrip.BlockID.Valid || nulls.StringOrEmpty(nominalTrip.BlockID) == "" {
+	if err != nil || nulls.StringOrEmpty(nominalTrip.BlockID) == "" {
 		return nominalTripID
 	}
 
