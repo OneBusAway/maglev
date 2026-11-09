@@ -140,6 +140,6 @@ func (s *stopConsolidation) apply(data *gtfsdb.GtfsData, logger *slog.Logger) {
 	logging.LogOperation(logger, "stop_consolidation_applied",
 		slog.String("default_agency_id", defaultAgencyID),
 		slog.Int("absorbed_stops", len(replacements)),
-		slog.Int("stop_times_moved_from", moved),
-		slog.Int("stop_times_dropped_from", len(replacements)-moved))
+		slog.Int("absorbed_stops_moved", moved),
+		slog.Int("absorbed_stops_dropped", len(replacements)-moved))
 }
