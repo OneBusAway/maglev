@@ -2462,3 +2462,26 @@ func TestBuildTripStatus_LaterBlockTripUsesBlockStops(t *testing.T) {
 	assert.Equal(t, "blk_B", status.ClosestStop)
 	assert.Equal(t, 60, status.ClosestStopTimeOffset)
 }
+
+// A trip update without a vehicle position still places the trip on its
+// block: Java shifts the block's scheduled location by the update's one
+// schedule deviation and reads closest and next stops from it, rather than
+// applying per-stop delays to the trip's own stops.
+func TestBuildTripStatus_TripUpdateWithoutVehicleUsesShiftedBlockStops(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := time.Date(2025, 1, 1, 10, 4, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(currentTime), "block-status.zip", blockStatusFiles())
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	delay := 2 * time.Minute
+	api.GtfsManager.MockAddTripUpdate("trip-09", &delay, nil)
+
+	status, _, err := api.BuildTripStatus(context.Background(), "blk", "trip-09", nil, serviceDate, currentTime, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, 120, status.ScheduleDeviation)
+	assert.Equal(t, "blk_A", status.ClosestStop, "10:02 effective is nearer trip-08's A than its B")
+	assert.Equal(t, -120, status.ClosestStopTimeOffset)
+	assert.Equal(t, "blk_B", status.NextStop)
+	assert.Equal(t, 180, status.NextStopTimeOffset)
+}
