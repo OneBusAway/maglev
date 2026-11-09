@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
@@ -324,4 +325,47 @@ func TestClearAllGTFSData(t *testing.T) {
 	metadata, err := client.Queries.GetImportMetadata(ctx)
 	require.NoError(t, err, "Import metadata should still exist after clear")
 	assert.NotEmpty(t, metadata.FileHash, "Import metadata should not be cleared")
+}
+
+func TestSkipIfImported(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	imported, err := client.SkipIfImported(t.Context(), FeedIdentity{Hash: "hash", Source: "source"})
+	require.NoError(t, err)
+	assert.False(t, imported, "an empty database holds no feed")
+
+	raba, err := os.ReadFile("../testdata/raba.zip")
+	require.NoError(t, err)
+	parsed, err := ParseGtfsData(raba, "source")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsed)
+	require.NoError(t, err)
+
+	for _, tt := range []struct {
+		hash, source string
+		want         bool
+	}{
+		{parsed.Hash, "source", true},
+		{parsed.Hash, "other-source", false},
+		{"other-hash", "source", false},
+	} {
+		imported, err := client.SkipIfImported(t.Context(), FeedIdentity{Hash: tt.hash, Source: tt.source})
+		require.NoError(t, err)
+		assert.Equal(t, tt.want, imported, "%s from %s", tt.hash, tt.source)
+	}
+}
+
+// TestStoreGtfsDataRejectsUnparsedData checks that importing a GtfsData built
+// by hand, without the stream its stop times come from, fails instead of
+// panicking.
+func TestStoreGtfsDataRejectsUnparsedData(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	changed, err := client.StoreGtfsData(t.Context(), &GtfsData{Static: &gtfs.Static{}, Hash: "hash", Source: "source"})
+	assert.ErrorIs(t, err, errNotParsed)
+	assert.False(t, changed)
 }

@@ -17,14 +17,14 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
 
-      - name: Check go fmt
+      - name: Check gofmt
         run: |
-          unformatted=$(go fmt ./...)
+          unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
             echo "The following files are not formatted:"
             echo "$unformatted"
             echo ""
-            echo "To fix, run locally: go fmt ./..."
+            echo "To fix, run locally: gofmt -w ."
             exit 1
           fi
 
@@ -55,7 +55,7 @@ jobs:
         shell: bash
 
       - name: Run go vet (fast mode)
-        run: go vet -tags='sqlite_fts5 sqlite_math_functions' ./...
+        run: go vet -tags='perftest sqlite_fts5 sqlite_math_functions' ./...
         env:
           CGO_ENABLED: 1
         shell: bash
@@ -93,7 +93,7 @@ jobs:
 
       - name: SonarQube Scan
         if: github.repository == 'OneBusAway/maglev' && env.SONAR_CI_ANALYSIS_ENABLED == 'true'
-        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 

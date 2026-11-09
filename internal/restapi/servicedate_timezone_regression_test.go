@@ -230,7 +230,7 @@ func TestServiceDateTimezoneRegression_BlockTripSequence(t *testing.T) {
 			setupTzTestGTFS(t, api.GtfsManager.GtfsDB.Queries, td, days)
 
 			// Add a vehicle for the trip so BuildTripStatus returns a tracked
-			// status (extension 4e omits the status key when no tracking exists).
+			// status rather than the untracked placeholder.
 			vehicleTS := tc.localTime
 			api.GtfsManager.MockAddVehicleWithOptions(tc.prefix+"V", td.TripID2, td.RouteID, internalgtfs.MockVehicleOptions{Timestamp: &vehicleTS})
 

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/OneBusAway/go-gtfs"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -43,7 +44,7 @@ func findSituationAlert(alerts []gtfs.Alert, agencyID, requested string) (gtfs.A
 		if alert.ID == "" {
 			continue
 		}
-		if situationID(alert.ID, agencyIDForAlert(alert, agencyID)) == requested {
+		if internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert, agencyID)) == requested {
 			return alert, true
 		}
 		if !foundRaw && alert.ID == requested {
@@ -55,18 +56,4 @@ func findSituationAlert(alerts []gtfs.Alert, agencyID, requested string) (gtfs.A
 		return rawMatch, true
 	}
 	return gtfs.Alert{}, false
-}
-
-// alertMatchesSituationID reports whether requested names this alert. An empty
-// alert id never matches. The situation id uses the alert's own agency when an
-// informed entity names one, and agencyID otherwise. That is the same fallback
-// situationRefsFromAlerts uses when it publishes situationIds.
-func alertMatchesSituationID(alert gtfs.Alert, agencyID, requested string) bool {
-	if alert.ID == "" || requested == "" {
-		return false
-	}
-	if alert.ID == requested {
-		return true
-	}
-	return situationID(alert.ID, agencyIDForAlert(alert, agencyID)) == requested
 }

@@ -25,15 +25,13 @@ type arrivalsForLocationParams struct {
 	TimeParam            string
 	Before               time.Duration
 	After                time.Duration
+	FrequencyBefore      time.Duration
+	FrequencyAfter       time.Duration
 	MaxCount             int
 	RouteTypes           []int
 	EmptyReturnsNotFound bool
 	IncludeReferences    bool
 }
-
-// locationDateTimeLayout is the only datetime format the time parameter
-// accepts besides epoch millis.
-const locationDateTimeLayout = "2006-01-02_15-04-05"
 
 // maxRouteTypeValues bounds how many routeType values one request may send, so
 // a pathological query string cannot expand the per-route filter unboundedly.
@@ -71,8 +69,12 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// The service date is a local calendar date, so datetime values resolve in
 	// the fallback agency's timezone. The format was validated during parsing,
-	// so this resolution cannot fail.
-	params.QueryTime = resolveLocationQueryTime(params, agencies, api.Clock.Now())
+	// so this resolution cannot fail. Java treats time=0 as "not supplied" (now).
+	timeParam := params.TimeParam
+	if ms, ok := utils.ParseEpochMillis(timeParam); ok && ms == 0 {
+		timeParam = ""
+	}
+	params.QueryTime = utils.ResolveArrivalTime(timeParam, agencies.fallbackLocation, api.Clock.Now())
 
 	// Nearest stop first: truncation below drops entries from the end, so the
 	// farthest stops must sort last.
@@ -80,12 +82,14 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	acc := newArrivalsAccumulator("")
 	pending, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
-		Stops:      stops,
-		Agencies:   agencies,
-		QueryTime:  params.QueryTime,
-		Before:     params.Before,
-		After:      params.After,
-		RouteTypes: params.RouteTypes,
+		Stops:           stops,
+		Agencies:        agencies,
+		QueryTime:       params.QueryTime,
+		Before:          params.Before,
+		After:           params.After,
+		FrequencyBefore: params.FrequencyBefore,
+		FrequencyAfter:  params.FrequencyAfter,
+		RouteTypes:      params.RouteTypes,
 	}, acc)
 	if err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
@@ -351,7 +355,7 @@ func retainTrip(refAcc, acc *arrivalsAccumulator, combinedTripID string) {
 // retainRoute carries a combined route ID's entity over from acc, under the
 // same contract as retainTrip.
 func retainRoute(refAcc, acc *arrivalsAccumulator, combinedRouteID string) {
-	if combinedRouteID == "" || acc == nil {
+	if combinedRouteID == "" {
 		return
 	}
 	for bareID, route := range acc.routes {
@@ -833,6 +837,8 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 		QueryTime:         api.Clock.Now(),
 		Before:            5 * time.Minute,
 		After:             35 * time.Minute,
+		FrequencyBefore:   defaultFrequencyBefore,
+		FrequencyAfter:    defaultFrequencyAfter,
 		MaxCount:          models.DefaultMaxCountForArrivalsForLocation,
 		IncludeReferences: true,
 	}
@@ -863,38 +869,19 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 
 	params.Before = parseMinutesValue(queryParams, "minutesBefore", params.Before, maxArrivalWindow, addError)
 	params.After = parseMinutesValue(queryParams, "minutesAfter", params.After, maxArrivalWindow, addError)
+	params.FrequencyBefore = parseMinutesValue(queryParams, "frequencyMinutesBefore", params.FrequencyBefore, maxArrivalWindow, addError)
+	params.FrequencyAfter = parseMinutesValue(queryParams, "frequencyMinutesAfter", params.FrequencyAfter, maxArrivalWindow, addError)
 	// Only epoch millis and yyyy-MM-dd_HH-mm-ss are accepted. In particular
 	// signed values and date-only values fail here, at parse time, so a bad
 	// time reports 400 even when the stop search finds nothing. The datetime
 	// itself resolves after agencies are known; see the handler.
-	params.TimeParam = queryParams.Get("time")
-	if params.TimeParam != "" {
-		if _, ok := utils.ParseEpochMillis(params.TimeParam); !ok {
-			if _, err := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, time.UTC); err != nil {
-				addError("time", `Invalid field value for field "time".`)
-			}
-		}
-	}
+	params.TimeParam, fieldErrors = utils.ParseArrivalTimeParam(queryParams.Get("time"), fieldErrors)
 	params.MaxCount = parseArrivalsForLocationMaxCount(queryParams, addError)
 	params.RouteTypes = parseRouteTypesParam(queryParams, addError)
 	params.EmptyReturnsNotFound, fieldErrors = utils.ParseBoolParam(queryParams, "emptyReturnsNotFound", false, fieldErrors)
 	params.IncludeReferences, fieldErrors = ShouldIncludeReferences(r, fieldErrors)
 
 	return params, fieldErrors
-}
-
-// resolveLocationQueryTime turns the validated time parameter into the query
-// instant. Epoch millis are absolute; datetime values read in the fallback
-// agency's timezone. An empty value falls back to now.
-func resolveLocationQueryTime(params arrivalsForLocationParams, agencies *stopAgencyIndex, now time.Time) time.Time {
-	if params.TimeParam == "" {
-		return now
-	}
-	if ms, ok := utils.ParseEpochMillis(params.TimeParam); ok {
-		return time.UnixMilli(ms)
-	}
-	parsed, _ := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, agencies.fallbackLocation)
-	return parsed
 }
 
 func parseArrivalsForLocationMaxCount(queryParams map[string][]string, addError func(string, string)) int {
@@ -929,12 +916,12 @@ func parseRouteTypesParam(queryParams map[string][]string, addError func(string,
 		if token == "" {
 			continue
 		}
-		routeType, err := strconv.Atoi(token)
+		routeType, err := strconv.ParseInt(token, 10, 32)
 		if err != nil {
 			addError("routeType", "must be a comma-delimited list of integers")
 			return nil
 		}
-		routeTypes = append(routeTypes, routeType)
+		routeTypes = append(routeTypes, int(routeType))
 	}
 	return routeTypes
 }
