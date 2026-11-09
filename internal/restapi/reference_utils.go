@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
@@ -427,9 +428,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 				knownAgencies[id] = struct{}{}
 			}
 		} else {
-			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-				logger.Error("failed to fetch agencies for situation reference", "error", err)
-			}
+			logQueryError(logger, "failed to fetch agencies for situation reference", err)
 		}
 
 		if len(routeCandidateIDs) > 0 {
@@ -440,9 +439,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 					routeAgencyMap[r.ID] = r.AgencyID
 				}
 			} else {
-				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-					logger.Error("failed to fetch routes for situation reference", "error", err)
-				}
+				logQueryError(logger, "failed to fetch routes for situation reference", err)
 			}
 		}
 
@@ -456,9 +453,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 					}
 				}
 			} else {
-				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-					logger.Error("failed to fetch stops for situation reference", "error", err)
-				}
+				logQueryError(logger, "failed to fetch stops for situation reference", err)
 			}
 		}
 
@@ -487,15 +482,11 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 							}
 						}
 					} else {
-						if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-							logger.Error("failed to fetch missing routes for situation reference", "error", err)
-						}
+						logQueryError(logger, "failed to fetch missing routes for situation reference", err)
 					}
 				}
 			} else {
-				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-					logger.Error("failed to fetch trips for situation reference", "error", err)
-				}
+				logQueryError(logger, "failed to fetch trips for situation reference", err)
 			}
 		}
 	}
@@ -1207,4 +1198,12 @@ func appendUniqueStopID(stopIDsByBareID map[string][]string, bareID, combinedID 
 		}
 	}
 	stopIDsByBareID[bareID] = append(stopIDsByBareID[bareID], combinedID)
+}
+
+func logQueryError(logger *slog.Logger, msg string, err error) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		logger.Warn(msg, "error", err)
+	} else if !errors.Is(err, context.Canceled) {
+		logger.Error(msg, "error", err)
+	}
 }
