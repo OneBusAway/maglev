@@ -39,7 +39,6 @@ func TestNewGTFSDBConfig_QueryMetricsRecorder(t *testing.T) {
 	})
 }
 
-
 func TestLogFeedExpiryUsesClock(t *testing.T) {
 	client, err := gtfsdb.NewClient(gtfsdb.Config{
 		DBPath: ":memory:",
@@ -98,7 +97,6 @@ func TestLogFeedExpiryUsesClock(t *testing.T) {
 		})
 	}
 }
-
 
 // logMessageCounter is a slog.Handler that counts records by message.
 type logMessageCounter struct {
