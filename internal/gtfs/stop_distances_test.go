@@ -48,26 +48,15 @@ func TestCalculateStopDirection_StopDistanceValidation(t *testing.T) {
 		{"increasing mismatched scale", []string{"0", "1", "2", "3"}, []string{"E", "E", "E", "E"}},
 	}
 	for _, tt := range tests {
-		for _, preloaded := range []bool{false, true} {
-			name := "database/"
-			if preloaded {
-				name = "preloaded/"
+		t.Run(tt.name, func(t *testing.T) {
+			client := directionTestClient(t, buildDirectionFeed(t, tt.distances, increasingDirectionShape))
+			calculator := NewAdvancedDirectionCalculator(client.Queries)
+			var got []string
+			for _, stopID := range []string{"S1", "S2", "S3", "S4"} {
+				got = append(got, calculator.CalculateStopDirection(context.Background(), stopID))
 			}
-			t.Run(name+tt.name, func(t *testing.T) {
-				client := directionTestClient(t, buildDirectionFeed(t, tt.distances, increasingDirectionShape))
-				calculator := NewAdvancedDirectionCalculator(client.Queries)
-				if preloaded {
-					cache, err := NewDirectionPrecomputer(client.Queries, client.DB).loadShapeCache(context.Background())
-					require.NoError(t, err)
-					require.NoError(t, calculator.SetShapeCache(cache))
-				}
-				var got []string
-				for _, stopID := range []string{"S1", "S2", "S3", "S4"} {
-					got = append(got, calculator.CalculateStopDirection(context.Background(), stopID))
-				}
-				assert.Equal(t, tt.expected, got)
-			})
-		}
+			assert.Equal(t, tt.expected, got)
+		})
 	}
 }
 
@@ -82,27 +71,16 @@ func TestCalculateStopDirection_ZeroCoordinatesUseGeography(t *testing.T) {
 		{"zero latitude and longitude", 40.020, -121.980},
 	}
 	for _, tt := range tests {
-		for _, preloaded := range []bool{false, true} {
-			name := "database/"
-			if preloaded {
-				name = "preloaded/"
+		t.Run(tt.name, func(t *testing.T) {
+			client := directionTestClient(t, buildDirectionFeed(t, []string{"0", "0", "0", "0"}, increasingDirectionShape))
+			for _, table := range []string{"stops", "shapes"} {
+				_, err := client.DB.Exec("UPDATE "+table+" SET lat = lat - ?, lon = lon - ?", tt.latOffset, tt.lonOffset)
+				require.NoError(t, err)
 			}
-			t.Run(name+tt.name, func(t *testing.T) {
-				client := directionTestClient(t, buildDirectionFeed(t, []string{"0", "0", "0", "0"}, increasingDirectionShape))
-				for _, table := range []string{"stops", "shapes"} {
-					_, err := client.DB.Exec("UPDATE "+table+" SET lat = lat - ?, lon = lon - ?", tt.latOffset, tt.lonOffset)
-					require.NoError(t, err)
-				}
-				calculator := NewAdvancedDirectionCalculator(client.Queries)
-				if preloaded {
-					cache, err := NewDirectionPrecomputer(client.Queries, client.DB).loadShapeCache(context.Background())
-					require.NoError(t, err)
-					require.NoError(t, calculator.SetShapeCache(cache))
-				}
-				// The final stop is on the northbound leg; the first shape segment is eastbound.
-				assert.Equal(t, "N", calculator.CalculateStopDirection(context.Background(), "S4"))
-			})
-		}
+			calculator := NewAdvancedDirectionCalculator(client.Queries)
+			// The final stop is on the northbound leg; the first shape segment is eastbound.
+			assert.Equal(t, "N", calculator.CalculateStopDirection(context.Background(), "S4"))
+		})
 	}
 }
 

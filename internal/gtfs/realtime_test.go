@@ -392,6 +392,14 @@ func TestDecideVehicleFeedTimestamp(t *testing.T) {
 			wantReason:    vehicleFeedAccept,
 		},
 		{
+			name:          "explicit epoch header applies without moving the watermark",
+			prev:          prev,
+			createdAt:     time.Unix(0, 0).UTC(),
+			wantApply:     true,
+			wantWatermark: prev,
+			wantReason:    vehicleFeedAccept,
+		},
+		{
 			name:          "newer header applies",
 			prev:          prev,
 			createdAt:     now,
@@ -582,7 +590,6 @@ func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedVehicleTimestamp: make(map[string]uint64),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
-		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 	}
 
 	cfg := RTFeedConfig{
@@ -990,6 +997,47 @@ func TestVehicleMerge_MissingTimestamp(t *testing.T) {
 	vehicles := manager.GetRealTimeVehicles()
 	require.Len(t, vehicles, 1)
 	assert.Nil(t, vehicles[0].Timestamp, "incoming nil timestamp should replace existing")
+}
+
+func TestVehicleMerge_EpochZeroHeaderTimestamp(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var payload []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "epoch-zero-feed",
+		AgencyIDs:           []string{"40"},
+		VehiclePositionsURL: server.URL,
+		RefreshInterval:     30,
+		Enabled:             true,
+	}
+	veh := &gtfsrt.VehiclePosition{
+		Vehicle:  &gtfsrt.VehicleDescriptor{Id: proto.String("epochveh")},
+		Position: &gtfsrt.Position{Latitude: proto.Float32(47.6), Longitude: proto.Float32(-122.3)},
+	}
+	mu.Lock()
+	payload = encodeVehicleFeed(time.Unix(0, 0), []*gtfsrt.VehiclePosition{veh})
+	mu.Unlock()
+
+	before := time.Now()
+	manager.updateFeedRealtime(ctx, feed)
+
+	vehicles := manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1, "a feed whose header timestamp is 0 must still be applied")
+
+	positions := manager.VehiclePositionsForAgency("40")
+	require.Len(t, positions.Vehicles, 1, "the vehicle must be exported for its agency")
+	assert.False(t, positions.Timestamp.Before(before),
+		"export timestamp must fall back to the fetch time, not the epoch")
 }
 
 func TestNewVehicleKey(t *testing.T) {
@@ -1997,7 +2045,6 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedVehicleTimestamp: make(map[string]uint64),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
-		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 	}
 
 	// 1. Test partial success (OR logic): Trip updates succeed, Vehicle positions fail

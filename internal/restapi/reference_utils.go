@@ -13,6 +13,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -383,6 +384,7 @@ func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []mode
 // the database, and emitting Java-parity consequence entries.
 func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.Alert) []models.Situation {
 	situations := make([]models.Situation, 0, len(alerts))
+	logger := logging.ForComponent(ctx, "http_server")
 
 	// Pre-collect candidate IDs for batch database lookup to avoid N+1 queries.
 	var routeCandidateIDs []string
@@ -424,6 +426,10 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 			for _, id := range agencyIDs {
 				knownAgencies[id] = struct{}{}
 			}
+		} else {
+			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+				logger.Error("failed to fetch agencies for situation reference", "error", err)
+			}
 		}
 
 		if len(routeCandidateIDs) > 0 {
@@ -432,6 +438,10 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 			if routes, err := utils.QueryInBatches(ctx, uniqueRouteIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs); err == nil {
 				for _, r := range routes {
 					routeAgencyMap[r.ID] = r.AgencyID
+				}
+			} else {
+				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+					logger.Error("failed to fetch routes for situation reference", "error", err)
 				}
 			}
 		}
@@ -444,6 +454,10 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 					if _, exists := stopAgencyMap[row.StopID]; !exists {
 						stopAgencyMap[row.StopID] = row.ID
 					}
+				}
+			} else {
+				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+					logger.Error("failed to fetch stops for situation reference", "error", err)
 				}
 			}
 		}
@@ -472,7 +486,15 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 								tripAgencyMap[t.ID] = agency
 							}
 						}
+					} else {
+						if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+							logger.Error("failed to fetch missing routes for situation reference", "error", err)
+						}
 					}
+				}
+			} else {
+				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+					logger.Error("failed to fetch trips for situation reference", "error", err)
 				}
 			}
 		}
@@ -990,7 +1012,7 @@ func situationRefsFromAlerts(alerts []gtfs.Alert, agencyID string) []situationRe
 		if alert.ID == "" {
 			continue
 		}
-		refs = append(refs, situationRef{ID: situationID(alert.ID, agencyIDForAlert(alert, agencyID)), Alert: alert})
+		refs = append(refs, situationRef{ID: internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert, agencyID)), Alert: alert})
 	}
 	return refs
 }
@@ -1021,25 +1043,10 @@ func dedupeSituationRefs(refs []situationRef) []situationRef {
 // situationIds would resolve to whichever one it happened to be built from.
 // The informed entity is the only source that does not vary by lookup path.
 func agencyIDForAlert(alert gtfs.Alert, fallbackAgencyID string) string {
-	for _, entity := range alert.InformedEntities {
-		if entity.AgencyID != nil && *entity.AgencyID != "" {
-			return *entity.AgencyID
-		}
+	if agencyID := internalgtfs.AlertAgencyID(alert); agencyID != "" {
+		return agencyID
 	}
 	return fallbackAgencyID
-}
-
-// situationID returns the combined-form ID for an alert.
-//
-// Prefixing is idempotent, not unconditional: a GTFS-RT feed exported by an OBA
-// instance already carries the agency prefix on its alert IDs — Puget Sound
-// ships "1_92239" — and prefixing again would publish "1_1_92239", which
-// resolves against nothing a client has seen. Upstream reports "1_92239".
-func situationID(alertID, agencyID string) string {
-	if agencyID == "" || strings.HasPrefix(alertID, agencyID+"_") {
-		return alertID
-	}
-	return utils.FormCombinedID(agencyID, alertID)
 }
 
 // situationCollector deduplicates the alerts referenced by list entries so the

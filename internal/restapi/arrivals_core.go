@@ -343,8 +343,8 @@ func (api *RestAPI) stopTimesForGroupServiceDay(
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	agencyLoc := group.location
 	// Fetch both trip windows before frequency metadata is available.
-	windowStart := in.QueryTime.Add(-max(in.Before, in.FrequencyBefore))
-	windowEnd := in.QueryTime.Add(max(in.After, in.FrequencyAfter))
+	windowStart, windowEnd := arrivalCandidateWindow(in.QueryTime,
+		max(in.Before, in.FrequencyBefore), max(in.After, in.FrequencyAfter))
 	serviceDate := servicedate.Of(in.QueryTime.In(agencyLoc)).AddDays(dayOffset)
 	serviceStart := serviceDate.Start(agencyLoc)
 	serviceDateStr := serviceDate.String()
@@ -624,8 +624,10 @@ func (api *RestAPI) appendBatchedStopTimesForDay(ctx context.Context, group agen
 		return nil
 	}
 
-	windowStartNanos := group.queryTime.Add(-max(in.Before, in.FrequencyBefore)).Sub(serviceStart).Nanoseconds()
-	windowEndNanos := group.queryTime.Add(max(in.After, in.FrequencyAfter)).Sub(serviceStart).Nanoseconds()
+	windowStart, windowEnd := arrivalCandidateWindow(group.queryTime,
+		max(in.Before, in.FrequencyBefore), max(in.After, in.FrequencyAfter))
+	windowStartNanos := windowStart.Sub(serviceStart).Nanoseconds()
+	windowEndNanos := windowEnd.Sub(serviceStart).Nanoseconds()
 	if windowEndNanos < 0 {
 		return nil
 	}
@@ -742,6 +744,16 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 		})
 	}
 	return arrivals, nil
+}
+
+// arrivalCandidateWindow returns the range the stop-time queries search. Like
+// Java's getArrivalsAndDeparturesForStopInTimeRange, it pads the requested
+// window by runningLate before and runningEarly after, so a late or early bus
+// whose scheduled time falls outside the window still becomes a candidate.
+// stopTimeInArrivalWindow then applies the requested window to scheduled and
+// predicted times.
+func arrivalCandidateWindow(queryTime time.Time, before, after time.Duration) (start, end time.Time) {
+	return queryTime.Add(-before - runningLate), queryTime.Add(after + runningEarly)
 }
 
 // stopTimeInArrivalWindow checks scheduled and available predicted times against
