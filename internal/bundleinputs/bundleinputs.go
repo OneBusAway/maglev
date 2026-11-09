@@ -105,6 +105,9 @@ func (feed Feed) validate() error {
 	if feed.SHA256 != "" && !isSHA256Hex(feed.SHA256) {
 		return fmt.Errorf("sha256 must be %d hex characters", sha256HexLength)
 	}
+	if feed.ByteSize < 0 {
+		return fmt.Errorf("byteSize cannot be negative")
+	}
 	return nil
 }
 

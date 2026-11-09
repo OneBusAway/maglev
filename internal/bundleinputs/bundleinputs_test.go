@@ -138,6 +138,11 @@ func TestParse_Validation(t *testing.T) {
 			wantErr:  "sha256 must be 64 hex characters",
 		},
 		{
+			name:     "negative byteSize",
+			manifest: `{"version": 1, "feeds": [{"id": "a", "defaultAgencyId": "1", "url": "https://example.com/a.zip", "byteSize": -1}]}`,
+			wantErr:  "byteSize cannot be negative",
+		},
+		{
 			name:     "local stopConsolidationUrl",
 			manifest: `{"version": 1, "feeds": [` + feedA + `], "stopConsolidationUrl": "stop-consolidation.txt"}`,
 			wantErr:  "stopConsolidationUrl",
