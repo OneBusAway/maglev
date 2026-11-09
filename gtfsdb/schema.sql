@@ -606,6 +606,7 @@ CREATE TABLE
     IF NOT EXISTS stop_consolidations (
         absorbed_id TEXT PRIMARY KEY,
         canonical_id TEXT,
+        rule_absorbed TEXT NOT NULL,
         rule_canonical TEXT NOT NULL,
         absorbed_name TEXT,
         absorbed_lat REAL,

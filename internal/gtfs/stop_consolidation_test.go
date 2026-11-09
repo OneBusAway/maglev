@@ -71,6 +71,7 @@ func TestStopConsolidation_AppliedOnImport(t *testing.T) {
 	require.Len(t, rows, 2)
 	assert.Equal(t, "3022", rows[0].AbsorbedID)
 	assert.False(t, rows[0].CanonicalID.Valid)
+	assert.Equal(t, "25_3022", rows[0].RuleAbsorbed)
 	assert.Equal(t, "25_gone", rows[0].RuleCanonical)
 	assert.Equal(t, "5027", rows[1].AbsorbedID)
 	assert.Equal(t, "5008", rows[1].CanonicalID.String)

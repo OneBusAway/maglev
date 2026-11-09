@@ -11,9 +11,10 @@ import (
 
 // StopReplacement is what stop consolidation does to one stop: the stop is
 // not stored, and its stop times move to Canonical, or are dropped when
-// Canonical is nil. RuleCanonical is the canonical stop as the
-// consolidation file names it.
+// Canonical is nil. RuleAbsorbed and RuleCanonical are the absorbed and
+// canonical stops as the consolidation file names them, agency included.
 type StopReplacement struct {
+	RuleAbsorbed  string
 	RuleCanonical string
 	Canonical     *gtfs.Stop
 }
@@ -82,6 +83,7 @@ func storeStopConsolidations(ctx context.Context, qtx *Queries, stops []gtfs.Sto
 		params := CreateStopConsolidationParams{
 			AbsorbedID:    stop.Id,
 			CanonicalID:   nulls.NonEmptyString(replacements.storedStopID(stop.Id)),
+			RuleAbsorbed:  replacement.RuleAbsorbed,
 			RuleCanonical: replacement.RuleCanonical,
 			AbsorbedName:  nulls.String(stop.Name),
 			AbsorbedLat:   nulls.Float64FromPtr(stop.Latitude),
