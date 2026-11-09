@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -51,6 +52,21 @@ func RedactHeaderValues(headers map[string]string) map[string]string {
 		redacted[name] = RedactedValue
 	}
 	return redacted
+}
+
+// RedactURL hides the secrets a URL can carry, for logs and dumped
+// config: the query string, which holds a signed URL's signature, and a
+// userinfo password. A URL that does not parse is hidden whole, since its
+// secrets cannot be found.
+func RedactURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return RedactedValue
+	}
+	if parsed.RawQuery != "" {
+		parsed.RawQuery = RedactedValue
+	}
+	return parsed.Redacted()
 }
 
 // GtfsRtFeed represents a single GTFS-RT feed configuration

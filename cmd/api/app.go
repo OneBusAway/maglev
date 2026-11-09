@@ -78,7 +78,7 @@ func resolveBundleInputs(ctx context.Context, gtfsCfgData *appconf.GtfsConfigDat
 	gtfsCfgData.UseStaticFeeds(manifest.StaticFeeds())
 	slog.Info("loaded static feeds from bundle inputs manifest",
 		"component", "config_loader",
-		"source", gtfsCfgData.BundleInputsURL,
+		"source", appconf.RedactURL(gtfsCfgData.BundleInputsURL),
 		"feed_count", len(manifest.Feeds),
 		"has_stop_consolidation_url", manifest.StopConsolidationURL != "")
 	return nil
@@ -351,7 +351,7 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	// rejects it next to gtfs-static-feeds. The startup log lists the feeds
 	// it resolved to.
 	if gtfsCfg.BundleInputsURL != "" {
-		jsonConfig["gtfs-bundle-inputs-url"] = gtfsCfg.BundleInputsURL
+		jsonConfig["gtfs-bundle-inputs-url"] = appconf.RedactURL(gtfsCfg.BundleInputsURL)
 	} else {
 		jsonConfig["gtfs-static-feeds"] = dumpStaticFeeds(gtfsCfg.StaticFeeds)
 	}

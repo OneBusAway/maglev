@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/appconf"
 )
 
 func TestFetch(t *testing.T) {
@@ -227,4 +228,33 @@ func TestFetchWithRetries_LocalFileFailsOnce(t *testing.T) {
 
 	require.ErrorContains(t, err, "no such file")
 	assert.Less(t, time.Since(start), time.Minute)
+}
+
+func TestFetch_RedactsSignedURLInErrors(t *testing.T) {
+	previous := retryBackoffs
+	retryBackoffs = nil
+	defer func() { retryBackoffs = previous }()
+	notFound := httptest.NewServer(http.NotFoundHandler())
+	defer notFound.Close()
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+
+	tests := []struct {
+		name   string
+		server string
+	}{
+		{name: "HTTP error status", server: notFound.URL},
+		// net/http puts the full request URL in a connection error.
+		{name: "connection refused", server: closed.URL},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Fetch(context.Background(), tt.server+"/b.json?sig=s3cr3t")
+
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "s3cr3t")
+			assert.Contains(t, err.Error(), tt.server+"/b.json?"+appconf.RedactedValue)
+		})
+	}
 }

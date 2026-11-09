@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -28,11 +29,11 @@ const (
 var retryBackoffs = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
 
 // Fetch reads the manifest at source, an http(s) URL or a local path, and
-// parses it. Errors name the source.
+// parses it. Errors name the source, with any signature in it redacted.
 func Fetch(ctx context.Context, source string) (*Manifest, error) {
 	manifest, err := fetchWithRetries(ctx, source, retryBackoffs)
 	if err != nil {
-		return nil, fmt.Errorf("bundle inputs %s: %w", source, err)
+		return nil, fmt.Errorf("bundle inputs %s: %w", appconf.RedactURL(source), err)
 	}
 	return manifest, nil
 }
@@ -117,6 +118,12 @@ func openSource(ctx context.Context, source string) (io.ReadCloser, error) {
 	client := &http.Client{Timeout: fetchTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
+		// net/http's *url.Error repeats the full request URL, signature
+		// included; Fetch names the source redacted instead.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		if ctx.Err() != nil {
 			return nil, err
 		}

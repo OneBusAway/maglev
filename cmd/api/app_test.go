@@ -867,6 +867,23 @@ func TestResolveBundleInputs(t *testing.T) {
 		assert.Empty(t, gtfsCfgData.StaticFeeds)
 	})
 
+	t.Run("a signed manifest URL is redacted in the log and the error", func(t *testing.T) {
+		var logOutput bytes.Buffer
+		previousLogger := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logOutput, nil)))
+		defer slog.SetDefault(previousLogger)
+
+		loaded := appconf.GtfsConfigData{BundleInputsURL: server.URL + "/bundle-inputs.json?sig=s3cr3t"}
+		require.NoError(t, resolveBundleInputs(context.Background(), &loaded))
+		missing := appconf.GtfsConfigData{BundleInputsURL: server.URL + "/missing.json?sig=s3cr3t"}
+		err := resolveBundleInputs(context.Background(), &missing)
+
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "s3cr3t")
+		assert.Contains(t, logOutput.String(), "source="+server.URL+"/bundle-inputs.json?"+appconf.RedactedValue)
+		assert.NotContains(t, logOutput.String(), "s3cr3t")
+	})
+
 	t.Run("no manifest leaves the static feeds alone", func(t *testing.T) {
 		feeds := []appconf.GtfsStaticFeed{{ID: "feed-0", URL: "https://example.com/a.zip"}}
 		gtfsCfgData := appconf.GtfsConfigData{StaticFeeds: feeds}
@@ -909,6 +926,17 @@ func TestDumpConfigJSON_BundleInputsURLRoundTrip(t *testing.T) {
 	require.NoError(t, err, "a manifest-mode dump loads again as-is")
 	assert.Equal(t, manifestURL, reloaded.BundleInputsURL)
 	assert.Nil(t, reloaded.GtfsStaticFeeds)
+}
+
+func TestDumpConfigJSON_RedactsSignedBundleInputsURL(t *testing.T) {
+	gtfsCfg := gtfs.Config{BundleInputsURL: "https://example.com/bundle-inputs.json?X-Amz-Signature=s3cr3t"}
+
+	output := captureDumpConfig(t, appconf.Config{}, gtfsCfg)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(output, &parsed))
+	assert.Equal(t, "https://example.com/bundle-inputs.json?"+appconf.RedactedValue, parsed["gtfs-bundle-inputs-url"])
+	assert.NotContains(t, string(output), "s3cr3t")
 }
 
 func TestDumpConfigJSON_OmitsEmptyBundleInputsURL(t *testing.T) {
