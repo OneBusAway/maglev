@@ -100,7 +100,6 @@ func TestBuildApplicationWithMemoryDB(t *testing.T) {
 	// BuildApplication injects the metrics client into the config.
 	// We sync the injected Metrics over to our local copy so the assertion passes.
 	gtfsCfg.Metrics = coreApp.GtfsConfig.Metrics
-	gtfsCfg.Clock = coreApp.GtfsConfig.Clock
 	assert.Equal(t, gtfsCfg, coreApp.GtfsConfig, "GtfsConfig should match input")
 }
 
@@ -246,6 +245,7 @@ func TestCreateServerHandlerResponds(t *testing.T) {
 	assert.NotEqual(t, http.StatusNotFound, w.Code, "Handler should be configured and respond to requests")
 }
 
+
 func TestHealthzDataExpiredMatchesHeader(t *testing.T) {
 	ctx := context.Background()
 
@@ -301,6 +301,58 @@ func TestHealthzDataExpiredMatchesHeader(t *testing.T) {
 	assert.Equal(t, healthResp.DataExpired, headerExpired, "/healthz data_expired must match X-Data-Expired header")
 	assert.True(t, healthResp.DataExpired, "feed should be marked as expired")
 }
+
+
+// The web UI's "/" route and the API's /api/ fallback share one mux in
+// CreateServer. Only "/" serves the landing page, unknown /api/ paths get
+// the JSON 404 after the key check, and real endpoints still win.
+func TestCreateServerRoutesUnknownPaths(t *testing.T) {
+	testDataPath := filepath.Join("..", "..", "testdata", "raba.zip")
+	if _, err := os.Stat(testDataPath); os.IsNotExist(err) {
+		t.Skip("Test data not available, skipping test")
+	}
+
+	cfg := appconf.Config{
+		Env:       appconf.Test,
+		ApiKeys:   []string{"test"},
+		RateLimit: 100,
+	}
+	gtfsCfg := gtfs.Config{
+		GTFSDataPath: ":memory:",
+		GtfsURL:      testDataPath,
+	}
+
+	logger := slog.New(slog.DiscardHandler)
+	coreApp, err := BuildApplication(context.Background(), cfg, gtfsCfg, logger)
+	require.NoError(t, err, "BuildApplication should not fail")
+
+	srv, api := CreateServer(coreApp, cfg, logger)
+	defer api.Shutdown()
+
+	tests := []struct {
+		name            string
+		path            string
+		wantStatus      int
+		wantContentType string
+	}{
+		{name: "landing page", path: "/", wantStatus: http.StatusOK, wantContentType: "text/html"},
+		{name: "unknown top-level path", path: "/foo/bar", wantStatus: http.StatusNotFound, wantContentType: "text/plain"},
+		{name: "unknown API path", path: "/api/where/nonexistent.json?key=test", wantStatus: http.StatusNotFound, wantContentType: "application/json"},
+		{name: "unknown API path without key", path: "/api/where/nonexistent.json", wantStatus: http.StatusUnauthorized, wantContentType: "application/json"},
+		{name: "registered API endpoint", path: "/api/where/current-time.json?key=test", wantStatus: http.StatusOK, wantContentType: "application/json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			srv.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tt.path, nil))
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			assert.Contains(t, w.Header().Get("Content-Type"), tt.wantContentType)
+		})
+	}
+}
+
 
 func TestRunServerStartsAndStopsCleanly(t *testing.T) {
 	ctx := context.Background()

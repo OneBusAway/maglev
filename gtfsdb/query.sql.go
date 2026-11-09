@@ -1517,43 +1517,6 @@ func (q *Queries) GetAgencyForStop(ctx context.Context, stopID string) (Agency, 
 	return i, err
 }
 
-const getAllShapes = `-- name: GetAllShapes :many
-SELECT
-    id, shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
-FROM
-    shapes
-`
-
-func (q *Queries) GetAllShapes(ctx context.Context) ([]Shape, error) {
-	rows, err := q.query(ctx, q.getAllShapesStmt, getAllShapes)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Shape
-	for rows.Next() {
-		var i Shape
-		if err := rows.Scan(
-			&i.ID,
-			&i.ShapeID,
-			&i.Lat,
-			&i.Lon,
-			&i.ShapePtSequence,
-			&i.ShapeDistTraveled,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getAllStopIDs = `-- name: GetAllStopIDs :many
 SELECT
     id
@@ -2607,6 +2570,8 @@ FROM
     JOIN agencies a ON r.agency_id = a.id
 WHERE
     a.id = ?
+ORDER BY
+    r.rowid
 `
 
 func (q *Queries) GetRouteIDsForAgency(ctx context.Context, id string) ([]string, error) {
@@ -2788,6 +2753,8 @@ FROM
     routes
 WHERE
     routes.agency_id = ?
+ORDER BY
+    routes.rowid
 `
 
 type GetRoutesForAgencyRow struct {
@@ -3792,6 +3759,8 @@ FROM
     stop_agencies
 WHERE
     agency_id = ?
+ORDER BY
+    stop_id
 `
 
 func (q *Queries) GetStopIDsForAgency(ctx context.Context, agencyID string) ([]string, error) {
@@ -3941,11 +3910,8 @@ SELECT
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
 WHERE st.stop_id = ?1
-  AND (
-    (st.arrival_time BETWEEN ?2 AND ?3)
-        OR
-    (st.departure_time BETWEEN ?2 AND ?3)
-    )
+  AND st.departure_time >= ?2
+  AND st.arrival_time <= ?3
 ORDER BY st.arrival_time
 `
 
@@ -4016,11 +3982,8 @@ SELECT
     t.block_id
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
-WHERE (
-    (st.arrival_time BETWEEN ?1 AND ?2)
-        OR
-    (st.departure_time BETWEEN ?1 AND ?2)
-    )
+WHERE st.departure_time >= ?1
+  AND st.arrival_time <= ?2
   AND st.stop_id IN (/*SLICE:stop_ids*/?)
 ORDER BY st.stop_id, st.arrival_time
 `

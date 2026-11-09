@@ -87,7 +87,7 @@ func tripAgencyMapFor(t *testing.T, manager *Manager, trips []gtfs.Trip) map[str
 	for _, trip := range trips {
 		routeIDs = append(routeIDs, trip.ID.RouteID)
 	}
-	got, err := manager.tripAgencyIDs(context.Background(), trips, routeAgencyMapFor(t, manager, routeIDs))
+	got, _, err := manager.tripAgencyIDs(context.Background(), trips, routeAgencyMapFor(t, manager, routeIDs))
 	require.NoError(t, err)
 	return got
 }
@@ -393,7 +393,6 @@ func TestAgencyFilterFeedAgencyFilterPopulation(t *testing.T) {
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedAgencyFilter:     make(map[string]map[string]bool),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
-		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 		feedVehicleTimestamp: make(map[string]uint64),
 	}
 
