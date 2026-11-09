@@ -6,8 +6,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -91,4 +94,137 @@ func TestFetch(t *testing.T) {
 			assert.Equal(t, tt.wantFeedIDs, gotFeedIDs)
 		})
 	}
+}
+
+func TestFetchWithRetries(t *testing.T) {
+	golden, err := os.ReadFile(goldenManifestPath)
+	require.NoError(t, err)
+	backoffs := []time.Duration{time.Millisecond, time.Millisecond}
+
+	tests := []struct {
+		name         string
+		failures     int // requests that get failStatus before the manifest is served
+		failStatus   int
+		body         []byte
+		wantRequests int
+		wantErr      string
+	}{
+		{
+			name:         "a 5xx is retried until the manifest loads",
+			failures:     2,
+			failStatus:   http.StatusServiceUnavailable,
+			body:         golden,
+			wantRequests: 3,
+		},
+		{
+			name:         "a 429 is retried",
+			failures:     1,
+			failStatus:   http.StatusTooManyRequests,
+			body:         golden,
+			wantRequests: 2,
+		},
+		{
+			name:         "a 5xx that outlasts the backoffs fails",
+			failures:     3,
+			failStatus:   http.StatusBadGateway,
+			body:         golden,
+			wantRequests: 3,
+			wantErr:      "received HTTP status 502",
+		},
+		{
+			name:         "a 4xx fails on the first attempt",
+			failures:     1,
+			failStatus:   http.StatusNotFound,
+			body:         golden,
+			wantRequests: 1,
+			wantErr:      "received HTTP status 404",
+		},
+		{
+			name:         "an invalid manifest fails on the first attempt",
+			body:         []byte(`{"version": 2}`),
+			wantRequests: 1,
+			wantErr:      "unsupported bundle inputs version 2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if int(requests.Add(1)) <= tt.failures {
+					w.WriteHeader(tt.failStatus)
+					return
+				}
+				_, _ = w.Write(tt.body)
+			}))
+			defer server.Close()
+
+			manifest, err := fetchWithRetries(context.Background(), server.URL, backoffs)
+
+			assert.Equal(t, tt.wantRequests, int(requests.Load()))
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Len(t, manifest.Feeds, 2)
+		})
+	}
+}
+
+func TestFetchWithRetries_RetriesNetworkErrors(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	source := server.URL
+	server.Close()
+	start := time.Now()
+
+	_, err := fetchWithRetries(context.Background(), source, []time.Duration{50 * time.Millisecond})
+
+	require.Error(t, err)
+	assert.GreaterOrEqual(t, time.Since(start), 50*time.Millisecond, "connection refused should be retried after the backoff")
+}
+
+func TestFetchWithRetries_RetriesTruncatedBody(t *testing.T) {
+	golden, err := os.ReadFile(goldenManifestPath)
+	require.NoError(t, err)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			// Promise more bytes than are sent, so the client sees the
+			// connection drop partway through the body.
+			w.Header().Set("Content-Length", strconv.Itoa(len(golden)))
+			_, _ = w.Write(golden[:10])
+			return
+		}
+		_, _ = w.Write(golden)
+	}))
+	defer server.Close()
+
+	manifest, err := fetchWithRetries(context.Background(), server.URL, []time.Duration{time.Millisecond})
+
+	require.NoError(t, err)
+	assert.Len(t, manifest.Feeds, 2)
+	assert.Equal(t, int32(2), requests.Load())
+}
+
+func TestFetchWithRetries_StopsWhenContextEnds(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err := fetchWithRetries(ctx, server.URL, []time.Duration{time.Hour})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestFetchWithRetries_LocalFileFailsOnce(t *testing.T) {
+	start := time.Now()
+
+	_, err := fetchWithRetries(context.Background(), filepath.Join(t.TempDir(), "missing.json"), []time.Duration{time.Hour})
+
+	require.ErrorContains(t, err, "no such file")
+	assert.Less(t, time.Since(start), time.Minute)
 }
