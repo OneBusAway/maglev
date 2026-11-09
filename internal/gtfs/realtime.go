@@ -549,6 +549,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	var tripFeedTime time.Time
 	if tripData != nil && tripErr == nil {
+		dropTripsWithoutTripUpdate(tripData)
 		tripFeedTime = normalizeTripUpdateTimestamps(tripData, time.Now())
 	}
 
@@ -820,6 +821,16 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	}
 
 	return hasNewData
+}
+
+// dropTripsWithoutTripUpdate removes the trips go-gtfs makes up for vehicle and
+// alert entities. Java builds records only from TripUpdate entities
+// (GtfsRealtimeTripLibrary.java:315-347), and an empty trip here would read as
+// a live update with no times.
+func dropTripsWithoutTripUpdate(tripData *gtfs.Realtime) {
+	tripData.Trips = slices.DeleteFunc(tripData.Trips, func(trip gtfs.Trip) bool {
+		return !trip.IsEntityInMessage
+	})
 }
 
 // maxPlausibleTimestampAge separates seconds from milliseconds: a value this far

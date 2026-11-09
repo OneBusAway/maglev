@@ -2460,6 +2460,46 @@ func TestMockResetRealTimeData_ClearsLatestFeedUpdate(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestUpdateFeedRealtime_KeepsOnlyTripUpdateEntities(t *testing.T) {
+	const (
+		tripUpdateTrip  = "trip-update"
+		vehicleOnlyTrip = "vehicle-only"
+		alertOnlyTrip   = "alert-only"
+	)
+	vehiclePosition := func(tripID, vehicleID string) *gtfsrt.VehiclePosition {
+		return &gtfsrt.VehiclePosition{
+			Trip:    &gtfsrt.TripDescriptor{TripId: proto.String(tripID)},
+			Vehicle: &gtfsrt.VehicleDescriptor{Id: proto.String(vehicleID)},
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		feed := &gtfsrt.FeedMessage{
+			Header: &gtfsrt.FeedHeader{GtfsRealtimeVersion: proto.String("2.0"), Timestamp: proto.Uint64(uint64(time.Now().Unix()))},
+			Entity: []*gtfsrt.FeedEntity{
+				{Id: proto.String("update"), TripUpdate: &gtfsrt.TripUpdate{Trip: &gtfsrt.TripDescriptor{TripId: proto.String(tripUpdateTrip)}}},
+				{Id: proto.String("update-vehicle"), Vehicle: vehiclePosition(tripUpdateTrip, "bus-1")},
+				{Id: proto.String("vehicle"), Vehicle: vehiclePosition(vehicleOnlyTrip, "bus-2")},
+				{Id: proto.String("alert"), Alert: &gtfsrt.Alert{InformedEntity: []*gtfsrt.EntitySelector{
+					{Trip: &gtfsrt.TripDescriptor{TripId: proto.String(alertOnlyTrip)}},
+				}}},
+			},
+		}
+		data, err := proto.Marshal(feed)
+		assert.NoError(t, err)
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+
+	manager := newTestManager()
+	manager.updateFeedRealtime(context.Background(), RTFeedConfig{ID: "feed", TripUpdatesURL: server.URL, Enabled: true})
+
+	assert.Len(t, manager.GetTripUpdatesForTrip(tripUpdateTrip), 1, "a trip update also named by a vehicle stays")
+	assert.Empty(t, manager.GetTripUpdatesForTrip(vehicleOnlyTrip))
+	assert.Empty(t, manager.GetTripUpdatesForTrip(alertOnlyTrip))
+	_, seen := manager.TripUpdateFirstSeen(vehicleOnlyTrip)
+	assert.False(t, seen)
+}
+
 func serveTripUpdate(t *testing.T, manager *Manager, tripID string, timestamp, headerTime *uint64) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
