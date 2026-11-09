@@ -191,6 +191,7 @@ All endpoints are registered in `internal/restapi/routes.go`:
 | `/api/gtfs_realtime/vehicle-positions-for-agency/{id}.pb` | `vehicle_positions_for_agency_handler.go` | GTFS-RT vehicle positions for an agency |
 | `/api/gtfs_realtime/alerts-for-agency/{id}.pb` | `alerts_for_agency_handler.go` | GTFS-RT service alerts for an agency |
 | `/api/gtfs_realtime/trip-updates-for-agency/{id}.pb` | `trip_updates_for_agency_handler.go` | GTFS-RT trip updates for an agency |
+| `/api/gtfs_realtime/alerts.pb` | `regional_alerts_handler.go` | GTFS-RT regional service alerts feed (ADR-0003) |
 
 ## Middleware Components
 
@@ -348,6 +349,7 @@ needs **no lock**. Never mutate what it returns:
 - `vehiclePositionsByAgency` - Map of agency ID → `AgencyVehiclePositions` (fresh, one per vehicle ID, sorted, plus the feed data time) for the GTFS-RT export, read with `VehiclePositionsForAgency`
 - `alerts` - `alertIndex` of alerts by trip, route, agency and stop
 - `alertFeedsByAgency` - Map of agency ID → serialized GTFS-RT alerts feed and the build time its alerts last changed, for the GTFS-RT export, read with `AlertFeedForAgency`; `alertsSince` dates the header-only feed of an agency with no alerts
+- `regionalAlertFeed` - Serialized GTFS-RT regional alerts feed and build time its alerts last changed (ADR-0003), read with `RegionalAlertFeed`
 - `tripUpdatesByAgency` - Map of agency ID → `AgencyTripUpdates` (one per entity ID, sorted, plus the newest feed data time) for the GTFS-RT export, read with `TripUpdatesForAgency`; its bytes are encoded on the first request per snapshot
 
 When a single feed refreshes, only its per-feed sub-map is overwritten; other feeds' data is untouched. A fresh snapshot is then built from all sub-maps and swapped in.
