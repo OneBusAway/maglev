@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	rawgtfs "github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -68,4 +69,50 @@ func TestSituationCreationTimeUsesIngestion(t *testing.T) {
 		}
 	}
 	require.True(t, found, "agency-wide alert must remain in empty-window references")
+}
+
+func TestSituationReferenceCreationTimePairing(t *testing.T) {
+	api := createTestApi(t)
+	first := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	second := first.Add(time.Hour)
+	alertForAgency := func(agency string, at time.Time) gtfs.FeedAlert {
+		return gtfs.FeedAlert{Alert: rawgtfs.Alert{ID: "dup", InformedEntities: []rawgtfs.AlertInformedEntity{
+			{AgencyID: &agency},
+		}}, CreatedAt: at}
+	}
+	for _, tc := range []struct {
+		name   string
+		alerts []gtfs.FeedAlert
+		ids    []string
+		times  []time.Time
+	}{
+		{name: "empty"},
+		{
+			name:   "missing ingestion metadata",
+			alerts: []gtfs.FeedAlert{alertForAgency("25", time.Time{})},
+			ids:    []string{"25_dup"},
+			times:  []time.Time{{}},
+		},
+		{
+			name: "filtered empty ID and repeated raw ID",
+			alerts: []gtfs.FeedAlert{
+				{CreatedAt: second.Add(time.Hour)},
+				alertForAgency("25", first),
+				alertForAgency("40", second),
+			},
+			ids:   []string{"25_dup", "40_dup"},
+			times: []time.Time{first, second},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			refs := situationRefsFromAlerts(tc.alerts, "25")
+			got := api.situationReferences(context.Background(), refs)
+			require.NotNil(t, got)
+			require.Len(t, got, len(tc.ids))
+			for i := range got {
+				require.Equal(t, tc.ids[i], got[i].ID)
+				require.Equal(t, models.NewModelTime(tc.times[i]), got[i].CreationTime)
+			}
+		})
+	}
 }

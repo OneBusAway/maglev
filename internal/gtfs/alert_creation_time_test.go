@@ -125,8 +125,13 @@ func TestAlertCreationTimeConcurrentReads(t *testing.T) {
 	agency := "25"
 	alert := gtfs.Alert{ID: "alert", InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agency}}}
 	base := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
-	manager.storeFeedAlerts("a", []gtfs.Alert{alert}, base)
-	manager.rebuildMergedRealtimeLocked()
+	publishAt := func(at time.Time) {
+		manager.realTimeMutex.Lock()
+		defer manager.realTimeMutex.Unlock()
+		manager.storeFeedAlerts("a", []gtfs.Alert{alert}, at)
+		manager.rebuildMergedRealtimeLocked()
+	}
+	publishAt(base)
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	wg.Add(2)
@@ -134,10 +139,7 @@ func TestAlertCreationTimeConcurrentReads(t *testing.T) {
 		defer wg.Done()
 		<-start
 		for i := range 32 {
-			manager.realTimeMutex.Lock()
-			manager.storeFeedAlerts("a", []gtfs.Alert{alert}, base.Add(time.Duration(i)*time.Minute))
-			manager.rebuildMergedRealtimeLocked()
-			manager.realTimeMutex.Unlock()
+			publishAt(base.Add(time.Duration(i) * time.Minute))
 		}
 	}()
 	go func() {
