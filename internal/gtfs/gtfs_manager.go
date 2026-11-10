@@ -60,6 +60,8 @@ type Manager struct {
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
 	feedAlerts   map[string][]gtfs.Alert
+	// Successful ingestion time for each alert snapshot; not its header time.
+	feedAlertIngestedAt map[string]time.Time
 	// Per-feed trips the agency filter dropped because their route couldn't
 	// be resolved to any agency. Kept out of the merged view, but the metrics
 	// endpoint reports them as that feed's unmatched records.
@@ -110,6 +112,7 @@ func (manager *Manager) clearFeedData(feedID string) {
 	delete(manager.feedTripDataTime, feedID)
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
+	delete(manager.feedAlertIngestedAt, feedID)
 
 	// Keep the last applied vehicle timestamp. Dropping it lets the next poll
 	// of the same frozen payload look new and reset the circuit breaker.

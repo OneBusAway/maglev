@@ -276,6 +276,7 @@ func (m *Manager) MockResetRealTimeData() {
 	delete(m.feedVehicleLastSeen, "_test")
 	delete(m.feedVehicleDataTime, "_test")
 	m.feedAlerts = make(map[string][]gtfs.Alert)
+	m.feedAlertIngestedAt = nil
 	// rebuild republishes an empty snapshot from the (empty) feed maps, which
 	// also clears anything the Mock* helpers injected directly.
 	m.rebuildMergedRealtimeLocked()

@@ -143,18 +143,18 @@ func TestFindSituationAlertPrefersPublishedID(t *testing.T) {
 		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agency25}},
 	}
 
-	got, ok := findSituationAlert([]gtfs.Alert{rawCollision, published}, "25", "25_late")
+	got, ok := findSituationAlert(feedAlertsForTest([]gtfs.Alert{rawCollision, published}), "25", "25_late")
 	require.True(t, ok)
 	assert.Equal(t, "late", got.ID, "the published 25_late must win over an earlier raw id")
 
-	got, ok = findSituationAlert([]gtfs.Alert{rawCollision}, "25", "25_late")
+	got, ok = findSituationAlert(feedAlertsForTest([]gtfs.Alert{rawCollision}), "25", "25_late")
 	require.True(t, ok)
 	assert.Equal(t, "25_late", got.ID, "a raw id still matches when nothing publishes it")
 
-	_, ok = findSituationAlert([]gtfs.Alert{published}, "25", "")
+	_, ok = findSituationAlert(feedAlertsForTest([]gtfs.Alert{published}), "25", "")
 	assert.False(t, ok)
 
-	_, ok = findSituationAlert([]gtfs.Alert{published}, "40", "40_late")
+	_, ok = findSituationAlert(feedAlertsForTest([]gtfs.Alert{published}), "40", "40_late")
 	assert.False(t, ok)
 }
 

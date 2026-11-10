@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
@@ -382,7 +381,7 @@ func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []mode
 // BuildSituationReferences converts GTFS-RT alerts into situation models,
 // prefixing route, stop, and trip IDs in allAffects with their agency from
 // the database, and emitting Java-parity consequence entries.
-func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.Alert) []models.Situation {
+func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []internalgtfs.FeedAlert) []models.Situation {
 	situations := make([]models.Situation, 0, len(alerts))
 	logger := logging.ForComponent(ctx, "http_server")
 
@@ -514,7 +513,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 
 		situation := models.Situation{
 			ID:                 alert.ID,
-			CreationTime:       models.NewModelTime(time.Time{}),
+			CreationTime:       models.NewModelTime(alert.CreatedAt),
 			ActiveWindows:      make([]models.ActiveWindow, 0, len(alert.ActivePeriods)),
 			AllAffects:         make([]models.AffectedEntity, 0, len(alert.InformedEntities)),
 			ConsequenceMessage: "",
@@ -540,7 +539,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 
 			fallbackAgency := getStringValue(entity.AgencyID)
 			if fallbackAgency == "" {
-				fallbackAgency = agencyIDForAlert(alert, "")
+				fallbackAgency = agencyIDForAlert(alert.Alert, "")
 			}
 
 			routeID := qualifyEntityID(rawRouteID, fallbackAgency, routeAgencyMap, knownAgencies)
@@ -1001,18 +1000,18 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 // situation references use to refer to it.
 type situationRef struct {
 	ID    string
-	Alert gtfs.Alert
+	Alert internalgtfs.FeedAlert
 }
 
 // situationRefsFromAlerts drops alerts with no ID and pairs the rest with the
 // situation ID used to refer to them.
-func situationRefsFromAlerts(alerts []gtfs.Alert, agencyID string) []situationRef {
+func situationRefsFromAlerts(alerts []internalgtfs.FeedAlert, agencyID string) []situationRef {
 	refs := make([]situationRef, 0, len(alerts))
 	for _, alert := range alerts {
 		if alert.ID == "" {
 			continue
 		}
-		refs = append(refs, situationRef{ID: internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert, agencyID)), Alert: alert})
+		refs = append(refs, situationRef{ID: internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert.Alert, agencyID)), Alert: alert})
 	}
 	return refs
 }
@@ -1061,7 +1060,7 @@ func newSituationCollector() *situationCollector {
 }
 
 // add records the alerts affecting one trip and returns their situation IDs.
-func (c *situationCollector) add(alerts []gtfs.Alert, agencyID string) []string {
+func (c *situationCollector) add(alerts []internalgtfs.FeedAlert, agencyID string) []string {
 	return c.addRefs(situationRefsFromAlerts(alerts, agencyID))
 }
 
@@ -1087,7 +1086,7 @@ func (api *RestAPI) situationReferences(ctx context.Context, refs []situationRef
 		return []models.Situation{}
 	}
 
-	alerts := make([]gtfs.Alert, 0, len(refs))
+	alerts := make([]internalgtfs.FeedAlert, 0, len(refs))
 	for _, ref := range refs {
 		alerts = append(alerts, ref.Alert)
 	}
