@@ -379,11 +379,11 @@ func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []mode
 	return utils.MapValues(agenciesMap)
 }
 
-// The cognitive complexity of this function (148 against an allowed 15) is
-// pre-existing upstream debt: the nesting below predates this PR, and this
-// change adds none of it — the three-step fallback lives in
-// entityFallbackAgency. Splitting the function is proposed in #2009; NOSONAR
-// suppresses only that pre-existing finding on this line.
+// BuildSituationReferences converts GTFS-RT alerts into situation models,
+// prefixing route, stop, and trip IDs in allAffects with their agency from
+// the database, and emitting Java-parity consequence entries.
+// NOSONAR: the cognitive complexity predates #1920; splitting the function
+// is tracked in #2009.
 func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []internalgtfs.FeedAlert) []models.Situation { // NOSONAR
 	situations := make([]models.Situation, 0, len(alerts))
 	logger := logging.ForComponent(ctx, "http_server")
