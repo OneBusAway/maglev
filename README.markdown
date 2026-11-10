@@ -380,7 +380,7 @@ The SQLite database is persisted using Docker volumes:
 * **Production**: `maglev-data` volume mounted at `/app/data`.
 * **Development**: `maglev-dev-data` volume.
 
-The GTFS database is stored in `/app/data/gtfs.db` within the container. SQLite temporary spill files (used for sorting and transactions during large static GTFS imports) are directed to `/app/data/tmp` via the `TMPDIR` environment variable. When deploying containers with a read-only root filesystem (such as `--read-only` in Docker or `readOnlyRootFilesystem: true` in Kubernetes), ensure `TMPDIR` points to a writable volume mount or provide a writable `tmpfs` (e.g. `--tmpfs /tmp`).
+The GTFS database is stored in `/app/data/gtfs.db` within the container. SQLite temporary spill files (used for sorting and transactions during large static GTFS imports) are directed to `/app/data` via the `SQLITE_TMPDIR` environment variable. When deploying containers with a read-only root filesystem (such as `--read-only` in Docker or `readOnlyRootFilesystem: true` in Kubernetes), ensure `SQLITE_TMPDIR` points to a writable volume mount like `/app/data`.
 
 #### Copy database to host for inspection
 
