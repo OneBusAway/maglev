@@ -813,6 +813,14 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		manager.feedLastUpdate[feedID] = time.Now()
 	}
 
+	// Stamp service-alerts success on its own clock, within the same lock.
+	// This is the timestamp clearStaleAlerts ages when the sub-feed fails.
+	if alertsUpdated {
+		if manager.feedAlertLastSuccess == nil {
+			manager.feedAlertLastSuccess = make(map[string]time.Time)
+		}
+		manager.feedAlertLastSuccess[feedID] = time.Now()
+	}
 	return hasNewData
 }
 
@@ -1464,6 +1472,11 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 
 				hasNewData := manager.updateFeedRealtime(ctx, feedCfg)
 				duration := time.Since(start)
+
+				if manager.clearStaleAlerts(feedCfg.ID) {
+					logger.Warn("service alerts stale beyond threshold while sibling sub-feeds succeed, clearing alert data",
+						slog.String("feed", feedCfg.ID))
+				}
 
 				if manager.Metrics != nil {
 					manager.Metrics.FeedFetchDuration.WithLabelValues(feedCfg.ID).Observe(duration.Seconds())
