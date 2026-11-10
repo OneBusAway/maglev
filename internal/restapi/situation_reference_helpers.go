@@ -22,6 +22,8 @@ type situationAgencyLookup struct {
 	routes, stops, trips map[string]string
 }
 
+// collectSituationEntityIDs includes raw and possibly qualified IDs so database
+// resolution can take precedence over an alert's fallback agency.
 func collectSituationEntityIDs(alerts []gtfs.Alert) situationEntityIDs {
 	var ids situationEntityIDs
 	for _, alert := range alerts {
@@ -35,6 +37,8 @@ func collectSituationEntityIDs(alerts []gtfs.Alert) situationEntityIDs {
 	return ids
 }
 
+// appendSituationCandidates also tries the suffix after the first underscore;
+// the database lookup later decides whether that underscore was a prefix.
 func appendSituationCandidates(ids []string, id string) []string {
 	if id == "" {
 		return ids
@@ -46,6 +50,8 @@ func appendSituationCandidates(ids []string, id string) []string {
 	return ids
 }
 
+// loadSituationAgencies keeps independent lookup failures local: missing maps
+// fall back during qualification rather than preventing situation construction.
 func (api *RestAPI) loadSituationAgencies(ctx context.Context, alerts []gtfs.Alert) situationAgencyLookup {
 	agencies := situationAgencyLookup{
 		known: make(map[string]struct{}), routes: make(map[string]string),
@@ -62,12 +68,16 @@ func (api *RestAPI) loadSituationAgencies(ctx context.Context, alerts []gtfs.Ale
 	return agencies
 }
 
+// logSituationLookupError preserves silent cancellation while reporting other
+// lookup failures through the request's HTTP logger.
 func logSituationLookupError(ctx context.Context, message string, err error) {
 	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 		logging.ForComponent(ctx, "http_server").Error(message, "error", err)
 	}
 }
 
+// loadSituationKnownAgencies identifies prefixes that qualification may retain
+// even when the referenced entity is absent from the static feed.
 func (api *RestAPI) loadSituationKnownAgencies(ctx context.Context, agencies map[string]struct{}) {
 	ids, err := api.GtfsManager.GtfsDB.Queries.ListAgencyIds(ctx)
 	if err != nil {
@@ -79,6 +89,8 @@ func (api *RestAPI) loadSituationKnownAgencies(ctx context.Context, agencies map
 	}
 }
 
+// loadSituationRouteAgencies deduplicates candidates and publishes results only
+// after every batch succeeds, leaving the existing map intact on failure.
 func (api *RestAPI) loadSituationRouteAgencies(ctx context.Context, ids []string, agencies map[string]string, message string) {
 	slices.Sort(ids)
 	routes, err := utils.QueryInBatches(ctx, slices.Compact(ids), api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
@@ -91,6 +103,8 @@ func (api *RestAPI) loadSituationRouteAgencies(ctx context.Context, ids []string
 	}
 }
 
+// loadSituationStopAgencies keeps the first agency returned for a shared stop;
+// GetAgenciesForStops orders those rows by agency ID.
 func (api *RestAPI) loadSituationStopAgencies(ctx context.Context, ids []string, agencies map[string]string) {
 	slices.Sort(ids)
 	rows, err := utils.QueryInBatches(ctx, slices.Compact(ids), api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops)
@@ -105,6 +119,8 @@ func (api *RestAPI) loadSituationStopAgencies(ctx context.Context, ids []string,
 	}
 }
 
+// loadSituationTripAgencies reuses loaded routes and fetches only missing route
+// candidates, retaining already resolved trip agencies if that lookup fails.
 func (api *RestAPI) loadSituationTripAgencies(ctx context.Context, ids []string, agencies situationAgencyLookup) {
 	slices.Sort(ids)
 	trips, err := utils.QueryInBatches(ctx, slices.Compact(ids), api.GtfsManager.GtfsDB.Queries.GetTripsByIDs)
@@ -131,6 +147,7 @@ func (api *RestAPI) loadSituationTripAgencies(ctx context.Context, ids []string,
 	}
 }
 
+// situationConsequences preserves an empty array for absent or unknown effects.
 func situationConsequences(effect gtfs.AlertEffect) []models.SituationConsequence {
 	consequences := make([]models.SituationConsequence, 0)
 	if alertHasEffect(effect) {
@@ -144,6 +161,8 @@ func situationConsequences(effect gtfs.AlertEffect) []models.SituationConsequenc
 	return consequences
 }
 
+// buildSituationReference constructs one situation without reordering selectors
+// or consulting the database again.
 func buildSituationReference(alert gtfs.Alert, agencies situationAgencyLookup) models.Situation {
 	situation := models.Situation{
 		ID:                 alert.ID,
@@ -157,29 +176,22 @@ func buildSituationReference(alert gtfs.Alert, agencies situationAgencyLookup) m
 		Severity:           mapAlertEffectToSeverity(alert.Effect),
 	}
 
-	if len(alert.Header) > 0 && alert.Header[0].Text != "" {
-		situation.Summary = &models.TranslatedString{
-			Value: alert.Header[0].Text,
-			Lang:  alert.Header[0].Language,
-		}
-	}
-
-	if len(alert.Description) > 0 && alert.Description[0].Text != "" {
-		situation.Description = &models.TranslatedString{
-			Value: alert.Description[0].Text,
-			Lang:  alert.Description[0].Language,
-		}
-	}
-
-	if len(alert.URL) > 0 && alert.URL[0].Text != "" {
-		situation.URL = &models.TranslatedString{
-			Value: alert.URL[0].Text,
-			Lang:  alert.URL[0].Language,
-		}
-	}
+	situation.Summary = firstSituationTranslation(alert.Header)
+	situation.Description = firstSituationTranslation(alert.Description)
+	situation.URL = firstSituationTranslation(alert.URL)
 	return situation
 }
 
+// firstSituationTranslation considers only the first entry; an empty first
+// text suppresses the field even when a later translation is populated.
+func firstSituationTranslation(texts []gtfs.AlertText) *models.TranslatedString {
+	if len(texts) == 0 || texts[0].Text == "" {
+		return nil
+	}
+	return &models.TranslatedString{Value: texts[0].Text, Lang: texts[0].Language}
+}
+
+// situationActiveWindows preserves input order and zero bounds for open ends.
 func situationActiveWindows(alert gtfs.Alert) []models.ActiveWindow {
 	windows := make([]models.ActiveWindow, 0, len(alert.ActivePeriods))
 	for _, period := range alert.ActivePeriods {
@@ -195,6 +207,8 @@ func situationActiveWindows(alert gtfs.Alert) []models.ActiveWindow {
 	return windows
 }
 
+// situationAffectedEntities preserves repeated selectors and their order while
+// qualifying IDs from database ownership before applying fallback agencies.
 func situationAffectedEntities(alert gtfs.Alert, agencies situationAgencyLookup) []models.AffectedEntity {
 	entities := make([]models.AffectedEntity, 0, len(alert.InformedEntities))
 	for _, entity := range alert.InformedEntities {

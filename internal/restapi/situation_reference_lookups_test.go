@@ -30,6 +30,8 @@ type situationLookupDB struct {
 	failWith error
 }
 
+// QueryContext records bind arguments before optionally failing a numbered call,
+// allowing tests to distinguish the initial and trip-completion route batches.
 func (db *situationLookupDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	db.calls = append(db.calls, strings.SplitN(query, "\n", 2)[0])
 	db.args = append(db.args, append([]any(nil), args...))
@@ -39,6 +41,8 @@ func (db *situationLookupDB) QueryContext(ctx context.Context, query string, arg
 	return db.DBTX.QueryContext(ctx, query, args...)
 }
 
+// TestSituationReferenceLookupFailures pins partial-map fallbacks, query order
+// and log suppression for direct and wrapped context errors at each stage.
 func TestSituationReferenceLookupFailures(t *testing.T) {
 	api := createTestApi(t)
 	db := api.GtfsManager.GtfsDB
@@ -110,6 +114,8 @@ func TestSituationReferenceLookupFailures(t *testing.T) {
 	}
 }
 
+// TestSituationReferencesWithoutDatabase keeps nil receivers and empty alerts
+// usable without changing empty-array or first-translation semantics.
 func TestSituationReferencesWithoutDatabase(t *testing.T) {
 	var api *RestAPI
 	empty := api.BuildSituationReferences(context.Background(), nil)
@@ -130,6 +136,8 @@ func TestSituationReferencesWithoutDatabase(t *testing.T) {
 	require.Equal(t, []models.ActiveWindow{}, got[0].ActiveWindows)
 }
 
+// TestSituationReferencesSharedStopAgency protects first-row selection when
+// multiple database agencies own the same stop, regardless of selector agency.
 func TestSituationReferencesSharedStopAgency(t *testing.T) {
 	api := createTestApiWithFeed(t, models.GetFixturePath(t, "raba.zip"))
 	db := api.GtfsManager.GtfsDB.DB
@@ -155,6 +163,8 @@ func TestSituationReferencesSharedStopAgency(t *testing.T) {
 	require.Equal(t, "00_1056", got[0].AllAffects[0].StopID, "the first database agency wins over later rows and the selector")
 }
 
+// TestSituationReferencesWindowsAndTranslations pins open window bounds,
+// millisecond units and the independent representation of translation fields.
 func TestSituationReferencesWindowsAndTranslations(t *testing.T) {
 	api := &RestAPI{}
 	zero, start, end := time.Unix(0, 0), time.Unix(2, 0), time.Unix(3, 0)
@@ -171,6 +181,8 @@ func TestSituationReferencesWindowsAndTranslations(t *testing.T) {
 	require.Equal(t, &models.TranslatedString{Value: "https://example.com", Lang: "en"}, got[0].URL)
 }
 
+// TestSituationReferencesLaterBatchFailure rejects partial agency maps when a
+// later query batch fails after an earlier batch returned a real route.
 func TestSituationReferencesLaterBatchFailure(t *testing.T) {
 	api := createTestApi(t)
 	db := api.GtfsManager.GtfsDB
@@ -201,5 +213,44 @@ func TestSituationReferencesLaterBatchFailure(t *testing.T) {
 			}
 			require.Equal(t, want, got[0].AllAffects[0].RouteID, "a later failure discards results from earlier batches")
 		})
+	}
+}
+
+// TestSituationReferenceTranslationFields checks all three field mappings through
+// the public builder, including the rule that later translations are ignored.
+func TestSituationReferenceTranslationFields(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		texts []gtfs.AlertText
+		want  *models.TranslatedString
+	}{
+		{name: "nil"},
+		{name: "empty", texts: []gtfs.AlertText{}},
+		{name: "empty-first", texts: []gtfs.AlertText{{Text: "", Language: "en"}, {Text: "Later", Language: "fr"}}},
+		{name: "first", texts: []gtfs.AlertText{{Text: "First", Language: "en"}, {Text: "Later", Language: "fr"}}, want: &models.TranslatedString{Value: "First", Lang: "en"}},
+		{name: "no-language", texts: []gtfs.AlertText{{Text: "Text"}}, want: &models.TranslatedString{Value: "Text"}},
+		{name: "whitespace", texts: []gtfs.AlertText{{Text: " ", Language: "en"}}, want: &models.TranslatedString{Value: " ", Lang: "en"}},
+		{name: "unicode", texts: []gtfs.AlertText{{Text: "東京", Language: "ja"}}, want: &models.TranslatedString{Value: "東京", Lang: "ja"}},
+	} {
+		for _, field := range []string{"summary", "description", "url"} {
+			t.Run(tc.name+"/"+field, func(t *testing.T) {
+				var alert gtfs.Alert
+				var want models.Situation
+				switch field {
+				case "summary":
+					alert.Header, want.Summary = tc.texts, tc.want
+				case "description":
+					alert.Description, want.Description = tc.texts, tc.want
+				case "url":
+					alert.URL, want.URL = tc.texts, tc.want
+				}
+				api := &RestAPI{}
+				got := api.BuildSituationReferences(context.Background(), []gtfs.Alert{alert})
+				require.Len(t, got, 1)
+				require.Equal(t, want.Summary, got[0].Summary)
+				require.Equal(t, want.Description, got[0].Description)
+				require.Equal(t, want.URL, got[0].URL)
+			})
+		}
 	}
 }
