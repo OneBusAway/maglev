@@ -380,7 +380,7 @@ The SQLite database is persisted using Docker volumes:
 * **Production**: `maglev-data` volume mounted at `/app/data`.
 * **Development**: `maglev-dev-data` volume.
 
-The GTFS database is stored in `/app/data/gtfs.db` within the container. SQLite temporary spill files (used for sorting and transactions during large static GTFS imports) are directed to `/app/data` via the `SQLITE_TMPDIR` environment variable. When deploying containers with a read-only root filesystem (such as `--read-only` in Docker or `readOnlyRootFilesystem: true` in Kubernetes), ensure `SQLITE_TMPDIR` points to a writable volume mount like `/app/data`.
+The GTFS database is stored in `/app/data/gtfs.db` within the container. The image sets `SQLITE_TMPDIR=/app/data` so SQLite temporary spill files (used for sorting and transactions during large static GTFS imports) stay on the writable volume. When deploying containers with a read-only root filesystem (such as `--read-only` in Docker or `readOnlyRootFilesystem: true` in Kubernetes), or if you mount the database volume elsewhere, ensure `SQLITE_TMPDIR` points to an existing writable directory.
 
 #### Copy database to host for inspection
 
@@ -479,12 +479,13 @@ and the first real-time fetch has been attempted, then `ok`.
 | `GTFS_STATIC_AUTH_VALUE`   | Auth header value for the static GTFS feed                           | —       |
 | `GTFS_REALTIME_AUTH_NAME`  | Auth header name for the first GTFS-RT feed only                     | —       |
 | `GTFS_REALTIME_AUTH_VALUE` | Auth header value for the first GTFS-RT feed only                    | —       |
+| `SQLITE_TMPDIR`            | Temporary directory used by SQLite during large static GTFS imports  | `/app/data` |
 | `MAGLEV_LOG_LEVEL`         | Log level; overrides the config file                                 | —       |
 | `MAGLEV_LOG_FORMAT`        | Log format; overrides the config file                                | —       |
 | `MAGLEV_ENABLE_PPROF`      | `1` starts the pprof server on `127.0.0.1:6060` (see Profiling)      | off     |
 | `MAGLEV_PROFILE_MUTEX`     | `1` enables mutex and block profiling (slows the server)             | off     |
 
-All except `TZ`, `GTFS_PROTECTED_API_KEYS` and the two profiling variables are read only when Maglev starts with a config file (`-f`).
+All except `TZ`, `SQLITE_TMPDIR`, `GTFS_PROTECTED_API_KEYS` and the two profiling variables are read only when Maglev starts with a config file (`-f`).
 
 ### Troubleshooting
 
