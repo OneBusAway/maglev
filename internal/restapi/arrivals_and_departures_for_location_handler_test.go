@@ -910,32 +910,43 @@ func TestRetainedStopCodes(t *testing.T) {
 	assert.Empty(t, retainedStopCodes(nil, nil))
 }
 
-func TestRetainIndexedRoute(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		agencyID   string
-		combinedID string
-		wantMatch  bool
-	}{
-		{name: "matching agency", agencyID: "AGENCY_ONE", combinedID: "AGENCY_ONE_ROUTE_100", wantMatch: true},
-		{name: "wrong agency", agencyID: "OTHER", combinedID: "AGENCY_ONE_ROUTE_100"},
-		{name: "empty combined ID"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			acc := newArrivalsAccumulator("AGENCY_ONE")
+func TestRetainRoute_AgencyWithUnderscore(t *testing.T) {
+	acc := newArrivalsAccumulator("AGENCY_ONE")
+	refAcc := newArrivalsAccumulator("AGENCY_ONE")
+
+	route := gtfsdb.Route{
+		ID:       "ROUTE_100",
+		AgencyID: "AGENCY_ONE",
+	}
+	acc.routes[route.ID] = &route
+
+	retainRoute(refAcc, "AGENCY_ONE_ROUTE_100", buildCombinedRouteIndex(acc, nil))
+
+	assert.Same(t, &route, refAcc.routes["ROUTE_100"])
+}
+
+func TestRetainRoute_RejectsOtherAgency(t *testing.T) {
+	acc := newArrivalsAccumulator("AGENCY_ONE")
+	acc.routes["ROUTE_100"] = &gtfsdb.Route{ID: "ROUTE_100", AgencyID: "OTHER"}
+
+	routeIndex := buildCombinedRouteIndex(acc, nil)
+	for _, combinedID := range []string{"AGENCY_ONE_ROUTE_100", "AGENCY_ROUTE_100"} {
+		t.Run(combinedID, func(t *testing.T) {
 			refAcc := newArrivalsAccumulator("AGENCY_ONE")
-			route := &gtfsdb.Route{ID: "ROUTE_100", AgencyID: tc.agencyID}
-			acc.routes[route.ID] = route
-
-			retainRoute(refAcc, tc.combinedID, buildCombinedRouteIndex(acc, nil))
-
-			if tc.wantMatch {
-				assert.Same(t, route, refAcc.routes[route.ID])
-			} else {
-				assert.Empty(t, refAcc.routes)
-			}
+			retainRoute(refAcc, combinedID, routeIndex)
+			assert.Empty(t, refAcc.routes)
 		})
 	}
+}
+
+func TestRetainRoute_EmptyCombinedID(t *testing.T) {
+	acc := newArrivalsAccumulator("AGENCY_ONE")
+	refAcc := newArrivalsAccumulator("AGENCY_ONE")
+	acc.routes["ROUTE_100"] = &gtfsdb.Route{ID: "ROUTE_100"}
+
+	retainRoute(refAcc, "", buildCombinedRouteIndex(acc, nil))
+
+	assert.Empty(t, refAcc.routes)
 }
 
 func TestAddRouteAlertsForRetainedStopsSkipsBadIDs(t *testing.T) {
