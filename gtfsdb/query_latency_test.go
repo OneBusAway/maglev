@@ -285,6 +285,16 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 		},
 	}
 
+	// Warm up the FTS5 vtable on all pool connections before concurrent load.
+	// Without this, concurrent goroutines can race to construct the stops_fts
+	// virtual table on fresh connections, producing "vtable constructor failed".
+	for i := 0; i < concurrency; i++ {
+		_, _ = client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{
+			SearchQuery: "a*",
+			Limit:       1,
+		})
+	}
+
 	t.Log("=== Query Latency Distribution (p50 / p95 / p99) ===")
 	t.Logf("  concurrency=%d  iterations-per-goroutine=%d  WAL=%v",
 		concurrency, iterations, latencyIsWALEnabled(ctx, t, client.DB))
