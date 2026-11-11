@@ -582,6 +582,10 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	manager.realTimeMutex.Lock()
 	defer manager.realTimeMutex.Unlock()
 
+	// Capture the previous trip-feed timestamp before storeFeedTrips overwrites it.
+	// Used below to decide whether to stamp feedTripLastSuccess.
+	prevTripDataTime := manager.feedTripDataTime[feedID]
+
 	if tripData != nil && tripErr == nil {
 		manager.storeFeedTrips(feedID, trips, tripData.CreatedAt)
 	}
@@ -816,13 +820,18 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		manager.feedLastUpdate[feedID] = time.Now()
 	}
 
-	// Stamp trip-updates success on its own clock, within the same lock. This
-	// is the timestamp clearStaleTripUpdates ages when the sub-feed fails.
+	// Stamp trip-updates success only when the feed's header timestamp moves
+	// forward, mirroring decideVehicleFeedTimestamp for vehicles. A frozen feed
+	// that keeps returning the same header will not reset the stale-trip clock,
+	// so clearStaleTripUpdates can eventually age it out.
 	if tripsUpdated {
-		if manager.feedTripLastSuccess == nil {
-			manager.feedTripLastSuccess = make(map[string]time.Time)
+		headerAdvanced := isMissingHeaderTime(tripData.CreatedAt) || tripData.CreatedAt.After(prevTripDataTime)
+		if headerAdvanced {
+			if manager.feedTripLastSuccess == nil {
+				manager.feedTripLastSuccess = make(map[string]time.Time)
+			}
+			manager.feedTripLastSuccess[feedID] = time.Now()
 		}
-		manager.feedTripLastSuccess[feedID] = time.Now()
 	}
 
 	return hasNewData
