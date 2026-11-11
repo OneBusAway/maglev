@@ -498,7 +498,7 @@ func TestLatestAgencyExpiry(t *testing.T) {
 	serviceDate := time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC)
 
 	t.Run("empty agencies returns error", func(t *testing.T) {
-		_, err := latestAgencyExpiry(serviceDate, nil)
+		_, err := latestAgencyExpiry(serviceDate, nil, 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot calculate feed expiry without an agency timezone")
 	})
@@ -507,7 +507,7 @@ func TestLatestAgencyExpiry(t *testing.T) {
 		agencies := []Agency{
 			{ID: "agency_1", Timezone: "   "},
 		}
-		_, err := latestAgencyExpiry(serviceDate, agencies)
+		_, err := latestAgencyExpiry(serviceDate, agencies, 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), `agency "agency_1" has empty timezone`)
 	})
@@ -516,7 +516,7 @@ func TestLatestAgencyExpiry(t *testing.T) {
 		agencies := []Agency{
 			{ID: "agency_1", Timezone: "Invalid/Not_A_Timezone"},
 		}
-		_, err := latestAgencyExpiry(serviceDate, agencies)
+		_, err := latestAgencyExpiry(serviceDate, agencies, 0)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), `agency "agency_1" has invalid timezone`)
 	})
@@ -525,7 +525,7 @@ func TestLatestAgencyExpiry(t *testing.T) {
 		agencies := []Agency{
 			{ID: "agency_1", Timezone: "America/Los_Angeles"},
 		}
-		expiry, err := latestAgencyExpiry(serviceDate, agencies)
+		expiry, err := latestAgencyExpiry(serviceDate, agencies, 0)
 		require.NoError(t, err)
 
 		loc, err := time.LoadLocation("America/Los_Angeles")
@@ -541,12 +541,28 @@ func TestLatestAgencyExpiry(t *testing.T) {
 			{ID: "la_agency", Timezone: "America/Los_Angeles"},
 			{ID: "ny_agency_dup", Timezone: "America/New_York"},
 		}
-		expiry, err := latestAgencyExpiry(serviceDate, agencies)
+		expiry, err := latestAgencyExpiry(serviceDate, agencies, 0)
 		require.NoError(t, err)
 
 		locLA, err := time.LoadLocation("America/Los_Angeles")
 		require.NoError(t, err)
 		expected := time.Date(2025, 6, 15, 23, 59, 59, 0, locLA)
+		assert.Equal(t, expected, expiry)
+	})
+
+	t.Run("past-midnight trip extends expiry beyond end of day", func(t *testing.T) {
+		agencies := []Agency{
+			{ID: "agency_1", Timezone: "America/Los_Angeles"},
+		}
+		// A trip that runs until 25:30:00 = 25.5 h in nanoseconds since midnight.
+		pastMidnightNs := int64(25*time.Hour + 30*time.Minute)
+		expiry, err := latestAgencyExpiry(serviceDate, agencies, pastMidnightNs)
+		require.NoError(t, err)
+
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		midnight := time.Date(2025, 6, 15, 0, 0, 0, 0, loc)
+		expected := midnight.Add(time.Duration(pastMidnightNs))
 		assert.Equal(t, expected, expiry)
 	})
 }
