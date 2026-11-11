@@ -45,6 +45,7 @@ type mergedRealtime struct {
 	tripLookup               map[string]int
 	vehicleLookupByTrip      map[string]int
 	vehicleLookupByVehicle   map[string]int
+	vehicleAgencyByVehicle   map[string]string // ingestion-time agency of each vehicle in vehicleLookupByVehicle; absent when unattributed
 	duplicatedVehicleByRoute map[string][]gtfs.Vehicle
 	vehiclesByRoute          map[string][]gtfs.Vehicle
 	vehiclePositionsByAgency map[string]AgencyVehiclePositions
@@ -63,6 +64,7 @@ var emptyMergedRealtime = &mergedRealtime{
 	tripLookup:               map[string]int{},
 	vehicleLookupByTrip:      map[string]int{},
 	vehicleLookupByVehicle:   map[string]int{},
+	vehicleAgencyByVehicle:   map[string]string{},
 	duplicatedVehicleByRoute: map[string][]gtfs.Vehicle{},
 	vehiclesByRoute:          map[string][]gtfs.Vehicle{},
 	vehiclePositionsByAgency: map[string]AgencyVehiclePositions{},
@@ -95,6 +97,7 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 		tripLookup:               maps.Clone(m.tripLookup),
 		vehicleLookupByTrip:      maps.Clone(m.vehicleLookupByTrip),
 		vehicleLookupByVehicle:   maps.Clone(m.vehicleLookupByVehicle),
+		vehicleAgencyByVehicle:   maps.Clone(m.vehicleAgencyByVehicle),
 		duplicatedVehicleByRoute: maps.Clone(m.duplicatedVehicleByRoute),
 		vehiclesByRoute:          maps.Clone(m.vehiclesByRoute),
 		vehiclePositionsByAgency: maps.Clone(m.vehiclePositionsByAgency),
@@ -1396,6 +1399,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		tripLookup:               tripLookup,
 		vehicleLookupByTrip:      vehicleLookupByTrip,
 		vehicleLookupByVehicle:   vehicleLookupByVehicle,
+		vehicleAgencyByVehicle:   manager.buildVehicleAgencyLookup(vehicleFeedIDs),
 		duplicatedVehicleByRoute: duplicatedVehicleByRoute,
 		vehiclesByRoute:          vehiclesByRoute,
 		vehiclePositionsByAgency: manager.buildVehiclePositionsByAgency(vehicleFeedIDs, builtAt),
@@ -1405,6 +1409,28 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		alertsSince:              alertsSince,
 		builtAt:                  builtAt,
 	})
+}
+
+// buildVehicleAgencyLookup maps each vehicle ID to the agency it was attributed
+// to at ingestion. It walks the feeds in the order that fills
+// vehicleLookupByVehicle, so when two feeds report the same ID, the entry
+// describes the vehicle that lookup returns. Caller must hold realTimeMutex.
+func (manager *Manager) buildVehicleAgencyLookup(sortedFeedIDs []string) map[string]string {
+	agencyByVehicle := make(map[string]string)
+	for _, feedID := range sortedFeedIDs {
+		for _, vehicle := range manager.feedVehicles[feedID] {
+			if vehicle.ID == nil || vehicle.ID.ID == "" {
+				continue
+			}
+			agencyID, attributed := manager.feedVehicleAgency[feedID][newVehicleKey(vehicle.ID)]
+			if !attributed {
+				delete(agencyByVehicle, vehicle.ID.ID)
+				continue
+			}
+			agencyByVehicle[vehicle.ID.ID] = agencyID
+		}
+	}
+	return agencyByVehicle
 }
 
 // calculateBackoff computes the next polling interval using exponential backoff with jitter
