@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -429,7 +428,7 @@ func TestManager_GetVehicleForTrip_BlocklessSharedBlock(t *testing.T) {
 		ID:        "shared-block-id",
 		RouteID:   existingTrip.RouteID,
 		ServiceID: existingTrip.ServiceID,
-		BlockID:   sql.NullString{},
+		BlockID:   nulls.String(""),
 	})
 	require.NoError(t, err)
 
@@ -447,7 +446,7 @@ func TestManager_GetVehicleForTrip_BlocklessSharedBlock(t *testing.T) {
 		ID:        "unrelated-blockless",
 		RouteID:   existingTrip.RouteID,
 		ServiceID: existingTrip.ServiceID,
-		BlockID:   sql.NullString{},
+		BlockID:   nulls.String(""),
 	})
 	require.NoError(t, err)
 
@@ -456,7 +455,7 @@ func TestManager_GetVehicleForTrip_BlocklessSharedBlock(t *testing.T) {
 		ID:        "lonely-blockless",
 		RouteID:   existingTrip.RouteID,
 		ServiceID: existingTrip.ServiceID,
-		BlockID:   sql.NullString{},
+		BlockID:   nulls.String(""),
 	})
 	require.NoError(t, err)
 
