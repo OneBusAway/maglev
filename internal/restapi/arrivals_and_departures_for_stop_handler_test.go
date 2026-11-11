@@ -1217,7 +1217,6 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 		name                string
 		setup               func(t *testing.T, api *RestAPI, now time.Time, tripID string)
 		wantPredicted       bool
-		noTimes             bool
 		wantArrivalOffset   time.Duration
 		wantDepartureOffset time.Duration
 	}{
@@ -1232,15 +1231,14 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 			wantPredicted: false,
 		},
 		{
-			name: "deviation beyond blockNotActive window preserves tracking without times",
+			name: "deviation beyond blockNotActive window is not predicted",
 			setup: func(t *testing.T, api *RestAPI, now time.Time, tripID string) {
 				api.GtfsManager.MockAddVehicleWithOptions("v1", tripID, "dp-route", internalgtfs.MockVehicleOptions{
 					Timestamp: &now,
 				})
 				addDownstreamSTU(t, api, tripID, 2*time.Hour)
 			},
-			wantPredicted: true,
-			noTimes:       true,
+			wantPredicted: false,
 		},
 		{
 			// The stop is scheduled 08:00 arrive / 08:05 depart and the block
@@ -1285,7 +1283,7 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 
 			a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
 			assert.Equal(t, tt.wantPredicted, a.Predicted)
-			if !tt.wantPredicted || tt.noTimes {
+			if !tt.wantPredicted {
 				assert.True(t, a.PredictedArrivalTime.IsZero())
 				assert.True(t, a.PredictedDepartureTime.IsZero())
 				return

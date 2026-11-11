@@ -248,6 +248,7 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 		noTripUpdate        bool
 		unrelated           bool
 		wantTimes           bool
+		fallbackTimes       bool
 		vehicleRelationship gtfs.TripScheduleRelationship
 		tripRelationship    gtfs.TripScheduleRelationship
 	}{
@@ -265,7 +266,8 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 		{name: "canceled-vehicle-and-trip-update", vehicleRelationship: gtfsrt.TripDescriptor_CANCELED, tripRelationship: gtfsrt.TripDescriptor_CANCELED},
 		{name: "empty-trip-update"},
 		{name: "unidentified-stop-update", updates: []gtfs.StopTimeUpdate{{}}},
-		{name: "later-only-update", updates: []gtfs.StopTimeUpdate{{StopSequence: &later, StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}}},
+		// Upstream uses the block deviation when this one-based update produces no samples.
+		{name: "later-only-update", wantTimes: true, fallbackTimes: true, updates: []gtfs.StopTimeUpdate{{StopSequence: &later, StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}}},
 		{name: "conflicting-stop-id", updates: []gtfs.StopTimeUpdate{{StopSequence: &target, StopID: stringPointerForPropagationTest("other-stop"), Arrival: &gtfs.StopTimeEvent{Delay: &delay}}}},
 		{name: "conflicting-prior-stop-id", updates: []gtfs.StopTimeUpdate{{StopSequence: &first, StopID: stringPointerForPropagationTest("other-stop"), Departure: &gtfs.StopTimeEvent{Time: &actualDeparture}}}},
 		{name: "conflicting-prior-with-target-id", updates: []gtfs.StopTimeUpdate{{StopSequence: &first, StopID: &stopID, Departure: &gtfs.StopTimeEvent{Time: &actualDeparture}}}},
@@ -395,7 +397,11 @@ func TestArrivalRealtimeTrackingSemantics(t *testing.T) {
 						assert.Equal(t, wantTracking, arrival.Predicted)
 						if tt.wantTimes && !isCanceled {
 							assert.Equal(t, scheduledArrival+delay.Milliseconds(), arrival.PredictedArrivalTime.UnixMilli())
-							assert.Equal(t, arrival.ScheduledDepartureTime.UnixMilli()+delay.Milliseconds(), arrival.PredictedDepartureTime.UnixMilli())
+							wantDeparture := arrival.ScheduledDepartureTime.UnixMilli() + delay.Milliseconds()
+							if tt.fallbackTimes {
+								wantDeparture = arrival.ScheduledDepartureTime.UnixMilli()
+							}
+							assert.Equal(t, wantDeparture, arrival.PredictedDepartureTime.UnixMilli())
 						} else {
 							assert.True(t, arrival.PredictedArrivalTime.IsZero())
 							assert.True(t, arrival.PredictedDepartureTime.IsZero())

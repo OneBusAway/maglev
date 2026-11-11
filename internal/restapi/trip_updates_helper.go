@@ -37,12 +37,63 @@ func arrivalIsCanceled(tripID string, vehicle *gtfs.Vehicle, tripUpdate *gtfs.Tr
 		vehicle.Trip.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED
 }
 
-// canUseBlockPredictionFallback lets a different trip in the block supply timing
-// only when this trip has no update of its own. An unusable direct update must
-// retain its NO_DATA, SKIPPED, empty-update or ambiguous-visit timing semantics.
-func (api *RestAPI) canUseBlockPredictionFallback(tripID string) bool {
+// canUseBlockPredictionFallback preserves direct timing boundaries while
+// allowing an earlier block trip to supply times past empty or later-only updates.
+func (api *RestAPI) canUseBlockPredictionFallback(tripID, stopID string, sequence int64, schedule tripSchedule, extras *tripStatusExtras) bool {
 	update, _ := api.GtfsManager.GetTripUpdateByID(tripID)
-	return update == nil
+	if update == nil || api.tripUpdateExpired(*update) {
+		return true
+	}
+	if update.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
+		return false
+	}
+	target, prior, _ := predictionUpdatesForStop(update.StopTimeUpdates, stopID, sequence, schedule)
+	if target != nil || prior != nil {
+		return false
+	}
+	for _, stu := range update.StopTimeUpdates {
+		if stu.StopID != nil && *stu.StopID == stopID && stu.StopSequence == nil {
+			if _, resolved := stopTimeUpdateSequence(stu, schedule.stopIDs); !resolved {
+				return false
+			}
+		}
+	}
+	for _, stu := range update.StopTimeUpdates {
+		later, resolved := stopTimeUpdateSequence(stu, schedule.stopIDs)
+		_, scheduled := schedule.stopIDs[later]
+		if resolved && scheduled && later > sequence && stopUpdateHasTiming(stu) {
+			return true
+		}
+	}
+	if extras == nil {
+		return false
+	}
+	for _, source := range api.collectBlockTripUpdates(extras.blockTripIDs) {
+		if source.tripID != tripID && tripUpdateHasTiming(source.tu) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func tripUpdateHasTiming(update gtfs.Trip) bool {
+	if update.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
+		return false
+	}
+	if update.Delay != nil {
+		return true
+	}
+	return slices.ContainsFunc(update.StopTimeUpdates, stopUpdateHasTiming)
+}
+
+func stopUpdateHasTiming(stu gtfs.StopTimeUpdate) bool {
+	if stu.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED ||
+		stu.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA {
+		return false
+	}
+	event, _ := propagationEvent(&stu)
+	return event != nil && (event.Time != nil || event.Delay != nil)
 }
 
 // GetScheduleDeviationForBlock returns the schedule deviation in seconds
@@ -61,45 +112,52 @@ func (api *RestAPI) canUseBlockPredictionFallback(tripID string) bool {
 // tripIDs MUST be in block-trip-start order; caller sorts via
 // blockTripIDsSortedByStartTime.
 func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []string, serviceDate time.Time, currentTime time.Time) (int, bool) {
+	deviation, resolved, _ := api.resolveBlockDeviation(ctx, tripIDs, serviceDate, currentTime)
+	return deviation, resolved
+}
+
+// resolveBlockDeviation distinguishes missing timing from an outlier record
+// discarded by Java's blockNotActive rule, which must also disable tracking.
+func (api *RestAPI) resolveBlockDeviation(ctx context.Context, tripIDs []string, serviceDate, currentTime time.Time) (deviation int, resolved, discarded bool) {
 	if len(tripIDs) == 0 {
-		return 0, false
+		return 0, false, false
 	}
 	tripUpdates := api.collectBlockTripUpdates(tripIDs)
 	if len(tripUpdates) == 0 {
-		return 0, false
+		return 0, false, false
 	}
 	// Java sets no deviation when the block's last update is canceled
 	// (GtfsRealtimeTripLibrary.java:953, :1104).
 	lastUpdate := tripUpdates[len(tripUpdates)-1].tu
 	if lastUpdate.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
-		return 0, false
+		return 0, false, false
 	}
 	dev, ok, discard := pickTripLevelDeviation(tripUpdates)
 	if discard {
 		// Java's blockNotActive guard fired: the entire VehicleLocationRecord
 		// would be discarded. We must NOT fall through to STU/per-stop paths —
 		// that would silently recover RT data Java treats as poisoned.
-		return 0, false
+		return 0, false, true
 	}
 	if ok {
-		return dev, true
+		return dev, true, false
 	}
 	if dev, ok := api.pickClosestSTUDeviation(ctx, tripUpdates, serviceDate, api.deviationPickTime(tripUpdates, currentTime)); ok {
 		if exceedsBlockNotActiveThreshold(dev) {
-			return 0, false
+			return 0, false, true
 		}
-		return dev, true
+		return dev, true, false
 	}
 	if dev, ok := pickFirstAvailableSTUDelay(tripUpdates); ok {
 		if exceedsBlockNotActiveThreshold(dev) {
-			return 0, false
+			return 0, false, true
 		}
-		return dev, true
+		return dev, true, false
 	}
 	// Java builds a record from any trip update, with a zero deviation when it
 	// has no times (GtfsRealtimeTripLibrary.java:1104-1105). Live Tampa reports
 	// these, whose stops are all SKIPPED, as predicted and on schedule.
-	return 0, true
+	return 0, true, false
 }
 
 // deviationPickTime is the moment a block's deviation is chosen for. Java keeps

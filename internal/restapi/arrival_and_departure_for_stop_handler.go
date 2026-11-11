@@ -371,7 +371,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			predicted = true
 			predictedArrivalTime = predictedArrival
 			predictedDepartureTime = predictedDeparture
-		} else if api.canUseBlockPredictionFallback(tripID) {
+		} else if api.canUseBlockPredictionFallback(tripID, stopCode, matchedStopTime.StopSequence, schedule, statusExtras) {
 			var fallbackTracked bool
 			predictedArrivalTime, predictedDepartureTime, fallbackTracked = api.predictedTimesFromScheduleDeviation(ctx, scheduleDeviationFallback{
 				status:             status,
@@ -401,10 +401,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// Check tracking after timing so a cancellation received during the request
 	// also overrides any times calculated from the previous realtime snapshot.
 	tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(tripID)
-	hasTripUpdateTracking := tripUpdate != nil &&
+	hasTripUpdateTracking := tripUpdate != nil && !api.tripUpdateExpired(*tripUpdate) &&
 		tripUpdate.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED
 	predicted = predicted || hasTripUpdateTracking
-	if arrivalIsCanceled(tripID, vehicle, tripUpdate) {
+	if arrivalIsCanceled(tripID, vehicle, tripUpdate) || statusExtras.deviationDiscarded {
 		predicted = false
 		predictedArrivalTime = time.Time{}
 		predictedDepartureTime = time.Time{}
@@ -644,7 +644,8 @@ func (api *RestAPI) getPredictedTimes(
 	schedule tripSchedule,
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
-	if realTimeTrip == nil || realTimeTrip.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
+	if realTimeTrip == nil || api.tripUpdateExpired(*realTimeTrip) ||
+		realTimeTrip.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
 		return time.Time{}, time.Time{}, false
 	}
 	if api.tripUpdateExpired(*realTimeTrip) {
@@ -690,8 +691,8 @@ func (api *RestAPI) getPredictedTimes(
 		departureOffset = arrivalOffset
 	}
 
-	// Java's blockNotActive filter lives at RT ingestion. Apply the deviation
-	// here without a cap so severely late vehicles still have predictions.
+	// Preserve event offsets here; callers suppress the whole arrival when
+	// the block's resolved deviation causes its realtime record to be discarded.
 	return scheduledArrivalTime.Add(*arrivalOffset), scheduledDepartureTime.Add(*departureOffset), true
 }
 

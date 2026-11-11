@@ -176,28 +176,44 @@ func TestArrivalsReusePredictionSchedules(t *testing.T) {
 	})
 }
 
+// TestArrivalsRABAAllSkippedTrip distinguishes the recorded expired update from
+// a timestamp-refreshed control that tests SKIPPED tracking without stale data.
 func TestArrivalsRABAAllSkippedTrip(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
 	const tripID = "25_03969589-98dc-4fcd-a1c2-ce084b4ca5d2"
-	for _, stopID := range []string{"25_3027", "25_9038"} {
-		t.Run(stopID, func(t *testing.T) {
-			endpoint := "/api/where/arrivals-and-departures-for-stop/" + stopID + ".json?key=TEST&minutesAfter=30&minutesBefore=10&time=1749828720000"
-			resp, body := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
-			require.Equal(t, http.StatusOK, resp.StatusCode)
-			for _, arrival := range body.Data.Entry.ArrivalsAndDepartures {
-				if arrival.TripID != tripID {
-					continue
-				}
-				assert.Equal(t, stopID, arrival.StopID)
-				assert.Equal(t, int64(1749828780000), arrival.ScheduledArrivalTime.UnixMilli())
-				assert.Equal(t, int64(1749828780000), arrival.ScheduledDepartureTime.UnixMilli())
-				assert.True(t, arrival.Predicted)
-				assert.True(t, arrival.PredictedArrivalTime.IsZero())
-				assert.True(t, arrival.PredictedDepartureTime.IsZero())
-				return
+	const rawTripID = "03969589-98dc-4fcd-a1c2-ce084b4ca5d2"
+	original, err := api.GtfsManager.GetTripUpdateByID(rawTripID)
+	require.NoError(t, err)
+	require.True(t, api.tripUpdateExpired(*original), "recorded fixture is expired at this service date")
+	for _, fresh := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fresh=%t", fresh), func(t *testing.T) {
+			update := *original
+			if fresh {
+				timestamp := api.Clock.Now()
+				update.Timestamp = &timestamp
 			}
-			t.Fatalf("missing RABA arrival for %s", tripID)
+			api.GtfsManager.MockAddFullTripUpdate(update)
+			for _, stopID := range []string{"25_3027", "25_9038"} {
+				t.Run(stopID, func(t *testing.T) {
+					endpoint := "/api/where/arrivals-and-departures-for-stop/" + stopID + ".json?key=TEST&minutesAfter=30&minutesBefore=10&time=1749828720000"
+					resp, body := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+					require.Equal(t, http.StatusOK, resp.StatusCode)
+					for _, arrival := range body.Data.Entry.ArrivalsAndDepartures {
+						if arrival.TripID != tripID {
+							continue
+						}
+						assert.Equal(t, stopID, arrival.StopID)
+						assert.Equal(t, int64(1749828780000), arrival.ScheduledArrivalTime.UnixMilli())
+						assert.Equal(t, int64(1749828780000), arrival.ScheduledDepartureTime.UnixMilli())
+						assert.Equal(t, fresh, arrival.Predicted)
+						assert.True(t, arrival.PredictedArrivalTime.IsZero())
+						assert.True(t, arrival.PredictedDepartureTime.IsZero())
+						return
+					}
+					t.Fatalf("missing RABA arrival for %s", tripID)
+				})
+			}
 		})
 	}
 }

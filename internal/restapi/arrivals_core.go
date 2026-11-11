@@ -1030,7 +1030,7 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 	tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(st.TripID)
 	hasVehicleTracking := vehicle != nil && vehicle.Trip != nil &&
 		vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED
-	hasTripUpdateTracking := tripUpdate != nil &&
+	hasTripUpdateTracking := tripUpdate != nil && !api.tripUpdateExpired(*tripUpdate) &&
 		tripUpdate.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED
 	isCanceled := arrivalIsCanceled(st.TripID, vehicle, tripUpdate)
 	hasRealtimeTracking := hasVehicleTracking || hasTripUpdateTracking || hasPredictionTimes
@@ -1089,7 +1089,7 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 
 	api.applyTripStatusPrediction(ctx, arrival, tripStatus, statusExtras, in, acc.deviationSamples)
 	tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(in.stopTime.TripID)
-	if arrivalIsCanceled(in.stopTime.TripID, vehicle, tripUpdate) {
+	if arrivalIsCanceled(in.stopTime.TripID, vehicle, tripUpdate) || statusExtras.deviationDiscarded {
 		arrival.Predicted = false
 		arrival.PredictedArrivalTime = models.NewModelTime(time.Time{})
 		arrival.PredictedDepartureTime = models.NewModelTime(time.Time{})
@@ -1108,7 +1108,7 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 // independently of tracking. A direct trip update keeps its timing boundaries.
 func (api *RestAPI) applyTripStatusPrediction(ctx context.Context, arrival *models.ArrivalAndDeparture, tripStatus *models.TripStatus, statusExtras *tripStatusExtras, in arrivalInput, sampleCache deviationSampleCache) {
 	hasPredictionTimes := !arrival.PredictedArrivalTime.IsZero() || !arrival.PredictedDepartureTime.IsZero()
-	if hasPredictionTimes || !api.canUseBlockPredictionFallback(in.stopTime.TripID) {
+	if hasPredictionTimes || !api.canUseBlockPredictionFallback(in.stopTime.TripID, in.stopCode, in.stopTime.StopSequence, in.schedule, statusExtras) {
 		return
 	}
 	serviceStart := in.serviceDate.Start(in.location)
