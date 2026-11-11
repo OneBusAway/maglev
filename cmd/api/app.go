@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -141,11 +140,11 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 
 	// Start DB stats collector using a provider so metrics follow DB hot-swap.
 	if gtfsManager != nil {
-		appMetrics.StartDBStatsCollector(func() *sql.DB {
+		appMetrics.StartDBStatsCollector(func() metrics.DBStatsProvider {
 			if gtfsManager.GtfsDB == nil {
 				return nil
 			}
-			return gtfsManager.GtfsDB.DB
+			return gtfsManager.GtfsDB
 		}, 15*time.Second)
 	}
 
