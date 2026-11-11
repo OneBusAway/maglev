@@ -1000,7 +1000,7 @@ func (manager *Manager) storeFeedTrips(feedID string, trips tripAttribution, hea
 	if manager.feedTripDataTime == nil {
 		manager.feedTripDataTime = make(map[string]time.Time)
 	}
-	if headerTime.IsZero() {
+	if isMissingHeaderTime(headerTime) {
 		headerTime = time.Now()
 	}
 	agencies := trips.agencies
