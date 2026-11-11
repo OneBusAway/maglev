@@ -222,3 +222,63 @@ func TestReloadStaticSkipIfImportedError(t *testing.T) {
 	assert.ErrorContains(t, err, "error checking import metadata")
 	assert.False(t, changed)
 }
+
+// TestLogFeedExpiryClassifiesFractionalDayExpiry checks that logFeedExpiry
+// keeps the fractional part of the days-until-expiry calculation, so a feed
+// that expired less than 24 hours ago logs "GTFS feed has expired" (matching
+// what healthz and the expiry middleware report), and a feed that is a
+// fractional number of days away is not counted into an earlier window.
+func TestLogFeedExpiryClassifiesFractionalDayExpiry(t *testing.T) {
+	counter := countLogMessages(t)
+	manager, err := InitGTFSManager(context.Background(), Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: filepath.Join(t.TempDir(), "gtfs.db"),
+		Env:          appconf.Development,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
+
+	messages := []string{
+		"GTFS feed has expired",
+		"GTFS feed expires in 1 day or less",
+		"GTFS feed expires in 3 days or less",
+		"GTFS feed expires in 7 days or less",
+		"GTFS feed valid",
+	}
+	snapshot := func() map[string]int {
+		counts := make(map[string]int, len(messages))
+		for _, message := range messages {
+			counts[message] = counter.count(message)
+		}
+		return counts
+	}
+
+	tests := []struct {
+		name   string
+		offset time.Duration
+		want   string
+	}{
+		{"half a day overdue logs expired", -12 * time.Hour, "GTFS feed has expired"},
+		{"half a day ahead logs one day or less", 12 * time.Hour, "GTFS feed expires in 1 day or less"},
+		{"one and a half days ahead logs three days or less", 36 * time.Hour, "GTFS feed expires in 3 days or less"},
+		{"two and a half days ahead logs three days or less", 60 * time.Hour, "GTFS feed expires in 3 days or less"},
+		{"three and a half days ahead logs seven days or less", 84 * time.Hour, "GTFS feed expires in 7 days or less"},
+		{"seven and a half days ahead logs valid", 180 * time.Hour, "GTFS feed valid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := snapshot()
+			require.NoError(t, manager.GtfsDB.Queries.UpdateFeedExpiresAt(context.Background(),
+				sql.NullInt64{Int64: time.Now().Add(tt.offset).Unix(), Valid: true}))
+			manager.logFeedExpiry(context.Background(), slog.Default())
+			after := snapshot()
+			for _, message := range messages {
+				want := 0
+				if message == tt.want {
+					want = 1
+				}
+				assert.Equal(t, before[message]+want, after[message], "expected %q and only it", message)
+			}
+		})
+	}
+}

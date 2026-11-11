@@ -108,6 +108,19 @@ func TestMetadataHandler_StaticGtfsHash(t *testing.T) {
 	assert.Equal(t, rabaZipSha256(t), body["staticGtfsHash"])
 }
 
+// TestMetadataHandler_StaticGtfsHashStripsTidyMarker checks that the metadata
+// endpoint reports the stored hash without the gtfstidy marker.
+func TestMetadataHandler_StaticGtfsHashStripsTidyMarker(t *testing.T) {
+	api := createTestApiWithFeed(t, filepath.Join("../../testdata", "raba.zip"))
+	_, err := api.GtfsManager.GtfsDB.DB.Exec("UPDATE import_metadata SET file_hash = ?", "abc123+gtfstidy")
+	require.NoError(t, err)
+
+	resp, body := callAPIHandler[map[string]any](t, api, "/api/v2/metadata.json?key=TEST")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "abc123", body["staticGtfsHash"])
+}
+
 func TestMetadataHandler_NoImportOmitsHash(t *testing.T) {
 	api := &RestAPI{
 		Application: &app.Application{
