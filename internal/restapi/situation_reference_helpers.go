@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
@@ -19,12 +20,13 @@ type situationEntityIDs struct {
 
 type situationAgencyLookup struct {
 	known                map[string]struct{}
+	firstStaticAgencyID  string
 	routes, stops, trips map[string]string
 }
 
 // collectSituationEntityIDs includes raw and possibly qualified IDs so database
 // resolution can take precedence over an alert's fallback agency.
-func collectSituationEntityIDs(alerts []gtfs.Alert) situationEntityIDs {
+func collectSituationEntityIDs(alerts []internalgtfs.FeedAlert) situationEntityIDs {
 	var ids situationEntityIDs
 	for _, alert := range alerts {
 		for _, entity := range alert.InformedEntities {
@@ -52,7 +54,7 @@ func appendSituationCandidates(ids []string, id string) []string {
 
 // loadSituationAgencies keeps independent lookup failures local: missing maps
 // fall back during qualification rather than preventing situation construction.
-func (api *RestAPI) loadSituationAgencies(ctx context.Context, alerts []gtfs.Alert) situationAgencyLookup {
+func (api *RestAPI) loadSituationAgencies(ctx context.Context, alerts []internalgtfs.FeedAlert) situationAgencyLookup {
 	agencies := situationAgencyLookup{
 		known: make(map[string]struct{}), routes: make(map[string]string),
 		stops: make(map[string]string), trips: make(map[string]string),
@@ -61,7 +63,7 @@ func (api *RestAPI) loadSituationAgencies(ctx context.Context, alerts []gtfs.Ale
 		return agencies
 	}
 	ids := collectSituationEntityIDs(alerts)
-	api.loadSituationKnownAgencies(ctx, agencies.known)
+	agencies.firstStaticAgencyID = api.loadSituationKnownAgencies(ctx, agencies.known)
 	api.loadSituationRouteAgencies(ctx, ids.routes, agencies.routes, "failed to fetch routes for situation reference")
 	api.loadSituationStopAgencies(ctx, ids.stops, agencies.stops)
 	api.loadSituationTripAgencies(ctx, ids.trips, agencies)
@@ -78,15 +80,19 @@ func logSituationLookupError(ctx context.Context, message string, err error) {
 
 // loadSituationKnownAgencies identifies prefixes that qualification may retain
 // even when the referenced entity is absent from the static feed.
-func (api *RestAPI) loadSituationKnownAgencies(ctx context.Context, agencies map[string]struct{}) {
+func (api *RestAPI) loadSituationKnownAgencies(ctx context.Context, agencies map[string]struct{}) string {
 	ids, err := api.GtfsManager.GtfsDB.Queries.ListAgencyIds(ctx)
 	if err != nil {
 		logSituationLookupError(ctx, "failed to fetch agencies for situation reference", err)
-		return
+		return ""
 	}
 	for _, id := range ids {
 		agencies[id] = struct{}{}
 	}
+	if len(ids) > 0 {
+		return ids[0]
+	}
+	return ""
 }
 
 // loadSituationRouteAgencies deduplicates candidates and publishes results only
@@ -163,11 +169,11 @@ func situationConsequences(effect gtfs.AlertEffect) []models.SituationConsequenc
 
 // buildSituationReference constructs one situation without reordering selectors
 // or consulting the database again.
-func buildSituationReference(alert gtfs.Alert, agencies situationAgencyLookup) models.Situation {
+func buildSituationReference(alert internalgtfs.FeedAlert, agencies situationAgencyLookup) models.Situation {
 	situation := models.Situation{
 		ID:                 alert.ID,
 		CreationTime:       models.NewModelTime(time.Time{}),
-		ActiveWindows:      situationActiveWindows(alert),
+		ActiveWindows:      situationActiveWindows(alert.Alert),
 		AllAffects:         situationAffectedEntities(alert, agencies),
 		ConsequenceMessage: "",
 		Consequences:       situationConsequences(alert.Effect),
@@ -209,15 +215,12 @@ func situationActiveWindows(alert gtfs.Alert) []models.ActiveWindow {
 
 // situationAffectedEntities preserves repeated selectors and their order while
 // qualifying IDs from database ownership before applying fallback agencies.
-func situationAffectedEntities(alert gtfs.Alert, agencies situationAgencyLookup) []models.AffectedEntity {
+func situationAffectedEntities(alert internalgtfs.FeedAlert, agencies situationAgencyLookup) []models.AffectedEntity {
 	entities := make([]models.AffectedEntity, 0, len(alert.InformedEntities))
 	for _, entity := range alert.InformedEntities {
 		rawRouteID, rawStopID, rawTripID := extractRawEntityIDs(entity)
 
-		fallbackAgency := getStringValue(entity.AgencyID)
-		if fallbackAgency == "" {
-			fallbackAgency = agencyIDForAlert(alert, "")
-		}
+		fallbackAgency := entityFallbackAgency(alert, entity, agencies.firstStaticAgencyID)
 
 		routeID := qualifyEntityID(rawRouteID, fallbackAgency, agencies.routes, agencies.known)
 		stopID := qualifyEntityID(rawStopID, fallbackAgency, agencies.stops, agencies.known)

@@ -74,7 +74,7 @@ func TestSituationReferenceLookupFailures(t *testing.T) {
 				db.Queries = gtfsdb.New(probe)
 				var logs bytes.Buffer
 				ctx := logging.WithLogger(context.Background(), slog.New(slog.NewTextHandler(&logs, nil)))
-				got := api.BuildSituationReferences(ctx, alerts)
+				got := api.BuildSituationReferences(ctx, feedAlertsForTest("", alerts))
 				require.Len(t, got, 2)
 				require.Equal(t, "first", got[0].ID)
 				require.Equal(t, "second", got[1].ID)
@@ -94,7 +94,7 @@ func TestSituationReferenceLookupFailures(t *testing.T) {
 				require.Equal(t, wantTrip, affect.TripID)
 				wantUnknown := "25_missing"
 				if failCall == 1 {
-					wantUnknown = "fallback_25_missing"
+					wantUnknown = "25_missing"
 				}
 				require.Equal(t, wantUnknown, got[0].AllAffects[2].RouteID)
 				calls := wantCalls
@@ -126,7 +126,7 @@ func TestSituationReferencesWithoutDatabase(t *testing.T) {
 		ID: "empty", Effect: gtfs.UnknownEffect,
 		Header: []gtfs.AlertText{{Text: ""}, {Text: "ignored"}},
 	}}
-	got := api.BuildSituationReferences(context.Background(), alerts)
+	got := api.BuildSituationReferences(context.Background(), feedAlertsForTest("", alerts))
 	require.Len(t, got, 1)
 	require.NotNil(t, got[0].ActiveWindows)
 	require.NotNil(t, got[0].AllAffects)
@@ -157,7 +157,7 @@ func TestSituationReferencesSharedStopAgency(t *testing.T) {
 	require.Equal(t, "00", rows[0].ID)
 	require.Equal(t, "25", rows[1].ID)
 	agency, stop := "25", "1056"
-	got := api.BuildSituationReferences(ctx, []gtfs.Alert{{InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agency, StopID: &stop}}}})
+	got := api.BuildSituationReferences(ctx, feedAlertsForTest("", []gtfs.Alert{{InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agency, StopID: &stop}}}}))
 	require.Len(t, got, 1)
 	require.Len(t, got[0].AllAffects, 1)
 	require.Equal(t, "00_1056", got[0].AllAffects[0].StopID, "the first database agency wins over later rows and the selector")
@@ -168,12 +168,12 @@ func TestSituationReferencesSharedStopAgency(t *testing.T) {
 func TestSituationReferencesWindowsAndTranslations(t *testing.T) {
 	api := &RestAPI{}
 	zero, start, end := time.Unix(0, 0), time.Unix(2, 0), time.Unix(3, 0)
-	got := api.BuildSituationReferences(context.Background(), []gtfs.Alert{{
+	got := api.BuildSituationReferences(context.Background(), feedAlertsForTest("", []gtfs.Alert{{
 		ActivePeriods: []gtfs.AlertActivePeriod{{}, {StartsAt: &zero}, {EndsAt: &end}, {StartsAt: &start, EndsAt: &end}},
 		Header:        []gtfs.AlertText{{Text: "First", Language: "en"}, {Text: "Second", Language: "fr"}},
 		Description:   []gtfs.AlertText{{Text: ""}, {Text: "Ignored"}},
 		URL:           []gtfs.AlertText{{Text: "https://example.com", Language: "en"}},
-	}})
+	}}))
 	require.Len(t, got, 1)
 	require.Equal(t, []models.ActiveWindow{{}, {}, {To: 3000}, {From: 2000, To: 3000}}, got[0].ActiveWindows)
 	require.Equal(t, &models.TranslatedString{Value: "First", Lang: "en"}, got[0].Summary)
@@ -201,7 +201,7 @@ func TestSituationReferencesLaterBatchFailure(t *testing.T) {
 		t.Run(strconv.Itoa(failCall), func(t *testing.T) {
 			probe := &situationLookupDB{DBTX: db.DB, failCall: failCall, failWith: errors.New("second route batch failed")}
 			db.Queries = gtfsdb.New(probe)
-			got := api.BuildSituationReferences(context.Background(), []gtfs.Alert{{InformedEntities: entities}})
+			got := api.BuildSituationReferences(context.Background(), feedAlertsForTest("", []gtfs.Alert{{InformedEntities: entities}}))
 			require.Len(t, got, 1)
 			require.Len(t, got[0].AllAffects, len(entities))
 			require.Len(t, probe.calls, 3)
@@ -245,7 +245,7 @@ func TestSituationReferenceTranslationFields(t *testing.T) {
 					alert.URL, want.URL = tc.texts, tc.want
 				}
 				api := &RestAPI{}
-				got := api.BuildSituationReferences(context.Background(), []gtfs.Alert{alert})
+				got := api.BuildSituationReferences(context.Background(), feedAlertsForTest("", []gtfs.Alert{alert}))
 				require.Len(t, got, 1)
 				require.Equal(t, want.Summary, got[0].Summary)
 				require.Equal(t, want.Description, got[0].Description)

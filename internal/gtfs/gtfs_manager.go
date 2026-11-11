@@ -97,6 +97,11 @@ type Manager struct {
 
 	// Tracks the last successful update time per feed
 	feedLastUpdate map[string]time.Time
+
+	// Tracks the last successful trip-updates fetch per feed, so a failing
+	// trip-updates sub-feed ages out on its own clock even while sibling
+	// sub-feeds keep resetting the feed-wide staleness timer.
+	feedTripLastSuccess map[string]time.Time
 }
 
 // clearFeedData removes stale data for a specific feed when the staleness threshold is crossed
@@ -121,6 +126,29 @@ func (manager *Manager) clearFeedData(feedID string) {
 	delete(manager.feedLastUpdate, feedID)
 
 	manager.rebuildMergedRealtimeLocked()
+}
+
+// clearStaleTripUpdates clears a feed's stored trip updates when its
+// trip-updates sub-feed has kept failing for longer than staleFeedThreshold
+// while a sibling sub-feed keeps succeeding. A partial success resets the
+// feed-wide staleness timer, so without this the last good trip updates would
+// be served (and, since #1737, republished) forever. Returns true when trip
+// data was cleared.
+func (manager *Manager) clearStaleTripUpdates(feedID string) bool {
+	manager.realTimeMutex.Lock()
+	defer manager.realTimeMutex.Unlock()
+
+	last, ok := manager.feedTripLastSuccess[feedID]
+	if !ok || time.Since(last) <= staleFeedThreshold || (len(manager.feedTrips[feedID]) == 0 && len(manager.feedUnattributedTrips[feedID]) == 0) {
+		return false
+	}
+
+	manager.feedTrips[feedID] = nil
+	delete(manager.feedUnattributedTrips, feedID)
+	delete(manager.feedTripAgency, feedID)
+	delete(manager.feedTripDataTime, feedID)
+	manager.rebuildMergedRealtimeLocked()
+	return true
 }
 
 // IsReady returns true if the GTFS data is fully initialized and indexed.
@@ -688,13 +716,12 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	if !requestedTrip.BlockID.Valid {
-		reqLogger.Debug("trip has no block ID, cannot find vehicle by block",
-			slog.String("trip_id", tripID))
+	// Java treats a blockless trip as its own block, and the direct lookup
+	// above already checked that trip.
+	requestedBlockID := nulls.StringOrEmpty(requestedTrip.BlockID)
+	if requestedBlockID == "" {
 		return nil
 	}
-
-	requestedBlockID := nulls.StringOrEmpty(requestedTrip.BlockID)
 
 	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
@@ -703,7 +730,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	blockTripIDs := make(map[string]bool)
+	blockTripIDs := make(map[string]bool, len(blockTrips))
 	for _, trip := range blockTrips {
 		blockTripIDs[trip.ID] = true
 	}
