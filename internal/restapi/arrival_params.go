@@ -28,7 +28,7 @@ func parseMinutesValue(queryParams url.Values, key string, fallback time.Duratio
 		return fallback
 	}
 
-	minutes, err := strconv.Atoi(values[0])
+	minutes, err := strconv.ParseInt(values[0], 10, 32)
 	if err != nil {
 		addError(key, "must be a valid integer")
 		return fallback
