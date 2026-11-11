@@ -38,7 +38,8 @@ func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 		GTFSDataPath:          gtfsCfgData.GTFSDataPath,
 		Env:                   gtfsCfgData.Env,
 
-		EnableGTFSTidy: gtfsCfgData.EnableGTFSTidy,
+		EnableGTFSTidy:       gtfsCfgData.EnableGTFSTidy,
+		StopConsolidationURL: gtfsCfgData.StopConsolidationURL,
 	}
 
 	for _, feedData := range gtfsCfgData.RTFeeds {
@@ -320,6 +321,9 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	if gtfsCfg.StaticAuthHeaderKey != "" {
 		staticFeed["auth-header-name"] = gtfsCfg.StaticAuthHeaderKey
 		staticFeed["auth-header-value"] = staticAuthValue
+	}
+	if gtfsCfg.StopConsolidationURL != "" {
+		staticFeed["stop-consolidation-url"] = gtfsCfg.StopConsolidationURL
 	}
 
 	// Build JSON config structure

@@ -92,6 +92,10 @@
           "type": "boolean",
           "description": "Enable GTFS tidying with gtfstidy tool (requires gtfstidy to be installed)",
           "default": false
+        },
+        "stop-consolidation-url": {
+          "type": "string",
+          "description": "Optional Java OneBusAway stop consolidation file (http/https URL or local file path). Each line lists a canonical stop ID, then the stop IDs merged into it, in <agency>_<id> form, where the agency is the feed's first agency in agency.txt"
         }
       },
       "required": ["url"],
