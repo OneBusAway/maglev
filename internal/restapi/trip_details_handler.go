@@ -346,7 +346,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if len(tripsToInclude) > 0 {
-			referencedTrips, err := api.buildReferencedTrips(ctx, agencyID, tripsToInclude, trip)
+			referencedTrips, err := api.buildReferencedTrips(ctx, tripsToInclude, trip)
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return
@@ -438,7 +438,7 @@ func tripSpanCovers(trip gtfsdb.Trip, freqs []gtfsdb.Frequency, offset time.Dura
 	return false
 }
 
-func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, tripsToInclude []string, mainTrip gtfsdb.Trip) ([]*models.Trip, error) {
+func (api *RestAPI) buildReferencedTrips(ctx context.Context, tripsToInclude []string, mainTrip gtfsdb.Trip) ([]*models.Trip, error) {
 	referencedTrips := []*models.Trip{}
 
 	// extract unique trip IDs for the batch fetch
@@ -510,13 +510,19 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 			continue
 		}
 
-		blockID := utils.FormBlockID(agencyID, nulls.StringOrEmpty(refTrip.BlockID), refTrip.ID)
+		// Every ID but the trip's own is filed under its route's agency, which
+		// differs from the request's in a two-agency block. For blockId this
+		// matches Java. Java gives serviceId and shapeId the feed's default agency
+		// instead, but maglev uses the route's agency because shape/{id} only
+		// resolves a shape under the agency of a route that uses it.
+		tripAgencyID := refRoute.AgencyID
+		blockID := utils.FormBlockID(tripAgencyID, nulls.StringOrEmpty(refTrip.BlockID), refTrip.ID)
 
 		refTripModel := &models.Trip{
 			ID:             entry.combinedID,
-			RouteID:        utils.FormCombinedID(refRoute.AgencyID, refTrip.RouteID),
-			ServiceID:      utils.FormCombinedID(agencyID, refTrip.ServiceID),
-			ShapeID:        utils.FormCombinedID(agencyID, nulls.StringOrEmpty(refTrip.ShapeID)),
+			RouteID:        utils.FormCombinedID(tripAgencyID, refTrip.RouteID),
+			ServiceID:      utils.FormCombinedID(tripAgencyID, refTrip.ServiceID),
+			ShapeID:        utils.FormCombinedID(tripAgencyID, nulls.StringOrEmpty(refTrip.ShapeID)),
 			TripHeadsign:   nulls.StringOrEmpty(refTrip.TripHeadsign),
 			TripShortName:  nulls.StringOrEmpty(refTrip.TripShortName),
 			DirectionID:    strconv.FormatInt(refTrip.DirectionID.Int64, 10),

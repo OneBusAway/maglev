@@ -205,7 +205,7 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 	{
 		linkedTripIDs := scheduleLinkedTripIDs(schedule)
 		if len(linkedTripIDs) > 0 {
-			linkedTrips, err := api.buildReferencedTrips(ctx, agencyID, linkedTripIDs, trip)
+			linkedTrips, err := api.buildReferencedTrips(ctx, linkedTripIDs, trip)
 			if err != nil {
 				return nil, err
 			}

@@ -485,9 +485,12 @@ func TestBuildReferencedTrips_CrossAgencyRouteID(t *testing.T) {
 			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
 		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
 			"s1,Stop 1,37.7749,-122.4194\n",
-		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
-			"r100,svc1,t1,Headsign,0\n" +
-			"r300,svc1,t2,Headsign,0\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id,shape_id\n" +
+			"r100,svc1,t1,Headsign,0,blk1,\n" +
+			"r300,svc1,t2,Headsign,0,blk1,shp2\n",
+		"shapes.txt": "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n" +
+			"shp2,37.7749,-122.4194,1\n" +
+			"shp2,37.7849,-122.4094,2\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"t1,08:00:00,08:00:00,s1,1\n" +
 			"t2,09:00:00,09:00:00,s1,1\n",
@@ -496,13 +499,18 @@ func TestBuildReferencedTrips_CrossAgencyRouteID(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "cross-agency-referenced-trips.zip", files)
 	ctx := context.Background()
 
-	trips, err := api.buildReferencedTrips(ctx, "A1", []string{"A1_t2"}, gtfsdb.Trip{ID: "t1"})
+	trips, err := api.buildReferencedTrips(ctx, []string{"A1_t2"}, gtfsdb.Trip{ID: "t1"})
 	require.NoError(t, err)
 	require.Len(t, trips, 1)
 
 	// The linked trip runs on A2's route, so its routeId has to carry A2 for the
-	// reference to resolve, even though the request was scoped to A1.
+	// reference to resolve, even though the request was scoped to A1. Its
+	// serviceId, shapeId and blockId follow the same route agency; see
+	// buildReferencedTrips for where that matches Java and where it doesn't.
 	assert.Equal(t, "A2_r300", trips[0].RouteID)
+	assert.Equal(t, "A2_svc1", trips[0].ServiceID)
+	assert.Equal(t, "A2_shp2", trips[0].ShapeID)
+	assert.Equal(t, "A2_blk1", trips[0].BlockID)
 
 	refs := &models.ReferencesModel{Trips: []models.Trip{*trips[0]}}
 	require.NoError(t, api.appendTripRouteReferences(ctx, refs, "A1"))
