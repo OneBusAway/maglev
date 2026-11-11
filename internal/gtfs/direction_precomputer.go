@@ -162,20 +162,20 @@ func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) err
 		qtx := dp.queries.WithTx(tx)
 		batchSuccess := 0
 		for _, result := range batch {
-			if result.direction != "" {
-				err := qtx.UpdateStopDirection(ctx, gtfsdb.UpdateStopDirectionParams{
-					Direction: sql.NullString{String: result.direction, Valid: true},
-					ID:        result.stopID,
-				})
-				if err != nil {
-					logging.LogError(dp.logger, fmt.Sprintf("Failed to update direction for stop %s", result.stopID), err)
-					errorCount++
-					continue
-				}
-				batchSuccess++
-			} else {
+			if result.direction == "" {
 				skippedCount++
+				continue
 			}
+			err := qtx.UpdateStopDirection(ctx, gtfsdb.UpdateStopDirectionParams{
+				Direction: sql.NullString{String: result.direction, Valid: true},
+				ID:        result.stopID,
+			})
+			if err != nil {
+				logging.LogError(dp.logger, fmt.Sprintf("Failed to update direction for stop %s", result.stopID), err)
+				errorCount++
+				continue
+			}
+			batchSuccess++
 		}
 
 		// Commit batch transaction
