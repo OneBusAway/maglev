@@ -338,7 +338,7 @@ func TestArrivalFrequencyWindowReachesServiceDayTwo(t *testing.T) {
 			arrivals := frequencyWindowArrivals(t, api, endpoint, params)
 			serviceDays := make(map[string]int)
 			for _, arrival := range arrivals {
-				serviceDays[arrival.ServiceDate.Format("2006-01-02")]++
+				serviceDays[arrival.ServiceDate.UTC().Format("2006-01-02")]++
 			}
 			// The frequency block runs 23:00-26:00 every service day, so its
 			// departures land in the window on day 0 (Jun 12), day 1 (Jun 13)
