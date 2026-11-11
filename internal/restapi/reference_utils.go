@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -487,9 +486,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 				firstStaticAgencyID = agencyIDs[0]
 			}
 		} else {
-			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-				logger.Error("failed to fetch agencies for situation reference", "error", err)
-			}
+			logQueryError(logger, "failed to fetch agencies for situation reference", err)
 		}
 
 		if len(routeCandidateIDs) > 0 {
@@ -500,9 +497,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 					routeAgencyMap[r.ID] = r.AgencyID
 				}
 			} else {
-				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-					logger.Error("failed to fetch routes for situation reference", "error", err)
-				}
+				logQueryError(logger, "failed to fetch routes for situation reference", err)
 			}
 		}
 
@@ -516,9 +511,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 					}
 				}
 			} else {
-				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-					logger.Error("failed to fetch stops for situation reference", "error", err)
-				}
+				logQueryError(logger, "failed to fetch stops for situation reference", err)
 			}
 		}
 
@@ -547,15 +540,11 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 							}
 						}
 					} else {
-						if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-							logger.Error("failed to fetch missing routes for situation reference", "error", err)
-						}
+						logQueryError(logger, "failed to fetch missing routes for situation reference", err)
 					}
 				}
 			} else {
-				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-					logger.Error("failed to fetch trips for situation reference", "error", err)
-				}
+				logQueryError(logger, "failed to fetch trips for situation reference", err)
 			}
 		}
 	}
