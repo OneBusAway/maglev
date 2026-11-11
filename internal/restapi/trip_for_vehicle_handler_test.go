@@ -189,7 +189,8 @@ func TestTripForVehicleHandler_NotFoundCases(t *testing.T) {
 		{"Unknown vehicle ID", utils.FormCombinedID(testdata.Raba.ID, "invalid")},
 		{"Vehicle with empty trip", utils.FormCombinedID(testdata.Raba.ID, idleVehicleID)},
 		{"Vehicle referencing non-existent trip", utils.FormCombinedID(testdata.Raba.ID, ghostVehicleID)},
-		{"Unknown agency", utils.FormCombinedID("INVALID_AGENCY", "MOCK_VEHICLE_1")},
+		{"Unknown agency with known vehicle", utils.FormCombinedID("UNKNOWN", "MOCK_VEHICLE_1")},
+		{"Unknown agency with underscore in ID", utils.FormCombinedID("INVALID_AGENCY", "MOCK_VEHICLE_1")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
