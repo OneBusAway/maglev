@@ -687,21 +687,17 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 
 // feedLatestStopTimeNs extracts the max departure time (ns since midnight) from
 // GetFeedLatestStopTime, which returns interface{} like all aggregated sqlc queries.
+// COALESCE guarantees a non-nil int64; other types are unexpected.
 func feedLatestStopTimeNs(ctx context.Context, qtx *Queries) (int64, error) {
 	val, err := qtx.GetFeedLatestStopTime(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get feed latest stop time: %w", err)
 	}
-	switch v := val.(type) {
-	case nil:
-		return 0, nil
-	case int64:
-		return v, nil
-	case int32:
-		return int64(v), nil
-	default:
+	v, ok := val.(int64)
+	if !ok {
 		return 0, fmt.Errorf("unexpected type from GetFeedLatestStopTime: %T", val)
 	}
+	return v, nil
 }
 
 func latestAgencyExpiry(serviceDate time.Time, agencies []Agency, latestStopNs int64) (time.Time, error) {
@@ -730,15 +726,12 @@ func latestAgencyExpiry(serviceDate time.Time, agencies []Agency, latestStopNs i
 			return time.Time{}, fmt.Errorf("agency %q has invalid timezone %q: %w", agency.ID, timezone, err)
 		}
 		seen[timezone] = true
-		// Construct the wall-clock time directly in the local timezone: adding a
-		// duration to midnight in UTC terms produces the wrong result on DST
-		// transition dates where the UTC offset differs between midnight and
-		// end-of-day.
-		h := int(latestStopNs / int64(time.Hour))
-		rem := latestStopNs % int64(time.Hour)
-		m := int(rem / int64(time.Minute))
-		s := int((rem % int64(time.Minute)) / int64(time.Second))
-		expiresAt := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), h, m, s, 0, location)
+		// Compute midnight as "noon minus 12h" per the GTFS elapsed-time
+		// convention, which avoids the DST-gap and fold ambiguity that
+		// affects building a wall-clock time directly.
+		expiresAt := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 12, 0, 0, 0, location).
+			Add(-12 * time.Hour).
+			Add(time.Duration(latestStopNs))
 		if latest.IsZero() || expiresAt.After(latest) {
 			latest = expiresAt
 		}

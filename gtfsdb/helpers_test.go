@@ -341,19 +341,27 @@ func TestUpdateFeedExpiresAtFromCalendar(t *testing.T) {
 
 func TestUpdateFeedExpiresAtFromCalendar_Timezones(t *testing.T) {
 	tests := []struct {
-		name      string
-		date      string
-		timezones []string
-		want      string
+		name           string
+		date           string
+		timezones      []string
+		pastMidnightNs int64 // non-zero: insert into trips so feed uses this departure time
+		want           string
 	}{
-		{"New York winter", "20270313", []string{"America/New_York"}, "2027-03-14T04:59:59Z"},
-		{"Seattle summer", "20270701", []string{"America/Los_Angeles"}, "2027-07-02T06:59:59Z"},
-		{"east of UTC", "20270313", []string{"Asia/Tokyo"}, "2027-03-13T14:59:59Z"},
-		{"fractional offset", "20270313", []string{"Asia/Kolkata"}, "2027-03-13T18:29:59Z"},
-		{"spring forward", "20270314", []string{"America/New_York"}, "2027-03-15T03:59:59Z"},
-		{"fall back", "20271107", []string{"America/New_York"}, "2027-11-08T04:59:59Z"},
-		{"multiple zones", "20270313", []string{"Asia/Tokyo", "America/Los_Angeles", "America/New_York", "America/Los_Angeles"}, "2027-03-14T07:59:59Z"},
-		{"trimmed timezone", "20270313", []string{" America/New_York "}, "2027-03-14T04:59:59Z"},
+		{"New York winter", "20270313", []string{"America/New_York"}, 0, "2027-03-14T04:59:59Z"},
+		{"Seattle summer", "20270701", []string{"America/Los_Angeles"}, 0, "2027-07-02T06:59:59Z"},
+		{"east of UTC", "20270313", []string{"Asia/Tokyo"}, 0, "2027-03-13T14:59:59Z"},
+		{"fractional offset", "20270313", []string{"Asia/Kolkata"}, 0, "2027-03-13T18:29:59Z"},
+		{"spring forward", "20270314", []string{"America/New_York"}, 0, "2027-03-15T03:59:59Z"},
+		// fall back: noon on 2027-11-07 is EST (UTC-5) since transition was at 2 AM;
+		// noon EST − 12h = midnight EDT + 1h (05:00Z) + 23h59m59s = 04:59:59Z.
+		{"fall back", "20271107", []string{"America/New_York"}, 0, "2027-11-08T04:59:59Z"},
+		{"multiple zones", "20270313", []string{"Asia/Tokyo", "America/Los_Angeles", "America/New_York", "America/Los_Angeles"}, 0, "2027-03-14T07:59:59Z"},
+		{"trimmed timezone", "20270313", []string{" America/New_York "}, 0, "2027-03-14T04:59:59Z"},
+		// DST-eve: trip runs past midnight into the DST transition day.
+		// spring forward eve: svc 2027-03-13 LA, dep 26:30 → noon PST(UTC-8)−12h=08:00Z+26h30m=10:30Z
+		{"spring forward eve", "20270313", []string{"America/Los_Angeles"}, int64(26*time.Hour + 30*time.Minute), "2027-03-14T10:30:00Z"},
+		// fall back eve: svc 2027-11-06 NY, dep 25:30 → noon EDT(UTC-4)−12h=04:00Z+25h30m=05:30Z
+		{"fall back eve", "20271106", []string{"America/New_York"}, int64(25*time.Hour + 30*time.Minute), "2027-11-07T05:30:00Z"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -366,6 +374,10 @@ func TestUpdateFeedExpiresAtFromCalendar_Timezones(t *testing.T) {
 			}
 			_, err = db.Exec("INSERT INTO calendar (end_date) VALUES (?)", tt.date)
 			require.NoError(t, err)
+			if tt.pastMidnightNs > 0 {
+				_, err = db.Exec("INSERT INTO trips (max_departure_time) VALUES (?)", tt.pastMidnightNs)
+				require.NoError(t, err)
+			}
 			require.NoError(t, updateFeedExpiresAtFromCalendar(t.Context(), q))
 			metadata, err := q.GetImportMetadata(t.Context())
 			require.NoError(t, err)
@@ -392,6 +404,28 @@ func TestUpdateFeedExpiresAtFromCalendar_InvalidTimezonePreservesExpiry(t *testi
 			assert.Equal(t, before.FeedExpiresAt, after.FeedExpiresAt)
 		})
 	}
+}
+
+// TestUpdateFeedExpiresAtFromCalendar_PastMidnightTrip verifies that when the
+// feed contains a trip with a departure after midnight (departure time > 24h),
+// the expiry is set beyond the end-of-day floor.
+func TestUpdateFeedExpiresAtFromCalendar_PastMidnightTrip(t *testing.T) {
+	db, q := newFeedExpiryTestDB(t)
+	// Trip departs at 25:30 (1:30 AM next day) = 25h30m from midnight.
+	pastMidnightNs := int64(25*time.Hour + 30*time.Minute)
+	_, err := db.Exec("INSERT INTO calendar (end_date) VALUES ('20270313')")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO trips (max_departure_time) VALUES (?)", pastMidnightNs)
+	require.NoError(t, err)
+
+	require.NoError(t, updateFeedExpiresAtFromCalendar(t.Context(), q))
+
+	metadata, err := q.GetImportMetadata(t.Context())
+	require.NoError(t, err)
+	require.True(t, metadata.FeedExpiresAt.Valid)
+	// Default agency timezone is UTC: noon UTC − 12h = 00:00Z, plus 25h30m = 2027-03-14T01:30:00Z.
+	assert.Equal(t, "2027-03-14T01:30:00Z",
+		time.Unix(metadata.FeedExpiresAt.Int64, 0).UTC().Format(time.RFC3339))
 }
 
 func TestStoreGtfsData_UnchangedFeedRefreshesExpiry(t *testing.T) {
