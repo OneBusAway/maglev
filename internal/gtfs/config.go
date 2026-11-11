@@ -1,7 +1,6 @@
 package gtfs
 
 import (
-	"strings"
 	"time"
 
 	"maglev.onebusaway.org/internal/appconf"
@@ -22,6 +21,12 @@ type RTFeedConfig struct {
 
 // Config holds GTFS configuration for the manager.
 type Config struct {
+	// StaticFeeds lists every static feed in load order. StaticFeeds[0] is
+	// authoritative: GtfsURL, StaticAuthHeader* and EnableGTFSTidy are
+	// derived from it, and the importer still reads only those fields.
+	StaticFeeds []appconf.GtfsStaticFeed
+	// BundleInputsURL is the manifest StaticFeeds was read from, if any.
+	BundleInputsURL       string
 	GtfsURL               string
 	StaticAuthHeaderKey   string
 	StaticAuthHeaderValue string
@@ -79,5 +84,5 @@ func (config Config) feedAgencyFilters() map[string]map[string]bool {
 }
 
 func (config Config) isLocalFile() bool {
-	return !strings.HasPrefix(config.GtfsURL, "http://") && !strings.HasPrefix(config.GtfsURL, "https://")
+	return !appconf.IsHTTPURL(config.GtfsURL)
 }

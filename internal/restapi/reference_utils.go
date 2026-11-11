@@ -2,8 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -41,13 +39,59 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 		return []models.Route{}, nil
 	}
 
-	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, originalRouteIDs)
+	routes, err := utils.QueryInBatches(ctx, originalRouteIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
 	if err != nil {
 		return nil, err
 	}
 
+	// The query orders each batch by ID. Preserve that ordering across batches.
+	if len(originalRouteIDs) > utils.IDsPerBatchedQuery {
+		slices.SortFunc(routes, func(a, b gtfsdb.Route) int { return strings.Compare(a.ID, b.ID) })
+	}
 	filteredRoutes := filterRoutesByExpectedCombinedID(routes, expectedCombinedIDs, agencyID)
 	return buildRouteModels(ctx, agencyID, filteredRoutes)
+}
+
+// candidateRouteIDs returns all possible bare route IDs for a route ID string,
+// including every underscore-separated suffix and the full string itself.
+func candidateRouteIDs(routeID string) []string {
+	parts := strings.Split(routeID, "_")
+	candidates := make([]string, 0, len(parts))
+	for i := 1; i < len(parts); i++ {
+		bareID := strings.Join(parts[i:], "_")
+		if !slices.Contains(candidates, bareID) {
+			candidates = append(candidates, bareID)
+		}
+	}
+	if !slices.Contains(candidates, routeID) {
+		candidates = append(candidates, routeID)
+	}
+	return candidates
+}
+
+// recordRouteCandidates records routeID and its agency-qualified variant into
+// expectedCombinedIDs, and appends previously unseen bare candidates to
+// candidateIDs using seen for deduplication.
+func recordRouteCandidates(
+	routeID, agencyID string,
+	expectedCombinedIDs map[string]bool,
+	seen map[string]bool,
+	candidateIDs []string,
+) []string {
+	if routeID == "" {
+		return candidateIDs
+	}
+	expectedCombinedIDs[routeID] = true
+	if !strings.Contains(routeID, "_") && agencyID != "" {
+		expectedCombinedIDs[utils.FormCombinedID(agencyID, routeID)] = true
+	}
+	for _, candID := range candidateRouteIDs(routeID) {
+		if !seen[candID] {
+			seen[candID] = true
+			candidateIDs = append(candidateIDs, candID)
+		}
+	}
+	return candidateIDs
 }
 
 // expectedRouteIDsForStops walks every stop's StaticRouteIDs and returns the
@@ -65,18 +109,7 @@ func expectedRouteIDsForStops(ctx context.Context, stops []models.Stop, agencyID
 		}
 
 		for _, routeID := range stop.StaticRouteIDs {
-			routeAgencyID, originalRouteID, err := utils.ExtractAgencyIDAndCodeID(routeID)
-			if err != nil {
-				originalRouteID = routeID
-				routeAgencyID = agencyID
-			}
-
-			expectedCombinedIDs[utils.FormCombinedID(routeAgencyID, originalRouteID)] = true
-
-			if !routeIDSet[originalRouteID] {
-				routeIDSet[originalRouteID] = true
-				originalRouteIDs = append(originalRouteIDs, originalRouteID)
-			}
+			originalRouteIDs = recordRouteCandidates(routeID, agencyID, expectedCombinedIDs, routeIDSet, originalRouteIDs)
 		}
 	}
 
@@ -218,6 +251,23 @@ func scheduleLinkedTripIDs(schedule *models.Schedule) []string {
 	return linked
 }
 
+// tripRouteCandidates collects expected combined route IDs and bare route ID
+// candidates for trips whose route is not already present in references.Routes.
+func tripRouteCandidates(trips []models.Trip, present map[string]bool, requestAgencyID string) (map[string]bool, []string) {
+	expectedCombinedIDs := make(map[string]bool)
+	candidateSet := make(map[string]bool)
+	candidateIDs := make([]string, 0)
+
+	for _, trip := range trips {
+		if trip.RouteID == "" || present[trip.RouteID] {
+			continue
+		}
+		candidateIDs = recordRouteCandidates(trip.RouteID, requestAgencyID, expectedCombinedIDs, candidateSet, candidateIDs)
+	}
+
+	return expectedCombinedIDs, candidateIDs
+}
+
 // appendTripRouteReferences adds the route of every referenced trip whose routeId
 // is not already in references.routes, plus that route's agency when it is not
 // requestAgencyID. A route that no longer exists costs the reference, not the
@@ -228,26 +278,29 @@ func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *m
 		present[route.ID] = true
 	}
 
-	for _, trip := range references.Trips {
-		if trip.RouteID == "" || present[trip.RouteID] {
-			continue
-		}
-		_, routeID, err := utils.ExtractAgencyIDAndCodeID(trip.RouteID)
-		if err != nil {
-			continue
-		}
+	expectedCombinedIDs, candidateIDs := tripRouteCandidates(references.Trips, present, requestAgencyID)
+	if len(candidateIDs) == 0 {
+		return nil
+	}
 
-		route, err := api.routeReferenceByID(ctx, routeID)
-		if errors.Is(err, sql.ErrNoRows) {
+	routes, err := utils.QueryInBatches(ctx, candidateIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
+	if err != nil {
+		return err
+	}
+
+	filteredRoutes := filterRoutesByExpectedCombinedID(routes, expectedCombinedIDs, requestAgencyID)
+	routeModels, err := buildRouteModels(ctx, requestAgencyID, filteredRoutes)
+	if err != nil {
+		return err
+	}
+
+	for _, routeModel := range routeModels {
+		if present[routeModel.ID] {
 			continue
 		}
-		if err != nil {
-			return err
-		}
-
-		present[route.ID] = true
-		references.Routes = append(references.Routes, route)
-		api.appendRouteAgencyReference(ctx, references, route.AgencyID, requestAgencyID)
+		present[routeModel.ID] = true
+		references.Routes = append(references.Routes, routeModel)
+		api.appendRouteAgencyReference(ctx, references, routeModel.AgencyID, requestAgencyID)
 	}
 
 	return nil
@@ -433,9 +486,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 				firstStaticAgencyID = agencyIDs[0]
 			}
 		} else {
-			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-				logger.Error("failed to fetch agencies for situation reference", "error", err)
-			}
+			logQueryError(logger, "failed to fetch agencies for situation reference", err)
 		}
 
 		if len(routeCandidateIDs) > 0 {
@@ -446,9 +497,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 					routeAgencyMap[r.ID] = r.AgencyID
 				}
 			} else {
-				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-					logger.Error("failed to fetch routes for situation reference", "error", err)
-				}
+				logQueryError(logger, "failed to fetch routes for situation reference", err)
 			}
 		}
 
@@ -462,9 +511,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 					}
 				}
 			} else {
-				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-					logger.Error("failed to fetch stops for situation reference", "error", err)
-				}
+				logQueryError(logger, "failed to fetch stops for situation reference", err)
 			}
 		}
 
@@ -493,15 +540,11 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 							}
 						}
 					} else {
-						if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-							logger.Error("failed to fetch missing routes for situation reference", "error", err)
-						}
+						logQueryError(logger, "failed to fetch missing routes for situation reference", err)
 					}
 				}
 			} else {
-				if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-					logger.Error("failed to fetch trips for situation reference", "error", err)
-				}
+				logQueryError(logger, "failed to fetch trips for situation reference", err)
 			}
 		}
 	}
@@ -912,18 +955,18 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 	}
 }
 
-// stopReferences builds the stop reference block for a set of list entries,
-// labelling each stop with the combined ID the entries actually referred to it
-// by — the referring trip's agency need not own the stop's first route. A stop
-// whose routes do not resolve still gets a reference, with an empty route list,
-// so every stop ID an entry emits resolves in the block.
-//
 // stopRoute pairs a route with the agency that owns it.
 type stopRoute struct {
 	agencyID string
 	routeID  string
 }
 
+// stopReferences builds the stop reference block for a set of list entries,
+// labelling each stop with the combined ID the entries actually referred to it
+// by — the referring trip's agency need not own the stop's first route. A stop
+// whose routes do not resolve still gets a reference, with an empty route list,
+// so every stop ID an entry emits resolves in the block.
+//
 // The routes each stop serves are returned alongside the references, for callers
 // that collect route references from them. idsByBareId is a map of a bare stop id
 // to combined agencyId_stopId
