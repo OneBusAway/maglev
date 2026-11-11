@@ -280,6 +280,7 @@ func newFeedExpiryTestDB(t *testing.T) (*sql.DB, *Queries) {
 		INSERT INTO agencies (id, name, url, timezone) VALUES ('1', 'Test', 'https://example.com', 'UTC');
 		CREATE TABLE calendar (end_date TEXT);
 		CREATE TABLE calendar_dates (date TEXT, exception_type INTEGER);
+		CREATE TABLE trips (max_departure_time INTEGER);
 		CREATE TABLE import_metadata (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			file_hash TEXT NOT NULL,

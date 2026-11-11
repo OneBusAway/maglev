@@ -730,10 +730,15 @@ func latestAgencyExpiry(serviceDate time.Time, agencies []Agency, latestStopNs i
 			return time.Time{}, fmt.Errorf("agency %q has invalid timezone %q: %w", agency.ID, timezone, err)
 		}
 		seen[timezone] = true
-		// Add the latest stop time to local midnight directly: adding 24h to midnight
-		// is incorrect on daylight-saving transition dates.
-		midnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 0, 0, 0, 0, location)
-		expiresAt := midnight.Add(time.Duration(latestStopNs))
+		// Construct the wall-clock time directly in the local timezone: adding a
+		// duration to midnight in UTC terms produces the wrong result on DST
+		// transition dates where the UTC offset differs between midnight and
+		// end-of-day.
+		h := int(latestStopNs / int64(time.Hour))
+		rem := latestStopNs % int64(time.Hour)
+		m := int(rem / int64(time.Minute))
+		s := int((rem % int64(time.Minute)) / int64(time.Second))
+		expiresAt := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), h, m, s, 0, location)
 		if latest.IsZero() || expiresAt.After(latest) {
 			latest = expiresAt
 		}
