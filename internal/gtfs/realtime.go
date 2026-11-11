@@ -813,6 +813,15 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		manager.feedLastUpdate[feedID] = time.Now()
 	}
 
+	// Stamp trip-updates success on its own clock, within the same lock. This
+	// is the timestamp clearStaleTripUpdates ages when the sub-feed fails.
+	if tripsUpdated {
+		if manager.feedTripLastSuccess == nil {
+			manager.feedTripLastSuccess = make(map[string]time.Time)
+		}
+		manager.feedTripLastSuccess[feedID] = time.Now()
+	}
+
 	return hasNewData
 }
 
@@ -1464,6 +1473,11 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 
 				hasNewData := manager.updateFeedRealtime(ctx, feedCfg)
 				duration := time.Since(start)
+
+				if hasNewData && manager.clearStaleTripUpdates(feedCfg.ID) {
+					logger.Warn("trip updates stale beyond threshold while sibling sub-feeds succeed, clearing trip data",
+						slog.String("feed", feedCfg.ID))
+				}
 
 				if manager.Metrics != nil {
 					manager.Metrics.FeedFetchDuration.WithLabelValues(feedCfg.ID).Observe(duration.Seconds())
