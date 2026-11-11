@@ -275,7 +275,7 @@ func TestSituationRefsFromAlertsAgencyScope(t *testing.T) {
 			collected := newSituationCollector()
 
 			for i, callerAgencyID := range tt.callerAgencyIDs {
-				refs := situationRefsFromAlerts([]gogtfs.Alert{tt.alert}, callerAgencyID)
+				refs := situationRefsFromAlerts(feedAlertsForTest("", []gogtfs.Alert{tt.alert}), callerAgencyID)
 				require.Len(t, refs, 1)
 				assert.Equal(t, tt.wantSituationIDs[i], refs[0].ID,
 					"alert reached with caller agency %q", callerAgencyID)
