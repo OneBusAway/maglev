@@ -128,7 +128,10 @@ func (s *stopConsolidation) apply(data *gtfsdb.GtfsData, logger *slog.Logger) {
 	replacements := make(gtfsdb.StopReplacements)
 	var moved int
 	for absorbed, outcome := range s.file.Apply(loaded) {
-		replacement := gtfsdb.StopReplacement{RuleCanonical: outcome.Canonical.String()}
+		replacement := gtfsdb.StopReplacement{
+			RuleAbsorbed:  absorbed.String(),
+			RuleCanonical: outcome.Canonical.String(),
+		}
 		if outcome.Moved {
 			replacement.Canonical = stopsByID[outcome.Canonical.ID]
 			moved++
