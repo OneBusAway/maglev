@@ -1192,3 +1192,45 @@ func TestScheduleForStopHandlerWithFrequency(t *testing.T) {
 		}
 	})
 }
+
+// TestBlockBoundariesUsesStopSequenceForTiedTimes checks that stops sharing the trip's
+// first or last time are not treated as block boundaries; only the trip's first and
+// last stop sequences are (matching Java's block-position rule).
+func TestBlockBoundariesUsesStopSequenceForTiedTimes(t *testing.T) {
+	tiedTime := int64(5*time.Hour + 51*time.Minute)
+	blockTrips := map[string][]gtfsdb.GetTripsByBlockIDsRow{
+		"block-1": {{ID: "trip-1", BlockID: sql.NullString{String: "block-1", Valid: true}}},
+	}
+	rowAt := func(stopSequence int64) gtfsdb.GetScheduleForStopOnDateRow {
+		return gtfsdb.GetScheduleForStopOnDateRow{
+			TripID:           "trip-1",
+			StopSequence:     stopSequence,
+			ArrivalTime:      tiedTime,
+			DepartureTime:    tiedTime,
+			BlockID:          sql.NullString{String: "block-1", Valid: true},
+			MinArrivalTime:   sql.NullInt64{Int64: tiedTime, Valid: true},
+			MaxDepartureTime: sql.NullInt64{Int64: tiedTime, Valid: true},
+			MinStopSequence:  0,
+			MaxStopSequence:  4,
+		}
+	}
+
+	tests := []struct {
+		name         string
+		stopSequence int64
+		wantFirst    bool
+		wantLast     bool
+	}{
+		{name: "first stop of a tied run is the block start", stopSequence: 0, wantFirst: true, wantLast: false},
+		{name: "middle stop sharing the first time is not a boundary", stopSequence: 3, wantFirst: false, wantLast: false},
+		{name: "last stop of a tied run is the block end", stopSequence: 4, wantFirst: false, wantLast: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotFirst, gotLast := blockBoundaries(rowAt(tt.stopSequence), blockTrips)
+			assert.Equal(t, tt.wantFirst, gotFirst, "isFirstInBlock")
+			assert.Equal(t, tt.wantLast, gotLast, "isLastInBlock")
+		})
+	}
+}
