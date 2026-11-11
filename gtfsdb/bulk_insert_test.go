@@ -378,7 +378,7 @@ func TestBulkInsertStops(t *testing.T) {
 		{"Empty batch", 0},
 		{"Single stop", 1},
 		{"Small batch", 50},
-		{"Across batch boundary", 150},
+		{"Multiple stops", 150},
 	}
 
 	for _, tc := range testCases {
@@ -423,6 +423,42 @@ func TestBulkInsertStops(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("Replace duplicate primary key", func(t *testing.T) {
+		_, err := client.DB.ExecContext(ctx, "DELETE FROM stops")
+		require.NoError(t, err)
+
+		stops := []CreateStopParams{
+			{
+				ID:   "stop_1",
+				Name: nulls.String("First Name"),
+				Desc: nulls.String("First Desc"),
+				Lat:  47.6062,
+				Lon:  -122.3321,
+			},
+			{
+				ID:   "stop_1",
+				Name: nulls.String("Second Name"),
+				Desc: nulls.String("Second Desc"),
+				Lat:  47.6063,
+				Lon:  -122.3322,
+			},
+		}
+
+		err = client.bulkInsertStops(ctx, slices.Values(stops), nil)
+		require.NoError(t, err)
+
+		var count int
+		err = client.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM stops").Scan(&count)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count, "Duplicate stop ID should replace")
+
+		var name, desc string
+		err = client.DB.QueryRowContext(ctx, "SELECT name, \"desc\" FROM stops WHERE id = 'stop_1'").Scan(&name, &desc)
+		require.NoError(t, err)
+		assert.Equal(t, "Second Name", name, "Should have replaced with second name")
+		assert.Equal(t, "Second Desc", desc, "Should have replaced with second desc")
+	})
 }
 
 func TestBulkInsertTrips(t *testing.T) {
@@ -475,7 +511,7 @@ func TestBulkInsertTrips(t *testing.T) {
 		{"Empty batch", 0},
 		{"Single trip", 1},
 		{"Small batch", 50},
-		{"Across batch boundary", 200},
+		{"Multiple trips", 200},
 	}
 
 	for _, tc := range testCases {
@@ -510,6 +546,39 @@ func TestBulkInsertTrips(t *testing.T) {
 			assert.Equal(t, tc.count, count)
 		})
 	}
+
+	t.Run("Replace duplicate primary key", func(t *testing.T) {
+		_, err := client.DB.ExecContext(ctx, "DELETE FROM trips")
+		require.NoError(t, err)
+
+		trips := []CreateTripParams{
+			{
+				ID:           "trip_1",
+				RouteID:      "route_1",
+				ServiceID:    "service_1",
+				TripHeadsign: nulls.String("First Headsign"),
+			},
+			{
+				ID:           "trip_1",
+				RouteID:      "route_1",
+				ServiceID:    "service_1",
+				TripHeadsign: nulls.String("Second Headsign"),
+			},
+		}
+
+		err = client.bulkInsertTrips(ctx, slices.Values(trips), nil)
+		require.NoError(t, err)
+
+		var count int
+		err = client.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM trips").Scan(&count)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count, "Duplicate trip ID should replace")
+
+		var headsign string
+		err = client.DB.QueryRowContext(ctx, "SELECT trip_headsign FROM trips WHERE id = 'trip_1'").Scan(&headsign)
+		require.NoError(t, err)
+		assert.Equal(t, "Second Headsign", headsign, "Should have replaced with second headsign")
+	})
 }
 
 func TestBulkInsertCalendarDates(t *testing.T) {
@@ -546,7 +615,7 @@ func TestBulkInsertCalendarDates(t *testing.T) {
 		{"Empty batch", 0},
 		{"Single date", 1},
 		{"Small batch", 100},
-		{"Across batch boundary", 700},
+		{"Multiple dates", 700},
 	}
 
 	for _, tc := range testCases {

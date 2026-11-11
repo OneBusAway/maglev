@@ -813,6 +813,7 @@ var stopInsert = batchInsert[CreateStopParams]{
 			s.LocationType, s.Timezone, s.WheelchairBoarding, s.PlatformCode, s.Direction, s.ParentStation)
 	},
 	progressInterval: 10_000,
+	insertPrefix:     "INSERT OR REPLACE INTO",
 }
 
 // bulkInsertStops inserts stops in the order they arrive, holding one batch at
@@ -834,6 +835,7 @@ var tripInsert = batchInsert[CreateTripParams]{
 			t.MinArrivalTime, t.MaxDepartureTime)
 	},
 	progressInterval: 25_000,
+	insertPrefix:     "INSERT OR REPLACE INTO",
 }
 
 // bulkInsertTrips inserts trips in the order they arrive, holding one batch at
