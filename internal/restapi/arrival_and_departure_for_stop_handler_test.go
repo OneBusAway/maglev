@@ -297,6 +297,21 @@ func TestArrivalAndDepartureForStopHandlerValidatesTripIDFormat(t *testing.T) {
 	assert.Equal(t, "invalid format: invalid", model.Data.FieldErrors["tripId"][0])
 }
 
+func TestArrivalAndDepartureForStop_WrongTripIdAgencyPrefix(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// Use a known RABA stop and trip; substitute a wrong agency prefix on the trip.
+	stopID := utils.FormCombinedID("25", "4062")
+	wrongTripID := utils.FormCombinedID("99", "0f36bccf-c435-4b31-b001-da345d06a57d")
+	serviceDate := time.Now().UnixMilli()
+
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d",
+		stopID, wrongTripID, serviceDate)
+	resp, _ := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
 func TestArrivalAndDepartureForStopHandlerRequiresServiceDate(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
