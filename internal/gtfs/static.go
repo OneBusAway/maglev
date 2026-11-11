@@ -204,10 +204,10 @@ func (manager *Manager) logFeedExpiry(ctx context.Context, logger *slog.Logger) 
 		manager.Metrics.FeedExpiresAt.Set(float64(expiresAt.Unix()))
 	}
 
-	daysUntil := int(time.Until(expiresAt).Hours() / 24)
+	daysUntil := time.Until(expiresAt).Hours() / 24
 	switch {
 	case daysUntil < 0:
-		logger.Warn("GTFS feed has expired", slog.Time("expires_at", expiresAt), slog.Int("days_overdue", -daysUntil))
+		logger.Warn("GTFS feed has expired", slog.Time("expires_at", expiresAt), slog.Float64("days_overdue", -daysUntil))
 	case daysUntil <= 1:
 		logger.Warn("GTFS feed expires in 1 day or less", slog.Time("expires_at", expiresAt))
 	case daysUntil <= 3:
@@ -215,6 +215,6 @@ func (manager *Manager) logFeedExpiry(ctx context.Context, logger *slog.Logger) 
 	case daysUntil <= 7:
 		logger.Warn("GTFS feed expires in 7 days or less", slog.Time("expires_at", expiresAt))
 	default:
-		logger.Info("GTFS feed valid", slog.Time("expires_at", expiresAt), slog.Int("days_until_expiry", daysUntil))
+		logger.Info("GTFS feed valid", slog.Time("expires_at", expiresAt), slog.Float64("days_until_expiry", daysUntil))
 	}
 }
