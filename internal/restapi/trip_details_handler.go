@@ -510,13 +510,13 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 			continue
 		}
 
-		blockID := utils.FormBlockID(agencyID, nulls.StringOrEmpty(refTrip.BlockID), refTrip.ID)
+		blockID := utils.FormBlockID(refRoute.AgencyID, nulls.StringOrEmpty(refTrip.BlockID), refTrip.ID)
 
 		refTripModel := &models.Trip{
 			ID:             entry.combinedID,
 			RouteID:        utils.FormCombinedID(refRoute.AgencyID, refTrip.RouteID),
-			ServiceID:      utils.FormCombinedID(agencyID, refTrip.ServiceID),
-			ShapeID:        utils.FormCombinedID(agencyID, nulls.StringOrEmpty(refTrip.ShapeID)),
+			ServiceID:      utils.FormCombinedID(refRoute.AgencyID, refTrip.ServiceID),
+			ShapeID:        utils.FormCombinedID(refRoute.AgencyID, nulls.StringOrEmpty(refTrip.ShapeID)),
 			TripHeadsign:   nulls.StringOrEmpty(refTrip.TripHeadsign),
 			TripShortName:  nulls.StringOrEmpty(refTrip.TripShortName),
 			DirectionID:    strconv.FormatInt(refTrip.DirectionID.Int64, 10),
