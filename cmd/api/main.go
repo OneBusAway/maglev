@@ -110,6 +110,14 @@ func main() {
 			slog.Error("failed to convert config", "error", err)
 			os.Exit(1)
 		}
+		// -dump-config prints the manifest URL, not its feeds, so it does
+		// not need the network.
+		if !dumpConfig {
+			if err := resolveBundleInputs(ctx, &gtfsCfgData); err != nil {
+				startupLogger.Error("failed to resolve static feeds", "error", err)
+				os.Exit(1)
+			}
+		}
 		gtfsCfg = gtfsConfigFromData(gtfsCfgData)
 
 	} else {
@@ -129,11 +137,11 @@ func main() {
 			LogLevel:         "info",
 			LogFormat:        "text",
 			RateLimit:        cfg.RateLimit,
-			GtfsStaticFeed: appconf.GtfsStaticFeed{
+			GtfsStaticFeeds: []appconf.GtfsStaticFeed{{
 				URL:             gtfsCfg.GtfsURL,
 				AuthHeaderName:  gtfsCfg.StaticAuthHeaderKey,
 				AuthHeaderValue: gtfsCfg.StaticAuthHeaderValue,
-			},
+			}},
 			GtfsRtFeeds: []appconf.GtfsRtFeed{
 				{
 					ID:                      "feed-0",
