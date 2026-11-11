@@ -45,6 +45,7 @@ type mergedRealtime struct {
 	tripLookup               map[string]int
 	vehicleLookupByTrip      map[string]int
 	vehicleLookupByVehicle   map[string]int
+	vehicleAgencyByID        map[string]string
 	duplicatedVehicleByRoute map[string][]gtfs.Vehicle
 	vehiclesByRoute          map[string][]gtfs.Vehicle
 	vehiclePositionsByAgency map[string]AgencyVehiclePositions
@@ -63,6 +64,7 @@ var emptyMergedRealtime = &mergedRealtime{
 	tripLookup:               map[string]int{},
 	vehicleLookupByTrip:      map[string]int{},
 	vehicleLookupByVehicle:   map[string]int{},
+	vehicleAgencyByID:        map[string]string{},
 	duplicatedVehicleByRoute: map[string][]gtfs.Vehicle{},
 	vehiclesByRoute:          map[string][]gtfs.Vehicle{},
 	vehiclePositionsByAgency: map[string]AgencyVehiclePositions{},
@@ -1396,6 +1398,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		tripLookup:               tripLookup,
 		vehicleLookupByTrip:      vehicleLookupByTrip,
 		vehicleLookupByVehicle:   vehicleLookupByVehicle,
+		vehicleAgencyByID:        manager.buildVehicleAgencyByID(),
 		duplicatedVehicleByRoute: duplicatedVehicleByRoute,
 		vehiclesByRoute:          vehiclesByRoute,
 		vehiclePositionsByAgency: manager.buildVehiclePositionsByAgency(vehicleFeedIDs, builtAt),
@@ -1405,6 +1408,31 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		alertsSince:              alertsSince,
 		builtAt:                  builtAt,
 	})
+}
+
+// buildVehicleAgencyByID returns a map from bare vehicle ID to the agency attributed to it
+// at ingestion. The map is keyed by whatever string the vehicleKey holds (ID > label > licensePlate),
+// matching the key used by vehicleLookupByVehicle so the two maps can be joined by that string.
+// Must be called with realTimeMutex held.
+func (manager *Manager) buildVehicleAgencyByID() map[string]string {
+	total := 0
+	for _, m := range manager.feedVehicleAgency {
+		total += len(m)
+	}
+	out := make(map[string]string, total)
+	for _, agencies := range manager.feedVehicleAgency {
+		for key, agencyID := range agencies {
+			switch {
+			case key.id != "":
+				out[key.id] = agencyID
+			case key.label != "":
+				out[key.label] = agencyID
+			case key.licensePlate != "":
+				out[key.licensePlate] = agencyID
+			}
+		}
+	}
+	return out
 }
 
 // calculateBackoff computes the next polling interval using exponential backoff with jitter

@@ -264,6 +264,16 @@ func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request
 	}
 
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
+
+	// Return 404 when the vehicle's attributed agency does not match the requested
+	// agency, so a vehicle in one agency is not visible via another agency's path.
+	if vehicleAgency, ok := api.GtfsManager.GetVehicleAgencyByID(vehicleID); ok && vehicleAgency != agencyID {
+		reqLogger.Debug("vehicle belongs to a different agency",
+			"vehicleID", vehicleID, "requestedAgency", agencyID, "vehicleAgency", vehicleAgency)
+		api.sendNotFound(w, r)
+		return "", false
+	}
+
 	// Return 404 when vehicle has no associated trip (idle vehicle)
 	// or when the trip ID is empty (avoiding a futile DB lookup)
 	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
