@@ -68,9 +68,22 @@ func TestSituationReferenceLookupFailures(t *testing.T) {
 		{"wrapped-canceled", fmt.Errorf("lookup: %w", context.Canceled)},
 		{"wrapped-deadline", fmt.Errorf("lookup: %w", context.DeadlineExceeded)},
 	} {
-		for failCall := 0; failCall <= len(wantCalls); failCall++ {
-			t.Run(failure.name+"/"+strconv.Itoa(failCall), func(t *testing.T) {
-				probe := &situationLookupDB{DBTX: db.DB, failCall: failCall, failWith: failure.err}
+		for _, stage := range []struct {
+			failCall    int
+			wantStop    string
+			wantTrip    string
+			wantUnknown string
+			wantCalls   []string
+		}{
+			{failCall: 0, wantStop: "25_1056", wantTrip: "25_" + trip, wantUnknown: "25_missing", wantCalls: wantCalls},
+			{failCall: 1, wantStop: "25_1056", wantTrip: "25_" + trip, wantUnknown: "25_missing", wantCalls: wantCalls},
+			{failCall: 2, wantStop: "25_1056", wantTrip: "25_" + trip, wantUnknown: "25_missing", wantCalls: wantCalls},
+			{failCall: 3, wantStop: "fallback_1056", wantTrip: "25_" + trip, wantUnknown: "25_missing", wantCalls: wantCalls},
+			{failCall: 4, wantStop: "25_1056", wantTrip: "fallback_" + trip, wantUnknown: "25_missing", wantCalls: wantCalls[:4]},
+			{failCall: 5, wantStop: "25_1056", wantTrip: "fallback_" + trip, wantUnknown: "25_missing", wantCalls: wantCalls},
+		} {
+			t.Run(failure.name+"/"+strconv.Itoa(stage.failCall), func(t *testing.T) {
+				probe := &situationLookupDB{DBTX: db.DB, failCall: stage.failCall, failWith: failure.err}
 				db.Queries = gtfsdb.New(probe)
 				var logs bytes.Buffer
 				ctx := logging.WithLogger(context.Background(), slog.New(slog.NewTextHandler(&logs, nil)))
@@ -82,28 +95,12 @@ func TestSituationReferenceLookupFailures(t *testing.T) {
 				require.Equal(t, got[0].AllAffects[0], got[0].AllAffects[1])
 				affect := got[0].AllAffects[0]
 				require.Equal(t, "fallback_missing", affect.RouteID)
-				wantStop := "25_1056"
-				if failCall == 3 {
-					wantStop = "fallback_1056"
-				}
-				require.Equal(t, wantStop, affect.StopID)
-				wantTrip := "25_" + trip
-				if failCall == 4 || failCall == 5 {
-					wantTrip = "fallback_" + trip
-				}
-				require.Equal(t, wantTrip, affect.TripID)
-				wantUnknown := "25_missing"
-				if failCall == 1 {
-					wantUnknown = "25_missing"
-				}
-				require.Equal(t, wantUnknown, got[0].AllAffects[2].RouteID)
-				calls := wantCalls
-				if failCall == 4 {
-					calls = calls[:4]
-				}
-				require.Equal(t, calls, probe.calls)
+				require.Equal(t, stage.wantStop, affect.StopID)
+				require.Equal(t, stage.wantTrip, affect.TripID)
+				require.Equal(t, stage.wantUnknown, got[0].AllAffects[2].RouteID)
+				require.Equal(t, stage.wantCalls, probe.calls)
 				require.Equal(t, []any{"25_missing", "missing"}, probe.args[1], "candidate IDs are sorted and deduplicated")
-				if failCall > 0 && failure.name == "database" {
+				if stage.failCall > 0 && failure.name == "database" {
 					require.Contains(t, logs.String(), "injected situation lookup failure")
 					require.Equal(t, 1, strings.Count(logs.String(), "level=ERROR"))
 				} else {
