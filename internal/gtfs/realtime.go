@@ -23,13 +23,13 @@ import (
 // alertIndex holds pre-built maps for O(1) alert lookups, keyed by trip, route, agency, and stop IDs.
 // It is rebuilt on every call to rebuildMergedRealtimeLocked under the existing write lock.
 type alertIndex struct {
-	byTrip   map[string][]gtfs.Alert
-	byRoute  map[string][]gtfs.Alert
-	byAgency map[string][]gtfs.Alert
-	byStop   map[string][]gtfs.Alert
+	byTrip   map[string][]FeedAlert
+	byRoute  map[string][]FeedAlert
+	byAgency map[string][]FeedAlert
+	byStop   map[string][]FeedAlert
 	// all keeps every indexed alert, including two feeds that publish the same
 	// raw alert id. The by* maps collapse those by id on lookup.
-	all []gtfs.Alert
+	all []FeedAlert
 }
 
 // mergedRealtime is the merged view of every realtime feed, published as a
@@ -67,10 +67,10 @@ var emptyMergedRealtime = &mergedRealtime{
 	vehiclesByRoute:          map[string][]gtfs.Vehicle{},
 	vehiclePositionsByAgency: map[string]AgencyVehiclePositions{},
 	alerts: alertIndex{
-		byTrip:   map[string][]gtfs.Alert{},
-		byRoute:  map[string][]gtfs.Alert{},
-		byAgency: map[string][]gtfs.Alert{},
-		byStop:   map[string][]gtfs.Alert{},
+		byTrip:   map[string][]FeedAlert{},
+		byRoute:  map[string][]FeedAlert{},
+		byAgency: map[string][]FeedAlert{},
+		byStop:   map[string][]FeedAlert{},
 	},
 	alertFeedsByAgency:  map[string]agencyAlertFeed{},
 	tripUpdatesByAgency: map[string]AgencyTripUpdates{},
@@ -360,18 +360,21 @@ func (manager *Manager) GetRealTimeVehicles() []gtfs.Vehicle {
 
 // Alerts returns every indexed alert in feed-id order. Two feeds that reuse
 // one raw alert id both appear. Callers must not mutate the slice or its alerts.
-func (manager *Manager) Alerts() []gtfs.Alert {
+func (manager *Manager) Alerts() []FeedAlert {
 	return manager.mergedRealtime().alerts.all
 }
 
-func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.Alert {
+// GetAlertsByIDs returns indexed alerts matching the given trip, route or
+// agency ID, in feed-id order. Each returned value carries the publishing
+// feed's first configured agency as FeedAgencyID.
+func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []FeedAlert {
 	idx := manager.mergedRealtime().alerts
 
 	seen := make(map[string]struct{})
-	var alerts []gtfs.Alert
+	var alerts []FeedAlert
 	// Invariant: alertIdx only contains alerts with non-empty IDs (rebuildMergedRealtimeLocked
 	// skips any alert where alert.ID == ""), so seen[a.ID] is sufficient for deduplication.
-	addUnique := func(candidates []gtfs.Alert) {
+	addUnique := func(candidates []FeedAlert) {
 		for _, a := range candidates {
 			if _, ok := seen[a.ID]; !ok {
 				seen[a.ID] = struct{}{}
@@ -394,7 +397,7 @@ func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.
 
 // GetAlertsForTrip returns alerts matching the trip, its route, or agency.
 // It acquires the realTimeMutex internally via GetAlertsByIDs.
-func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []gtfs.Alert {
+func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []FeedAlert {
 	var routeID string
 	var agencyID string
 
@@ -429,7 +432,7 @@ func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []g
 // alert reaches a stop even when no arrival there carries it.
 // Deduplication by alert ID is done internally so callers never receive
 // duplicate entries even when the same alert ID appears in multiple feeds.
-func (manager *Manager) GetAlertsForStop(stopID, agencyID string) []gtfs.Alert {
+func (manager *Manager) GetAlertsForStop(stopID, agencyID string) []FeedAlert {
 	idx := manager.mergedRealtime().alerts
 	src := idx.byStop[stopID]
 	if agencyID != "" {
@@ -439,7 +442,7 @@ func (manager *Manager) GetAlertsForStop(stopID, agencyID string) []gtfs.Alert {
 		return nil
 	}
 	seen := make(map[string]struct{}, len(src))
-	out := make([]gtfs.Alert, 0, len(src))
+	out := make([]FeedAlert, 0, len(src))
 	for _, a := range src {
 		if _, ok := seen[a.ID]; !ok {
 			seen[a.ID] = struct{}{}
@@ -813,6 +816,15 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		manager.feedLastUpdate[feedID] = time.Now()
 	}
 
+	// Stamp trip-updates success on its own clock, within the same lock. This
+	// is the timestamp clearStaleTripUpdates ages when the sub-feed fails.
+	if tripsUpdated {
+		if manager.feedTripLastSuccess == nil {
+			manager.feedTripLastSuccess = make(map[string]time.Time)
+		}
+		manager.feedTripLastSuccess[feedID] = time.Now()
+	}
+
 	return hasNewData
 }
 
@@ -991,7 +1003,7 @@ func (manager *Manager) storeFeedTrips(feedID string, trips tripAttribution, hea
 	if manager.feedTripDataTime == nil {
 		manager.feedTripDataTime = make(map[string]time.Time)
 	}
-	if headerTime.IsZero() {
+	if isMissingHeaderTime(headerTime) {
 		headerTime = time.Now()
 	}
 	agencies := trips.agencies
@@ -1326,17 +1338,18 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		}
 	}
 	idx := alertIndex{
-		byTrip:   make(map[string][]gtfs.Alert),
-		byRoute:  make(map[string][]gtfs.Alert),
-		byAgency: make(map[string][]gtfs.Alert),
-		byStop:   make(map[string][]gtfs.Alert),
+		byTrip:   make(map[string][]FeedAlert),
+		byRoute:  make(map[string][]FeedAlert),
+		byAgency: make(map[string][]FeedAlert),
+		byStop:   make(map[string][]FeedAlert),
 	}
 	for _, id := range alertFeedIDs {
 		for _, alert := range manager.feedAlerts[id] {
 			if alert.InformedEntities == nil || alert.ID == "" {
 				continue
 			}
-			idx.all = append(idx.all, alert)
+			feedAlert := FeedAlert{Alert: alert, FeedAgencyID: manager.config.firstAgencyForFeed(id)}
+			idx.all = append(idx.all, feedAlert)
 			// Per-alert per-bucket dedup: prevents the same alert from being appended
 			// to the same bucket more than once when it has multiple InformedEntities
 			// referencing the same key (e.g. two entities both pointing to stop "S1").
@@ -1349,14 +1362,14 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 			for _, entity := range alert.InformedEntities {
 				if entity.TripID != nil && !seenTrip[entity.TripID.ID] {
 					seenTrip[entity.TripID.ID] = true
-					idx.byTrip[entity.TripID.ID] = append(idx.byTrip[entity.TripID.ID], alert)
+					idx.byTrip[entity.TripID.ID] = append(idx.byTrip[entity.TripID.ID], feedAlert)
 				}
 				// Only match route-level entities that have no stop or trip restriction.
 				// Entities with {routeId + stopId} are stop-specific alerts and are filed
 				// in byStop only (matching Java's inverted index bucket behaviour).
 				if entity.RouteID != nil && entity.StopID == nil && entity.TripID == nil && !seenRoute[*entity.RouteID] {
 					seenRoute[*entity.RouteID] = true
-					idx.byRoute[*entity.RouteID] = append(idx.byRoute[*entity.RouteID], alert)
+					idx.byRoute[*entity.RouteID] = append(idx.byRoute[*entity.RouteID], feedAlert)
 				}
 				// Only match agency-wide alerts: entity has agencyId but no route, trip
 				// or stop restriction. Entities with {agencyId + stopId} are stop-specific
@@ -1367,11 +1380,11 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 					entity.StopID == nil
 				if isAgencyWide && !seenAgency[*entity.AgencyID] {
 					seenAgency[*entity.AgencyID] = true
-					idx.byAgency[*entity.AgencyID] = append(idx.byAgency[*entity.AgencyID], alert)
+					idx.byAgency[*entity.AgencyID] = append(idx.byAgency[*entity.AgencyID], feedAlert)
 				}
 				if entity.StopID != nil && !seenStop[*entity.StopID] {
 					seenStop[*entity.StopID] = true
-					idx.byStop[*entity.StopID] = append(idx.byStop[*entity.StopID], alert)
+					idx.byStop[*entity.StopID] = append(idx.byStop[*entity.StopID], feedAlert)
 				}
 			}
 		}
@@ -1465,6 +1478,11 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 				hasNewData := manager.updateFeedRealtime(ctx, feedCfg)
 				duration := time.Since(start)
 
+				if hasNewData && manager.clearStaleTripUpdates(feedCfg.ID) {
+					logger.Warn("trip updates stale beyond threshold while sibling sub-feeds succeed, clearing trip data",
+						slog.String("feed", feedCfg.ID))
+				}
+
 				if manager.Metrics != nil {
 					manager.Metrics.FeedFetchDuration.WithLabelValues(feedCfg.ID).Observe(duration.Seconds())
 				}
@@ -1514,6 +1532,6 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 }
 
 // GetAlertsForRoute returns alerts matching the given route ID.
-func (manager *Manager) GetAlertsForRoute(routeID string) []gtfs.Alert {
+func (manager *Manager) GetAlertsForRoute(routeID string) []FeedAlert {
 	return manager.GetAlertsByIDs("", routeID, "")
 }
