@@ -191,12 +191,17 @@ func (m *Metrics) RecordDBQuery(queryName, op string, err error) {
 	m.DBQueryTotal.WithLabelValues(queryName, op, status).Inc()
 }
 
+// DBStatsProvider is implemented by *sql.DB and by any test fake.
+type DBStatsProvider interface {
+	Stats() sql.DBStats
+}
+
 // StartDBStatsCollector starts a goroutine that periodically collects database
 // connection pool statistics and updates the corresponding metrics.
 // The interval specifies how often to collect stats.
 // This method is idempotent - calling it multiple times has no effect after the first call.
 // Call Shutdown() to stop the collector.
-func (m *Metrics) StartDBStatsCollector(dbProvider func() *sql.DB, interval time.Duration) {
+func (m *Metrics) StartDBStatsCollector(dbProvider func() DBStatsProvider, interval time.Duration) {
 	if dbProvider == nil {
 		return
 	}
@@ -214,7 +219,7 @@ func (m *Metrics) StartDBStatsCollector(dbProvider func() *sql.DB, interval time
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	var currentDB *sql.DB
+	var currentProvider DBStatsProvider
 	var lastWaitDuration time.Duration
 
 	// Add to WaitGroup BEFORE exposing cancel to avoid race with Shutdown
@@ -237,25 +242,25 @@ func (m *Metrics) StartDBStatsCollector(dbProvider func() *sql.DB, interval time
 		for {
 			select {
 			case <-ticker.C:
-				db := dbProvider()
-				if db == nil {
+				p := dbProvider()
+				if p == nil {
 					m.DBConnectionsOpen.Set(0)
 					m.DBConnectionsInUse.Set(0)
 					m.DBConnectionsIdle.Set(0)
-					currentDB = nil
+					currentProvider = nil
 					lastWaitDuration = 0
 					continue
 				}
 
-				stats := db.Stats()
+				stats := p.Stats()
 				m.DBConnectionsOpen.Set(float64(stats.OpenConnections))
 				m.DBConnectionsInUse.Set(float64(stats.InUse))
 				m.DBConnectionsIdle.Set(float64(stats.Idle))
 
-				// WaitDuration is cumulative per *sql.DB pool. If hot-swap changed
-				// the DB pointer, reset baseline to this pool's current counter.
-				if db != currentDB {
-					currentDB = db
+				// WaitDuration is cumulative per pool. If hot-swap changed
+				// the provider, reset baseline to this pool's current counter.
+				if p != currentProvider {
+					currentProvider = p
 					lastWaitDuration = stats.WaitDuration
 					continue
 				}
