@@ -492,6 +492,9 @@ func absInt64(v int64) int64 {
 func pickFirstAvailableSTUDelay(tripUpdates []tripUpdateForTrip) (int, bool) {
 	for _, t := range tripUpdates {
 		for _, stu := range t.tu.StopTimeUpdates {
+			if stu.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED {
+				continue
+			}
 			if stu.Arrival != nil && stu.Arrival.Delay != nil {
 				return int(stu.Arrival.Delay.Seconds()), true
 			}

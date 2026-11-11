@@ -247,6 +247,34 @@ func TestGetScheduleDeviation_FallbackForwardWalkAcrossBlockTrips(t *testing.T) 
 		"outer walk must be forward — first block trip's STU wins over later trips'")
 }
 
+// TestGetScheduleDeviation_FallbackSkipsSkippedSTUs confirms that the
+// pickFirstAvailableSTUDelay fallback ignores SKIPPED stop time updates and
+// does not return a skipped stop's delay as the schedule deviation.
+func TestGetScheduleDeviation_FallbackSkipsSkippedSTUs(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	skippedStop := "stop-skipped"
+	skippedDelay := 999 * time.Second
+	servedStop := "stop-served"
+	servedDelay := 60 * time.Second
+	skippedSTU := gtfs.StopTimeUpdate{StopID: &skippedStop, Arrival: &gtfs.StopTimeEvent{Delay: &skippedDelay}}
+	skippedSTU.ScheduleRelationship = gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED
+	updates := []gtfs.StopTimeUpdate{
+		skippedSTU,
+		{StopID: &servedStop, Arrival: &gtfs.StopTimeEvent{Delay: &servedDelay}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-fallback-skip-skipped", nil, updates)
+
+	deviation, hasData := api.GetScheduleDeviationForBlock(
+		context.Background(), []string{"trip-fallback-skip-skipped"}, devDate, devNow,
+	)
+	assert.True(t, hasData)
+	assert.Equal(t, 60, deviation,
+		"fallback must skip SKIPPED STUs and return the first served stop's delay")
+}
+
 func TestGetStopDelaysFromTripUpdates_NoUpdates(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
