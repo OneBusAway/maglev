@@ -149,8 +149,8 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 		}
 
 		parentID := ""
-		if nulls.StringOrEmpty(stop.ParentStation) != "" {
-			parentID = utils.FormCombinedID(agencyID, nulls.StringOrEmpty(stop.ParentStation))
+		if parentStation := nulls.StringOrEmpty(stop.ParentStation); parentStation != "" {
+			parentID = utils.FormCombinedID(agencyID, parentStation)
 		}
 
 		stopsList = append(stopsList, models.Stop{

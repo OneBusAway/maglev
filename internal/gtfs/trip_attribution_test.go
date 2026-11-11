@@ -48,17 +48,17 @@ func TestAttributeTrips(t *testing.T) {
 			"T7 resolves by neither route nor static trip")
 	})
 
-	t.Run("static trip fills a missing route only", func(t *testing.T) {
+	t.Run("static trip replaces a missing or unknown route", func(t *testing.T) {
 		manager := newAttributionTestManager(t)
 
 		got, err := manager.attributeTrips(context.Background(), trips, RTFeedConfig{ID: "feed"})
 		require.NoError(t, err)
 
-		assert.Equal(t, "R1", got.kept[1].ID.RouteID)
-		assert.Equal(t, "X", got.kept[2].ID.RouteID, "an unknown route_id is kept as ingested")
+		assert.Equal(t, "R1", got.kept[1].ID.RouteID, "a missing route_id is replaced by the static trip's route")
+		assert.Equal(t, "R1", got.kept[2].ID.RouteID, "an unknown route_id is replaced by the static trip's route, as for vehicles (#1716)")
+		assert.Equal(t, "X", got.kept[4].ID.RouteID, "a trip absent from static data keeps its ingested route_id")
 		assert.Empty(t, trips[1].ID.RouteID, "the parsed feed trip must not be changed in place")
 	})
-
 	t.Run("feed with agency-ids", func(t *testing.T) {
 		manager := newAttributionTestManager(t)
 		feedCfg := RTFeedConfig{ID: "feed", AgencyIDs: []string{"agency-B", "agency-A"}}

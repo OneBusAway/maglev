@@ -135,6 +135,30 @@ func TestArrivalFrequencyWindowPredictions(t *testing.T) {
 	}
 }
 
+// TestArrivalFrequencyWindowRunningLateCandidate verifies that the padded
+// candidate search also reaches a late frequency-based trip: its 06:00 stop
+// time lies outside a zero-width window at 06:12, but its prediction does not.
+func TestArrivalFrequencyWindowRunningLateCandidate(t *testing.T) {
+	for _, endpoint := range []string{"stop", "location"} {
+		t.Run(endpoint, func(t *testing.T) {
+			api := createTestApiWithFrequencyData(t)
+			defer api.Shutdown()
+			delay := 12 * time.Minute
+			api.GtfsManager.MockAddTripUpdate(freqTripID, nil, []gtfs.StopTimeUpdate{{
+				StopID:       new(freqStopAID),
+				StopSequence: new(uint32(1)),
+				Arrival:      &gtfs.StopTimeEvent{Delay: &delay},
+			}})
+			params := url.Values{
+				"time":          {fmt.Sprint(time.Date(2025, 6, 12, 6, 12, 0, 0, time.UTC).UnixMilli())},
+				"minutesBefore": {"0"}, "minutesAfter": {"0"},
+				"frequencyMinutesBefore": {"0"}, "frequencyMinutesAfter": {"0"},
+			}
+			assertFrequencyWindowTrips(t, frequencyWindowArrivals(t, api, endpoint, params), []string{freqTripID})
+		})
+	}
+}
+
 func TestArrivalFrequencyWindowAcrossMidnight(t *testing.T) {
 	files := frequencyFixtureFiles()
 	files["stop_times.txt"] = strings.ReplaceAll(files["stop_times.txt"], "06:00:00", "24:01:00")
@@ -327,4 +351,78 @@ func TestArrivalWindow_StopTimeSpanningQueryWindow(t *testing.T) {
 			assertFrequencyWindowTrips(t, arrivals, []string{spanningTripID})
 		})
 	}
+}
+
+// TestArrivalWindow_RunningLateAndEarlyCandidates verifies that, like Java,
+// the candidate search is padded by runningLate before and runningEarly after
+// the requested window, so a bus whose scheduled time falls outside the window
+// is still returned when its predicted time falls inside it.
+func TestArrivalWindow_RunningLateAndEarlyCandidates(t *testing.T) {
+	// Query at 10:15 with a ±5 minute window: 10:10–10:20. Padded by
+	// runningLate (30m) and runningEarly (10m), the search is 09:40–10:30.
+	tests := []struct {
+		name         string
+		tripID       string
+		scheduledAtA string
+		delay        *time.Duration
+		wantIncluded bool
+	}{
+		{"late_bus_predicted_in_window", "late-trip", "10:00:00", ptrDuration(12 * time.Minute), true},
+		{"early_bus_predicted_in_window", "early-trip", "10:25:00", ptrDuration(-7 * time.Minute), true},
+		{"late_bus_without_prediction", "unpredicted-trip", "10:00:00", nil, false},
+		{"beyond_running_late_buffer", "very-late-trip", "09:35:00", ptrDuration(40 * time.Minute), false},
+	}
+
+	files := frequencyFixtureFiles()
+	for _, tc := range tests {
+		files["trips.txt"] += freqRouteID + "," + freqServiceID + "," + tc.tripID + ",Buffered Trip,0," + tc.tripID + "-block\n"
+		files["stop_times.txt"] += tc.tripID + "," + tc.scheduledAtA + "," + tc.scheduledAtA + "," + freqStopAID + ",1\n"
+		files["stop_times.txt"] += tc.tripID + ",11:00:00,11:00:00," + freqStopBID + ",2\n"
+	}
+
+	queryTime := time.Date(2025, 6, 12, 10, 15, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(queryTime), "running-window.zip", files)
+	defer api.Shutdown()
+
+	stopID := freqStopAID
+	firstStop := uint32(1)
+	for _, tc := range tests {
+		if tc.delay == nil {
+			continue
+		}
+		api.GtfsManager.MockAddTripUpdate(tc.tripID, nil, []gtfs.StopTimeUpdate{
+			{StopID: &stopID, StopSequence: &firstStop, Arrival: &gtfs.StopTimeEvent{Delay: tc.delay}},
+		})
+	}
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// The frequency window is pinned too: its 30-minute default would
+	// otherwise widen the search past the early bus on its own.
+	params := url.Values{
+		"time":                   {fmt.Sprint(queryTime.UnixMilli())},
+		"minutesBefore":          {"5"},
+		"minutesAfter":           {"5"},
+		"frequencyMinutesBefore": {"5"},
+		"frequencyMinutesAfter":  {"5"},
+	}
+	for _, endpoint := range []string{"stop", "location"} {
+		arrivals := frequencyWindowArrivals(t, api, endpoint, params)
+		for _, tc := range tests {
+			t.Run(endpoint+"/"+tc.name, func(t *testing.T) {
+				assert.Equal(t, tc.wantIncluded, arrivalsIncludeTrip(t, arrivals, tc.tripID))
+			})
+		}
+	}
+}
+
+func arrivalsIncludeTrip(t *testing.T, arrivals []models.ArrivalAndDeparture, tripID string) bool {
+	t.Helper()
+	for _, arrival := range arrivals {
+		_, id, err := utils.ExtractAgencyIDAndCodeID(arrival.TripID)
+		require.NoError(t, err)
+		if id == tripID {
+			return true
+		}
+	}
+	return false
 }

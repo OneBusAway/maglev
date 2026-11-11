@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"maglev.onebusaway.org/internal/nulls"
 	"net/http"
 	"strconv"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -38,7 +38,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
