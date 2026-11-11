@@ -281,7 +281,7 @@ After modifying SQL queries or schema, run `make models` to regenerate the Go co
 
 **Route/Trip Relations:**
 - `GetStopIDsForRoute`, `GetStopIDsForTrip` - Stop IDs on route/trip
-- `GetRoutesForStop`, `GetRouteIDsForStop` - Routes serving a stop
+- `GetRoutesForStop`, `GetRouteIDsForStops` - Routes serving a stop
 - `GetAllTripsForRoute`, `GetTripsForRouteInActiveServiceIDs` - Trips on route
 - `GetStopsForRoute` - All stops on a route
 
@@ -579,7 +579,15 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
   "env": "development",
   "api-keys": ["test"],
   "rate-limit": 100,
-  "gtfs-static-feed": { "url": "..." },
+  "gtfs-static-feeds": [
+    {
+      "id": "sound-transit",
+      "url": "...",
+      "default-agency-id": "40",
+      "auth-header-name": "Authorization",
+      "auth-header-value": "Bearer ..."
+    }
+  ],
   "gtfs-rt-feeds": [
     {
       "id": "my-feed",
@@ -594,6 +602,17 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
   ]
 }
 ```
+
+### Static Feeds
+- `gtfs-static-feeds` is a list of static feeds. The older `gtfs-static-feed` object still works and is read as a one-element list. Setting both keys, or an empty list, is an error.
+- Each feed takes `id`, `url`, `default-agency-id`, `agency-id-mappings`, `auth-header-name`/`auth-header-value`, `headers` and `enable-gtfs-tidy`.
+- `id` — defaults to `"feed-0"`, `"feed-1"`, …; must be unique
+- `default-agency-id` — must be unique across feeds; it and `agency-id-mappings` targets must not contain `_`
+- `url` is required on every feed. The Sound Transit default URL is filled in when neither key is set, or when the `gtfs-static-feed` object has no `url`; never for a list entry
+- In code, `JSONConfig.normalizeStaticFeeds` moves the singular key into `GtfsStaticFeeds` (and fills in ids), so read `GtfsStaticFeeds` only; the `GtfsStaticFeed` pointer is set only by JSON decoding
+- `GTFS_STATIC_AUTH_NAME`/`GTFS_STATIC_AUTH_VALUE` apply only when exactly one static feed is configured; with more feeds they are a startup error, so a secret is never dropped silently
+- `gtfs-bundle-inputs-url` (manifest mode) points at an obacloud `bundle-inputs.json` (version 1, URL or local path) instead of listing feeds. It cannot be combined with either static feed key, and no default feed is added. `cmd/api` `resolveBundleInputs` fetches it at startup with `internal/bundleinputs` and fills `GtfsConfigData.StaticFeeds` with each feed's `id`, `url` and `defaultAgencyId`; a fetch or parse failure stops startup. The periodic static reload does not read the manifest again yet. Manifest feeds take no auth headers, so `GTFS_STATIC_AUTH_*` is a startup error in this mode
+- For now the importer loads only the first feed. `default-agency-id` and `agency-id-mappings` are validated but not yet applied, and `headers` is accepted but not sent (use `auth-header-name`/`auth-header-value`); `ToGtfsConfigData` logs a warning when `agency-id-mappings` or `headers` is set
 
 ### GTFS-RT Feed Defaults
 - `id` — auto-generated as `"feed-0"`, `"feed-1"`, … when omitted
