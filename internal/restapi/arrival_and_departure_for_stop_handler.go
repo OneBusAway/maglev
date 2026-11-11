@@ -175,7 +175,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	_, tripID, err := utils.ExtractAgencyIDAndCodeID(params.TripID)
 	if err != nil {
 		fieldErrors := map[string][]string{
-			"id": {err.Error()},
+			"tripId": {err.Error()},
 		}
 		api.validationErrorResponse(w, r, fieldErrors)
 		return

@@ -278,6 +278,25 @@ func TestArrivalAndDepartureForStopHandlerRequiresTripId(t *testing.T) {
 	assert.Equal(t, "missingRequiredField", model.Data.FieldErrors["tripId"][0])
 }
 
+func TestArrivalAndDepartureForStopHandlerValidatesTripIDFormat(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	stop := mustGetStop(t, api)
+
+	stopID := utils.FormCombinedID(agency.ID, stop.ID)
+	serviceDate := time.Now().UnixMilli()
+
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=invalid&serviceDate=%d", stopID, serviceDate)
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, model.Data.FieldErrors, "tripId")
+	assert.NotContains(t, model.Data.FieldErrors, "id")
+	assert.Equal(t, "invalid format: invalid", model.Data.FieldErrors["tripId"][0])
+}
+
 func TestArrivalAndDepartureForStopHandlerRequiresServiceDate(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
