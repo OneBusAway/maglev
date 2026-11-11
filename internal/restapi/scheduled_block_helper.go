@@ -585,9 +585,9 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 	}
 	blockIDStr := nulls.StringOrEmpty(blockID)
 	if blockIDStr == "" {
-		return fallback
+		blockIDStr = targetTripID
 	}
-	blockTrips, err := q.GetTripsByBlockID(ctx, blockID)
+	blockTrips, err := q.GetTripsByBlockID(ctx, nulls.String(blockIDStr))
 	if err != nil {
 		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetTripsByBlockID failed, degrading to single-trip mode",
 			slog.String("trip_id", targetTripID), slog.String("block_id", blockIDStr))

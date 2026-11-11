@@ -735,7 +735,8 @@ SELECT
 FROM
     trips
 WHERE
-    block_id = ?;
+    block_id = @block_id
+    OR ((block_id IS NULL OR length(block_id) = 0) AND id = @block_id);
 
 -- name: GetCalendarByServiceID :one
 SELECT
@@ -812,7 +813,7 @@ SELECT
     t.min_arrival_time AS earliest_time,
     t.max_departure_time AS latest_time
 FROM trips t
-WHERE t.block_id = ?
+WHERE (t.block_id = @block_id OR ((t.block_id IS NULL OR length(t.block_id) = 0) AND t.id = @block_id))
   AND t.service_id IN (sqlc.slice('service_ids'))
 ORDER BY t.min_arrival_time;
 
@@ -1508,7 +1509,7 @@ SELECT CAST((
 WITH BlockTrips AS (
     SELECT id, ROW_NUMBER() OVER (ORDER BY min_arrival_time) - 1 AS seq
     FROM trips
-    WHERE block_id = @block_id
+    WHERE (block_id = @block_id OR ((block_id IS NULL OR length(block_id) = 0) AND id = @block_id))
       AND service_id IN (sqlc.slice('service_ids'))
 )
 SELECT seq FROM BlockTrips WHERE id = @trip_id;
@@ -1521,7 +1522,7 @@ WITH NavTrips AS (
         LAG(id)  OVER (ORDER BY min_arrival_time) AS prev_trip_id,
         LEAD(id) OVER (ORDER BY min_arrival_time) AS next_trip_id
     FROM trips
-    WHERE block_id = @block_id
+    WHERE (block_id = @block_id OR ((block_id IS NULL OR length(block_id) = 0) AND id = @block_id))
       AND service_id IN (sqlc.slice('service_ids'))
 )
 SELECT prev_trip_id, next_trip_id
@@ -1536,7 +1537,7 @@ WHERE st.trip_id = (
     SELECT next_trip_id FROM (
         SELECT id, LEAD(id) OVER (ORDER BY min_arrival_time) AS next_trip_id
         FROM trips
-        WHERE block_id = @block_id
+        WHERE (block_id = @block_id OR ((block_id IS NULL OR length(block_id) = 0) AND id = @block_id))
           AND service_id IN (sqlc.slice('service_ids'))
     ) WHERE id = @trip_id
 )
