@@ -2290,3 +2290,233 @@ func TestGetDuplicatedVehiclesForRoute_NoMatchReturnsEmpty(t *testing.T) {
 
 	assert.Empty(t, result, "route miss should return empty result")
 }
+
+func TestNextTripUpdatesSeen(t *testing.T) {
+	timestamp := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	firstFeed := timestamp.Add(10 * time.Second)
+	laterFeed := timestamp.Add(40 * time.Second)
+	previous := map[string]tripUpdateSeen{"trip": {timestamp: timestamp, at: firstFeed}}
+	newerTimestamp := timestamp.Add(30 * time.Second)
+
+	tests := []struct {
+		name      string
+		previous  map[string]tripUpdateSeen
+		trip      gtfs.Trip
+		wantAt    time.Time
+		wantEntry bool
+	}{
+		{name: "new trip is seen at the feed's time", trip: gtfs.Trip{ID: gtfs.TripID{ID: "trip"}, Timestamp: &timestamp}, wantAt: laterFeed, wantEntry: true},
+		{name: "repeated timestamp keeps the first time", previous: previous, trip: gtfs.Trip{ID: gtfs.TripID{ID: "trip"}, Timestamp: &timestamp}, wantAt: firstFeed, wantEntry: true},
+		{name: "advanced timestamp is seen again", previous: previous, trip: gtfs.Trip{ID: gtfs.TripID{ID: "trip"}, Timestamp: &newerTimestamp}, wantAt: laterFeed, wantEntry: true},
+		{name: "no timestamp has no entry", previous: previous, trip: gtfs.Trip{ID: gtfs.TripID{ID: "trip"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			seen := nextTripUpdatesSeen(tt.previous, []gtfs.Trip{tt.trip}, laterFeed)
+
+			entry, ok := seen["trip"]
+			assert.Equal(t, tt.wantEntry, ok)
+			assert.Equal(t, tt.wantAt, entry.at)
+		})
+	}
+}
+
+// Polls a feed through the real ingestion path: the first-seen time holds while
+// an update's timestamp repeats and moves when the timestamp advances.
+func TestTripUpdateFirstSeen_FollowsFeedPolls(t *testing.T) {
+	const tripID = "trip"
+	updateTimestamp := uint64(1_767_268_800)
+	feedTime := updateTimestamp + 10
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		feed := &gtfsrt.FeedMessage{
+			Header: &gtfsrt.FeedHeader{GtfsRealtimeVersion: proto.String("2.0"), Timestamp: proto.Uint64(feedTime)},
+			Entity: []*gtfsrt.FeedEntity{{
+				Id: proto.String("entity"),
+				TripUpdate: &gtfsrt.TripUpdate{
+					Trip:      &gtfsrt.TripDescriptor{TripId: proto.String(tripID)},
+					Timestamp: proto.Uint64(updateTimestamp),
+				},
+			}},
+		}
+		data, err := proto.Marshal(feed)
+		assert.NoError(t, err)
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+
+	manager := newTestManager()
+	poll := func() time.Time {
+		t.Helper()
+		manager.updateFeedRealtime(context.Background(), RTFeedConfig{ID: "feed", TripUpdatesURL: server.URL, Enabled: true})
+		seenAt, ok := manager.TripUpdateFirstSeen(tripID)
+		require.True(t, ok)
+		return seenAt
+	}
+
+	firstSeen := poll()
+	assert.Equal(t, time.Unix(int64(feedTime), 0).Unix(), firstSeen.Unix())
+
+	feedTime += 30
+	assert.Equal(t, firstSeen.Unix(), poll().Unix(), "a repeated timestamp keeps the first time")
+
+	feedTime += 30
+	updateTimestamp += 60
+	assert.Equal(t, int64(feedTime), poll().Unix(), "an advanced timestamp is seen again")
+}
+
+func TestUpdateFeedRealtime_NormalizesTripUpdateTimestamps(t *testing.T) {
+	headerTime := time.Now().Add(-time.Minute).Truncate(time.Second)
+	updateTime := headerTime.Add(-30 * time.Second)
+
+	tests := []struct {
+		name      string
+		timestamp *uint64
+		want      time.Time
+	}{
+		{name: "seconds are kept", timestamp: proto.Uint64(uint64(updateTime.Unix())), want: updateTime},
+		{name: "milliseconds are converted", timestamp: proto.Uint64(uint64(updateTime.UnixMilli())), want: updateTime},
+		{name: "a missing timestamp takes the header time", want: headerTime},
+		{name: "a zero timestamp takes the header time", timestamp: proto.Uint64(0), want: headerTime},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const tripID = "trip"
+			manager := newTestManager()
+			serveTripUpdate(t, manager, tripID, tt.timestamp, proto.Uint64(uint64(headerTime.Unix())))
+
+			updates := manager.GetTripUpdatesForTrip(tripID)
+			require.Len(t, updates, 1)
+			require.NotNil(t, updates[0].Timestamp)
+			assert.Equal(t, tt.want.Unix(), updates[0].Timestamp.Unix())
+		})
+	}
+
+	t.Run("no header falls back to the fetch time", func(t *testing.T) {
+		const tripID = "trip"
+		manager := newTestManager()
+		before := time.Now().Truncate(time.Second)
+		serveTripUpdate(t, manager, tripID, nil, nil)
+
+		updates := manager.GetTripUpdatesForTrip(tripID)
+		require.Len(t, updates, 1)
+		require.NotNil(t, updates[0].Timestamp)
+		assert.GreaterOrEqual(t, updates[0].Timestamp.Unix(), before.Unix())
+	})
+}
+
+func TestUpdateFeedRealtime_FirstSeenUsesNormalizedFeedTime(t *testing.T) {
+	headerTime := time.Now().Add(-time.Minute).Truncate(time.Second)
+	updateTime := proto.Uint64(uint64(headerTime.Add(-30 * time.Second).Unix()))
+
+	t.Run("a millisecond header is converted", func(t *testing.T) {
+		const tripID = "trip"
+		manager := newTestManager()
+		serveTripUpdate(t, manager, tripID, updateTime, proto.Uint64(uint64(headerTime.UnixMilli())))
+
+		seenAt, ok := manager.TripUpdateFirstSeen(tripID)
+		require.True(t, ok)
+		assert.Equal(t, headerTime.Unix(), seenAt.Unix())
+	})
+
+	t.Run("a zero header takes the fetch time", func(t *testing.T) {
+		const tripID = "trip"
+		manager := newTestManager()
+		before := time.Now().Truncate(time.Second)
+		serveTripUpdate(t, manager, tripID, updateTime, proto.Uint64(0))
+
+		seenAt, ok := manager.TripUpdateFirstSeen(tripID)
+		require.True(t, ok)
+		assert.GreaterOrEqual(t, seenAt.Unix(), before.Unix())
+	})
+}
+
+func TestLatestFeedUpdateTime_FollowsRemainingFeeds(t *testing.T) {
+	manager := newTestManager()
+	older := time.Now().Add(-time.Minute).Truncate(time.Second)
+	newer := older.Add(30 * time.Second)
+	manager.SetFeedUpdateTimeForTest("older", older)
+	manager.SetFeedUpdateTimeForTest("newer", newer)
+
+	manager.clearFeedData("newer")
+	latest, ok := manager.LatestFeedUpdateTime()
+	require.True(t, ok)
+	assert.True(t, older.Equal(latest), "expected the remaining feed's time, got %s", latest)
+
+	manager.clearFeedData("older")
+	_, ok = manager.LatestFeedUpdateTime()
+	assert.False(t, ok)
+}
+
+func TestMockResetRealTimeData_ClearsLatestFeedUpdate(t *testing.T) {
+	manager := newTestManager()
+	manager.SetFeedUpdateTimeForTest("feed", time.Now())
+
+	manager.MockResetRealTimeData()
+
+	_, ok := manager.LatestFeedUpdateTime()
+	assert.False(t, ok)
+}
+
+func TestUpdateFeedRealtime_KeepsOnlyTripUpdateEntities(t *testing.T) {
+	const (
+		tripUpdateTrip  = "trip-update"
+		vehicleOnlyTrip = "vehicle-only"
+		alertOnlyTrip   = "alert-only"
+	)
+	vehiclePosition := func(tripID, vehicleID string) *gtfsrt.VehiclePosition {
+		return &gtfsrt.VehiclePosition{
+			Trip:    &gtfsrt.TripDescriptor{TripId: proto.String(tripID)},
+			Vehicle: &gtfsrt.VehicleDescriptor{Id: proto.String(vehicleID)},
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		feed := &gtfsrt.FeedMessage{
+			Header: &gtfsrt.FeedHeader{GtfsRealtimeVersion: proto.String("2.0"), Timestamp: proto.Uint64(uint64(time.Now().Unix()))},
+			Entity: []*gtfsrt.FeedEntity{
+				{Id: proto.String("update"), TripUpdate: &gtfsrt.TripUpdate{Trip: &gtfsrt.TripDescriptor{TripId: proto.String(tripUpdateTrip)}}},
+				{Id: proto.String("update-vehicle"), Vehicle: vehiclePosition(tripUpdateTrip, "bus-1")},
+				{Id: proto.String("vehicle"), Vehicle: vehiclePosition(vehicleOnlyTrip, "bus-2")},
+				{Id: proto.String("alert"), Alert: &gtfsrt.Alert{InformedEntity: []*gtfsrt.EntitySelector{
+					{Trip: &gtfsrt.TripDescriptor{TripId: proto.String(alertOnlyTrip)}},
+				}}},
+			},
+		}
+		data, err := proto.Marshal(feed)
+		assert.NoError(t, err)
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+
+	manager := newTestManager()
+	manager.updateFeedRealtime(context.Background(), RTFeedConfig{ID: "feed", TripUpdatesURL: server.URL, Enabled: true})
+
+	assert.Len(t, manager.GetTripUpdatesForTrip(tripUpdateTrip), 1, "a trip update also named by a vehicle stays")
+	assert.Empty(t, manager.GetTripUpdatesForTrip(vehicleOnlyTrip))
+	assert.Empty(t, manager.GetTripUpdatesForTrip(alertOnlyTrip))
+	_, seen := manager.TripUpdateFirstSeen(vehicleOnlyTrip)
+	assert.False(t, seen)
+}
+
+func serveTripUpdate(t *testing.T, manager *Manager, tripID string, timestamp, headerTime *uint64) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		feed := &gtfsrt.FeedMessage{
+			Header: &gtfsrt.FeedHeader{GtfsRealtimeVersion: proto.String("2.0"), Timestamp: headerTime},
+			Entity: []*gtfsrt.FeedEntity{{
+				Id: proto.String("entity"),
+				TripUpdate: &gtfsrt.TripUpdate{
+					Trip:      &gtfsrt.TripDescriptor{TripId: proto.String(tripID)},
+					Timestamp: timestamp,
+				},
+			}},
+		}
+		data, err := proto.Marshal(feed)
+		assert.NoError(t, err)
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	manager.updateFeedRealtime(context.Background(), RTFeedConfig{ID: "feed", TripUpdatesURL: server.URL, Enabled: true})
+}
