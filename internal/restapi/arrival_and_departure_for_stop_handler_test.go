@@ -386,6 +386,41 @@ func TestArrivalAndDepartureForStopHandlerWithMinutesParameters(t *testing.T) {
 	assert.Equal(t, stopID, model.Data.Entry.StopID)
 }
 
+func TestArrivalAndDepartureForStopHandlerValidatesIntegerParamsRange(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	api.rateLimiter = NewRateLimitMiddleware(100, time.Second, nil)
+
+	stopID := utils.FormCombinedID("25", "3028")
+	tripID := utils.FormCombinedID("25", "03969589-98dc-4fcd-a1c2-ce084b4ca5d2")
+	serviceDate := time.Now().UnixMilli()
+
+	tests := []struct {
+		name       string
+		paramQuery string
+		field      string
+	}{
+		{"minutesAfter 64-bit overflow", "minutesAfter=99999999999", "minutesAfter"},
+		{"minutesAfter int32 overflow", "minutesAfter=2147483648", "minutesAfter"},
+		{"minutesBefore 64-bit overflow", "minutesBefore=99999999999", "minutesBefore"},
+		{"minutesBefore int32 overflow", "minutesBefore=2147483648", "minutesBefore"},
+		{"stopSequence 64-bit overflow", "stopSequence=99999999999", "stopSequence"},
+		{"stopSequence int32 overflow", "stopSequence=2147483648", "stopSequence"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&%s",
+				stopID, tripID, serviceDate, tt.paramQuery)
+			resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.Contains(t, model.Data.FieldErrors, tt.field)
+			assert.Equal(t, "must be a valid integer", model.Data.FieldErrors[tt.field][0])
+		})
+	}
+}
+
 func TestArrivalAndDepartureForStopHandlerWithNonexistentTripID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

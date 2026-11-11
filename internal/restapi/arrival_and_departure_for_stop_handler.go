@@ -45,13 +45,13 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 
 	// Validate minutesAfter
 	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
-		if minutesAfter, err := strconv.Atoi(minutesAfterStr); err == nil {
+		if minutesAfter, err := strconv.ParseInt(minutesAfterStr, 10, 32); err == nil {
 			if minutesAfter < 0 {
 				fieldErrors["minutesAfter"] = []string{"must be a non-negative integer"}
 			} else if minutesAfter > maxMinutesAfter {
 				params.MinutesAfter = maxMinutesAfter
 			} else {
-				params.MinutesAfter = minutesAfter
+				params.MinutesAfter = int(minutesAfter)
 			}
 		} else {
 			fieldErrors["minutesAfter"] = []string{"must be a valid integer"}
@@ -60,13 +60,13 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 
 	// Validate minutesBefore
 	if minutesBeforeStr := r.URL.Query().Get("minutesBefore"); minutesBeforeStr != "" {
-		if minutesBefore, err := strconv.Atoi(minutesBeforeStr); err == nil {
+		if minutesBefore, err := strconv.ParseInt(minutesBeforeStr, 10, 32); err == nil {
 			if minutesBefore < 0 {
 				fieldErrors["minutesBefore"] = []string{"must be a non-negative integer"}
 			} else if minutesBefore > maxMinutesBefore {
 				params.MinutesBefore = maxMinutesBefore
 			} else {
-				params.MinutesBefore = minutesBefore
+				params.MinutesBefore = int(minutesBefore)
 			}
 		} else {
 			fieldErrors["minutesBefore"] = []string{"must be a valid integer"}
@@ -104,8 +104,9 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 
 	// Validate stopSequence
 	if stopSequenceStr := r.URL.Query().Get("stopSequence"); stopSequenceStr != "" {
-		if stopSequence, err := strconv.Atoi(stopSequenceStr); err == nil {
-			params.StopSequence = &stopSequence
+		if stopSequence, err := strconv.ParseInt(stopSequenceStr, 10, 32); err == nil {
+			seq := int(stopSequence)
+			params.StopSequence = &seq
 		} else {
 			fieldErrors["stopSequence"] = []string{"must be a valid integer"}
 		}
