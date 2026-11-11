@@ -153,7 +153,7 @@ func TestTripAttributionIngestion(t *testing.T) {
 		manager := newAttributionTestManager(t)
 		require.True(t, manager.updateFeedRealtime(ctx, serveTripFeed(t, RTFeedConfig{ID: "feed"}, createdAt, gtfs.TripID{ID: "T1"})))
 
-		require.True(t, manager.updateFeedRealtime(ctx, serveTripFeed(t, RTFeedConfig{ID: "feed"}, createdAt, gtfs.TripID{ID: "T8", RouteID: "R2"})))
+		require.True(t, manager.updateFeedRealtime(ctx, serveTripFeed(t, RTFeedConfig{ID: "feed"}, createdAt.Add(time.Second), gtfs.TripID{ID: "T8", RouteID: "R2"})))
 
 		assert.Equal(t, map[string]string{"T8": "agency-C"}, manager.feedTripAgency["feed"])
 	})
@@ -174,7 +174,7 @@ func TestTripAttributionIngestion(t *testing.T) {
 			gtfs.TripID{ID: "T1"}, gtfs.TripID{ID: "T8", RouteID: "R2"})))
 		require.NoError(t, manager.GtfsDB.DB.Close())
 
-		require.True(t, manager.updateFeedRealtime(ctx, serveTripFeed(t, RTFeedConfig{ID: "feed"}, createdAt, gtfs.TripID{ID: "T1"})))
+		require.True(t, manager.updateFeedRealtime(ctx, serveTripFeed(t, RTFeedConfig{ID: "feed"}, createdAt.Add(time.Second), gtfs.TripID{ID: "T1"})))
 
 		assert.Equal(t, map[string]string{"T1": "agency-A"}, manager.feedTripAgency["feed"],
 			"T8 left the feed, so its agency is dropped")
