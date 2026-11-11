@@ -143,18 +143,18 @@ func TestFindSituationAlertPrefersPublishedID(t *testing.T) {
 		InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agency25}},
 	}
 
-	got, ok := findSituationAlert([]gtfs.Alert{rawCollision, published}, "25", "25_late")
+	got, ok := findSituationAlert(feedAlertsForTest("", []gtfs.Alert{rawCollision, published}), "25", "25_late")
 	require.True(t, ok)
 	assert.Equal(t, "late", got.ID, "the published 25_late must win over an earlier raw id")
 
-	got, ok = findSituationAlert([]gtfs.Alert{rawCollision}, "25", "25_late")
+	got, ok = findSituationAlert(feedAlertsForTest("", []gtfs.Alert{rawCollision}), "25", "25_late")
 	require.True(t, ok)
 	assert.Equal(t, "25_late", got.ID, "a raw id still matches when nothing publishes it")
 
-	_, ok = findSituationAlert([]gtfs.Alert{published}, "25", "")
+	_, ok = findSituationAlert(feedAlertsForTest("", []gtfs.Alert{published}), "25", "")
 	assert.False(t, ok)
 
-	_, ok = findSituationAlert([]gtfs.Alert{published}, "40", "40_late")
+	_, ok = findSituationAlert(feedAlertsForTest("", []gtfs.Alert{published}), "40", "40_late")
 	assert.False(t, ok)
 }
 
@@ -163,7 +163,10 @@ func TestSituationHandler_ParityAllAffectsAndConsequences(t *testing.T) {
 	defer cleanup()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	db := api.GtfsManager.GtfsDB.DB
-
+	// Java qualifies unknown entity IDs with the feed's first configured
+	// agency, so the mock feeds need the same agency-ids as production config.
+	api.GtfsManager.MockSetFeedAgencyIDs("feed-40", "40")
+	api.GtfsManager.MockSetFeedAgencyIDs("feed-a", "40")
 	// Add an underscore route to DB under agency 25 to test raw underscore qualification
 	_, err := db.Exec(`INSERT INTO routes (id, agency_id, short_name, type) VALUES ('r_under', '25', 'Under', 3)`)
 	require.NoError(t, err)

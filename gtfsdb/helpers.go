@@ -579,6 +579,13 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		return false, fmt.Errorf("error committing import transaction: %w", err)
 	}
 
+	logging.LogOperation(logger, "optimizing_database")
+	if err := c.OptimizeDatabase(ctx); err != nil {
+		logging.LogError(logger, "Unable to optimize database", err)
+	} else {
+		logging.LogOperation(logger, "database_optimized")
+	}
+
 	counts, err := c.TableCounts()
 	if err != nil {
 		logging.LogError(logger, "Error getting table counts", err)
@@ -915,6 +922,24 @@ var calendarDateInsert = batchInsert[CreateCalendarDateParams]{
 // does not commit; if nil it starts its own and commits.
 func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates iter.Seq[CreateCalendarDateParams], tx *sql.Tx) error {
 	return bulkInsertRows(ctx, c, tx, calendarDateInsert, calendarDates)
+}
+
+// OptimizeDatabase runs PRAGMA analysis_limit and ANALYZE after an import
+// so SQLite computes query planner statistics (stored in sqlite_stat1).
+func (c *Client) OptimizeDatabase(ctx context.Context) error {
+	conn, err := c.DB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection for optimization: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.ExecContext(ctx, "PRAGMA analysis_limit = 1000"); err != nil {
+		return fmt.Errorf("failed to set analysis_limit: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "ANALYZE"); err != nil {
+		return fmt.Errorf("failed to run analyze: %w", err)
+	}
+	return nil
 }
 
 // enableWALMode enables Write-Ahead Logging, which allows
