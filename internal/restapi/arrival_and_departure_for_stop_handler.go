@@ -628,7 +628,9 @@ func (api *RestAPI) getPredictedTimes(
 	scheduledArrivalTime, scheduledDepartureTime time.Time,
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
-	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
+	if tripUpdateIsCanceledOrDeleted(realTimeTrip) ||
+		realTimeTrip == nil ||
+		(len(realTimeTrip.StopTimeUpdates) == 0 && realTimeTrip.Delay == nil) {
 		return time.Time{}, time.Time{}, false
 	}
 

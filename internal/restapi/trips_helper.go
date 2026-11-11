@@ -29,9 +29,8 @@ import (
 type tripStatusExtras struct {
 	snapshot   *scheduledBlockSnapshot
 	situations []situationRef
-	// deviationResolved reports that status.ScheduleDeviation came from a
-	// TripUpdate inside Java's blockNotActive window, rather than defaulting
-	// to 0.
+	// deviationResolved reports that the block had a TripUpdate inside Java's
+	// blockNotActive window, including when an active update defaults to 0.
 	deviationResolved bool
 	// blockTripIDs are the block's trips in start order, from which Java
 	// builds its per-stop deviation samples.
@@ -662,9 +661,9 @@ type scheduleDeviationFallback struct {
 // applyBlockLocationToInstance (ArrivalAndDepartureServiceImpl.java:585-608)
 // and applyBlockLocationToBean:
 //
-//   - Canceled trips are never predicted.
-//   - Without a resolved deviation there is nothing to apply: either no
-//     TripUpdate exists, or Java's blockNotActive guard discarded it.
+//   - Trips whose own update is CANCELED or DELETED are never predicted.
+//   - Without a resolved deviation there is nothing to apply: no update
+//     resolved the block, or Java's blockNotActive guard discarded it.
 //   - When the block's StopTimeUpdates yield deviation samples,
 //     getBestScheduleDeviation takes the last sample at or before the stop
 //     and refuses to propagate upstream, so a stop before every sample is
@@ -673,9 +672,11 @@ type scheduleDeviationFallback struct {
 //   - The deviation is applied less any scheduled slack the vehicle can
 //     absorb before reaching the stop.
 func (api *RestAPI) predictedTimesFromScheduleDeviation(ctx context.Context, in scheduleDeviationFallback) (predictedArrival, predictedDeparture time.Time, predicted bool) {
+	ownTripUpdate, _ := api.GtfsManager.GetTripUpdateByID(in.tripID)
 	hasUsableDeviation := in.status != nil &&
 		in.extras != nil &&
 		in.status.Status != "CANCELED" &&
+		!tripUpdateIsCanceledOrDeleted(ownTripUpdate) &&
 		in.extras.deviationResolved
 	if !hasUsableDeviation {
 		return time.Time{}, time.Time{}, false

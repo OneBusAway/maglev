@@ -26,8 +26,9 @@ type StopDelayInfo struct {
 }
 
 // GetScheduleDeviationForBlock returns the schedule deviation in seconds
-// (positive = late) across every TripUpdate matching any tripID. Mirrors
-// Java's GtfsRealtimeTripLibrary.applyTripUpdatesToRecord (lines 932-1014):
+// (positive = late) across every TripUpdate matching any tripID, including
+// canceled updates. An empty SCHEDULED or UNSCHEDULED update resolves to zero.
+// Mirrors Java's GtfsRealtimeTripLibrary.applyTripUpdatesToRecord (lines 932-1014):
 //
 //  1. LAST trip-level delay across the block wins (Java overwrites
 //     unconditionally; the tripUpdateHasDelay flag then suppresses per-STU
@@ -69,6 +70,14 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 		}
 		return dev, true
 	}
+	// Only SCHEDULED and UNSCHEDULED updates establish active scheduled
+	// service when there is no usable deviation or timepoint prediction.
+	for _, update := range tripUpdates {
+		switch update.tu.ID.ScheduleRelationship {
+		case gtfsrt.TripDescriptor_SCHEDULED, gtfsrt.TripDescriptor_UNSCHEDULED:
+			return 0, true
+		}
+	}
 	return 0, false
 }
 
@@ -90,6 +99,18 @@ func exceedsBlockNotActiveThreshold(deviationSeconds int) bool {
 type tripUpdateForTrip struct {
 	tripID string
 	tu     gtfs.Trip
+}
+
+func tripUpdateIsCanceledOrDeleted(update *gtfs.Trip) bool {
+	if update == nil {
+		return false
+	}
+	switch update.ID.ScheduleRelationship {
+	case gtfsrt.TripDescriptor_CANCELED, gtfsrt.TripDescriptor_DELETED:
+		return true
+	default:
+		return false
+	}
 }
 
 // collectBlockTripUpdates flattens every TripUpdate matching any tripID
