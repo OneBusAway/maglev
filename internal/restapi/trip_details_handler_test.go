@@ -122,49 +122,45 @@ func TestTripDetailsHandlerWithInvalidTripID(t *testing.T) {
 	assert.Equal(t, "resource not found", model.Text)
 }
 
-func TestTripDetailsHandlerWithUnknownAgency(t *testing.T) {
+func TestTripDetailsHandlerWithInvalidAgencyPrefix(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
+	ctx := context.Background()
 	trip := mustGetTrip(t, api)
-	tripID := utils.FormCombinedID("UNKNOWN", trip.ID)
-
-	resp, model := callAPIHandler[TripDetailsResponse](t, api,
-		"/api/where/trip-details/"+tripID+".json?key=TEST")
-
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, http.StatusNotFound, model.Code)
-	assert.Equal(t, "resource not found", model.Text)
-}
-
-func TestTripDetailsHandlerWithMismatchedAgency(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	trip := mustGetTrip(t, api)
-	agencies := mustGetAgencies(t, api)
-	var otherAgencyID string
-	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(context.Background(), trip.RouteID)
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
 	require.NoError(t, err)
 
-	for _, a := range agencies {
-		if a.ID != route.AgencyID {
-			otherAgencyID = a.ID
-			break
-		}
+	// Create a second valid agency in the DB so "OTHER" is a known but mismatched agency
+	_, err = api.GtfsManager.GtfsDB.Queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID:       "OTHER",
+		Name:     "Other Transit Agency",
+		Url:      "https://example.com/other",
+		Timezone: "America/Los_Angeles",
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		agencyID string
+	}{
+		{"unknown agency not in database", "UNKNOWN"},
+		{"known agency mismatched from route agency", "OTHER"},
 	}
-	if otherAgencyID == "" {
-		otherAgencyID = "OTHER_AGENCY"
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NotEqual(t, route.AgencyID, tt.agencyID)
+
+			tripID := utils.FormCombinedID(tt.agencyID, trip.ID)
+			resp, model := callAPIHandler[TripDetailsResponse](t, api,
+				"/api/where/trip-details/"+tripID+".json?key=TEST")
+
+			assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+			assert.Equal(t, http.StatusNotFound, model.Code)
+			assert.Equal(t, "resource not found", model.Text)
+		})
 	}
-
-	tripID := utils.FormCombinedID(otherAgencyID, trip.ID)
-
-	resp, model := callAPIHandler[TripDetailsResponse](t, api,
-		"/api/where/trip-details/"+tripID+".json?key=TEST")
-
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-	assert.Equal(t, http.StatusNotFound, model.Code)
-	assert.Equal(t, "resource not found", model.Text)
 }
 
 func TestTripDetailsHandlerWithServiceDate(t *testing.T) {
