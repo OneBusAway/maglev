@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"net/http"
