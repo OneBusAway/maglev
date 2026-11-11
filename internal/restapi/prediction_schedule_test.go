@@ -105,7 +105,8 @@ func TestArrivalsReusePredictionSchedules(t *testing.T) {
 	t.Run("one-batch-for-schedules-and-counts", func(t *testing.T) {
 		db.single, db.batch = 0, 0
 		clear(db.byCaller)
-		schedules := api.loadTripSchedules(t.Context(), []string{trip})
+		schedules, err := api.loadTripSchedules(t.Context(), []string{trip})
+		require.NoError(t, err)
 		require.Len(t, schedules[trip].stopTimes, 2)
 		assert.Equal(t, schedule.stopIDs, schedules[trip].stopIDs)
 		assert.Equal(t, 1, db.batch)
@@ -164,16 +165,13 @@ func TestArrivalsReusePredictionSchedules(t *testing.T) {
 		}
 	}
 
-	t.Run("failed-batch-does-not-invent-time-only-predictions", func(t *testing.T) {
+	t.Run("failed-schedule-batch-returns-server-error", func(t *testing.T) {
 		db.failBatch = true
-		resp, body := callAPIHandler[response](t, api, endpoints[0].url)
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.Len(t, body.Data.Entry.Arrivals, 3)
-		for _, arrival := range body.Data.Entry.Arrivals {
-			assert.True(t, arrival.Predicted, "the prior update still tracks this trip")
-			assert.True(t, arrival.PredictedArrivalTime.IsZero())
-			assert.True(t, arrival.PredictedDepartureTime.IsZero())
-			assert.Zero(t, arrival.TotalStopsInTrip)
+		for _, endpoint := range endpoints {
+			resp, body := callAPIHandler[models.ResponseModel](t, api, endpoint.url)
+			require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+			assert.Equal(t, http.StatusInternalServerError, body.Code)
+			assert.Equal(t, "internal server error", body.Text)
 		}
 	})
 }
