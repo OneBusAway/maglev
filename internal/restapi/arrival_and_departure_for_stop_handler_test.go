@@ -2246,10 +2246,9 @@ func TestArrivalAndDepartureForStop_UnderscoreAgencyStatusStops(t *testing.T) {
 	for _, s := range model.Data.References.Stops {
 		stopsByID[s.ID] = s
 	}
+	require.NotEmpty(t, status.NextStop, "tripStatus.nextStop must be set")
+	require.NotEmpty(t, status.ClosestStop, "tripStatus.closestStop must be set")
 	for _, combinedID := range []string{status.NextStop, status.ClosestStop} {
-		if combinedID == "" {
-			continue
-		}
 		_, ok := stopsByID[combinedID]
 		assert.Truef(t, ok, "references.stops must contain %q (route agency has underscores)", combinedID)
 	}

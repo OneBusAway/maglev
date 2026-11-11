@@ -464,8 +464,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// Include active trip if it's different from the parameter trip and trip status is not null
 	if tripStatus != nil && tripStatus.ActiveTripID != "" {
-		activeTripID := extractBareEntityID(tripStatus.ActiveTripID, route.AgencyID)
-		if activeTripID != "" && activeTripID != tripID {
+		_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ActiveTripID)
+		if err == nil && activeTripID != tripID {
 			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
 			if err == nil {
 				activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
