@@ -366,7 +366,7 @@ func (manager *Manager) Alerts() []FeedAlert {
 
 // GetAlertsByIDs returns indexed alerts matching the given trip, route or
 // agency ID, in feed-id order. Each returned value carries the publishing
-// feed's successful ingestion time as CreatedAt.
+// feed's first configured agency and successful ingestion time.
 func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []FeedAlert {
 	idx := manager.mergedRealtime().alerts
 
@@ -820,6 +820,15 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		manager.feedLastUpdate[feedID] = time.Now()
 	}
 
+	// Stamp trip-updates success on its own clock, within the same lock. This
+	// is the timestamp clearStaleTripUpdates ages when the sub-feed fails.
+	if tripsUpdated {
+		if manager.feedTripLastSuccess == nil {
+			manager.feedTripLastSuccess = make(map[string]time.Time)
+		}
+		manager.feedTripLastSuccess[feedID] = time.Now()
+	}
+
 	return hasNewData
 }
 
@@ -998,7 +1007,7 @@ func (manager *Manager) storeFeedTrips(feedID string, trips tripAttribution, hea
 	if manager.feedTripDataTime == nil {
 		manager.feedTripDataTime = make(map[string]time.Time)
 	}
-	if headerTime.IsZero() {
+	if isMissingHeaderTime(headerTime) {
 		headerTime = time.Now()
 	}
 	agencies := trips.agencies
@@ -1343,7 +1352,11 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 			if alert.InformedEntities == nil || alert.ID == "" {
 				continue
 			}
-			feedAlert := FeedAlert{Alert: alert, CreatedAt: manager.feedAlertIngestedAt[id]}
+			feedAlert := FeedAlert{
+				Alert:        alert,
+				FeedAgencyID: manager.config.firstAgencyForFeed(id),
+				CreatedAt:    manager.feedAlertIngestedAt[id],
+			}
 			idx.all = append(idx.all, feedAlert)
 			// Per-alert per-bucket dedup: prevents the same alert from being appended
 			// to the same bucket more than once when it has multiple InformedEntities
@@ -1472,6 +1485,11 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 
 				hasNewData := manager.updateFeedRealtime(ctx, feedCfg)
 				duration := time.Since(start)
+
+				if hasNewData && manager.clearStaleTripUpdates(feedCfg.ID) {
+					logger.Warn("trip updates stale beyond threshold while sibling sub-feeds succeed, clearing trip data",
+						slog.String("feed", feedCfg.ID))
+				}
 
 				if manager.Metrics != nil {
 					manager.Metrics.FeedFetchDuration.WithLabelValues(feedCfg.ID).Observe(duration.Seconds())

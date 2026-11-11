@@ -6,11 +6,12 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 )
 
-// FeedAlert carries an alert's ingestion time through the immutable indexes.
-// CreatedAt is the successful fetch/parse time, not the feed header or read time.
+// FeedAlert carries the publishing feed's first configured agency and the
+// successful fetch/parse time through the immutable alert indexes.
 type FeedAlert struct {
 	gtfs.Alert
-	CreatedAt time.Time
+	FeedAgencyID string
+	CreatedAt    time.Time
 }
 
 // storeFeedAlerts replaces one feed's alerts and timestamp together. The caller

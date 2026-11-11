@@ -226,6 +226,24 @@ func (m *Manager) MockAddAlert(feedID string, alert gtfs.Alert) {
 	m.rebuildMergedRealtimeLocked()
 }
 
+// MockSetFeedAgencyIDs configures a feed's agency-ids for tests, the value
+// InitGTFSManager reads from config.json. Alerts added afterwards carry the
+// first ID as their FeedAgencyID.
+func (m *Manager) MockSetFeedAgencyIDs(feedID string, agencyIDs ...string) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	for i := range m.config.RTFeeds {
+		if m.config.RTFeeds[i].ID == feedID {
+			m.config.RTFeeds[i].AgencyIDs = agencyIDs
+			m.rebuildMergedRealtimeLocked()
+			return
+		}
+	}
+	m.config.RTFeeds = append(m.config.RTFeeds, RTFeedConfig{ID: feedID, AgencyIDs: agencyIDs})
+	m.rebuildMergedRealtimeLocked()
+}
+
 // MockSetAgencyVehicles replaces a feed's vehicles with the given ones, all
 // attributed to agencyID and seen now, and rebuilds the snapshot so they
 // reach VehiclePositionsForAgency.
