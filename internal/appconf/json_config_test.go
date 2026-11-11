@@ -731,3 +731,24 @@ func TestToGtfsConfigData_DuplicateIDs(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "duplicate feed ID")
 }
+
+func TestRedactURL(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "empty", raw: "", want: ""},
+		{name: "no query", raw: "https://example.com/bundle-inputs.json", want: "https://example.com/bundle-inputs.json"},
+		{name: "signed query", raw: "https://example.com/b.json?X-Amz-Signature=abc&X-Amz-Expires=60", want: "https://example.com/b.json?" + RedactedValue},
+		{name: "password in userinfo", raw: "https://user:secret@example.com/b.json", want: "https://user:xxxxx@example.com/b.json"},
+		{name: "local path", raw: "./testdata/bundle-inputs.json", want: "./testdata/bundle-inputs.json"},
+		{name: "unparseable", raw: "https://[::1/b.json?sig=abc", want: RedactedValue},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, RedactURL(tt.raw))
+		})
+	}
+}
