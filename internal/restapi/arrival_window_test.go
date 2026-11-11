@@ -497,6 +497,46 @@ func TestArrivalWindow_RunningLateAndEarlyCandidates(t *testing.T) {
 	}
 }
 
+// TestArrivalWindow_RunningEarlyCrossesMidnight verifies that the service-day
+// scan covers the padded candidate window: a trip scheduled on the next
+// service date whose predicted time falls before midnight is still returned.
+func TestArrivalWindow_RunningEarlyCrossesMidnight(t *testing.T) {
+	// Query at 23:50 with a ±5 minute window: 23:45–23:55. Padded by
+	// runningLate (30m) and runningEarly (10m), the day queries search
+	// 23:15–00:05, which reaches the next service date. A trip scheduled
+	// 00:02 running 9 minutes early is predicted at 23:53, inside the
+	// requested window. Unpadded, the window ends at 23:55 and maxDay is 0,
+	// so service day +1 is never scanned and the arrival is dropped.
+	files := frequencyFixtureFiles()
+	files["trips.txt"] += freqRouteID + "," + freqServiceID + ",early-midnight-trip,Buffered Trip,0,early-midnight-block\n"
+	files["stop_times.txt"] += "early-midnight-trip,00:02:00,00:02:00," + freqStopAID + ",1\n"
+	files["stop_times.txt"] += "early-midnight-trip,11:00:00,11:00:00," + freqStopBID + ",2\n"
+
+	queryTime := time.Date(2025, 6, 12, 23, 50, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(queryTime), "early-midnight-window.zip", files)
+	defer api.Shutdown()
+
+	stopID := freqStopAID
+	firstStop := uint32(1)
+	api.GtfsManager.MockAddTripUpdate("early-midnight-trip", nil, []gtfs.StopTimeUpdate{
+		{StopID: &stopID, StopSequence: &firstStop, Arrival: &gtfs.StopTimeEvent{Delay: ptrDuration(-9 * time.Minute)}},
+	})
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	params := url.Values{
+		"time":                   {fmt.Sprint(queryTime.UnixMilli())},
+		"minutesBefore":          {"5"},
+		"minutesAfter":           {"5"},
+		"frequencyMinutesBefore": {"5"},
+		"frequencyMinutesAfter":  {"5"},
+	}
+	for _, endpoint := range []string{"stop", "location"} {
+		arrivals := frequencyWindowArrivals(t, api, endpoint, params)
+		assert.True(t, arrivalsIncludeTrip(t, arrivals, "early-midnight-trip"),
+			"arrival predicted at 23:53 (scheduled 00:02 on the next service day, 9 min early) should be returned")
+	}
+}
+
 func arrivalsIncludeTrip(t *testing.T, arrivals []models.ArrivalAndDeparture, tripID string) bool {
 	t.Helper()
 	for _, arrival := range arrivals {
