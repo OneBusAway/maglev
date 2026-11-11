@@ -31,6 +31,9 @@ type blockStopMetric struct {
 	// AccumulatedSlack is the scheduled time, in seconds, a late vehicle can
 	// make up before reaching this stop: see accumulateBlockSlack.
 	AccumulatedSlack int64
+	// Location is the stop's position, or nil when its coordinates could not
+	// be loaded.
+	Location *models.Location
 }
 
 // dwellSeconds is the stop's scheduled time between arrival and departure.
@@ -319,6 +322,55 @@ func (s *scheduledBlockSnapshot) closestAndNextStops() (stops scheduledStops, ok
 	return stops, true
 }
 
+// scheduledPosition places the block's active trip at the snapshot's time:
+// along the active trip's shape when it has one, otherwise, as Java's
+// ScheduledBlockLocationServiceImpl does, on the straight line between the
+// stops before and after, by time. Returns (nil, -1) when the snapshot is nil,
+// its time falls outside the block, or the stops have no coordinates.
+func (s *scheduledBlockSnapshot) scheduledPosition() (*models.Location, float64) {
+	if s == nil || !s.InRange {
+		return nil, -1
+	}
+	if position, orientation := positionAndOrientationAtDistance(
+		s.ActiveTripShape, s.ActiveTripCumulativeDistances, s.ActiveTripScheduledDistance,
+	); position != nil {
+		return position, orientation
+	}
+	return s.positionBetweenStops()
+}
+
+// positionBetweenStops interpolates between the stops the snapshot's time falls
+// between, from the earlier stop's departure to the later one's arrival.
+// During a stop's dwell, or at the block's first stop, Java reports the stop
+// itself with orientation 0.
+func (s *scheduledBlockSnapshot) positionBetweenStops() (*models.Location, float64) {
+	index, atStop, ok := s.scheduledStopIndex()
+	if !ok || s.Stops[index].Location == nil {
+		return nil, -1
+	}
+	next := s.Stops[index]
+	if atStop || index == 0 {
+		return next.Location, 0
+	}
+	previous := s.Stops[index-1]
+	departed := previous.departureSeconds()
+	span := next.EffectiveStopSeconds - departed
+	if previous.Location == nil || span <= 0 {
+		return next.Location, 0
+	}
+	ratio := float64(s.CurrentSeconds-departed) / float64(span)
+	from, to := *previous.Location, *next.Location
+	position := &models.Location{
+		Lat: from.Lat + ratio*(to.Lat-from.Lat),
+		Lon: from.Lon + ratio*(to.Lon-from.Lon),
+	}
+	orientation := segmentOrientation(
+		gtfs.ShapePoint{Latitude: from.Lat, Longitude: from.Lon},
+		gtfs.ShapePoint{Latitude: to.Lat, Longitude: to.Lon},
+	)
+	return position, orientation
+}
+
 func absInt(n int) int {
 	if n < 0 {
 		return -n
@@ -415,6 +467,10 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 			tripStopDistances, tripLength = haversineStopDistances(t.stopTimes, stopByID)
 		}
 		for k, st := range t.stopTimes {
+			var location *models.Location
+			if stop, ok := stopByID[st.StopID]; ok {
+				location = &models.Location{Lat: stop.Lat, Lon: stop.Lon}
+			}
 			stops = append(stops, blockStopMetric{
 				TripID:               t.id,
 				StopID:               st.StopID,
@@ -425,6 +481,7 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 				DistanceAlongTrip:    tripStopDistances[k],
 				ArrivalSeconds:       utils.NanosToSeconds(st.ArrivalTime),
 				DepartureSeconds:     utils.NanosToSeconds(st.DepartureTime),
+				Location:             location,
 			})
 			blockSeq++
 		}
