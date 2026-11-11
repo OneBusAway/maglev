@@ -258,3 +258,12 @@ func TestFetch_RedactsSignedURLInErrors(t *testing.T) {
 		})
 	}
 }
+
+// A URL that net/http cannot turn into a request fails before it is sent,
+// and that error repeats the full URL too.
+func TestFetch_RedactsMalformedSignedURLInErrors(t *testing.T) {
+	_, err := Fetch(context.Background(), "https://host:abc/b.json?sig=s3cr3t")
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "s3cr3t")
+}

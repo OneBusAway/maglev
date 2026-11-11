@@ -113,17 +113,12 @@ func openSource(ctx context.Context, source string) (io.ReadCloser, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
 	if err != nil {
-		return nil, err
+		return nil, withoutURL(err)
 	}
 	client := &http.Client{Timeout: fetchTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		// net/http's *url.Error repeats the full request URL, signature
-		// included; Fetch names the source redacted instead.
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
-			err = urlErr.Err
-		}
+		err = withoutURL(err)
 		if ctx.Err() != nil {
 			return nil, err
 		}
@@ -138,6 +133,17 @@ func openSource(ctx context.Context, source string) (io.ReadCloser, error) {
 		return nil, statusErr
 	}
 	return resp.Body, nil
+}
+
+// withoutURL drops the *url.Error wrapper that net/url and net/http put
+// around request errors. It repeats the full URL, signature included;
+// Fetch names the source redacted instead.
+func withoutURL(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err
+	}
+	return err
 }
 
 // openLocalSource opens a manifest on disk. Like the config file, it must
