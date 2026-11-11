@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
@@ -1198,12 +1197,4 @@ func appendUniqueStopID(stopIDsByBareID map[string][]string, bareID, combinedID 
 		}
 	}
 	stopIDsByBareID[bareID] = append(stopIDsByBareID[bareID], combinedID)
-}
-
-func logQueryError(logger *slog.Logger, msg string, err error) {
-	if errors.Is(err, context.DeadlineExceeded) {
-		logger.Warn(msg, "error", err)
-	} else if !errors.Is(err, context.Canceled) {
-		logger.Error(msg, "error", err)
-	}
 }
