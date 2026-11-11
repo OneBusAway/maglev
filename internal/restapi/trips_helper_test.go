@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
@@ -2419,4 +2420,68 @@ func slackTestSnapshot(trips ...slackTestTrip) *scheduledBlockSnapshot {
 	}
 	accumulateBlockSlack(snap.Stops, blockTrips, make([]float64, len(trips)))
 	return snap
+}
+
+// blockStatusFiles is a block of two trips on one route: trip-08 runs A to B,
+// then trip-09 runs B back to A.
+func blockStatusFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"blk,Block Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"r,blk,R,Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"A,Stop A,47.6000,-122.3000\n" +
+			"B,Stop B,47.6100,-122.3000\n",
+		"trips.txt": "route_id,service_id,trip_id,block_id\n" +
+			"r,svc,trip-08,block\n" +
+			"r,svc,trip-09,block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"trip-08,10:00:00,10:00:00,A,1\n" +
+			"trip-08,10:05:00,10:05:00,B,2\n" +
+			"trip-09,10:10:00,10:10:00,B,1\n" +
+			"trip-09,10:15:00,10:15:00,A,2\n",
+	}
+}
+
+// With only the schedule, Java reads closest and next stops off the block's
+// scheduled location, so a later trip in the block reports where the active
+// trip is rather than its own first stop.
+func TestBuildTripStatus_LaterBlockTripUsesBlockStops(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := time.Date(2025, 1, 1, 10, 4, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(currentTime), "block-status.zip", blockStatusFiles())
+
+	status, _, err := api.BuildTripStatus(context.Background(), "blk", "trip-09", nil, serviceDate, currentTime, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, "blk_B", status.NextStop)
+	assert.Equal(t, 60, status.NextStopTimeOffset)
+	assert.Equal(t, "blk_B", status.ClosestStop)
+	assert.Equal(t, 60, status.ClosestStopTimeOffset)
+}
+
+// A trip update without a vehicle position still places the trip on its
+// block: Java shifts the block's scheduled location by the update's one
+// schedule deviation and reads closest and next stops from it, rather than
+// applying per-stop delays to the trip's own stops.
+func TestBuildTripStatus_TripUpdateWithoutVehicleUsesShiftedBlockStops(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := time.Date(2025, 1, 1, 10, 4, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(currentTime), "block-status.zip", blockStatusFiles())
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	delay := 2 * time.Minute
+	api.GtfsManager.MockAddTripUpdate("trip-09", &delay, nil)
+
+	status, _, err := api.BuildTripStatus(context.Background(), "blk", "trip-09", nil, serviceDate, currentTime, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, 120, status.ScheduleDeviation)
+	assert.Equal(t, "blk_A", status.ClosestStop, "10:02 effective is nearer trip-08's A than its B")
+	assert.Equal(t, -120, status.ClosestStopTimeOffset)
+	assert.Equal(t, "blk_B", status.NextStop)
+	assert.Equal(t, 180, status.NextStopTimeOffset)
 }

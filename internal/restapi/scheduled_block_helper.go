@@ -45,6 +45,9 @@ type scheduledBlockSnapshot struct {
 	StopIndex     map[scheduledStopKey]int
 	NextStopIndex int // -1 when currentTime is past the block's last stop
 
+	// CurrentSeconds is the snapshot's time, in seconds since service-date midnight.
+	CurrentSeconds int64
+
 	// Block-level interpolated distance at currentTime.
 	DistanceAlongBlock float64
 
@@ -248,10 +251,79 @@ func buildSnapshotFromStops(
 		Stops:              stops,
 		StopIndex:          stopIndex,
 		NextStopIndex:      findNextStopIndex(stops, currentSeconds, monotonic),
+		CurrentSeconds:     currentSeconds,
 		DistanceAlongBlock: interpolateBlockDistance(stops, currentSeconds, monotonic),
 		InRange:            currentSeconds >= firstStopSec && currentSeconds <= lastStopSec,
 		ShiftTripIDs:       shiftTripIDs,
 	}
+}
+
+// scheduledStops is a block's closest and next stop at one moment, with each
+// stop's offset from that moment in seconds.
+type scheduledStops struct {
+	closestStopID string
+	closestOffset int
+	nextStopID    string
+	nextOffset    int
+}
+
+// scheduledStopIndex finds the snapshot's time among the block's stops as
+// Java's ScheduledBlockLocationServiceImpl does: the first stop whose departure
+// is at or after it. atStop reports that the time falls in that stop's dwell,
+// between its arrival and departure. ok is false past the last departure.
+func (s *scheduledBlockSnapshot) scheduledStopIndex() (index int, atStop bool, ok bool) {
+	for i, stop := range s.Stops {
+		if stop.departureSeconds() >= s.CurrentSeconds {
+			return i, stop.EffectiveStopSeconds <= s.CurrentSeconds, true
+		}
+	}
+	return 0, false, false
+}
+
+// departureSeconds is the stop's departure, or its arrival when none is set.
+func (m blockStopMetric) departureSeconds() int64 {
+	return max(m.DepartureSeconds, m.EffectiveStopSeconds)
+}
+
+// closestAndNextStops picks the block's closest and next stops the way Java's
+// ScheduledBlockLocationServiceImpl does:
+//   - during a stop's dwell, both are that stop, with offsets 0;
+//   - before the block starts, both are its first stop;
+//   - between stops, the next is the stop ahead and the closest is the nearer
+//     in time of it and the stop behind, measured from that stop's departure,
+//     with ties going to the stop ahead.
+//
+// ok is false when the snapshot is nil or its time is past the block's end.
+func (s *scheduledBlockSnapshot) closestAndNextStops() (stops scheduledStops, ok bool) {
+	if s == nil {
+		return scheduledStops{}, false
+	}
+	index, atStop, ok := s.scheduledStopIndex()
+	if !ok {
+		return scheduledStops{}, false
+	}
+	next := s.Stops[index]
+	if atStop {
+		return scheduledStops{closestStopID: next.StopID, nextStopID: next.StopID}, true
+	}
+	toOffset := int(next.EffectiveStopSeconds - s.CurrentSeconds)
+	stops = scheduledStops{closestStopID: next.StopID, closestOffset: toOffset, nextStopID: next.StopID, nextOffset: toOffset}
+	if index == 0 {
+		return stops, true
+	}
+	previous := s.Stops[index-1]
+	fromOffset := int(previous.departureSeconds() - s.CurrentSeconds)
+	if absInt(fromOffset) < absInt(toOffset) {
+		stops.closestStopID, stops.closestOffset = previous.StopID, fromOffset
+	}
+	return stops, true
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // assignActiveTrip fills snap.ActiveTrip* fields by picking the latest trip
