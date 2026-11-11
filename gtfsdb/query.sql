@@ -227,16 +227,6 @@ WHERE
 ORDER BY
     r.rowid;
 
--- name: GetRouteIDsForStop :many
-SELECT DISTINCT
-    (routes.agency_id || '_' || routes.id) AS route_id
-FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
-WHERE
-    stop_times.stop_id = ?;
-
 -- name: GetRoutesForAgency :many
 SELECT
     routes.id,
