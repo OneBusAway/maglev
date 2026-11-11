@@ -186,9 +186,16 @@ func (manager *Manager) storeConfiguredFeed(ctx context.Context, logger *slog.Lo
 }
 
 // logFeedExpiry reads the feed_expires_at value persisted by StoreGtfsData
-// and updates the metrics gauge / emits warning logs about how soon the feed
-// will expire. The DB write itself happens atomically inside the import
-// transaction; this function is read-only.
+// and updates the metrics gauge. It then logs one of six messages:
+//   - Warn "GTFS feed has no active calendar dates" when no expiry is found
+//   - Warn "GTFS feed has expired"                  when daysUntil < 0
+//   - Warn "GTFS feed expires in 1 day or less"     when daysUntil ≤ 1
+//   - Warn "GTFS feed expires in 3 days or less"    when daysUntil ≤ 3
+//   - Warn "GTFS feed expires in 7 days or less"    when daysUntil ≤ 7
+//   - Info "GTFS feed valid"                        otherwise (includes days_until_expiry)
+//
+// The DB write itself happens atomically inside the import transaction;
+// this function is read-only.
 func (manager *Manager) logFeedExpiry(ctx context.Context, logger *slog.Logger) {
 	if manager.Metrics != nil && manager.Metrics.FeedExpiresAt != nil {
 		manager.Metrics.FeedExpiresAt.Set(-1)
