@@ -1952,8 +1952,8 @@ func TestArrivalsAndDeparturesForStopHandler_MultiDayWindow(t *testing.T) {
 			beyondDay++
 		}
 	}
-	// The 1440-minute arrivals-window cap Java applied at minute 5 of a
-	// multi-day window hid arrivals beyond the first day; the uncapped scan
-	// surfaces stop 4062's next-day service.
+	// The 1440-minute arrivals-window cap Maglev applied hid arrivals beyond
+	// the first day; the scan extended to the full window (capped at
+	// 35,791 minutes) surfaces stop 4062's next-day service.
 	assert.Positive(t, beyondDay, "multi-day window should return arrivals beyond 1440 minutes out")
 }
