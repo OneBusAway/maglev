@@ -193,6 +193,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedTrips:            make(map[string][]gtfs.Trip),
 		feedVehicles:         make(map[string][]gtfs.Vehicle),
 		feedAlerts:           make(map[string][]gtfs.Alert),
+		feedAlertIngestedAt:  make(map[string]time.Time),
 		feedLastUpdate:       make(map[string]time.Time),
 		feedAgencyFilter:     config.feedAgencyFilters(),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),

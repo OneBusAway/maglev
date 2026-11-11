@@ -329,6 +329,7 @@ The manager keeps two kinds of static state in memory:
 - `feedTrips` - `map[string][]gtfs.Trip` — trips per feed
 - `feedVehicles` - `map[string][]gtfs.Vehicle` — vehicles per feed
 - `feedAlerts` - `map[string][]gtfs.Alert` — alerts per feed
+- `feedAlertIngestedAt` - `map[string]time.Time` — successful alert ingestion time per feed
 - `feedVehicleLastSeen` - `map[string]map[vehicleKey]time.Time` — per-feed, per-vehicle last-seen timestamps for stale vehicle expiry (15 min window)
 - `feedVehicleAgency` - `map[string]map[vehicleKey]string`: the one agency each vehicle was attributed to at ingestion (its route's agency, else the feed's first `agency-ids` entry)
 - `feedVehicleDataTime` - `map[string]time.Time`: when each feed's vehicle data was produced (header timestamp, else fetch time)

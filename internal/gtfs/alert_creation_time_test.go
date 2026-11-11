@@ -63,10 +63,14 @@ func TestAlertCreationTimeSnapshots(t *testing.T) {
 	manager.MockResetRealTimeData()
 	require.Empty(t, manager.Alerts())
 	require.Empty(t, manager.feedAlertIngestedAt)
+	require.NotNil(t, manager.feedAlertIngestedAt)
+	publish("b", []gtfs.Alert{alert}, first)
+	require.Len(t, manager.Alerts(), 1)
+	require.Equal(t, first, manager.Alerts()[0].CreatedAt, "reset must leave the feed maps ready for reuse")
 }
 
 // TestAlertCreationTimeFetchFailure uses real HTTP/protobuf ingestion to check
-// failed and canceled fetches preserve the previously published alert timestamp.
+// failed and canceled fetches preserve the timestamp, then recovery refreshes it.
 func TestAlertCreationTimeFetchFailure(t *testing.T) {
 	payload, err := proto.Marshal(&gtfsrt.FeedMessage{
 		Header: &gtfsrt.FeedHeader{GtfsRealtimeVersion: proto.String("2.0"), Timestamp: proto.Uint64(1)},
@@ -116,6 +120,13 @@ func TestAlertCreationTimeFetchFailure(t *testing.T) {
 	cancel()
 	require.False(t, manager.updateFeedRealtime(ctx, feed))
 	require.Equal(t, old, manager.Alerts()[0].CreatedAt)
+	mu.Lock()
+	status, body = http.StatusOK, payload
+	mu.Unlock()
+	require.True(t, manager.updateFeedRealtime(context.Background(), feed))
+	recovered := manager.Alerts()
+	require.Len(t, recovered, 1)
+	require.True(t, recovered[0].CreatedAt.After(old), "every successful poll must restamp the alert")
 }
 
 // TestAlertCreationTimeConcurrentReads exercises timestamp publication while

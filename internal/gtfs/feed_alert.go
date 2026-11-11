@@ -17,12 +17,6 @@ type FeedAlert struct {
 // storeFeedAlerts replaces one feed's alerts and timestamp together. The caller
 // must hold realTimeMutex and publish a new merged snapshot afterward.
 func (manager *Manager) storeFeedAlerts(feedID string, alerts []gtfs.Alert, ingestedAt time.Time) {
-	if manager.feedAlerts == nil {
-		manager.feedAlerts = make(map[string][]gtfs.Alert)
-	}
-	if manager.feedAlertIngestedAt == nil {
-		manager.feedAlertIngestedAt = make(map[string]time.Time)
-	}
 	manager.feedAlerts[feedID] = alerts
 	manager.feedAlertIngestedAt[feedID] = ingestedAt
 }
