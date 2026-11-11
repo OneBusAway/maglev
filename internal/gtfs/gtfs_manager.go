@@ -757,6 +757,14 @@ func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) 
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
 }
 
+// GetVehicleAgencyByID returns the agency attributed to the vehicle at ingestion.
+// ok is false when the vehicle is not known or was ingested before agency attribution.
+func (manager *Manager) GetVehicleAgencyByID(vehicleID string) (string, bool) {
+	merged := manager.mergedRealtime()
+	agencyID, ok := merged.vehicleAgencyByID[vehicleID]
+	return agencyID, ok
+}
+
 func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
 	merged := manager.mergedRealtime()
 
