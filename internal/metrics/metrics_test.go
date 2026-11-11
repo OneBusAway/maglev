@@ -47,7 +47,7 @@ func TestStartDBStatsCollector_NilProvider(t *testing.T) {
 
 func TestStartDBStatsCollector_ProviderCanReturnNilDB(t *testing.T) {
 	m := New()
-	m.StartDBStatsCollector(func() *sql.DB { return nil }, 20*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return nil }, 20*time.Millisecond)
 	defer m.Shutdown()
 
 	assert.True(t, m.collectorStarted.Load())
@@ -67,14 +67,14 @@ func TestStartDBStatsCollector_NonPositiveInterval(t *testing.T) {
 
 	m := New()
 
-	m.StartDBStatsCollector(func() *sql.DB { return db }, 0)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, 0)
 	assert.False(t, m.collectorStarted.Load(), "collector should not start with zero interval")
 
-	m.StartDBStatsCollector(func() *sql.DB { return db }, -time.Second)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, -time.Second)
 	assert.False(t, m.collectorStarted.Load(), "collector should not start with negative interval")
 
 	// A later valid start must still work.
-	m.StartDBStatsCollector(func() *sql.DB { return db }, 20*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, 20*time.Millisecond)
 	assert.True(t, m.collectorStarted.Load(), "collector should start with a positive interval")
 
 	m.Shutdown()
@@ -88,11 +88,11 @@ func TestStartDBStatsCollector_Idempotent(t *testing.T) {
 	m := New()
 
 	// Start collector first time
-	m.StartDBStatsCollector(func() *sql.DB { return db }, 100*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, 100*time.Millisecond)
 	assert.True(t, m.collectorStarted.Load())
 
 	// Second call should be no-op
-	m.StartDBStatsCollector(func() *sql.DB { return db }, 100*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, 100*time.Millisecond)
 	assert.True(t, m.collectorStarted.Load())
 
 	m.Shutdown()
@@ -104,7 +104,7 @@ func TestStartDBStatsCollector_CollectsStats(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	m := New()
-	m.StartDBStatsCollector(func() *sql.DB { return db }, 50*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, 50*time.Millisecond)
 
 	// Wait for at least one collection cycle
 	time.Sleep(100 * time.Millisecond)
@@ -128,7 +128,7 @@ func TestShutdown_StopsGoroutine(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	m := New()
-	m.StartDBStatsCollector(func() *sql.DB { return db }, 50*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, 50*time.Millisecond)
 
 	// Shutdown should block until goroutine exits
 	done := make(chan struct{})
@@ -163,7 +163,7 @@ func TestStartDBStatsCollector_FollowsDBSwap(t *testing.T) {
 	dbPtr.Store(db1)
 
 	m := New()
-	m.StartDBStatsCollector(func() *sql.DB { return dbPtr.Load() }, 20*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return dbPtr.Load() }, 20*time.Millisecond)
 	defer m.Shutdown()
 
 	require.Eventually(t, func() bool {

@@ -159,12 +159,14 @@ func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) err
 			}
 		}()
 
-		// Write batch using direct SQL execution to avoid prepared statement issues
+		qtx := dp.queries.WithTx(tx)
 		batchSuccess := 0
-		const updateSQL = "UPDATE stops SET direction = ? WHERE id = ?"
 		for _, result := range batch {
 			if result.direction != "" {
-				_, err := tx.ExecContext(ctx, updateSQL, result.direction, result.stopID)
+				err := qtx.UpdateStopDirection(ctx, gtfsdb.UpdateStopDirectionParams{
+					Direction: sql.NullString{String: result.direction, Valid: true},
+					ID:        result.stopID,
+				})
 				if err != nil {
 					logging.LogError(dp.logger, fmt.Sprintf("Failed to update direction for stop %s", result.stopID), err)
 					errorCount++
