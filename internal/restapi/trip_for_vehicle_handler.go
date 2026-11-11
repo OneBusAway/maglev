@@ -38,7 +38,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 

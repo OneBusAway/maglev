@@ -772,7 +772,7 @@ func TestBuildSituationReferences_Parity(t *testing.T) {
 		},
 	}
 
-	situations := api.BuildSituationReferences(context.Background(), alerts)
+	situations := api.BuildSituationReferences(context.Background(), feedAlertsForTest("", alerts))
 	require.Len(t, situations, 5)
 
 	// First alert: IDs are prefixed with agency
