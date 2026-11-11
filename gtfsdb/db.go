@@ -132,6 +132,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.createTripStmt, err = db.PrepareContext(ctx, createTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateTrip: %w", err)
 	}
+	if q.deleteTripStmt, err = db.PrepareContext(ctx, deleteTrip); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteTrip: %w", err)
+	}
 	if q.getActiveBlockIDsForAgencyStmt, err = db.PrepareContext(ctx, getActiveBlockIDsForAgency); err != nil {
 		return nil, fmt.Errorf("error preparing query GetActiveBlockIDsForAgency: %w", err)
 	}
@@ -597,6 +600,11 @@ func (q *Queries) Close() error {
 	if q.createTripStmt != nil {
 		if cerr := q.createTripStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing createTripStmt: %w", cerr)
+		}
+	}
+	if q.deleteTripStmt != nil {
+		if cerr := q.deleteTripStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteTripStmt: %w", cerr)
 		}
 	}
 	if q.getActiveBlockIDsForAgencyStmt != nil {
@@ -1144,6 +1152,7 @@ type Queries struct {
 	createStopConsolidationStmt               *sql.Stmt
 	createStopTimeStmt                        *sql.Stmt
 	createTripStmt                            *sql.Stmt
+	deleteTripStmt                            *sql.Stmt
 	getActiveBlockIDsForAgencyStmt            *sql.Stmt
 	getActiveLayoverBlockIDsForRouteStmt      *sql.Stmt
 	getActiveRouteIDsForStopsOnDateStmt       *sql.Stmt
@@ -1280,6 +1289,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createStopConsolidationStmt:               q.createStopConsolidationStmt,
 		createStopTimeStmt:                        q.createStopTimeStmt,
 		createTripStmt:                            q.createTripStmt,
+		deleteTripStmt:                            q.deleteTripStmt,
 		getActiveBlockIDsForAgencyStmt:            q.getActiveBlockIDsForAgencyStmt,
 		getActiveLayoverBlockIDsForRouteStmt:      q.getActiveLayoverBlockIDsForRouteStmt,
 		getActiveRouteIDsForStopsOnDateStmt:       q.getActiveRouteIDsForStopsOnDateStmt,
