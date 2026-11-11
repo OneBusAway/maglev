@@ -775,9 +775,9 @@ func delayPropBlockID(t *testing.T) string {
 	return "dp-block-" + t.Name()
 }
 
-// addDownstreamSTU adds a second stop at sequence 5 to the trip and injects a
-// TripUpdate whose only StopTimeUpdate targets that stop with the given delay.
-func addDownstreamSTU(t *testing.T, api *RestAPI, tripID string, delay time.Duration) {
+// addDownstreamStop adds a second stop at GTFS sequence 5 to the trip created
+// by setupDelayPropTestData and returns its ID.
+func addDownstreamStop(t *testing.T, api *RestAPI, tripID string) string {
 	t.Helper()
 	ctx := context.Background()
 	q := api.GtfsManager.GtfsDB.Queries
@@ -793,13 +793,17 @@ func addDownstreamSTU(t *testing.T, api *RestAPI, tripID string, delay time.Dura
 		DepartureTime: int64(9*time.Hour + 5*time.Minute),
 	})
 	require.NoError(t, err)
+	return downstreamStopID
+}
 
-	seq := uint32(5)
+// addDownstreamSTU adds a downstream stop and a TripUpdate targeting only that
+// stop. Its update names the stop by stop_id alone, which is what makes Java
+// build a deviation sample from it: see sampleEntryForSTU.
+func addDownstreamSTU(t *testing.T, api *RestAPI, tripID string, delay time.Duration) {
+	t.Helper()
+	downstreamStopID := addDownstreamStop(t, api, tripID)
 	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
-		{
-			StopID: &downstreamStopID, StopSequence: &seq,
-			Arrival: &gtfs.StopTimeEvent{Delay: &delay},
-		},
+		{StopID: &downstreamStopID, Arrival: &gtfs.StopTimeEvent{Delay: &delay}},
 	})
 }
 
@@ -1097,6 +1101,56 @@ func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 	assert.True(t, a.Predicted, "arrival.predicted should agree with tripStatus.predicted")
 	assert.True(t, a.PredictedArrivalTime.IsZero(), "deviation must not propagate upstream")
 	assert.True(t, a.PredictedDepartureTime.IsZero(), "deviation must not propagate upstream")
+}
+
+// A feed numbering stops from 1 builds Java no deviation samples, so an upstream
+// stop gets the block's deviation rather than no predicted times.
+func TestPluralArrivals_OneBasedDownstreamSTUAppliesBlockDeviation(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	downstreamStopID := addDownstreamStop(t, api, tripID)
+	delay := 174 * time.Second
+	gtfsStopSequence := uint32(5)
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{StopID: &downstreamStopID, StopSequence: &gtfsStopSequence, Arrival: &gtfs.StopTimeEvent{Delay: &delay}},
+	})
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
+
+	a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	assert.True(t, a.Predicted)
+	assert.Equal(t, a.ScheduledArrivalTime.Add(delay).UnixMilli(), a.PredictedArrivalTime.UnixMilli())
+}
+
+// Java stops using a vehicle record five minutes after its timestamp, so a
+// trip update the feed keeps repeating unchanged no longer predicts anything.
+func TestPluralArrivals_ExpiredTripUpdateIsNotPredicted(t *testing.T) {
+	now := time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopCode, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	expiredAt := now.Add(-6 * time.Minute)
+	delay := 174 * time.Second
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:              gtfs.TripID{ID: tripID},
+		Timestamp:       &expiredAt,
+		StopTimeUpdates: []gtfs.StopTimeUpdate{{StopID: &stopCode, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}},
+	})
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
+
+	a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	assert.False(t, a.Predicted)
+	assert.True(t, a.PredictedArrivalTime.IsZero())
+	require.NotNil(t, a.TripStatus)
+	assert.False(t, a.TripStatus.Predicted)
+	assert.Equal(t, 0, a.TripStatus.ScheduleDeviation)
 }
 
 func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {

@@ -23,13 +23,13 @@ import (
 // alertIndex holds pre-built maps for O(1) alert lookups, keyed by trip, route, agency, and stop IDs.
 // It is rebuilt on every call to rebuildMergedRealtimeLocked under the existing write lock.
 type alertIndex struct {
-	byTrip   map[string][]gtfs.Alert
-	byRoute  map[string][]gtfs.Alert
-	byAgency map[string][]gtfs.Alert
-	byStop   map[string][]gtfs.Alert
+	byTrip   map[string][]FeedAlert
+	byRoute  map[string][]FeedAlert
+	byAgency map[string][]FeedAlert
+	byStop   map[string][]FeedAlert
 	// all keeps every indexed alert, including two feeds that publish the same
 	// raw alert id. The by* maps collapse those by id on lookup.
-	all []gtfs.Alert
+	all []FeedAlert
 }
 
 // mergedRealtime is the merged view of every realtime feed, published as a
@@ -43,6 +43,7 @@ type mergedRealtime struct {
 	trips                    []gtfs.Trip
 	vehicles                 []gtfs.Vehicle
 	tripLookup               map[string]int
+	tripUpdateSeenAt         map[string]time.Time
 	vehicleLookupByTrip      map[string]int
 	vehicleLookupByVehicle   map[string]int
 	duplicatedVehicleByRoute map[string][]gtfs.Vehicle
@@ -61,16 +62,17 @@ type mergedRealtime struct {
 // Manager, which several tests construct, reads as empty rather than panicking.
 var emptyMergedRealtime = &mergedRealtime{
 	tripLookup:               map[string]int{},
+	tripUpdateSeenAt:         map[string]time.Time{},
 	vehicleLookupByTrip:      map[string]int{},
 	vehicleLookupByVehicle:   map[string]int{},
 	duplicatedVehicleByRoute: map[string][]gtfs.Vehicle{},
 	vehiclesByRoute:          map[string][]gtfs.Vehicle{},
 	vehiclePositionsByAgency: map[string]AgencyVehiclePositions{},
 	alerts: alertIndex{
-		byTrip:   map[string][]gtfs.Alert{},
-		byRoute:  map[string][]gtfs.Alert{},
-		byAgency: map[string][]gtfs.Alert{},
-		byStop:   map[string][]gtfs.Alert{},
+		byTrip:   map[string][]FeedAlert{},
+		byRoute:  map[string][]FeedAlert{},
+		byAgency: map[string][]FeedAlert{},
+		byStop:   map[string][]FeedAlert{},
 	},
 	alertFeedsByAgency:  map[string]agencyAlertFeed{},
 	tripUpdatesByAgency: map[string]AgencyTripUpdates{},
@@ -93,6 +95,7 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 		trips:                    slices.Clone(m.trips),
 		vehicles:                 slices.Clone(m.vehicles),
 		tripLookup:               maps.Clone(m.tripLookup),
+		tripUpdateSeenAt:         maps.Clone(m.tripUpdateSeenAt),
 		vehicleLookupByTrip:      maps.Clone(m.vehicleLookupByTrip),
 		vehicleLookupByVehicle:   maps.Clone(m.vehicleLookupByVehicle),
 		duplicatedVehicleByRoute: maps.Clone(m.duplicatedVehicleByRoute),
@@ -360,18 +363,21 @@ func (manager *Manager) GetRealTimeVehicles() []gtfs.Vehicle {
 
 // Alerts returns every indexed alert in feed-id order. Two feeds that reuse
 // one raw alert id both appear. Callers must not mutate the slice or its alerts.
-func (manager *Manager) Alerts() []gtfs.Alert {
+func (manager *Manager) Alerts() []FeedAlert {
 	return manager.mergedRealtime().alerts.all
 }
 
-func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.Alert {
+// GetAlertsByIDs returns indexed alerts matching the given trip, route or
+// agency ID, in feed-id order. Each returned value carries the publishing
+// feed's first configured agency as FeedAgencyID.
+func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []FeedAlert {
 	idx := manager.mergedRealtime().alerts
 
 	seen := make(map[string]struct{})
-	var alerts []gtfs.Alert
+	var alerts []FeedAlert
 	// Invariant: alertIdx only contains alerts with non-empty IDs (rebuildMergedRealtimeLocked
 	// skips any alert where alert.ID == ""), so seen[a.ID] is sufficient for deduplication.
-	addUnique := func(candidates []gtfs.Alert) {
+	addUnique := func(candidates []FeedAlert) {
 		for _, a := range candidates {
 			if _, ok := seen[a.ID]; !ok {
 				seen[a.ID] = struct{}{}
@@ -394,7 +400,7 @@ func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []gtfs.
 
 // GetAlertsForTrip returns alerts matching the trip, its route, or agency.
 // It acquires the realTimeMutex internally via GetAlertsByIDs.
-func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []gtfs.Alert {
+func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []FeedAlert {
 	var routeID string
 	var agencyID string
 
@@ -429,7 +435,7 @@ func (manager *Manager) GetAlertsForTrip(ctx context.Context, tripID string) []g
 // alert reaches a stop even when no arrival there carries it.
 // Deduplication by alert ID is done internally so callers never receive
 // duplicate entries even when the same alert ID appears in multiple feeds.
-func (manager *Manager) GetAlertsForStop(stopID, agencyID string) []gtfs.Alert {
+func (manager *Manager) GetAlertsForStop(stopID, agencyID string) []FeedAlert {
 	idx := manager.mergedRealtime().alerts
 	src := idx.byStop[stopID]
 	if agencyID != "" {
@@ -439,7 +445,7 @@ func (manager *Manager) GetAlertsForStop(stopID, agencyID string) []gtfs.Alert {
 		return nil
 	}
 	seen := make(map[string]struct{}, len(src))
-	out := make([]gtfs.Alert, 0, len(src))
+	out := make([]FeedAlert, 0, len(src))
 	for _, a := range src {
 		if _, ok := seen[a.ID]; !ok {
 			seen[a.ID] = struct{}{}
@@ -544,6 +550,12 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		return false
 	}
 
+	var tripFeedTime time.Time
+	if tripData != nil && tripErr == nil {
+		dropTripsWithoutTripUpdate(tripData)
+		tripFeedTime = normalizeTripUpdateTimestamps(tripData, time.Now())
+	}
+
 	// Apply agency-based filtering if configured for this feed.
 	// This runs before acquiring realTimeMutex to keep the critical section short.
 	agencyFilter := manager.feedAgencyFilter[feedID]
@@ -581,6 +593,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	if tripData != nil && tripErr == nil {
 		manager.storeFeedTrips(feedID, trips, tripData.CreatedAt)
+		manager.recordTripUpdatesSeenLocked(feedID, trips.kept, tripFeedTime)
 	}
 
 	// False until a vehicle payload is actually stored. A stale header is not
@@ -807,13 +820,95 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	// Update timestamp within the same lock
 	if hasNewData {
-		if manager.feedLastUpdate == nil {
-			manager.feedLastUpdate = make(map[string]time.Time)
+		manager.recordFeedUpdateLocked(feedID, time.Now())
+	}
+
+	// Stamp trip-updates success on its own clock, within the same lock. This
+	// is the timestamp clearStaleTripUpdates ages when the sub-feed fails.
+	if tripsUpdated {
+		if manager.feedTripLastSuccess == nil {
+			manager.feedTripLastSuccess = make(map[string]time.Time)
 		}
-		manager.feedLastUpdate[feedID] = time.Now()
+		manager.feedTripLastSuccess[feedID] = time.Now()
 	}
 
 	return hasNewData
+}
+
+// dropTripsWithoutTripUpdate removes the trips go-gtfs makes up for vehicle and
+// alert entities. Java builds records only from TripUpdate entities
+// (GtfsRealtimeTripLibrary.java:315-347), and an empty trip here would read as
+// a live update with no times.
+func dropTripsWithoutTripUpdate(tripData *gtfs.Realtime) {
+	tripData.Trips = slices.DeleteFunc(tripData.Trips, func(trip gtfs.Trip) bool {
+		return !trip.IsEntityInMessage
+	})
+}
+
+// maxPlausibleTimestampAge separates seconds from milliseconds: a value this far
+// from now as seconds must be in another scale, as Java's ensureMillis assumes.
+const maxPlausibleTimestampAge = 100 * 365 * 24 * time.Hour
+
+// normalizeTripUpdateTimestamps gives each trip update the time of the record
+// Java builds from it. Some feeds send milliseconds, and an update with no
+// timestamp, or a zero one, takes the feed's header time
+// (GtfsRealtimeTripLibrary.java:381-389, :532, :1106), so it can still expire when
+// the feed freezes. With no header it takes the fetch time. It returns that feed
+// time.
+func normalizeTripUpdateTimestamps(tripData *gtfs.Realtime, fetchedAt time.Time) time.Time {
+	feedTime := fetchedAt
+	if tripData.CreatedAt.Unix() > 0 {
+		feedTime = timestampInSeconds(tripData.CreatedAt, fetchedAt)
+	}
+	for i := range tripData.Trips {
+		timestamp := tripData.Trips[i].Timestamp
+		normalized := feedTime
+		if timestamp != nil && timestamp.Unix() != 0 {
+			normalized = timestampInSeconds(*timestamp, fetchedAt)
+		}
+		tripData.Trips[i].Timestamp = &normalized
+	}
+	return feedTime
+}
+
+// timestampInSeconds corrects a time parsed from a millisecond value as seconds.
+func timestampInSeconds(timestamp, now time.Time) time.Time {
+	age := now.Sub(timestamp)
+	if age > -maxPlausibleTimestampAge && age < maxPlausibleTimestampAge {
+		return timestamp
+	}
+	return time.UnixMilli(timestamp.Unix()).In(timestamp.Location())
+}
+
+// tripUpdateSeen is when a trip update's timestamp first arrived.
+type tripUpdateSeen struct {
+	timestamp time.Time
+	at        time.Time
+}
+
+func (manager *Manager) recordTripUpdatesSeenLocked(feedID string, trips []gtfs.Trip, feedTime time.Time) {
+	if manager.feedTripUpdateSeen == nil {
+		manager.feedTripUpdateSeen = make(map[string]map[string]tripUpdateSeen)
+	}
+	manager.feedTripUpdateSeen[feedID] = nextTripUpdatesSeen(manager.feedTripUpdateSeen[feedID], trips, feedTime)
+}
+
+// nextTripUpdatesSeen carries a trip's first-seen time forward until its update's
+// timestamp changes. Java reprocesses a vehicle's record only when that timestamp
+// advances, using the feed's time then (GtfsRealtimeSource.java:645, :742).
+func nextTripUpdatesSeen(previous map[string]tripUpdateSeen, trips []gtfs.Trip, feedTime time.Time) map[string]tripUpdateSeen {
+	seen := make(map[string]tripUpdateSeen, len(trips))
+	for _, trip := range trips {
+		if trip.ID.ID == "" || trip.Timestamp == nil {
+			continue
+		}
+		if prior, ok := previous[trip.ID.ID]; ok && prior.timestamp.Equal(*trip.Timestamp) {
+			seen[trip.ID.ID] = prior
+			continue
+		}
+		seen[trip.ID.ID] = tripUpdateSeen{timestamp: *trip.Timestamp, at: feedTime}
+	}
+	return seen
 }
 
 func collectTripRouteIDs(routeIDSet map[string]struct{}, trips []gtfs.Trip) {
@@ -991,7 +1086,7 @@ func (manager *Manager) storeFeedTrips(feedID string, trips tripAttribution, hea
 	if manager.feedTripDataTime == nil {
 		manager.feedTripDataTime = make(map[string]time.Time)
 	}
-	if headerTime.IsZero() {
+	if isMissingHeaderTime(headerTime) {
 		headerTime = time.Now()
 	}
 	agencies := trips.agencies
@@ -1296,6 +1391,13 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		}
 	}
 
+	tripUpdateSeenAt := make(map[string]time.Time, len(allTrips))
+	for _, id := range feedIDs {
+		for tripID, seen := range manager.feedTripUpdateSeen[id] {
+			tripUpdateSeenAt[tripID] = seen.at
+		}
+	}
+
 	vehicleLookupByTrip := make(map[string]int, len(allVehicles))
 	vehicleLookupByVehicle := make(map[string]int, len(allVehicles))
 	duplicatedVehicleByRoute := make(map[string][]gtfs.Vehicle)
@@ -1326,17 +1428,18 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		}
 	}
 	idx := alertIndex{
-		byTrip:   make(map[string][]gtfs.Alert),
-		byRoute:  make(map[string][]gtfs.Alert),
-		byAgency: make(map[string][]gtfs.Alert),
-		byStop:   make(map[string][]gtfs.Alert),
+		byTrip:   make(map[string][]FeedAlert),
+		byRoute:  make(map[string][]FeedAlert),
+		byAgency: make(map[string][]FeedAlert),
+		byStop:   make(map[string][]FeedAlert),
 	}
 	for _, id := range alertFeedIDs {
 		for _, alert := range manager.feedAlerts[id] {
 			if alert.InformedEntities == nil || alert.ID == "" {
 				continue
 			}
-			idx.all = append(idx.all, alert)
+			feedAlert := FeedAlert{Alert: alert, FeedAgencyID: manager.config.firstAgencyForFeed(id)}
+			idx.all = append(idx.all, feedAlert)
 			// Per-alert per-bucket dedup: prevents the same alert from being appended
 			// to the same bucket more than once when it has multiple InformedEntities
 			// referencing the same key (e.g. two entities both pointing to stop "S1").
@@ -1349,14 +1452,14 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 			for _, entity := range alert.InformedEntities {
 				if entity.TripID != nil && !seenTrip[entity.TripID.ID] {
 					seenTrip[entity.TripID.ID] = true
-					idx.byTrip[entity.TripID.ID] = append(idx.byTrip[entity.TripID.ID], alert)
+					idx.byTrip[entity.TripID.ID] = append(idx.byTrip[entity.TripID.ID], feedAlert)
 				}
 				// Only match route-level entities that have no stop or trip restriction.
 				// Entities with {routeId + stopId} are stop-specific alerts and are filed
 				// in byStop only (matching Java's inverted index bucket behaviour).
 				if entity.RouteID != nil && entity.StopID == nil && entity.TripID == nil && !seenRoute[*entity.RouteID] {
 					seenRoute[*entity.RouteID] = true
-					idx.byRoute[*entity.RouteID] = append(idx.byRoute[*entity.RouteID], alert)
+					idx.byRoute[*entity.RouteID] = append(idx.byRoute[*entity.RouteID], feedAlert)
 				}
 				// Only match agency-wide alerts: entity has agencyId but no route, trip
 				// or stop restriction. Entities with {agencyId + stopId} are stop-specific
@@ -1367,11 +1470,11 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 					entity.StopID == nil
 				if isAgencyWide && !seenAgency[*entity.AgencyID] {
 					seenAgency[*entity.AgencyID] = true
-					idx.byAgency[*entity.AgencyID] = append(idx.byAgency[*entity.AgencyID], alert)
+					idx.byAgency[*entity.AgencyID] = append(idx.byAgency[*entity.AgencyID], feedAlert)
 				}
 				if entity.StopID != nil && !seenStop[*entity.StopID] {
 					seenStop[*entity.StopID] = true
-					idx.byStop[*entity.StopID] = append(idx.byStop[*entity.StopID], alert)
+					idx.byStop[*entity.StopID] = append(idx.byStop[*entity.StopID], feedAlert)
 				}
 			}
 		}
@@ -1381,6 +1484,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		trips:                    allTrips,
 		vehicles:                 allVehicles,
 		tripLookup:               tripLookup,
+		tripUpdateSeenAt:         tripUpdateSeenAt,
 		vehicleLookupByTrip:      vehicleLookupByTrip,
 		vehicleLookupByVehicle:   vehicleLookupByVehicle,
 		duplicatedVehicleByRoute: duplicatedVehicleByRoute,
@@ -1465,6 +1569,11 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 				hasNewData := manager.updateFeedRealtime(ctx, feedCfg)
 				duration := time.Since(start)
 
+				if hasNewData && manager.clearStaleTripUpdates(feedCfg.ID) {
+					logger.Warn("trip updates stale beyond threshold while sibling sub-feeds succeed, clearing trip data",
+						slog.String("feed", feedCfg.ID))
+				}
+
 				if manager.Metrics != nil {
 					manager.Metrics.FeedFetchDuration.WithLabelValues(feedCfg.ID).Observe(duration.Seconds())
 				}
@@ -1514,6 +1623,6 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 }
 
 // GetAlertsForRoute returns alerts matching the given route ID.
-func (manager *Manager) GetAlertsForRoute(routeID string) []gtfs.Alert {
+func (manager *Manager) GetAlertsForRoute(routeID string) []FeedAlert {
 	return manager.GetAlertsByIDs("", routeID, "")
 }

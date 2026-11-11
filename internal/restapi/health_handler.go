@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 )
 
@@ -40,7 +41,7 @@ func (api *RestAPI) dataFreshness(ctx context.Context) (DataFreshness, error) {
 		importTime := time.Unix(0, metadata.ImportTime).UTC()
 		freshness.StaticGtfsLastUpdated = &importTime
 	}
-	freshness.StaticGtfsHash = metadata.FileHash
+	freshness.StaticGtfsHash = gtfs.ContentHash(metadata.FileHash)
 	return freshness, nil
 }
 
