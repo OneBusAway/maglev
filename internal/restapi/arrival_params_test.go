@@ -79,10 +79,10 @@ func TestParseMinutesValue(t *testing.T) {
 			expected: 35791 * time.Minute,
 		},
 		{
-			name:     "bounds max int32 at maxWindow",
+			name:     "bounds max int32 at maxArrivalWindowMinutes",
 			params:   url.Values{"minutesAfter": {"2147483647"}},
 			key:      "minutesAfter",
-			expected: maxWindow,
+			expected: 35791 * time.Minute,
 		},
 		{
 			name:         "reports error on int32 overflow 2147483648 and returns fallback",
