@@ -215,6 +215,31 @@ func (m *Manager) MockAddTripUpdate(tripID string, delay *time.Duration, stopTim
 	m.merged.Store(merged)
 }
 
+// MockAddFullTripUpdate adds a trip update carrying fields MockAddTripUpdate
+// cannot set, such as its timestamp and vehicle descriptor.
+func (m *Manager) MockAddFullTripUpdate(trip gtfs.Trip) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	merged := m.mergedRealtime().clone()
+	merged.trips = append(merged.trips, trip)
+	merged.tripLookup[trip.ID.ID] = len(merged.trips) - 1
+	m.merged.Store(merged)
+}
+
+// MockSetTripUpdateFirstSeen sets when a trip update's timestamp first arrived.
+func (m *Manager) MockSetTripUpdateFirstSeen(tripID string, seenAt time.Time) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	merged := m.mergedRealtime().clone()
+	if merged.tripUpdateSeenAt == nil {
+		merged.tripUpdateSeenAt = map[string]time.Time{}
+	}
+	merged.tripUpdateSeenAt[tripID] = seenAt
+	m.merged.Store(merged)
+}
+
 func (m *Manager) MockAddAlert(feedID string, alert gtfs.Alert) {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
@@ -223,6 +248,24 @@ func (m *Manager) MockAddAlert(feedID string, alert gtfs.Alert) {
 		m.feedAlerts = make(map[string][]gtfs.Alert)
 	}
 	m.feedAlerts[feedID] = append(m.feedAlerts[feedID], alert)
+	m.rebuildMergedRealtimeLocked()
+}
+
+// MockSetFeedAgencyIDs configures a feed's agency-ids for tests, the value
+// InitGTFSManager reads from config.json. Alerts added afterwards carry the
+// first ID as their FeedAgencyID.
+func (m *Manager) MockSetFeedAgencyIDs(feedID string, agencyIDs ...string) {
+	m.realTimeMutex.Lock()
+	defer m.realTimeMutex.Unlock()
+
+	for i := range m.config.RTFeeds {
+		if m.config.RTFeeds[i].ID == feedID {
+			m.config.RTFeeds[i].AgencyIDs = agencyIDs
+			m.rebuildMergedRealtimeLocked()
+			return
+		}
+	}
+	m.config.RTFeeds = append(m.config.RTFeeds, RTFeedConfig{ID: feedID, AgencyIDs: agencyIDs})
 	m.rebuildMergedRealtimeLocked()
 }
 
@@ -276,6 +319,8 @@ func (m *Manager) MockResetRealTimeData() {
 	delete(m.feedVehicleLastSeen, "_test")
 	delete(m.feedVehicleDataTime, "_test")
 	m.feedAlerts = make(map[string][]gtfs.Alert)
+	m.feedLastUpdate = make(map[string]time.Time)
+	m.latestFeedUpdate.Store(nil)
 	// rebuild republishes an empty snapshot from the (empty) feed maps, which
 	// also clears anything the Mock* helpers injected directly.
 	m.rebuildMergedRealtimeLocked()

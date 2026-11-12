@@ -2245,6 +2245,8 @@ func TestBuildTripSchedule_ShapeLookupFailureLogsAndContinues(t *testing.T) {
 	loc, err := time.LoadLocation(agency.Timezone)
 	require.NoError(t, err)
 
+	originalQueries := api.GtfsManager.GtfsDB.Queries
+	t.Cleanup(func() { api.GtfsManager.GtfsDB.Queries = originalQueries })
 	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(&shapeFetchFailureDB{
 		DBTX:     api.GtfsManager.GtfsDB.DB,
 		failWith: errors.New("forced shape lookup failure"),
