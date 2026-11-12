@@ -285,14 +285,23 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 		},
 	}
 
-	// Warm up the FTS5 vtable on all pool connections before concurrent load.
-	// Without this, concurrent goroutines can race to construct the stops_fts
-	// virtual table on fresh connections, producing "vtable constructor failed".
+	// Touch the FTS5 vtable on each connection in the pool before the concurrent
+	// phase. Hold all connections open simultaneously so the pool must open one
+	// per slot; a sequential loop reuses the same idle connection each time and
+	// leaves the rest uninitialised, letting goroutines race on vtable construction.
+	warmConns := make([]*sql.Conn, 0, concurrency)
 	for i := 0; i < concurrency; i++ {
-		_, _ = client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{
-			SearchQuery: "a*",
-			Limit:       1,
-		})
+		conn, err := client.DB.Conn(ctx)
+		if err != nil {
+			t.Fatalf("warm-up: acquire conn %d: %v", i, err)
+		}
+		if _, err := conn.ExecContext(ctx, "SELECT docid FROM stops_fts LIMIT 0"); err != nil {
+			t.Fatalf("warm-up: touch stops_fts on conn %d: %v", i, err)
+		}
+		warmConns = append(warmConns, conn)
+	}
+	for _, conn := range warmConns {
+		_ = conn.Close()
 	}
 
 	t.Log("=== Query Latency Distribution (p50 / p95 / p99) ===")
