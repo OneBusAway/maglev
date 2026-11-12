@@ -42,7 +42,7 @@ func (db *situationLookupDB) QueryContext(ctx context.Context, query string, arg
 }
 
 // TestSituationReferenceLookupFailures pins partial-map fallbacks, query order
-// and log suppression for direct and wrapped context errors at each stage.
+// and log levels for direct and wrapped context errors at each stage.
 func TestSituationReferenceLookupFailures(t *testing.T) {
 	api := createTestApi(t)
 	db := api.GtfsManager.GtfsDB
@@ -100,11 +100,16 @@ func TestSituationReferenceLookupFailures(t *testing.T) {
 				require.Equal(t, stage.wantUnknown, got[0].AllAffects[2].RouteID)
 				require.Equal(t, stage.wantCalls, probe.calls)
 				require.Equal(t, []any{"25_missing", "missing"}, probe.args[1], "candidate IDs are sorted and deduplicated")
-				if stage.failCall > 0 && failure.name == "database" {
+				switch {
+				case stage.failCall == 0, errors.Is(failure.err, context.Canceled):
+					require.Empty(t, logs.String())
+				case errors.Is(failure.err, context.DeadlineExceeded):
+					require.Contains(t, logs.String(), "context deadline exceeded")
+					require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"))
+					require.NotContains(t, logs.String(), "level=ERROR")
+				default:
 					require.Contains(t, logs.String(), "injected situation lookup failure")
 					require.Equal(t, 1, strings.Count(logs.String(), "level=ERROR"))
-				} else {
-					require.Empty(t, logs.String(), "context errors remain silent")
 				}
 			})
 		}
