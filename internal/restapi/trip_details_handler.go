@@ -179,6 +179,10 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
+	if route.AgencyID != agencyID {
+		api.sendNotFound(w, r)
+		return
+	}
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
 	if err != nil {

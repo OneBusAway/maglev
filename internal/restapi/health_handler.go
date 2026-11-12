@@ -60,7 +60,7 @@ func (api *RestAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	// 1. Liveness Check: Is the basic infrastructure initialized?
-	if api.Application == nil || api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil || api.GtfsManager.GtfsDB.DB == nil {
+	if api.Application == nil || api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(HealthResponse{
 			Status: "unavailable",
@@ -82,7 +82,7 @@ func (api *RestAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	// 3. Connectivity Check: Is the database actually reachable?
-	if err := api.GtfsManager.GtfsDB.DB.PingContext(r.Context()); err != nil {
+	if err := api.GtfsManager.GtfsDB.Ping(r.Context()); err != nil {
 		logging.LogError(reqLogger, "GTFS DB ping failed", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(HealthResponse{
