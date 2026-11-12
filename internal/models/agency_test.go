@@ -115,6 +115,11 @@ func TestAgencyCoverageWithZeroValues(t *testing.T) {
 	assert.Equal(t, 0.0, coverage.LonSpan)
 }
 
+func TestAgencyReferenceFromDatabase_Nil(t *testing.T) {
+	got := AgencyReferenceFromDatabase(nil)
+	assert.Equal(t, AgencyReference{}, got)
+}
+
 func TestAgencyReferenceWithEmptyStrings(t *testing.T) {
 	agency := NewAgencyReference("", "", "", "", "", "", "", "", "", false)
 

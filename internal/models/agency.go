@@ -55,6 +55,9 @@ func NewAgencyReference(id, name, url, timezone, lang, phone, email, fareUrl, di
 }
 
 func AgencyReferenceFromDatabase(agency *gtfsdb.Agency) AgencyReference {
+	if agency == nil {
+		return AgencyReference{}
+	}
 	return AgencyReference{
 		ID:             agency.ID,
 		Name:           agency.Name,
