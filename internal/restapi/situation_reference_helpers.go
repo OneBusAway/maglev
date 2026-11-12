@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"strings"
 	"time"
@@ -64,18 +63,10 @@ func (api *RestAPI) loadSituationAgencies(ctx context.Context, alerts []internal
 	}
 	ids := collectSituationEntityIDs(alerts)
 	agencies.firstStaticAgencyID = api.loadSituationKnownAgencies(ctx, agencies.known)
-	api.loadSituationRouteAgencies(ctx, ids.routes, agencies.routes, "failed to fetch routes for situation reference")
+	api.loadSituationRouteAgencies(ctx, ids.routes, agencies.routes, "routes")
 	api.loadSituationStopAgencies(ctx, ids.stops, agencies.stops)
 	api.loadSituationTripAgencies(ctx, ids.trips, agencies)
 	return agencies
-}
-
-// logSituationLookupError preserves silent cancellation while reporting other
-// lookup failures through the request's HTTP logger.
-func logSituationLookupError(ctx context.Context, message string, err error) {
-	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-		logging.ForComponent(ctx, "http_server").Error(message, "error", err)
-	}
 }
 
 // loadSituationKnownAgencies identifies prefixes that qualification may retain
@@ -83,7 +74,7 @@ func logSituationLookupError(ctx context.Context, message string, err error) {
 func (api *RestAPI) loadSituationKnownAgencies(ctx context.Context, agencies map[string]struct{}) string {
 	ids, err := api.GtfsManager.GtfsDB.Queries.ListAgencyIds(ctx)
 	if err != nil {
-		logSituationLookupError(ctx, "failed to fetch agencies for situation reference", err)
+		logQueryError(logging.ForComponent(ctx, "http_server"), "failed to fetch agencies for situation reference", err)
 		return ""
 	}
 	for _, id := range ids {
@@ -97,11 +88,11 @@ func (api *RestAPI) loadSituationKnownAgencies(ctx context.Context, agencies map
 
 // loadSituationRouteAgencies deduplicates candidates and publishes results only
 // after every batch succeeds, leaving the existing map intact on failure.
-func (api *RestAPI) loadSituationRouteAgencies(ctx context.Context, ids []string, agencies map[string]string, message string) {
+func (api *RestAPI) loadSituationRouteAgencies(ctx context.Context, ids []string, agencies map[string]string, purpose string) {
 	slices.Sort(ids)
 	routes, err := utils.QueryInBatches(ctx, slices.Compact(ids), api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
 	if err != nil {
-		logSituationLookupError(ctx, message, err)
+		logQueryError(logging.ForComponent(ctx, "http_server"), "failed to fetch "+purpose+" for situation reference", err)
 		return
 	}
 	for _, route := range routes {
@@ -115,7 +106,7 @@ func (api *RestAPI) loadSituationStopAgencies(ctx context.Context, ids []string,
 	slices.Sort(ids)
 	rows, err := utils.QueryInBatches(ctx, slices.Compact(ids), api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops)
 	if err != nil {
-		logSituationLookupError(ctx, "failed to fetch stops for situation reference", err)
+		logQueryError(logging.ForComponent(ctx, "http_server"), "failed to fetch stops for situation reference", err)
 		return
 	}
 	for _, row := range rows {
@@ -131,7 +122,7 @@ func (api *RestAPI) loadSituationTripAgencies(ctx context.Context, ids []string,
 	slices.Sort(ids)
 	trips, err := utils.QueryInBatches(ctx, slices.Compact(ids), api.GtfsManager.GtfsDB.Queries.GetTripsByIDs)
 	if err != nil {
-		logSituationLookupError(ctx, "failed to fetch trips for situation reference", err)
+		logQueryError(logging.ForComponent(ctx, "http_server"), "failed to fetch trips for situation reference", err)
 		return
 	}
 	var missingRouteIDs []string
@@ -145,7 +136,7 @@ func (api *RestAPI) loadSituationTripAgencies(ctx context.Context, ids []string,
 	if len(missingRouteIDs) == 0 {
 		return
 	}
-	api.loadSituationRouteAgencies(ctx, missingRouteIDs, agencies.routes, "failed to fetch missing routes for situation reference")
+	api.loadSituationRouteAgencies(ctx, missingRouteIDs, agencies.routes, "missing routes")
 	for _, trip := range trips {
 		if agency, ok := agencies.routes[trip.RouteID]; ok {
 			agencies.trips[trip.ID] = agency
