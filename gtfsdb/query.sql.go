@@ -1015,6 +1015,80 @@ func (q *Queries) GetActiveLayoverBlockIDsForRoute(ctx context.Context, arg GetA
 	return items, nil
 }
 
+const getActiveRouteIDsForStopsInInterval = `-- name: GetActiveRouteIDsForStopsInInterval :many
+SELECT DISTINCT
+    routes.id AS route_id,
+    routes.agency_id,
+    stop_times.stop_id
+FROM
+    stop_times
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id
+WHERE
+    stop_times.arrival_time <= ?1
+    AND stop_times.stop_id IN (/*SLICE:stop_ids*/?)
+    AND trips.service_id IN (/*SLICE:service_ids*/?)
+`
+
+type GetActiveRouteIDsForStopsInIntervalParams struct {
+	IntervalEnd int64
+	StopIds     []string
+	ServiceIds  []string
+}
+
+type GetActiveRouteIDsForStopsInIntervalRow struct {
+	RouteID  string
+	AgencyID string
+	StopID   string
+}
+
+// Like GetActiveRouteIDsForStopsOnDate, but a route also needs a visit at the
+// stop that starts no later than interval_end (nanoseconds since the start of
+// the service day), matching Java's service-interval route lookup.
+// The scalar comes before the slices so its ?1 numbering survives slice
+// expansion; after the slices, sqlc's ?3 would bind to a stop ID instead.
+func (q *Queries) GetActiveRouteIDsForStopsInInterval(ctx context.Context, arg GetActiveRouteIDsForStopsInIntervalParams) ([]GetActiveRouteIDsForStopsInIntervalRow, error) {
+	query := getActiveRouteIDsForStopsInInterval
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.IntervalEnd)
+	if len(arg.StopIds) > 0 {
+		for _, v := range arg.StopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(arg.StopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
+	if len(arg.ServiceIds) > 0 {
+		for _, v := range arg.ServiceIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", strings.Repeat(",?", len(arg.ServiceIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:service_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetActiveRouteIDsForStopsInIntervalRow
+	for rows.Next() {
+		var i GetActiveRouteIDsForStopsInIntervalRow
+		if err := rows.Scan(&i.RouteID, &i.AgencyID, &i.StopID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getActiveRouteIDsForStopsOnDate = `-- name: GetActiveRouteIDsForStopsOnDate :many
 SELECT DISTINCT
     routes.id AS route_id,

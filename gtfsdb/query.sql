@@ -690,6 +690,25 @@ WHERE
     stop_times.stop_id IN (sqlc.slice('stop_ids'))
     AND trips.service_id IN (sqlc.slice('service_ids'));
 
+-- name: GetActiveRouteIDsForStopsInInterval :many
+-- Like GetActiveRouteIDsForStopsOnDate, but a route also needs a visit at the
+-- stop that starts no later than interval_end (nanoseconds since the start of
+-- the service day), matching Java's service-interval route lookup.
+-- The scalar comes before the slices so its ?1 numbering survives slice
+-- expansion; after the slices, sqlc's ?3 would bind to a stop ID instead.
+SELECT DISTINCT
+    routes.id AS route_id,
+    routes.agency_id,
+    stop_times.stop_id
+FROM
+    stop_times
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id
+WHERE
+    stop_times.arrival_time <= sqlc.arg('interval_end')
+    AND stop_times.stop_id IN (sqlc.slice('stop_ids'))
+    AND trips.service_id IN (sqlc.slice('service_ids'));
+
 -- name: GetAgenciesForStops :many
 SELECT DISTINCT
     a.id,
