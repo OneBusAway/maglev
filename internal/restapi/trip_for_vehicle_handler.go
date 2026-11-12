@@ -17,6 +17,9 @@ import (
 
 // tripForVehicleHandler returns trip details for the trip currently being served by a given vehicle.
 func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request) {
+	// A trip-update vehicle positions its block several times: to find the
+	// active trip, its service date, and its status. They share snapshots.
+	r = r.WithContext(WithSnapshotCache(r.Context(), newSnapshotCache()))
 	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
 	if len(referenceErrors) > 0 {
 		api.validationErrorResponse(w, r, referenceErrors)

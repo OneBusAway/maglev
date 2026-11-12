@@ -763,6 +763,41 @@ func TestTripUpdateVehicleTrip_UnknownVehicleSkipsTripLookups(t *testing.T) {
 	assert.Equal(t, 1, counter.queries, "only the block lookup should run")
 }
 
+// A trip-update vehicle positions its block several times per request, for its
+// active trip, service date and status, so the handlers share snapshots. Without
+// that, trip-for-vehicle ran 89 queries here and trip-details 74.
+func TestTripUpdateVehicleHandlers_ShareBlockSnapshots(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(7*time.Hour + 30*time.Minute) // before the block's 08:00 start, so the record is kept
+	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer setupAPI.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
+
+	tests := []struct {
+		name       string
+		endpoint   string
+		maxQueries int
+	}{
+		{name: "trip-for-vehicle", endpoint: fmt.Sprintf("/api/where/trip-for-vehicle/%s.json?key=TEST", plannedVehicleID), maxQueries: 65},
+		{name: "trip-details with the vehicle", endpoint: fmt.Sprintf("/api/where/trip-details/dp-agency_%s.json?key=TEST&vehicleId=%s", tripID, plannedVehicleID), maxQueries: 60},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Each subtest gets its own rate limiter: the mock clock never refills one.
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(tripID, now))
+			counter := countQueries(t, api)
+
+			resp, _ := callAPIHandler[TripDetailsResponse](t, api, tt.endpoint)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.LessOrEqual(t, counter.queries, tt.maxQueries)
+		})
+	}
+}
+
 func ptrTime(t time.Time) *time.Time { return &t }
 
 // A block's trip updates form one record, timed by the last one
