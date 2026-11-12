@@ -295,7 +295,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 		if err != nil {
 			t.Fatalf("warm-up: acquire conn %d: %v", i, err)
 		}
-		if _, err := conn.ExecContext(ctx, "SELECT docid FROM stops_fts LIMIT 0"); err != nil {
+		if _, err := conn.ExecContext(ctx, "SELECT rowid FROM stops_fts LIMIT 0"); err != nil {
 			t.Fatalf("warm-up: touch stops_fts on conn %d: %v", i, err)
 		}
 		warmConns = append(warmConns, conn)
