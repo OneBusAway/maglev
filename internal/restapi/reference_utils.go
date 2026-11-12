@@ -1141,7 +1141,7 @@ func (c *situationCollector) addRefs(refs []situationRef) []string {
 }
 
 // situationReferences converts collected alerts into situation references,
-// attaching the IDs and ingestion timestamps retained by the collector.
+// attaching the IDs and alert creation times retained by the collector.
 // BuildSituationReferences emits raw alert IDs and preserves input order one-for-one.
 func (api *RestAPI) situationReferences(ctx context.Context, refs []situationRef) []models.Situation {
 	if len(refs) == 0 {

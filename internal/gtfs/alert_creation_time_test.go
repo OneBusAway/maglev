@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -50,35 +51,60 @@ func TestAlertCreationTimeSnapshots(t *testing.T) {
 	}
 	third := second.Add(time.Hour)
 	publish("a", []gtfs.Alert{alert}, third)
-	require.Equal(t, third, manager.Alerts()[0].CreatedAt)
+	require.Equal(t, first, manager.Alerts()[0].CreatedAt, "an unchanged poll must preserve creation time")
+	reordered := alert
+	reordered.InformedEntities = slices.Clone(alert.InformedEntities)
+	slices.Reverse(reordered.InformedEntities)
+	publish("a", []gtfs.Alert{reordered}, third)
+	require.Equal(t, first, manager.Alerts()[0].CreatedAt, "selector order alone must not refresh creation time")
+	require.Equal(t, reordered.InformedEntities, manager.Alerts()[0].InformedEntities, "retain incoming selector order")
+	changedSelectors := reordered
+	changedSelectors.InformedEntities = slices.Clone(reordered.InformedEntities)
+	changedSelectors.InformedEntities[0] = changedSelectors.InformedEntities[1]
+	publish("a", []gtfs.Alert{changedSelectors}, third)
+	require.Equal(t, third, manager.Alerts()[0].CreatedAt, "replacing a selector must refresh creation time")
+	edited := alert
+	edited.Header = []gtfs.AlertText{{Text: "Edited"}}
+	publish("a", []gtfs.Alert{edited}, third.Add(time.Hour))
+	require.Equal(t, third.Add(time.Hour), manager.Alerts()[0].CreatedAt)
 	require.Equal(t, second, manager.Alerts()[1].CreatedAt, "another feed's timestamp must not advance")
 	require.Equal(t, first, old[0].CreatedAt, "previously published snapshots must not change")
 	manager.clearFeedData("a")
-	require.NotContains(t, manager.feedAlertIngestedAt, "a")
+	require.NotContains(t, manager.feedAlertCreatedAt, "a")
 	require.Len(t, manager.Alerts(), 1)
 	require.Equal(t, second, manager.Alerts()[0].CreatedAt)
 	publish("b", nil, third)
 	require.Empty(t, manager.Alerts(), "a successful empty feed removes the old alert")
 	publish("b", []gtfs.Alert{alert}, third)
+	require.Equal(t, third, manager.Alerts()[0].CreatedAt, "an alert returning after removal gets a new timestamp")
 	manager.MockResetRealTimeData()
 	require.Empty(t, manager.Alerts())
-	require.Empty(t, manager.feedAlertIngestedAt)
-	require.NotNil(t, manager.feedAlertIngestedAt)
+	require.Empty(t, manager.feedAlertCreatedAt)
+	require.NotNil(t, manager.feedAlertCreatedAt)
 	publish("b", []gtfs.Alert{alert}, first)
 	require.Len(t, manager.Alerts(), 1)
 	require.Equal(t, first, manager.Alerts()[0].CreatedAt, "reset must leave the feed maps ready for reuse")
 }
 
 // TestAlertCreationTimeFetchFailure uses real HTTP/protobuf ingestion to check
-// failed and canceled fetches preserve the timestamp, then recovery refreshes it.
+// failed fetches and unchanged polls preserve timestamps; edited content refreshes one.
 func TestAlertCreationTimeFetchFailure(t *testing.T) {
-	payload, err := proto.Marshal(&gtfsrt.FeedMessage{
-		Header: &gtfsrt.FeedHeader{GtfsRealtimeVersion: proto.String("2.0"), Timestamp: proto.Uint64(1)},
-		Entity: []*gtfsrt.FeedEntity{{Id: proto.String("alert"), Alert: &gtfsrt.Alert{
-			InformedEntity: []*gtfsrt.EntitySelector{{AgencyId: proto.String("25")}},
-		}}},
-	})
-	require.NoError(t, err)
+	makePayload := func(timestamp uint64, text string) []byte {
+		t.Helper()
+		entity := func(id, header string) *gtfsrt.FeedEntity {
+			return &gtfsrt.FeedEntity{Id: proto.String(id), Alert: &gtfsrt.Alert{
+				InformedEntity: []*gtfsrt.EntitySelector{{AgencyId: proto.String("25")}},
+				HeaderText:     &gtfsrt.TranslatedString{Translation: []*gtfsrt.TranslatedString_Translation{{Text: proto.String(header)}}},
+			}}
+		}
+		payload, err := proto.Marshal(&gtfsrt.FeedMessage{
+			Header: &gtfsrt.FeedHeader{GtfsRealtimeVersion: proto.String("2.0"), Timestamp: proto.Uint64(timestamp)},
+			Entity: []*gtfsrt.FeedEntity{entity("alert", text), entity("other", "Unchanged")},
+		})
+		require.NoError(t, err)
+		return payload
+	}
+	payload := makePayload(1, "Original")
 	var mu sync.Mutex
 	status, body := http.StatusOK, payload
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +119,7 @@ func TestAlertCreationTimeFetchFailure(t *testing.T) {
 	before := time.Now()
 	require.True(t, manager.updateFeedRealtime(context.Background(), feed))
 	got := manager.Alerts()
-	require.Len(t, got, 1)
+	require.Len(t, got, 2)
 	require.False(t, got[0].CreatedAt.Before(before))
 	require.False(t, got[0].CreatedAt.After(time.Now()))
 	old := got[0].CreatedAt
@@ -120,13 +146,27 @@ func TestAlertCreationTimeFetchFailure(t *testing.T) {
 	cancel()
 	require.False(t, manager.updateFeedRealtime(ctx, feed))
 	require.Equal(t, old, manager.Alerts()[0].CreatedAt)
-	mu.Lock()
-	status, body = http.StatusOK, payload
-	mu.Unlock()
-	require.True(t, manager.updateFeedRealtime(context.Background(), feed))
-	recovered := manager.Alerts()
-	require.Len(t, recovered, 1)
-	require.True(t, recovered[0].CreatedAt.After(old), "every successful poll must restamp the alert")
+	poll := func(payload []byte) []FeedAlert {
+		t.Helper()
+		mu.Lock()
+		status, body = http.StatusOK, payload
+		mu.Unlock()
+		require.True(t, manager.updateFeedRealtime(context.Background(), feed))
+		alerts := manager.Alerts()
+		require.Len(t, alerts, 2)
+		return alerts
+	}
+	for _, unchanged := range [][]byte{payload, makePayload(2, "Original")} {
+		recovered := poll(unchanged)
+		require.Equal(t, old, recovered[0].CreatedAt, "unchanged content keeps its timestamp")
+		require.Equal(t, got[1].CreatedAt, recovered[1].CreatedAt)
+	}
+	edited := poll(makePayload(3, "Edited"))
+	require.Equal(t, "alert", edited[0].ID)
+	require.Equal(t, "Edited", edited[0].Header[0].Text)
+	require.True(t, edited[0].CreatedAt.After(old), "edited content gets a new timestamp")
+	require.Equal(t, "other", edited[1].ID)
+	require.Equal(t, got[1].CreatedAt, edited[1].CreatedAt, "editing one alert leaves the other unchanged")
 }
 
 // TestAlertCreationTimeConcurrentReads exercises timestamp publication while

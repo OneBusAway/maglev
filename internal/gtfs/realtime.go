@@ -372,7 +372,7 @@ func (manager *Manager) Alerts() []FeedAlert {
 
 // GetAlertsByIDs returns indexed alerts matching the given trip, route or
 // agency ID, in feed-id order. Each returned value carries the publishing
-// feed's first configured agency and successful ingestion time.
+// feed's first configured agency and the creation time of its current content.
 func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []FeedAlert {
 	idx := manager.mergedRealtime().alerts
 
@@ -1448,7 +1448,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 			feedAlert := FeedAlert{
 				Alert:        alert,
 				FeedAgencyID: manager.config.firstAgencyForFeed(id),
-				CreatedAt:    manager.feedAlertIngestedAt[id],
+				CreatedAt:    manager.feedAlertCreatedAt[id][alert.ID],
 			}
 			idx.all = append(idx.all, feedAlert)
 			// Per-alert per-bucket dedup: prevents the same alert from being appended
