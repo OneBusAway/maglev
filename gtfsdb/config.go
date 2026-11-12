@@ -77,7 +77,8 @@ const connectionBusyTimeoutMs = 5000
 // recursive_triggers makes SQLite fire DELETE triggers for the implicit delete
 // of INSERT OR REPLACE. Without it a feed that repeats a stop_id leaves the
 // first row's stops_rtree and stops_fts entries behind, pointing at a rowid
-// that no longer exists.
+// that no longer exists. A feed that repeats a route_id does the same to
+// routes_fts, so the replaced route's name keeps matching.
 func DSN(path string) string {
 	return dsn(path, connectionCacheKiB)
 }
