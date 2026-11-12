@@ -371,6 +371,7 @@ func TestArrivalWindow_RunningLateAndEarlyCandidates(t *testing.T) {
 		{"early_bus_predicted_in_window", "early-trip", "10:25:00", ptrDuration(-7 * time.Minute), true},
 		{"late_bus_without_prediction", "unpredicted-trip", "10:00:00", nil, false},
 		{"beyond_running_late_buffer", "very-late-trip", "09:35:00", ptrDuration(40 * time.Minute), false},
+		{"beyond_running_early_buffer", "very-early-trip", "10:31:00", ptrDuration(-12 * time.Minute), false},
 	}
 
 	files := frequencyFixtureFiles()
