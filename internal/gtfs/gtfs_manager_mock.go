@@ -205,9 +205,10 @@ func (m *Manager) MockAddTripUpdate(tripID string, delay *time.Duration, stopTim
 	defer m.realTimeMutex.Unlock()
 
 	trip := gtfs.Trip{
-		ID:              gtfs.TripID{ID: tripID},
-		Delay:           delay,
-		StopTimeUpdates: stopTimeUpdates,
+		ID:                gtfs.TripID{ID: tripID},
+		Delay:             delay,
+		StopTimeUpdates:   stopTimeUpdates,
+		IsEntityInMessage: true,
 	}
 	merged := m.mergedRealtime().clone()
 	merged.trips = append(merged.trips, trip)
@@ -216,10 +217,13 @@ func (m *Manager) MockAddTripUpdate(tripID string, delay *time.Duration, stopTim
 }
 
 // MockAddFullTripUpdate adds a trip update carrying fields MockAddTripUpdate
-// cannot set, such as its timestamp and vehicle descriptor.
+// cannot set, such as its timestamp and vehicle descriptor. Like ingestion, it
+// keeps the trip only as a trip update entity.
 func (m *Manager) MockAddFullTripUpdate(trip gtfs.Trip) {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
+
+	trip.IsEntityInMessage = true
 
 	merged := m.mergedRealtime().clone()
 	merged.trips = append(merged.trips, trip)
