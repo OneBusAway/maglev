@@ -85,6 +85,7 @@ type GtfsRtFeed struct {
 
 // JSONConfig represents the JSON configuration file structure
 type JSONConfig struct {
+	Role             string   `json:"role"`
 	Port             int      `json:"port"`
 	Host             string   `json:"host"`
 	Env              string   `json:"env"`
@@ -179,6 +180,9 @@ func ProtectedAPIKeysFromEnv() []string {
 
 // setDefaults applies default values to the JSON config if fields are missing or zero
 func (j *JSONConfig) setDefaults() {
+	if j.Role == "" {
+		j.Role = "all"
+	}
 	if j.Port == 0 {
 		j.Port = 4000
 	}
@@ -306,6 +310,15 @@ func (j *JSONConfig) Validate() error {
 	}
 	if !validLogFormats[j.LogFormat] {
 		return fmt.Errorf("log format must be one of [text, json], got %q", j.LogFormat)
+	}
+
+	validRoles := map[string]bool{
+		"all":      true,
+		"ingester": true,
+		"server":   true,
+	}
+	if !validRoles[j.Role] {
+		return fmt.Errorf("role must be one of [all, ingester, server], got %q", j.Role)
 	}
 
 	// Validate DataPath for path traversal attempts
@@ -445,6 +458,7 @@ func validatePath(path, fieldName string) error {
 // ToAppConfig converts JSONConfig to appconf.Config
 func (j *JSONConfig) ToAppConfig() Config {
 	return Config{
+		Role:             j.Role,
 		Port:             j.Port,
 		Host:             j.Host,
 		Env:              EnvFlagToEnvironment(j.Env),

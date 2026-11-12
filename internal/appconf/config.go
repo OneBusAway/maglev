@@ -6,6 +6,7 @@ package appconf
 // Application (development, staging, production, etc.). We will read in these
 // configuration settings from command-line flags when the Application starts.
 type Config struct {
+	Role             string
 	Port             int
 	Host             string
 	Env              Environment

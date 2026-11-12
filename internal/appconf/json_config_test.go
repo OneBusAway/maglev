@@ -413,6 +413,7 @@ func TestValidate_PathTraversalDataPath(t *testing.T) {
 				ProtectedApiKeys: []string{"test"},
 				RateLimit:        100,
 				DataPath:         tt.dataPath,
+				Role:             "all",
 				LogLevel:         "info",
 				LogFormat:        "text",
 			}
@@ -449,6 +450,7 @@ func TestValidate_FileURLNotAllowed(t *testing.T) {
 				GtfsStaticFeeds: []GtfsStaticFeed{{
 					URL: tt.gtfsURL,
 				}},
+				Role:      "all",
 				LogLevel:  "info",
 				LogFormat: "text",
 			}
@@ -487,6 +489,7 @@ func TestValidate_PathTraversalGtfsURL(t *testing.T) {
 				GtfsStaticFeeds: []GtfsStaticFeed{{
 					URL: tt.gtfsURL,
 				}},
+				Role:      "all",
 				LogLevel:  "info",
 				LogFormat: "text",
 			}
@@ -524,6 +527,7 @@ func TestValidate_ValidAbsolutePaths(t *testing.T) {
 					URL: tt.gtfsURL,
 				}},
 				DataPath:  "./gtfs.db",
+				Role:      "all",
 				LogLevel:  "info",
 				LogFormat: "text",
 			}
@@ -564,6 +568,7 @@ func TestValidate_PartialAuthHeaders(t *testing.T) {
 					AuthHeaderValue: tt.authValue,
 				}},
 				DataPath:  "./gtfs.db",
+				Role:      "all",
 				LogLevel:  "info",
 				LogFormat: "text",
 			}

@@ -45,6 +45,7 @@ func main() {
 
 	var cfg appconf.Config
 	var gtfsCfg gtfs.Config
+	var roleFlag string
 	var apiKeysFlag string
 	var exemptApiKeysFlag string
 	var protectedApiKeysFlag string
@@ -62,6 +63,7 @@ func main() {
 	// Parse command-line flags
 	flag.StringVar(&configFile, "f", "", "Path to JSON configuration file (mutually exclusive with other flags)")
 	flag.BoolVar(&dumpConfig, "dump-config", false, "Dump current configuration as JSON and exit")
+	flag.StringVar(&roleFlag, "role", "all", "Server role (all|ingester|server)")
 	flag.IntVar(&cfg.Port, "port", 4000, "API server port")
 	flag.StringVar(&cfg.Host, "host", "", "Address to bind the server to (default: all interfaces)")
 	flag.StringVar(&envFlag, "env", "development", "Environment (development|test|production)")
@@ -126,6 +128,7 @@ func main() {
 		// Pack the CLI flags into a temporary JSONConfig struct
 		// This allows us to run the exact same robust validation logic as the JSON path!
 		cliConfig := appconf.JSONConfig{
+			Role:          roleFlag,
 			Port:          cfg.Port,
 			Host:          cfg.Host,
 			Env:           envFlag,
@@ -186,6 +189,11 @@ func main() {
 	level := parseLogLevel(cfg.LogLevel)
 	logger := slog.New(newLogHandler(cfg.LogFormat, level))
 	slog.SetDefault(logger)
+
+	if cfg.Role != "all" {
+		logger.Warn("role isolation is pending phase 2 runtime support; running in monolithic mode",
+			slog.String("configured_role", cfg.Role))
+	}
 
 	// Build application with dependencies
 	coreApp, err := BuildApplication(ctx, cfg, gtfsCfg, logger)
