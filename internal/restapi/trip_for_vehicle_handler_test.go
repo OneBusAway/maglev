@@ -397,11 +397,12 @@ func TestTripForVehicleHandler_MissingRoute(t *testing.T) {
 }
 
 // TestTripForVehicleHandler_RouteFromAnotherAgency covers a vehicle running a
-// trip whose route belongs to a different agency: the route reference must keep
-// its own agency prefix, or the trip's routeId points at a route the client
-// cannot resolve.
+// trip on another agency's route. With real ingestion the vehicle is attributed
+// to its route's agency, so a request under a different agency's prefix is 404.
 func TestTripForVehicleHandler_RouteFromAnotherAgency(t *testing.T) {
-	api, _ := setupTestApiWithMockVehicle(t)
+	api := createTestApi(t)
+	t.Cleanup(api.Shutdown)
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	const (
 		otherAgencyID    = "OTHERAGENCY"
@@ -413,10 +414,12 @@ func TestTripForVehicleHandler_RouteFromAnotherAgency(t *testing.T) {
 	api.GtfsManager.MockAddAgency(otherAgencyID, "Other Agency")
 	api.GtfsManager.MockAddRoute(otherRouteID, otherAgencyID, "Cross-agency route")
 	insertStubTrip(t, api, crossAgencyTrip, otherRouteID)
-	api.GtfsManager.MockAddVehicle(crossAgencyVehID, crossAgencyTrip, otherRouteID)
+	// Attribute the vehicle to its route's agency, as ingestion does.
+	api.GtfsManager.MockSetAgencyVehicles("_test", otherAgencyID, []gtfs.Vehicle{{
+		ID:   &gtfs.VehicleID{ID: crossAgencyVehID},
+		Trip: &gtfs.Trip{ID: gtfs.TripID{ID: crossAgencyTrip, RouteID: otherRouteID}},
+	}})
 
-	// These rows land in the package-shared fixture database, so take them back
-	// out rather than leaving them behind for later tests.
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id = ?`, crossAgencyTrip)
@@ -424,31 +427,12 @@ func TestTripForVehicleHandler_RouteFromAnotherAgency(t *testing.T) {
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM agencies WHERE id = ?`, otherAgencyID)
 	})
 
-	// includeTrip=true so the route lookup is reached even though the mock trip
-	// has no real-time status to build.
 	resp, model := callAPIHandler[TripDetailsResponse](t, api,
 		tripForVehicleURL(utils.FormCombinedID(testdata.Raba.ID, crossAgencyVehID),
 			url.Values{"includeTrip": {"true"}}))
 
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	require.Len(t, model.Data.References.Trips, 1)
-	require.Len(t, model.Data.References.Routes, 1)
-
-	referencedAgencies := make([]string, 0, len(model.Data.References.Agencies))
-	for _, agency := range model.Data.References.Agencies {
-		referencedAgencies = append(referencedAgencies, agency.ID)
-	}
-	assert.Contains(t, referencedAgencies, testdata.Raba.ID, "the vehicle's own agency")
-	assert.Contains(t, referencedAgencies, otherAgencyID,
-		"the route's agency must be dereferenceable too, or references.routes[0].agencyId resolves to nothing")
-
-	routeRef := model.Data.References.Routes[0]
-	assert.Equal(t, otherAgencyID, routeRef.AgencyID,
-		"the route reference carries the route's own agency, not the vehicle's")
-	assert.Equal(t, utils.FormCombinedID(otherAgencyID, otherRouteID), routeRef.ID)
-	assert.Equal(t, routeRef.ID, model.Data.References.Trips[0].RouteID,
-		"the trip's routeId must resolve against references.routes")
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
 }
 
 // TestTripForVehicleHandler_TripReferences covers where the active trip's
