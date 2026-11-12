@@ -153,7 +153,9 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// A trip-update vehicle positions its block for its service date and again
+	// for its status. They share snapshots.
+	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
 	defaults := TripParamDefaults{IncludeTrip: true, IncludeSchedule: true}
 
 	// Format errors do not need the agency timezone. Catch them before GetTrip so
