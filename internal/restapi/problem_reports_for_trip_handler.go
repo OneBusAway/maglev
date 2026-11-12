@@ -4,11 +4,12 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // problemReportsForTripHandler returns all user-submitted problem reports for a given trip.
 func (api *RestAPI) problemReportsForTripHandler(w http.ResponseWriter, r *http.Request) {
-	_, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	agencyID, tripID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
 	}
@@ -28,7 +29,7 @@ func (api *RestAPI) problemReportsForTripHandler(w http.ResponseWriter, r *http.
 
 	reportList := make([]models.ProblemReportTrip, 0, len(reports))
 	for _, report := range reports {
-		reportList = append(reportList, models.NewProblemReportTrip(report))
+		reportList = append(reportList, models.NewProblemReportTrip(report, utils.FormCombinedID(agencyID, report.TripID)))
 	}
 
 	references := models.NewEmptyReferences()
