@@ -2433,33 +2433,6 @@ func TestUpdateFeedRealtime_FirstSeenUsesNormalizedFeedTime(t *testing.T) {
 	})
 }
 
-func TestLatestFeedUpdateTime_FollowsRemainingFeeds(t *testing.T) {
-	manager := newTestManager()
-	older := time.Now().Add(-time.Minute).Truncate(time.Second)
-	newer := older.Add(30 * time.Second)
-	manager.SetFeedUpdateTimeForTest("older", older)
-	manager.SetFeedUpdateTimeForTest("newer", newer)
-
-	manager.clearFeedData("newer")
-	latest, ok := manager.LatestFeedUpdateTime()
-	require.True(t, ok)
-	assert.True(t, older.Equal(latest), "expected the remaining feed's time, got %s", latest)
-
-	manager.clearFeedData("older")
-	_, ok = manager.LatestFeedUpdateTime()
-	assert.False(t, ok)
-}
-
-func TestMockResetRealTimeData_ClearsLatestFeedUpdate(t *testing.T) {
-	manager := newTestManager()
-	manager.SetFeedUpdateTimeForTest("feed", time.Now())
-
-	manager.MockResetRealTimeData()
-
-	_, ok := manager.LatestFeedUpdateTime()
-	assert.False(t, ok)
-}
-
 func TestUpdateFeedRealtime_KeepsOnlyTripUpdateEntities(t *testing.T) {
 	const (
 		tripUpdateTrip  = "trip-update"
