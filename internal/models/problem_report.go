@@ -24,10 +24,11 @@ type ProblemReportTrip struct {
 }
 
 // NewProblemReportTrip converts a database ProblemReportsTrip to an API response model.
-func NewProblemReportTrip(report gtfsdb.ProblemReportsTrip) ProblemReportTrip {
+// tripID is the combined trip ID to return; the stored trip ID is bare.
+func NewProblemReportTrip(report gtfsdb.ProblemReportsTrip, tripID string) ProblemReportTrip {
 	return ProblemReportTrip{
 		ID:                   report.ID,
-		TripID:               report.TripID,
+		TripID:               tripID,
 		ServiceDate:          nulls.StringOrEmpty(report.ServiceDate),
 		VehicleID:            nulls.StringOrEmpty(report.VehicleID),
 		StopID:               nulls.StringOrEmpty(report.StopID),
@@ -57,10 +58,11 @@ type ProblemReportStop struct {
 }
 
 // NewProblemReportStop converts a database ProblemReportsStop to an API response model.
-func NewProblemReportStop(report gtfsdb.ProblemReportsStop) ProblemReportStop {
+// stopID is the combined stop ID to return; the stored stop ID is bare.
+func NewProblemReportStop(report gtfsdb.ProblemReportsStop, stopID string) ProblemReportStop {
 	return ProblemReportStop{
 		ID:                   report.ID,
-		StopID:               report.StopID,
+		StopID:               stopID,
 		Code:                 nulls.StringOrEmpty(report.Code),
 		UserComment:          nulls.StringOrEmpty(report.UserComment),
 		UserLat:              report.UserLat.Float64,
