@@ -21,8 +21,12 @@ const tripUpdateVehicleBlockWindow = time.Hour
 
 // vehicleForTrip returns the vehicle serving a trip's block: one reporting
 // positions when there is one, otherwise one known only from a trip update.
+//
+// A feed carrying trip updates at its vehicle positions URL makes go-gtfs list
+// a position-less vehicle for each update naming one. That vehicle is skipped
+// here so the trip-update path builds it with Java's record checks.
 func (api *RestAPI) vehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
-	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil {
+	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil && !isTripUpdateVehicle(vehicle) {
 		blockUpdates := api.vehicleBlockTripUpdates(ctx, vehicle, serviceDate)
 		if !api.vehicleRecordExpired(blockUpdates) {
 			return vehicleWithRecordStatus(vehicle, blockUpdates)
@@ -301,8 +305,10 @@ func (api *RestAPI) tripAgencyID(ctx context.Context, tripID string) (string, bo
 	return route.AgencyID, true
 }
 
-// isTripUpdateVehicle reports whether a vehicle comes from a trip update alone,
-// as built by vehicleFromTripUpdate, rather than from the vehicle positions feed.
+// isTripUpdateVehicle reports whether a vehicle comes from a trip update alone
+// rather than from a vehicle position entity. go-gtfs leaves IsEntityInMessage
+// false on a vehicle only a trip update names, and every stored trip update has
+// it set, so this holds for vehicleFromTripUpdate's vehicles and go-gtfs's alike.
 func isTripUpdateVehicle(vehicle *gtfs.Vehicle) bool {
 	return vehicle != nil &&
 		!vehicle.IsEntityInMessage &&

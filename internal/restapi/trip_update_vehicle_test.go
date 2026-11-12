@@ -86,6 +86,47 @@ func TestTripUpdateVehicleForTrip(t *testing.T) {
 	}
 }
 
+// A feed serving trip updates at its vehicle positions URL makes go-gtfs add a
+// position-less vehicle for each trip update naming one. That vehicle is known
+// only from the trip update, so it must pass the same checks as one built here.
+func TestVehicleForTrip_LibraryTripUpdateVehicle(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(7 * time.Hour) // setupDelayPropTestData's block starts at 08:00
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+
+	tests := []struct {
+		name        string
+		recordTime  time.Time
+		wantVehicle bool
+	}{
+		{name: "record within an hour of the block", recordTime: now.Add(time.Minute), wantVehicle: true},
+		{name: "record more than an hour before the block", recordTime: now.Add(-time.Minute)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			tripUpdate := plannedVehicleTripUpdate(tripID, tt.recordTime)
+			tripUpdate.IsEntityInMessage = true
+			libraryVehicle := gtfs.Vehicle{ID: tripUpdate.Vehicle.ID, Trip: &tripUpdate}
+			api.GtfsManager.MockSetAgencyVehicles("_test", "dp-agency", []gtfs.Vehicle{libraryVehicle})
+			api.GtfsManager.MockAddFullTripUpdate(tripUpdate)
+
+			vehicle := api.vehicleForTrip(context.Background(), tripID, serviceDate)
+
+			if !tt.wantVehicle {
+				assert.Nil(t, vehicle)
+				return
+			}
+			require.NotNil(t, vehicle)
+			require.NotNil(t, vehicle.Timestamp, "the record's time")
+			assert.Equal(t, tt.recordTime, *vehicle.Timestamp)
+		})
+	}
+}
+
 // A block that has not started yet reports the vehicle waiting at its first
 // stop, frozen at the update's timestamp: live Tampa's block_*_schedBasedVehicle.
 func TestPluralArrivals_TripUpdateVehicleBeforeBlockStart(t *testing.T) {

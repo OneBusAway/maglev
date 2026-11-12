@@ -162,8 +162,8 @@ func (api *RestAPI) tripUpdateVehicleHasPosition(tripUpdate gtfs.Trip) bool {
 	if tripUpdate.Vehicle == nil || tripUpdate.Vehicle.ID == nil {
 		return false
 	}
-	_, err := api.GtfsManager.GetVehicleByID(tripUpdate.Vehicle.ID.ID)
-	return err == nil
+	vehicle, err := api.GtfsManager.GetVehicleByID(tripUpdate.Vehicle.ID.ID)
+	return err == nil && !isTripUpdateVehicle(vehicle)
 }
 
 type tripUpdateForTrip struct {
