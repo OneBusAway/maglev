@@ -2169,3 +2169,49 @@ func TestArrivalAndDepartureForStopHandler_CrossAgencyTimezone(t *testing.T) {
 	assert.True(t, entry.ServiceDate.In(locLA).Equal(expectedMidnightLA),
 		"service date must be midnight in the trip agency timezone, got %v", entry.ServiceDate)
 }
+
+// TestArrivalAndDepartureForStop_ArrivalDepartureEnabledFlags verifies that
+// arrivalEnabled is false for the first stop of a trip and departureEnabled
+// is false for the last stop.
+func TestArrivalAndDepartureForStop_ArrivalDepartureEnabledFlags(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	const agencyID = "25"
+	const bareTrip = "0f36bccf-c435-4b31-b001-da345d06a57d"
+	tripID := utils.FormCombinedID(agencyID, bareTrip)
+	serviceDate := time.Now()
+
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(context.Background(), bareTrip)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(stopTimes), 2, "trip must have at least two stops")
+
+	firstStop := utils.FormCombinedID(agencyID, stopTimes[0].StopID)
+	lastStop := utils.FormCombinedID(agencyID, stopTimes[len(stopTimes)-1].StopID)
+	lastIdx := len(stopTimes) - 1
+
+	tests := []struct {
+		name          string
+		stopID        string
+		stopSequence  int
+		wantArrival   bool
+		wantDeparture bool
+	}{
+		{"first stop: arrivalEnabled false", firstStop, 0, false, true},
+		{"last stop: departureEnabled false", lastStop, lastIdx, true, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			endpoint := fmt.Sprintf(
+				"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d",
+				tc.stopID, tripID, serviceDate.UnixMilli(), tc.stopSequence,
+			)
+			resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			entry := model.Data.Entry
+			assert.Equal(t, tc.wantArrival, entry.ArrivalEnabled, "%s: ArrivalEnabled", tc.name)
+			assert.Equal(t, tc.wantDeparture, entry.DepartureEnabled, "%s: DepartureEnabled", tc.name)
+		})
+	}
+}
