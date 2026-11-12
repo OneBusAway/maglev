@@ -1093,7 +1093,8 @@ func (api *RestAPI) routeZones(
 func tripsByBlock(trips []gtfsdb.GetTripsByBlockIDsRow) map[string][]gtfsdb.GetTripsByBlockIDsRow {
 	byBlock := make(map[string][]gtfsdb.GetTripsByBlockIDsRow)
 	for _, trip := range trips {
-		byBlock[nulls.StringOrEmpty(trip.BlockID)] = append(byBlock[nulls.StringOrEmpty(trip.BlockID)], trip)
+		blockID := nulls.StringOrEmpty(trip.BlockID)
+		byBlock[blockID] = append(byBlock[blockID], trip)
 	}
 	return byBlock
 }
@@ -1172,9 +1173,7 @@ func (api *RestAPI) routeBlocksAndTripsInService(ctx context.Context, routeID st
 			return nil, nil, err
 		}
 		for _, blockID := range indexedBlocks {
-			if blockID.Valid {
-				blockIDs = append(blockIDs, blockID.String)
-			}
+			blockIDs = append(blockIDs, nulls.StringOrEmpty(blockID))
 		}
 	}
 

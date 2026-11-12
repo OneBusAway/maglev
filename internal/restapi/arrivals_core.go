@@ -343,8 +343,8 @@ func (api *RestAPI) stopTimesForGroupServiceDay(
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	agencyLoc := group.location
 	// Fetch both trip windows before frequency metadata is available.
-	windowStart := in.QueryTime.Add(-max(in.Before, in.FrequencyBefore))
-	windowEnd := in.QueryTime.Add(max(in.After, in.FrequencyAfter))
+	windowStart, windowEnd := arrivalCandidateWindow(in.QueryTime,
+		max(in.Before, in.FrequencyBefore), max(in.After, in.FrequencyAfter))
 	serviceDate := servicedate.Of(in.QueryTime.In(agencyLoc)).AddDays(dayOffset)
 	serviceStart := serviceDate.Start(agencyLoc)
 	serviceDateStr := serviceDate.String()
@@ -624,8 +624,10 @@ func (api *RestAPI) appendBatchedStopTimesForDay(ctx context.Context, group agen
 		return nil
 	}
 
-	windowStartNanos := group.queryTime.Add(-max(in.Before, in.FrequencyBefore)).Sub(serviceStart).Nanoseconds()
-	windowEndNanos := group.queryTime.Add(max(in.After, in.FrequencyAfter)).Sub(serviceStart).Nanoseconds()
+	windowStart, windowEnd := arrivalCandidateWindow(group.queryTime,
+		max(in.Before, in.FrequencyBefore), max(in.After, in.FrequencyAfter))
+	windowStartNanos := windowStart.Sub(serviceStart).Nanoseconds()
+	windowEndNanos := windowEnd.Sub(serviceStart).Nanoseconds()
 	if windowEndNanos < 0 {
 		return nil
 	}
@@ -744,6 +746,16 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 	return arrivals, nil
 }
 
+// arrivalCandidateWindow returns the range the stop-time queries search. Like
+// Java's getArrivalsAndDeparturesForStopInTimeRange, it pads the requested
+// window by runningLate before and runningEarly after, so a late or early bus
+// whose scheduled time falls outside the window still becomes a candidate.
+// stopTimeInArrivalWindow then applies the requested window to scheduled and
+// predicted times.
+func arrivalCandidateWindow(queryTime time.Time, before, after time.Duration) (start, end time.Time) {
+	return queryTime.Add(-before - runningLate), queryTime.Add(after + runningEarly)
+}
+
 // stopTimeInArrivalWindow checks scheduled and available predicted times against
 // the trip's window before expensive trip-status and reference construction.
 // Bounds are inclusive, matching the candidate queries and Java's range check.
@@ -782,8 +794,8 @@ func convertStopsInWindowRow(row gtfsdb.GetStopTimesForStopsInWindowRow) gtfsdb.
 
 // batchArrivalEntities resolves every route, trip, per-trip stop index and
 // frequency row the matched stop_times need in four queries rather than per
-// row. A frequency fetch failure is fatal — unlike the stop index, it cannot
-// silently degrade a field, since BuildTripStatus itself needs the map.
+// row. Any lookup failure is returned to the handler rather than publishing
+// arrivals with incomplete entity data.
 func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes []activeStopTime) (
 	routesLookup map[string]gtfsdb.Route,
 	tripsLookup map[string]gtfsdb.Trip,
@@ -821,7 +833,11 @@ func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes
 		}
 	}
 
-	return routesLookup, tripsLookup, api.buildTripStopIndex(ctx, uniqueTripIDs), freqMap, nil
+	tripStops, err = api.buildTripStopIndex(ctx, uniqueTripIDs)
+	if err != nil {
+		return nil, nil, tripStopIndex{}, nil, err
+	}
+	return routesLookup, tripsLookup, tripStops, freqMap, nil
 }
 
 // bestArrivalMillis is the instant Java's ArrivalAndDepartureComparator sorts
@@ -893,32 +909,28 @@ type tripStopIndex struct {
 // stop_sequence: GTFS only requires that value to increase along the trip, so a
 // 0-based or sparsely numbered feed makes the two differ.
 //
-// An unknown trip yields 0, matching how stopCounts degrades when the batch
-// fetch below fails.
+// An unknown trip yields 0.
 func (idx tripStopIndex) stopPosition(tripID string, stopSequence int64) int {
 	return idx.positions[tripStopKey{tripID: tripID, stopSequence: stopSequence}]
 }
 
 // buildTripStopIndex resolves each trip's stop count and per-stop positions in
-// one batched query rather than a pair of per-arrival lookups. A failure yields
-// empty maps rather than an error: the missing values degrade two response
-// fields, and the arrivals themselves are still worth returning.
-func (api *RestAPI) buildTripStopIndex(ctx context.Context, tripIDs []string) tripStopIndex {
+// one batched query rather than a pair of per-arrival lookups. A failed lookup
+// is returned so a database failure cannot be mistaken for a first stop.
+func (api *RestAPI) buildTripStopIndex(ctx context.Context, tripIDs []string) (tripStopIndex, error) {
 	idx := tripStopIndex{
 		stopCounts: make(map[string]int, len(tripIDs)),
 		positions:  make(map[tripStopKey]int),
 	}
 	if len(tripIDs) == 0 {
-		return idx
+		return idx, nil
 	}
-	reqLogger := logging.ForComponent(ctx, "http_server")
 
 	// Ordered by (trip_id, stop_sequence), so each trip's running count is also
 	// the next row's position within that trip.
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
-		reqLogger.Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
-		return idx
+		return tripStopIndex{}, fmt.Errorf("query stop times for trip index: %w", err)
 	}
 
 	for _, st := range stopTimes {
@@ -926,7 +938,7 @@ func (api *RestAPI) buildTripStopIndex(ctx context.Context, tripIDs []string) tr
 		idx.positions[key] = idx.stopCounts[st.TripID]
 		idx.stopCounts[st.TripID]++
 	}
-	return idx
+	return idx, nil
 }
 
 // arrivalInput carries the per-row values buildArrival needs. Grouped into a
@@ -1037,20 +1049,14 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.ArrivalAndDeparture, in arrivalInput, vehicle *gtfs.Vehicle, acc *arrivalsAccumulator) {
 	tripStatus, statusExtras, distanceFromStop, numberOfStopsAway := api.tripStatusForArrival(ctx, in, vehicle, acc)
 
-	// BuildTripStatus (via calculateBlockTripSequence) already computed
-	// this and set it on the status; reuse rather than redoing the block
-	// lookup for every arrival row.
-	blockTripSequence := 0
-	if tripStatus != nil {
-		blockTripSequence = tripStatus.BlockTripSequence
-	}
-
 	api.applyTripStatusPrediction(ctx, arrival, tripStatus, statusExtras, in, acc.deviationSamples)
 
 	arrival.TripStatus = tripStatus
 	arrival.DistanceFromStop = distanceFromStop
 	arrival.NumberOfStopsAway = numberOfStopsAway
-	arrival.BlockTripSequence = blockTripSequence
+	// Already computed by BuildTripStatus; reuse rather than redoing the block
+	// lookup for every arrival row.
+	arrival.BlockTripSequence = statusExtras.tripBlockSequence
 	arrival.SituationIDs = acc.situations.addRefs(statusExtras.situations)
 }
 
