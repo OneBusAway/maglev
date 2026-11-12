@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"strconv"
 	"time"
@@ -224,7 +223,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 
 	if tripAgencyID != route.AgencyID {
-		api.dbErrorResponse(w, r, sql.ErrNoRows)
+		api.sendNotFound(w, r)
 		return
 	}
 
