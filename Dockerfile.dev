@@ -25,8 +25,8 @@ RUN mkdir -p /app/data && \
     chown -R maglev:maglev /app && \
     chown -R maglev:maglev /go
 
-# Ensure SQLite temp files use the writable volume when running with a read-only root
-ENV SQLITE_TMPDIR=/app/data
+# Ensure temp files (Go and SQLite) use the writable volume when running with a read-only root
+ENV TMPDIR=/app/data
 
 # Switch to non-root user
 USER maglev

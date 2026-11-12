@@ -86,8 +86,8 @@ WORKDIR /app
 # Create data directory for SQLite database persistence
 RUN mkdir -p /app/data && chown -R maglev:maglev /app
 
-# Ensure SQLite temp files use the writable volume when running with a read-only root
-ENV SQLITE_TMPDIR=/app/data
+# Ensure temp files (Go and SQLite) use the writable volume when running with a read-only root
+ENV TMPDIR=/app/data
 
 # Copy binary from builder
 COPY --from=builder /build/maglev .
