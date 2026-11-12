@@ -753,37 +753,47 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 	}
 	return nil
 }
+func (merged *mergedRealtime) vehicleAtIndex(index int) *gtfs.Vehicle {
+	if index >= 0 && index < len(merged.vehicles) {
+		return &merged.vehicles[index]
+	}
+	return nil
+}
+
+func (merged *mergedRealtime) resolveVehicleKey(agencyID, vehicleID string) (agencyVehicleKey, int, bool) {
+	key := agencyVehicleKey{agencyID: agencyID, vehicleID: vehicleID}
+	if idx, exists := merged.vehicleLookupByVehicle[key]; exists {
+		return key, idx, true
+	}
+	if agencyID != "" {
+		fallbackKey := agencyVehicleKey{agencyID: "", vehicleID: vehicleID}
+		if idx, exists := merged.vehicleLookupByVehicle[fallbackKey]; exists {
+			return fallbackKey, idx, true
+		}
+	} else {
+		fallbackKey := agencyVehicleKey{agencyID: "", vehicleID: vehicleID}
+		if idx, exists := merged.vehicleLookupByVehicle[fallbackKey]; exists {
+			return fallbackKey, idx, true
+		}
+		for k, idx := range merged.vehicleLookupByVehicle {
+			if k.vehicleID == vehicleID {
+				return k, idx, true
+			}
+		}
+	}
+	return agencyVehicleKey{}, 0, false
+}
 
 // GetVehicleByID returns the vehicle matching the agency and vehicle ID.
 // If not found under the requested agency, it falls back to an unattributed vehicle.
 // If agencyID is empty, it searches for the vehicle under any agency.
 func (manager *Manager) GetVehicleByID(agencyID, vehicleID string) (*gtfs.Vehicle, error) {
 	merged := manager.mergedRealtime()
-
-	if index, exists := merged.vehicleLookupByVehicle[agencyVehicleKey{agencyID: agencyID, vehicleID: vehicleID}]; exists {
-		if index >= 0 && index < len(merged.vehicles) {
-			return &merged.vehicles[index], nil
+	if _, idx, ok := merged.resolveVehicleKey(agencyID, vehicleID); ok {
+		if v := merged.vehicleAtIndex(idx); v != nil {
+			return v, nil
 		}
 	}
-
-	// Fallback to unattributed vehicle if not found under specified agency
-	if agencyID != "" {
-		if index, exists := merged.vehicleLookupByVehicle[agencyVehicleKey{agencyID: "", vehicleID: vehicleID}]; exists {
-			if index >= 0 && index < len(merged.vehicles) {
-				return &merged.vehicles[index], nil
-			}
-		}
-	}
-
-	// Fallback for callers that don't know the agency
-	if agencyID == "" {
-		for key, index := range merged.vehicleLookupByVehicle {
-			if key.vehicleID == vehicleID && index >= 0 && index < len(merged.vehicles) {
-				return &merged.vehicles[index], nil
-			}
-		}
-	}
-
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
 }
 
@@ -791,23 +801,13 @@ func (manager *Manager) GetVehicleByID(agencyID, vehicleID string) (*gtfs.Vehicl
 // attributed to at ingestion. ok is false when the vehicle is unknown or has
 // no attributed agency.
 func (manager *Manager) VehicleAgencyID(agencyID, vehicleID string) (string, bool) {
-	_, err := manager.GetVehicleByID(agencyID, vehicleID)
-	if err != nil {
+	merged := manager.mergedRealtime()
+	key, idx, ok := merged.resolveVehicleKey(agencyID, vehicleID)
+	if !ok || merged.vehicleAtIndex(idx) == nil {
 		return "", false
 	}
-	merged := manager.mergedRealtime()
-	agency, ok := merged.vehicleAgencyByVehicle[agencyVehicleKey{agencyID: agencyID, vehicleID: vehicleID}]
-	if ok && agency != "" {
-		return agency, true
-	}
-	if agencyID == "" {
-		for key, agency := range merged.vehicleAgencyByVehicle {
-			if key.vehicleID == vehicleID && agency != "" {
-				return agency, true
-			}
-		}
-	}
-	return "", false
+	agency, hasAgency := merged.vehicleAgencyByVehicle[key]
+	return agency, hasAgency && agency != ""
 }
 
 func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {

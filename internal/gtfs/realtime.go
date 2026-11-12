@@ -1384,10 +1384,6 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	// Writes the released copies back to feedVehicles, so a trip stays released
 	// after the vehicle that took it drops out.
 	manager.releaseTripsTakenAcrossFeeds(vehicleFeedIDs)
-	allVehicles := make([]gtfs.Vehicle, 0, totalVehicles)
-	for _, id := range vehicleFeedIDs {
-		allVehicles = append(allVehicles, manager.feedVehicles[id]...)
-	}
 
 	alertFeedIDs := make([]string, 0, len(manager.feedAlerts))
 	for id := range manager.feedAlerts {
@@ -1409,13 +1405,13 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		}
 	}
 
-	vehicleLookupByTrip := make(map[string]int, len(allVehicles))
-	vehicleLookupByVehicle := make(map[agencyVehicleKey]int, len(allVehicles))
-	vehicleAgencyByVehicle := make(map[agencyVehicleKey]string, len(allVehicles))
+	vehicleLookupByTrip := make(map[string]int, totalVehicles)
+	vehicleLookupByVehicle := make(map[agencyVehicleKey]int, totalVehicles)
+	vehicleAgencyByVehicle := make(map[agencyVehicleKey]string, totalVehicles)
 	duplicatedVehicleByRoute := make(map[string][]gtfs.Vehicle)
 	vehiclesByRoute := make(map[string][]gtfs.Vehicle)
 
-	allVehicles = make([]gtfs.Vehicle, 0, totalVehicles)
+	allVehicles := make([]gtfs.Vehicle, 0, totalVehicles)
 	for _, feedID := range vehicleFeedIDs {
 		agencyMap := manager.feedVehicleAgency[feedID]
 		for _, vehicle := range manager.feedVehicles[feedID] {
