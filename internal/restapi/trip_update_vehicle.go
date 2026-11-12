@@ -186,7 +186,6 @@ func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.T
 		return nil
 	}
 
-	tripUpdate.IsEntityInMessage = true
 	return &gtfs.Vehicle{ID: vehicleID, Trip: &tripUpdate, Timestamp: &recordTime}
 }
 
