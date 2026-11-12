@@ -78,7 +78,7 @@ func TestMergedRealtimeBeforeFirstPublish(t *testing.T) {
 	assert.Empty(t, manager.GetAlertsForStop("stop-1", ""))
 	assert.Empty(t, manager.GetTripUpdatesForTrip("trip-1"))
 
-	_, err := manager.GetVehicleByID("veh-1")
+	_, err := manager.GetVehicleByID("", "veh-1")
 	assert.Error(t, err)
 }
 
@@ -237,19 +237,22 @@ func TestVehicleAgencyID(t *testing.T) {
 
 	tests := []struct {
 		name         string
+		agencyID     string
 		vehicleID    string
 		wantAgencyID string
 		wantOK       bool
 	}{
-		{"attributed vehicle", "attributed", "A", true},
-		{"vehicle with no attributed agency", "unattributed", "", false},
-		{"later feed's report of the same ID wins", "reattributed", "B", true},
-		{"later unattributed report clears the agency", "cleared", "", false},
-		{"unknown vehicle", "missing", "", false},
+		{"attributed vehicle", "A", "attributed", "A", true},
+		{"vehicle with no attributed agency", "", "unattributed", "", false},
+		{"feed-a vehicle keeps agency A", "A", "reattributed", "A", true},
+		{"feed-b vehicle keeps agency B", "B", "reattributed", "B", true},
+		{"feed-a vehicle cleared has agency A", "A", "cleared", "A", true},
+		{"feed-b vehicle cleared has no agency", "B", "cleared", "", false},
+		{"unknown vehicle", "", "missing", "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			agencyID, ok := manager.VehicleAgencyID(tt.vehicleID)
+			agencyID, ok := manager.VehicleAgencyID(tt.agencyID, tt.vehicleID)
 			assert.Equal(t, tt.wantAgencyID, agencyID)
 			assert.Equal(t, tt.wantOK, ok)
 		})

@@ -39,14 +39,19 @@ type alertIndex struct {
 // stored. rebuildMergedRealtimeLocked always builds a fresh one, and the mock
 // helpers copy before they write. That is what lets readers load it without
 // holding realTimeMutex.
+// agencyVehicleKey identifies a vehicle within a specific transit agency.
+type agencyVehicleKey struct {
+	agencyID  string
+	vehicleID string
+}
 type mergedRealtime struct {
 	trips                    []gtfs.Trip
 	vehicles                 []gtfs.Vehicle
 	tripLookup               map[string]int
 	tripUpdateSeenAt         map[string]time.Time
 	vehicleLookupByTrip      map[string]int
-	vehicleLookupByVehicle   map[string]int
-	vehicleAgencyByVehicle   map[string]string // ingestion-time agency of each vehicle in vehicleLookupByVehicle; absent when unattributed
+	vehicleLookupByVehicle   map[agencyVehicleKey]int
+	vehicleAgencyByVehicle   map[agencyVehicleKey]string // ingestion-time agency of each vehicle in vehicleLookupByVehicle; absent when unattributed
 	duplicatedVehicleByRoute map[string][]gtfs.Vehicle
 	vehiclesByRoute          map[string][]gtfs.Vehicle
 	vehiclePositionsByAgency map[string]AgencyVehiclePositions
@@ -65,8 +70,8 @@ var emptyMergedRealtime = &mergedRealtime{
 	tripLookup:               map[string]int{},
 	tripUpdateSeenAt:         map[string]time.Time{},
 	vehicleLookupByTrip:      map[string]int{},
-	vehicleLookupByVehicle:   map[string]int{},
-	vehicleAgencyByVehicle:   map[string]string{},
+	vehicleLookupByVehicle:   map[agencyVehicleKey]int{},
+	vehicleAgencyByVehicle:   map[agencyVehicleKey]string{},
 	duplicatedVehicleByRoute: map[string][]gtfs.Vehicle{},
 	vehiclesByRoute:          map[string][]gtfs.Vehicle{},
 	vehiclePositionsByAgency: map[string]AgencyVehiclePositions{},
@@ -123,7 +128,10 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 		out.vehicleLookupByTrip = map[string]int{}
 	}
 	if out.vehicleLookupByVehicle == nil {
-		out.vehicleLookupByVehicle = map[string]int{}
+		out.vehicleLookupByVehicle = map[agencyVehicleKey]int{}
+	}
+	if out.vehicleAgencyByVehicle == nil {
+		out.vehicleAgencyByVehicle = map[agencyVehicleKey]string{}
 	}
 	if out.duplicatedVehicleByRoute == nil {
 		out.duplicatedVehicleByRoute = map[string][]gtfs.Vehicle{}
@@ -1402,32 +1410,47 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	}
 
 	vehicleLookupByTrip := make(map[string]int, len(allVehicles))
-	vehicleLookupByVehicle := make(map[string]int, len(allVehicles))
+	vehicleLookupByVehicle := make(map[agencyVehicleKey]int, len(allVehicles))
+	vehicleAgencyByVehicle := make(map[agencyVehicleKey]string, len(allVehicles))
 	duplicatedVehicleByRoute := make(map[string][]gtfs.Vehicle)
 	vehiclesByRoute := make(map[string][]gtfs.Vehicle)
-	for i, vehicle := range allVehicles {
-		if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
-			vehicleLookupByTrip[vehicle.Trip.ID.ID] = i
-		}
-		if vehicle.Trip != nil && vehicle.Trip.ID.RouteID != "" {
-			vehiclesByRoute[vehicle.Trip.ID.RouteID] = append(vehiclesByRoute[vehicle.Trip.ID.RouteID], vehicle)
-		}
-		if vehicle.ID != nil && vehicle.ID.ID != "" {
-			vehicleLookupByVehicle[vehicle.ID.ID] = i
-		}
-		if vehicle.Trip == nil || vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
-			continue
-		}
-		routeID := vehicle.Trip.ID.RouteID
-		// Some feeds omit route_id in VehiclePosition trip descriptors.
-		// Fall back to the corresponding TripUpdate to resolve the route.
-		if routeID == "" && vehicle.Trip.ID.ID != "" {
-			if index, exists := tripLookup[vehicle.Trip.ID.ID]; exists {
-				routeID = allTrips[index].ID.RouteID
+
+	allVehicles = make([]gtfs.Vehicle, 0, totalVehicles)
+	for _, feedID := range vehicleFeedIDs {
+		agencyMap := manager.feedVehicleAgency[feedID]
+		for _, vehicle := range manager.feedVehicles[feedID] {
+			allVehicles = append(allVehicles, vehicle)
+			i := len(allVehicles) - 1
+
+			if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
+				vehicleLookupByTrip[vehicle.Trip.ID.ID] = i
 			}
-		}
-		if routeID != "" {
-			duplicatedVehicleByRoute[routeID] = append(duplicatedVehicleByRoute[routeID], vehicle)
+			if vehicle.Trip != nil && vehicle.Trip.ID.RouteID != "" {
+				vehiclesByRoute[vehicle.Trip.ID.RouteID] = append(vehiclesByRoute[vehicle.Trip.ID.RouteID], vehicle)
+			}
+			if vehicle.ID != nil && vehicle.ID.ID != "" {
+				var agencyID string
+				if agencyMap != nil {
+					agencyID = agencyMap[newVehicleKey(vehicle.ID)]
+				}
+				key := agencyVehicleKey{agencyID: agencyID, vehicleID: vehicle.ID.ID}
+				vehicleLookupByVehicle[key] = i
+				if agencyID != "" {
+					vehicleAgencyByVehicle[key] = agencyID
+				}
+			}
+			if vehicle.Trip == nil || vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
+				continue
+			}
+			routeID := vehicle.Trip.ID.RouteID
+			if routeID == "" && vehicle.Trip.ID.ID != "" {
+				if index, exists := tripLookup[vehicle.Trip.ID.ID]; exists {
+					routeID = allTrips[index].ID.RouteID
+				}
+			}
+			if routeID != "" {
+				duplicatedVehicleByRoute[routeID] = append(duplicatedVehicleByRoute[routeID], vehicle)
+			}
 		}
 	}
 	idx := alertIndex{
@@ -1490,7 +1513,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		tripUpdateSeenAt:         tripUpdateSeenAt,
 		vehicleLookupByTrip:      vehicleLookupByTrip,
 		vehicleLookupByVehicle:   vehicleLookupByVehicle,
-		vehicleAgencyByVehicle:   manager.buildVehicleAgencyLookup(vehicleFeedIDs),
+		vehicleAgencyByVehicle:   vehicleAgencyByVehicle,
 		duplicatedVehicleByRoute: duplicatedVehicleByRoute,
 		vehiclesByRoute:          vehiclesByRoute,
 		vehiclePositionsByAgency: manager.buildVehiclePositionsByAgency(vehicleFeedIDs, builtAt),
