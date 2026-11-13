@@ -2,9 +2,11 @@ package restapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +22,108 @@ import (
 // want a different key (auth checks) build their URL inline.
 func blockURL(blockID string) string {
 	return "/api/where/block/" + blockID + ".json?key=TEST"
+}
+
+type blockSequenceFixtureTrip struct {
+	id            string
+	stopSequences []int
+}
+
+func blockSequenceFixtureFiles(trips []blockSequenceFixtureTrip) map[string]string {
+	var tripRows, stopRows, timeRows strings.Builder
+	tripRows.WriteString("route_id,service_id,trip_id,block_id\n")
+	stopRows.WriteString("stop_id,stop_name,stop_lat,stop_lon\n")
+	timeRows.WriteString("trip_id,arrival_time,departure_time,stop_id,stop_sequence\n")
+
+	stopNumber := 0
+	for tripIndex, trip := range trips {
+		fmt.Fprintf(&tripRows, "route,service,%s,block\n", trip.id)
+		for stopIndex, sequence := range trip.stopSequences {
+			stopID := fmt.Sprintf("stop-%d", stopNumber)
+			stopNumber++
+			fmt.Fprintf(&stopRows, "%s,Stop %s,47.0,-122.0\n", stopID, stopID)
+			hour := 8 + tripIndex + stopIndex
+			fmt.Fprintf(&timeRows, "%s,%02d:00:00,%02d:00:00,%s,%d\n",
+				trip.id, hour, hour, stopID, sequence)
+		}
+	}
+
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"block-sequence-agency,Block Sequence,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_type\n" +
+			"route,block-sequence-agency,BS,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"service,1,1,1,1,1,1,1,20200101,20301231\n",
+		"trips.txt":      tripRows.String(),
+		"stops.txt":      stopRows.String(),
+		"stop_times.txt": timeRows.String(),
+	}
+}
+
+func TestBlockHandlerBlockSequenceUsesPositionInBlock(t *testing.T) {
+	tests := []struct {
+		name        string
+		trips       []blockSequenceFixtureTrip
+		wantIndices [][]int
+	}{
+		{
+			name:        "zero-based stop numbering",
+			trips:       []blockSequenceFixtureTrip{{id: "trip-a", stopSequences: []int{0, 1, 2}}},
+			wantIndices: [][]int{{0, 1, 2}},
+		},
+		{
+			name:        "one-based stop numbering",
+			trips:       []blockSequenceFixtureTrip{{id: "trip-a", stopSequences: []int{1, 2, 3}}},
+			wantIndices: [][]int{{0, 1, 2}},
+		},
+		{
+			name:        "sparse stop numbering",
+			trips:       []blockSequenceFixtureTrip{{id: "trip-a", stopSequences: []int{10, 20, 30}}},
+			wantIndices: [][]int{{0, 1, 2}},
+		},
+		{
+			name: "sequence continues across trips",
+			trips: []blockSequenceFixtureTrip{
+				{id: "trip-a", stopSequences: []int{10, 20}},
+				{id: "trip-b", stopSequences: []int{10, 20}},
+			},
+			wantIndices: [][]int{{0, 1}, {2, 3}},
+		},
+		{
+			name: "trips follow run order rather than trip ID",
+			trips: []blockSequenceFixtureTrip{
+				{id: "T2", stopSequences: []int{10, 20}},
+				{id: "T10", stopSequences: []int{10, 20}},
+			},
+			wantIndices: [][]int{{0, 1}, {2, 3}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "block-sequence.zip", blockSequenceFixtureFiles(tt.trips))
+			defer api.Shutdown()
+
+			_, model := callAPIHandler[BlockEntryResponse](t, api, blockURL("block-sequence-agency_block"))
+
+			require.Len(t, model.Data.Entry.Configurations, 1)
+			blockTrips := model.Data.Entry.Configurations[0].Trips
+			require.Len(t, blockTrips, len(tt.wantIndices))
+			for i, trip := range tt.trips {
+				assert.Equal(t, "block-sequence-agency_"+trip.id, blockTrips[i].TripId)
+			}
+			for tripIndex, want := range tt.wantIndices {
+				stopTimes := blockTrips[tripIndex].BlockStopTimes
+				require.Len(t, stopTimes, len(want))
+				got := make([]int, len(stopTimes))
+				for i, stopTime := range stopTimes {
+					got[i] = stopTime.BlockSequence
+				}
+				assert.Equal(t, want, got)
+			}
+		})
+	}
 }
 
 func TestBlockHandlerEndToEnd(t *testing.T) {

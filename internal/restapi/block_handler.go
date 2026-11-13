@@ -120,22 +120,46 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 		for tripID := range tripStops {
 			tripIDs = append(tripIDs, tripID)
 		}
-		slices.Sort(tripIDs)
 
+		stopIndex := tripStopIndex{
+			stopCounts: make(map[string]int, len(tripIDs)),
+			positions:  make(map[tripStopKey]int),
+		}
+		tripStartTimes := make(map[string]int64, len(tripIDs))
 		for _, tripID := range tripIDs {
 			stops := tripStops[tripID]
-
 			slices.SortFunc(stops, func(a, b gtfsdb.GetBlockDetailsRow) int {
 				return cmp.Compare(a.StopSequence, b.StopSequence)
 			})
+			tripStartTimes[tripID] = min(stops[0].ArrivalTime, stops[0].DepartureTime)
+			for _, stop := range stops[1:] {
+				tripStartTimes[tripID] = min(tripStartTimes[tripID], stop.ArrivalTime, stop.DepartureTime)
+			}
+			for position, stop := range stops {
+				stopIndex.positions[tripStopKey{tripID: tripID, stopSequence: stop.StopSequence}] = position
+			}
+			stopIndex.stopCounts[tripID] = len(stops)
+		}
+
+		slices.SortFunc(tripIDs, func(a, b string) int {
+			if order := cmp.Compare(tripStartTimes[a], tripStartTimes[b]); order != 0 {
+				return order
+			}
+			return cmp.Compare(a, b)
+		})
+
+		blockSequenceOffset := 0
+		for _, tripID := range tripIDs {
+			stops := tripStops[tripID]
 
 			var blockStopTimes []models.BlockStopTime
 			tripStartDistance := blockDistance
 
-			for i, stop := range stops {
+			for _, stop := range stops {
 				var distanceFromPrevious float64
-				if i > 0 {
-					prevStop := stops[i-1]
+				position := stopIndex.stopPosition(tripID, stop.StopSequence)
+				if position > 0 {
+					prevStop := stops[position-1]
 					distanceFromPrevious = utils.Distance(
 						prevStop.Lat, prevStop.Lon,
 						stop.Lat, stop.Lon,
@@ -144,7 +168,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 				}
 
 				blockStopTime := models.BlockStopTime{
-					BlockSequence:      int(stop.StopSequence - 1),
+					BlockSequence:      blockSequenceOffset + position,
 					DistanceAlongBlock: blockDistance,
 					StopTime: models.BlockStopTimeData{
 						StopTime: models.StopTime{
@@ -175,6 +199,7 @@ func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID 
 				TripId:               utils.FormCombinedID(agencyID, tripID),
 			}
 			config.Trips = append(config.Trips, trip)
+			blockSequenceOffset += stopIndex.stopCounts[tripID]
 		}
 
 		configurations = append(configurations, *config)
