@@ -64,6 +64,7 @@ func TestRouteHasFutureService_BeyondTwoYearWindow(t *testing.T) {
 		ServiceID: "cal-far-future",
 	})
 	require.NoError(t, err)
+	markTripTimed(t, client, "trip-1")
 
 	// Addition also lives past the horizon. Without this, a query that used
 	// the feed's max date as an implicit upper bound could return 0 simply
@@ -135,6 +136,7 @@ func TestRouteHasFutureService_WithinTwoYearWindow(t *testing.T) {
 		ServiceID: "cal-near-future",
 	})
 	require.NoError(t, err)
+	markTripTimed(t, client, "trip-1")
 
 	hasFuture, err := client.Queries.RouteHasFutureService(ctx, RouteHasFutureServiceParams{
 		RouteID: "route-1",
@@ -190,6 +192,7 @@ func TestRouteHasFutureService_ServiceEndedInPast(t *testing.T) {
 		ServiceID: "cal-past",
 	})
 	require.NoError(t, err)
+	markTripTimed(t, client, "trip-1")
 
 	hasFuture, err := client.Queries.RouteHasFutureService(ctx, RouteHasFutureServiceParams{
 		RouteID: "route-1",
@@ -260,6 +263,7 @@ func TestRouteHasFutureService_AdditionBeyondCalendarEnd(t *testing.T) {
 		ServiceID: "cal-limited",
 	})
 	require.NoError(t, err)
+	markTripTimed(t, client, "trip-1")
 
 	// Addition sits past the calendar's end_date but well within the
 	// query's 2-year horizon relative to ref_date below.
@@ -279,4 +283,13 @@ func TestRouteHasFutureService_AdditionBeyondCalendarEnd(t *testing.T) {
 	assert.Equal(t, int64(1), hasFuture,
 		"an exception_type=1 addition past every calendar row's end_date must "+
 			"be reported as future service via Part 1 of the query")
+}
+
+// markTripTimed gives a hand-built trip the time bounds the importer caches
+// for any trip with timed stop_times, so it counts as fixed-route service
+// rather than a flex-only trip.
+func markTripTimed(t *testing.T, client *Client, tripID string) {
+	t.Helper()
+	_, err := client.DB.Exec("UPDATE trips SET min_arrival_time = 0, max_departure_time = 0 WHERE id = ?", tripID)
+	require.NoError(t, err)
 }

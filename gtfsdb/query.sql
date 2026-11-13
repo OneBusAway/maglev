@@ -459,6 +459,8 @@ WHERE
 SELECT DISTINCT *
 FROM trips t
 WHERE t.route_id = @route_id
+  -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+  AND t.min_arrival_time IS NOT NULL
 ORDER BY t.direction_id, t.trip_headsign;
 
 -- name: GetStopIDsForTrip :many
@@ -478,6 +480,8 @@ FROM shapes s
     WHERE route_id = @route_id
       AND trip_headsign = @trip_headsign
       AND shape_id IS NOT NULL
+      -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+      AND min_arrival_time IS NOT NULL
     ORDER BY id
     LIMIT 1
 ) t ON s.shape_id = t.shape_id
@@ -525,6 +529,8 @@ SELECT DISTINCT *
 FROM trips t
 WHERE t.route_id = @route_id
   AND t.service_id IN (sqlc.slice(('service_ids')))
+  -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+  AND t.min_arrival_time IS NOT NULL
 ORDER BY t.direction_id, t.trip_headsign;
 
 -- name: GetScheduleForStop :many
@@ -756,7 +762,9 @@ SELECT
 FROM
     trips
 WHERE
-    block_id = ?;
+    block_id = ?
+    -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+    AND min_arrival_time IS NOT NULL;
 
 -- name: GetCalendarByServiceID :one
 SELECT
@@ -1002,6 +1010,8 @@ FROM
 WHERE
     t.block_id IN (sqlc.slice('block_ids'))
     AND t.service_id IN (sqlc.slice('service_ids'))
+    -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+    AND t.min_arrival_time IS NOT NULL
 ORDER BY
     t.block_id ASC,
     t.min_arrival_time ASC;
@@ -1395,6 +1405,8 @@ SELECT
 FROM trips t
 WHERE t.block_id IN (sqlc.slice('block_ids'))
   AND t.service_id IN (sqlc.slice('service_ids'))
+  -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+  AND t.min_arrival_time IS NOT NULL
 ORDER BY t.block_id, t.min_arrival_time, t.id;
 
 -- Problem Report Queries
@@ -1500,6 +1512,8 @@ SELECT CAST((
         FROM trips t
         JOIN calendar_dates cd ON cd.service_id = t.service_id
         WHERE t.route_id = sqlc.arg(route_id)
+          -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+          AND t.min_arrival_time IS NOT NULL
           AND cd.exception_type = 1
           AND cd.date > (SELECT ref_ymd FROM ref)
           AND cd.date <= (SELECT horizon_ymd FROM ref)
@@ -1515,6 +1529,8 @@ SELECT CAST((
         FROM trips t
         JOIN calendar cal ON cal.id = t.service_id
         WHERE t.route_id = sqlc.arg(route_id)
+          -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+          AND t.min_arrival_time IS NOT NULL
           AND cal.end_date > (SELECT ref_ymd FROM ref)
           AND cal.start_date <= (SELECT horizon_ymd FROM ref)
           AND (cal.sunday + cal.monday + cal.tuesday + cal.wednesday
@@ -1531,6 +1547,8 @@ WITH BlockTrips AS (
     FROM trips
     WHERE block_id = @block_id
       AND service_id IN (sqlc.slice('service_ids'))
+      -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+      AND min_arrival_time IS NOT NULL
 )
 SELECT seq FROM BlockTrips WHERE id = @trip_id;
 
@@ -1544,6 +1562,8 @@ WITH NavTrips AS (
     FROM trips
     WHERE block_id = @block_id
       AND service_id IN (sqlc.slice('service_ids'))
+      -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+      AND min_arrival_time IS NOT NULL
 )
 SELECT prev_trip_id, next_trip_id
 FROM NavTrips
@@ -1559,6 +1579,8 @@ WHERE st.trip_id = (
         FROM trips
         WHERE block_id = @block_id
           AND service_id IN (sqlc.slice('service_ids'))
+          -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+          AND min_arrival_time IS NOT NULL
     ) WHERE id = @trip_id
 )
 ORDER BY st.stop_sequence ASC

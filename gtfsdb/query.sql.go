@@ -1885,6 +1885,8 @@ const getAllTripsForRoute = `-- name: GetAllTripsForRoute :many
 SELECT DISTINCT id, route_id, service_id, trip_headsign, trip_short_name, direction_id, block_id, shape_id, wheelchair_accessible, bikes_allowed, min_arrival_time, max_departure_time
 FROM trips t
 WHERE t.route_id = ?1
+  -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+  AND t.min_arrival_time IS NOT NULL
 ORDER BY t.direction_id, t.trip_headsign
 `
 
@@ -2348,6 +2350,8 @@ WITH BlockTrips AS (
     FROM trips
     WHERE block_id = ?2
       AND service_id IN (/*SLICE:service_ids*/?)
+      -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+      AND min_arrival_time IS NOT NULL
 )
 SELECT seq FROM BlockTrips WHERE id = ?1
 `
@@ -2685,6 +2689,8 @@ WHERE st.trip_id = (
         FROM trips
         WHERE block_id = ?1
           AND service_id IN (/*SLICE:service_ids*/?)
+          -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+          AND min_arrival_time IS NOT NULL
     ) WHERE id = ?3
 )
 ORDER BY st.stop_sequence ASC
@@ -3124,6 +3130,8 @@ WITH NavTrips AS (
     FROM trips
     WHERE block_id = ?2
       AND service_id IN (/*SLICE:service_ids*/?)
+      -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+      AND min_arrival_time IS NOT NULL
 )
 SELECT prev_trip_id, next_trip_id
 FROM NavTrips
@@ -4390,6 +4398,8 @@ FROM shapes s
     WHERE route_id = ?1
       AND trip_headsign = ?2
       AND shape_id IS NOT NULL
+      -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+      AND min_arrival_time IS NOT NULL
     ORDER BY id
     LIMIT 1
 ) t ON s.shape_id = t.shape_id
@@ -5481,6 +5491,8 @@ FROM
 WHERE
     t.block_id IN (/*SLICE:block_ids*/?)
     AND t.service_id IN (/*SLICE:service_ids*/?)
+    -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+    AND t.min_arrival_time IS NOT NULL
 ORDER BY
     t.block_id ASC,
     t.min_arrival_time ASC
@@ -5611,6 +5623,8 @@ FROM
     trips
 WHERE
     block_id = ?
+    -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+    AND min_arrival_time IS NOT NULL
 `
 
 type GetTripsByBlockIDRow struct {
@@ -5737,6 +5751,8 @@ SELECT
 FROM trips t
 WHERE t.block_id IN (/*SLICE:block_ids*/?)
   AND t.service_id IN (/*SLICE:service_ids*/?)
+  -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+  AND t.min_arrival_time IS NOT NULL
 ORDER BY t.block_id, t.min_arrival_time, t.id
 `
 
@@ -6016,6 +6032,8 @@ SELECT DISTINCT id, route_id, service_id, trip_headsign, trip_short_name, direct
 FROM trips t
 WHERE t.route_id = ?1
   AND t.service_id IN (/*SLICE:('service_ids')*/?)
+  -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+  AND t.min_arrival_time IS NOT NULL
 ORDER BY t.direction_id, t.trip_headsign
 `
 
@@ -6679,6 +6697,8 @@ SELECT CAST((
         FROM trips t
         JOIN calendar_dates cd ON cd.service_id = t.service_id
         WHERE t.route_id = ?1
+          -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+          AND t.min_arrival_time IS NOT NULL
           AND cd.exception_type = 1
           AND cd.date > (SELECT ref_ymd FROM ref)
           AND cd.date <= (SELECT horizon_ymd FROM ref)
@@ -6694,6 +6714,8 @@ SELECT CAST((
         FROM trips t
         JOIN calendar cal ON cal.id = t.service_id
         WHERE t.route_id = ?1
+          -- min_arrival_time IS NULL exactly for flex-only trips (no timed stop_times).
+          AND t.min_arrival_time IS NOT NULL
           AND cal.end_date > (SELECT ref_ymd FROM ref)
           AND cal.start_date <= (SELECT horizon_ymd FROM ref)
           AND (cal.sunday + cal.monday + cal.tuesday + cal.wednesday

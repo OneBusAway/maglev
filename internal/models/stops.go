@@ -12,6 +12,9 @@ type Stop struct {
 	RouteIDs           []string `json:"routeIds"`
 	StaticRouteIDs     []string `json:"staticRouteIds"`
 	WheelchairBoarding string   `json:"wheelchairBoarding"`
+	// OnDemandServiceIDs points at the on-demand services whose rules reference
+	// this stop directly or through a location group. Omitted when empty.
+	OnDemandServiceIDs []string `json:"onDemandServiceIds,omitempty"`
 }
 
 func NewStop(code, direction, id, name, parent, wheelchairBoarding string, lat, lon float64, locationType int, routeIDs, staticRouteIDs []string) Stop {

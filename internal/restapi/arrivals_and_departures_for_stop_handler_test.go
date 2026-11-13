@@ -761,6 +761,9 @@ func setupDelayPropTestData(t *testing.T, api *RestAPI, stopSeq int64) (stopCode
 		DepartureTime: int64(departureOffset),
 	})
 	require.NoError(t, err)
+	// The importer caches each trip's time bounds; do the same so the trip
+	// counts as timed rather than flex-only.
+	require.NoError(t, q.BulkUpdateTripTimeBounds(ctx))
 
 	combinedStopID = utils.FormCombinedID(agencyID, stopCode)
 	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -1338,6 +1341,9 @@ func addEarlierBlockTrip(t *testing.T, api *RestAPI) string {
 		DepartureTime: int64(7 * time.Hour),
 	})
 	require.NoError(t, err)
+	// The importer caches each trip's time bounds; do the same so the trip
+	// counts as timed rather than flex-only.
+	require.NoError(t, q.BulkUpdateTripTimeBounds(ctx))
 	return earlierTripID
 }
 
