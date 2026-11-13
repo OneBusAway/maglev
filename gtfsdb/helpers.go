@@ -668,7 +668,11 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 		if err != nil {
 			return fmt.Errorf("failed to get agency timezones: %w", err)
 		}
-		expiresAt, err := latestAgencyExpiry(parsedTime, agencies)
+		latestStopNs, err := feedLatestStopTimeNs(ctx, qtx)
+		if err != nil {
+			return err
+		}
+		expiresAt, err := latestAgencyExpiry(parsedTime, agencies, latestStopNs)
 		if err != nil {
 			return err
 		}
@@ -681,9 +685,31 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 	return nil
 }
 
-func latestAgencyExpiry(serviceDate time.Time, agencies []Agency) (time.Time, error) {
+// feedLatestStopTimeNs extracts the max departure time (ns since midnight) from
+// GetFeedLatestStopTime, which returns interface{} like all aggregated sqlc queries.
+// COALESCE guarantees a non-nil int64; other types are unexpected.
+func feedLatestStopTimeNs(ctx context.Context, qtx *Queries) (int64, error) {
+	val, err := qtx.GetFeedLatestStopTime(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get feed latest stop time: %w", err)
+	}
+	v, ok := val.(int64)
+	if !ok {
+		return 0, fmt.Errorf("unexpected type from GetFeedLatestStopTime: %T", val)
+	}
+	return v, nil
+}
+
+func latestAgencyExpiry(serviceDate time.Time, agencies []Agency, latestStopNs int64) (time.Time, error) {
 	if len(agencies) == 0 {
 		return time.Time{}, fmt.Errorf("cannot calculate feed expiry without an agency timezone")
+	}
+	// Use the latest stop time duration from the feed, with end-of-day as a floor
+	// so feeds without stop times (or with stop times before 23:59:59) still expire
+	// at the same time as before this change.
+	const endOfDayNs = int64(23*time.Hour + 59*time.Minute + 59*time.Second)
+	if latestStopNs < endOfDayNs {
+		latestStopNs = endOfDayNs
 	}
 	var latest time.Time
 	seen := make(map[string]bool)
@@ -700,9 +726,12 @@ func latestAgencyExpiry(serviceDate time.Time, agencies []Agency) (time.Time, er
 			return time.Time{}, fmt.Errorf("agency %q has invalid timezone %q: %w", agency.ID, timezone, err)
 		}
 		seen[timezone] = true
-		// Construct local end-of-day directly: adding 24 hours to midnight
-		// is incorrect on daylight-saving transition dates.
-		expiresAt := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 23, 59, 59, 0, location)
+		// Compute midnight as "noon minus 12h" per the GTFS elapsed-time
+		// convention, which avoids the DST-gap and fold ambiguity that
+		// affects building a wall-clock time directly.
+		expiresAt := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 12, 0, 0, 0, location).
+			Add(-12 * time.Hour).
+			Add(time.Duration(latestStopNs))
 		if latest.IsZero() || expiresAt.After(latest) {
 			latest = expiresAt
 		}
