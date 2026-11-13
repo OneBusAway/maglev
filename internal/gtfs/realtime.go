@@ -149,13 +149,13 @@ const staleVehicleTimeout = 15 * time.Minute
 // staleFeedThreshold is the duration after which feed data is cleared if fetches keep failing
 const staleFeedThreshold = 5 * time.Minute
 
-// maxVehicleFeedFutureSkew is how far a vehicle-feed header may sit ahead of
-// local time and still be stored as the freshness watermark. A larger jump is
-// still applied, so a millisecond header or a clock written as local epoch
-// seconds keeps publishing vehicles, but it is not recorded. clearFeedData
-// keeps the watermark, so a future value would reject a corrected clock until
-// wall time passed it.
-const maxVehicleFeedFutureSkew = 15 * time.Minute
+// maxFeedFutureSkew is how far a feed header (vehicle or trip-updates) may sit
+// ahead of local time and still be stored as the freshness watermark. A larger jump
+// is still applied, so a millisecond header or a clock written as local epoch
+// seconds keeps publishing updates, but it is not recorded. clearFeedData
+// and clearStaleTripUpdates keep the watermark, so a future value would reject a
+// corrected clock until wall time passed it.
+const maxFeedFutureSkew = 15 * time.Minute
 
 // realtimeHTTPClient is a dedicated HTTP client for GTFS-RT feed fetching,
 // configured with explicit timeouts and transport limits to avoid the pitfalls
@@ -173,10 +173,6 @@ func newRealtimeHTTPClient() *http.Client {
 	transport.ExpectContinueTimeout = 1 * time.Second
 
 	return &http.Client{
-		// Timeout acts as an absolute safety net per request. The caller in
-		// pollFeed also sets a 15s context timeout; the stricter of the two
-		// wins. Keep this <= the context timeout so the client enforces the
-		// bound even if a caller forgets a context.
 		Timeout:   10 * time.Second,
 		Transport: transport,
 	}
@@ -186,46 +182,46 @@ func newRealtimeHTTPClient() *http.Client {
 // than the existing vehicle based on GTFS-RT timestamps.
 func isVehicleStale(existing, incoming gtfs.Vehicle) bool {
 	if existing.Timestamp == nil || incoming.Timestamp == nil {
-		// If either timestamp is missing, we cannot safely compare
 		return false
 	}
 	return incoming.Timestamp.Before(*existing.Timestamp)
 }
 
-type vehicleFeedTimestampReason int
+type feedTimestampReason int
 
 const (
-	vehicleFeedAccept vehicleFeedTimestampReason = iota
-	vehicleFeedSkipStale
-	vehicleFeedSkipFuture
+	feedAccept feedTimestampReason = iota
+	feedSkipStale
+	feedSkipFuture
 )
 
-type vehicleFeedTimestampDecision struct {
+type feedTimestampDecision struct {
 	apply     bool
 	watermark uint64
-	reason    vehicleFeedTimestampReason
+	reason    feedTimestampReason
 }
 
-// decideVehicleFeedTimestamp decides whether a vehicle payload is new and which
-// watermark to store. Headers beyond maxVehicleFeedFutureSkew are applied and
-// left out of the watermark, so a fast producer clock still publishes vehicles
+// decideFeedTimestamp decides whether a feed payload (vehicle or trip updates) is
+// new and which watermark to store. Headers beyond maxFeedFutureSkew are applied and
+// left out of the watermark, so a fast producer clock still publishes updates
 // without blocking a later correction. Unchanged and older plausible headers
-// stay rejected, including after clearFeedData keeps the watermark.
-func decideVehicleFeedTimestamp(prev uint64, createdAt, now time.Time) vehicleFeedTimestampDecision {
+// stay rejected, including after clearFeedData or clearStaleTripUpdates keeps
+// the watermark.
+func decideFeedTimestamp(prev uint64, createdAt, now time.Time) feedTimestampDecision {
 	if isMissingHeaderTime(createdAt) {
-		return vehicleFeedTimestampDecision{apply: true, watermark: prev, reason: vehicleFeedAccept}
+		return feedTimestampDecision{apply: true, watermark: prev, reason: feedAccept}
 	}
 
-	if createdAt.After(now.Add(maxVehicleFeedFutureSkew)) {
-		return vehicleFeedTimestampDecision{apply: true, watermark: prev, reason: vehicleFeedSkipFuture}
+	if createdAt.After(now.Add(maxFeedFutureSkew)) {
+		return feedTimestampDecision{apply: true, watermark: prev, reason: feedSkipFuture}
 	}
 
 	incoming := uint64(createdAt.UnixNano())
 	if prev == 0 || incoming > prev {
-		return vehicleFeedTimestampDecision{apply: true, watermark: incoming, reason: vehicleFeedAccept}
+		return feedTimestampDecision{apply: true, watermark: incoming, reason: feedAccept}
 	}
 
-	return vehicleFeedTimestampDecision{apply: false, watermark: prev, reason: vehicleFeedSkipStale}
+	return feedTimestampDecision{apply: false, watermark: prev, reason: feedSkipStale}
 }
 
 // tripIDsServedBy returns the IDs of the trips the given vehicles serve.
@@ -594,9 +590,13 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	manager.realTimeMutex.Lock()
 	defer manager.realTimeMutex.Unlock()
 
+	// False until a trip payload is actually stored. A stale header is not
+	// stored and must not reset the poller circuit breaker or the trip-updates
+	// staleness clock. A header past maxFeedFutureSkew is stored without
+	// moving the watermark.
+	applyTripUpdate := false
 	if tripData != nil && tripErr == nil {
-		manager.storeFeedTrips(feedID, trips, tripData.CreatedAt)
-		manager.recordTripUpdatesSeenLocked(feedID, trips.kept, tripFeedTime)
+		applyTripUpdate = manager.applyTripFeedUpdate(logger, feedID, tripData, trips, tripFeedTime)
 	}
 
 	// False until a vehicle payload is actually stored. A stale header is not
@@ -607,17 +607,17 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		// Guard against zero CreatedAt from feeds without FeedHeader timestamp.
 		// When CreatedAt is zero time.Time{}, UnixNano() returns a negative value that
 		// wraps to ~11.6×10¹⁸ when cast to uint64, which would permanently block updates.
-		decision := decideVehicleFeedTimestamp(manager.feedVehicleTimestamp[feedID], vehicleData.CreatedAt, time.Now())
+		decision := decideFeedTimestamp(manager.feedVehicleTimestamp[feedID], vehicleData.CreatedAt, time.Now())
 		applyVehicleUpdate = decision.apply
 		switch decision.reason {
-		case vehicleFeedSkipFuture:
+		case feedSkipFuture:
 			logging.LogOperation(
 				logger,
 				"ignoring_future_vehicle_feed_timestamp",
 				slog.String("feed", feedID),
 				slog.Time("feed_timestamp", vehicleData.CreatedAt),
 			)
-		case vehicleFeedSkipStale:
+		case feedSkipStale:
 			logging.LogOperation(
 				logger,
 				"skipping_stale_vehicle_realtime_feed",
@@ -627,6 +627,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			)
 		default:
 			if decision.apply && !isMissingHeaderTime(vehicleData.CreatedAt) {
+				if manager.feedVehicleTimestamp == nil {
+					manager.feedVehicleTimestamp = make(map[string]uint64)
+				}
 				manager.feedVehicleTimestamp[feedID] = decision.watermark
 			}
 		}
@@ -736,7 +739,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		manager.feedAlerts[feedID] = alertData.Alerts
 	}
 
-	tripsUpdated := tripData != nil && tripErr == nil
+	tripsUpdated := applyTripUpdate
 	vehiclesUpdated := applyVehicleUpdate
 	alertsUpdated := alertData != nil && alertErr == nil
 
@@ -767,12 +770,12 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		hasNewData = false
 	}
 
-	// A stale vehicle skip already logged skipping_stale_vehicle_realtime_feed.
+	// A stale payload skip already logged skipping_stale_*_realtime_feed.
 	// Do not also report that as a failed update when nothing else failed.
-	skippedStaleVehiclesOnly := feedCfg.VehiclePositionsURL != "" &&
-		vehicleData != nil && vehicleErr == nil && !vehiclesUpdated &&
-		(feedCfg.TripUpdatesURL == "" || tripErr == nil) &&
-		(feedCfg.ServiceAlertsURL == "" || alertErr == nil)
+	skippedStalePayloadOnly := !hasNewData &&
+		tripErr == nil && vehicleErr == nil && alertErr == nil &&
+		((feedCfg.TripUpdatesURL != "" && tripData != nil && !tripsUpdated) ||
+			(feedCfg.VehiclePositionsURL != "" && vehicleData != nil && !vehiclesUpdated))
 
 	// Logging based on partial vs total success
 	if hasNewData {
@@ -807,7 +810,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				slog.Bool("service_alerts_success", alertsUpdated),
 			)
 		}
-	} else if !skippedStaleVehiclesOnly {
+	} else if !skippedStalePayloadOnly {
 		logger.Error("realtime feed update failed",
 			slog.String("feed", feedID),
 			slog.Bool("trip_updates_configured", feedCfg.TripUpdatesURL != ""),
@@ -1074,6 +1077,44 @@ func (manager *Manager) attributeFeedTrips(ctx context.Context, logger *slog.Log
 		slog.String("feed", feedCfg.ID))
 	keepUnattributed := len(manager.feedAgencyFilter[feedCfg.ID]) == 0
 	return tripAttribution{kept: trips}, keepUnattributed
+}
+
+// applyTripFeedUpdate evaluates tripData freshness against the feed's watermark
+// and stores the trips if accepted. Caller must hold realTimeMutex.
+func (manager *Manager) applyTripFeedUpdate(logger *slog.Logger, feedID string, tripData *gtfs.Realtime, trips tripAttribution, tripFeedTime time.Time) bool {
+	if tripData == nil {
+		return false
+	}
+	decision := decideFeedTimestamp(manager.feedTripTimestamp[feedID], tripData.CreatedAt, time.Now())
+	switch decision.reason {
+	case feedSkipFuture:
+		logging.LogOperation(
+			logger,
+			"ignoring_future_trip_feed_timestamp",
+			slog.String("feed", feedID),
+			slog.Time("feed_timestamp", tripData.CreatedAt),
+		)
+	case feedSkipStale:
+		logging.LogOperation(
+			logger,
+			"skipping_stale_trip_realtime_feed",
+			slog.String("feed", feedID),
+			slog.Uint64("feed_timestamp", uint64(tripData.CreatedAt.UnixNano())),
+			slog.Uint64("last_applied_timestamp", manager.feedTripTimestamp[feedID]),
+		)
+	default:
+		if decision.apply && !isMissingHeaderTime(tripData.CreatedAt) {
+			if manager.feedTripTimestamp == nil {
+				manager.feedTripTimestamp = make(map[string]uint64)
+			}
+			manager.feedTripTimestamp[feedID] = decision.watermark
+		}
+	}
+	if decision.apply {
+		manager.storeFeedTrips(feedID, trips, tripData.CreatedAt)
+		manager.recordTripUpdatesSeenLocked(feedID, trips.kept, tripFeedTime)
+	}
+	return decision.apply
 }
 
 // storeFeedTrips replaces a feed's trips and their attribution, dated at the

@@ -370,7 +370,7 @@ func TestClearFeedData_StalePayloadStaysRejected(t *testing.T) {
 	assert.Empty(t, manager.GetRealTimeVehicles(), "a rejected stale payload must not republish vehicles")
 }
 
-func TestDecideVehicleFeedTimestamp(t *testing.T) {
+func TestDecideFeedTimestamp(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	prevAt := now.Add(-time.Minute)
 	prev := uint64(prevAt.UnixNano())
@@ -382,14 +382,14 @@ func TestDecideVehicleFeedTimestamp(t *testing.T) {
 		createdAt     time.Time
 		wantApply     bool
 		wantWatermark uint64
-		wantReason    vehicleFeedTimestampReason
+		wantReason    feedTimestampReason
 	}{
 		{
 			name:          "missing header applies without moving the watermark",
 			prev:          prev,
 			wantApply:     true,
 			wantWatermark: prev,
-			wantReason:    vehicleFeedAccept,
+			wantReason:    feedAccept,
 		},
 		{
 			name:          "explicit epoch header applies without moving the watermark",
@@ -397,7 +397,7 @@ func TestDecideVehicleFeedTimestamp(t *testing.T) {
 			createdAt:     time.Unix(0, 0).UTC(),
 			wantApply:     true,
 			wantWatermark: prev,
-			wantReason:    vehicleFeedAccept,
+			wantReason:    feedAccept,
 		},
 		{
 			name:          "newer header applies",
@@ -405,7 +405,7 @@ func TestDecideVehicleFeedTimestamp(t *testing.T) {
 			createdAt:     now,
 			wantApply:     true,
 			wantWatermark: uint64(now.UnixNano()),
-			wantReason:    vehicleFeedAccept,
+			wantReason:    feedAccept,
 		},
 		{
 			name:          "equal header is stale",
@@ -413,7 +413,7 @@ func TestDecideVehicleFeedTimestamp(t *testing.T) {
 			createdAt:     prevAt,
 			wantApply:     false,
 			wantWatermark: prev,
-			wantReason:    vehicleFeedSkipStale,
+			wantReason:    feedSkipStale,
 		},
 		{
 			name:          "older header is stale",
@@ -421,36 +421,36 @@ func TestDecideVehicleFeedTimestamp(t *testing.T) {
 			createdAt:     now.Add(-2 * time.Minute),
 			wantApply:     false,
 			wantWatermark: prev,
-			wantReason:    vehicleFeedSkipStale,
+			wantReason:    feedSkipStale,
 		},
 		{
 			name:          "header at the future skew bound applies",
-			createdAt:     now.Add(maxVehicleFeedFutureSkew),
+			createdAt:     now.Add(maxFeedFutureSkew),
 			wantApply:     true,
-			wantWatermark: uint64(now.Add(maxVehicleFeedFutureSkew).UnixNano()),
-			wantReason:    vehicleFeedAccept,
+			wantWatermark: uint64(now.Add(maxFeedFutureSkew).UnixNano()),
+			wantReason:    feedAccept,
 		},
 		{
 			name:          "header beyond the future skew applies without moving the watermark",
 			prev:          prev,
-			createdAt:     now.Add(maxVehicleFeedFutureSkew + time.Second),
+			createdAt:     now.Add(maxFeedFutureSkew + time.Second),
 			wantApply:     true,
 			wantWatermark: prev,
-			wantReason:    vehicleFeedSkipFuture,
+			wantReason:    feedSkipFuture,
 		},
 		{
 			name:          "first future header applies and leaves a zero watermark",
 			createdAt:     now.Add(time.Hour),
 			wantApply:     true,
 			wantWatermark: 0,
-			wantReason:    vehicleFeedSkipFuture,
+			wantReason:    feedSkipFuture,
 		},
 		{
 			name:          "millisecond header applies without becoming the watermark",
 			createdAt:     time.Unix(now.UnixMilli(), 0),
 			wantApply:     true,
 			wantWatermark: 0,
-			wantReason:    vehicleFeedSkipFuture,
+			wantReason:    feedSkipFuture,
 		},
 		{
 			name:          "header behind an existing watermark is stale",
@@ -458,20 +458,19 @@ func TestDecideVehicleFeedTimestamp(t *testing.T) {
 			createdAt:     now,
 			wantApply:     false,
 			wantWatermark: futureWatermark,
-			wantReason:    vehicleFeedSkipStale,
+			wantReason:    feedSkipStale,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := decideVehicleFeedTimestamp(tt.prev, tt.createdAt, now)
+			got := decideFeedTimestamp(tt.prev, tt.createdAt, now)
 			assert.Equal(t, tt.wantApply, got.apply)
 			assert.Equal(t, tt.wantWatermark, got.watermark)
 			assert.Equal(t, tt.wantReason, got.reason)
 		})
 	}
 }
-
 func TestUpdateFeedRealtime_FutureHeaderThenClearAcceptsCorrectedHeader(t *testing.T) {
 	manager := newTestManager()
 	ctx := context.Background()
@@ -745,6 +744,7 @@ func TestUpdateFeedRealtime_StaleVehiclesWithSuccessfulTripsStillSucceed(t *test
 
 	freshAt := time.Unix(1_700_000_000, 0).UTC()
 	var mu sync.Mutex
+	var tripPayload []byte
 	vehiclePayload := encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{{
 		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-fresh")},
 		Timestamp: proto.Uint64(uint64(freshAt.Unix())),
@@ -758,8 +758,10 @@ func TestUpdateFeedRealtime_StaleVehiclesWithSuccessfulTripsStillSucceed(t *test
 	defer vehicleServer.Close()
 
 	tripServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/x-protobuf")
-		_, _ = w.Write(encodeTripFeed(freshAt.Add(time.Minute), "trip-kept", "route-1"))
+		_, _ = w.Write(tripPayload)
 	}))
 	defer tripServer.Close()
 
@@ -769,6 +771,10 @@ func TestUpdateFeedRealtime_StaleVehiclesWithSuccessfulTripsStillSucceed(t *test
 		VehiclePositionsURL: vehicleServer.URL,
 	}
 
+	mu.Lock()
+	tripPayload = encodeTripFeed(freshAt.Add(time.Minute), "trip-kept", "route-1")
+	mu.Unlock()
+
 	assert.True(t, manager.updateFeedRealtime(ctx, feed), "the first poll should store both sub-feeds")
 
 	staleOnly := &gtfsrt.VehiclePosition{
@@ -777,6 +783,7 @@ func TestUpdateFeedRealtime_StaleVehiclesWithSuccessfulTripsStillSucceed(t *test
 	}
 	mu.Lock()
 	vehiclePayload = encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{staleOnly})
+	tripPayload = encodeTripFeed(freshAt.Add(2*time.Minute), "trip-kept", "route-1")
 	mu.Unlock()
 
 	assert.True(t, manager.updateFeedRealtime(ctx, feed), "successful trip updates should still count when vehicles are stale")
