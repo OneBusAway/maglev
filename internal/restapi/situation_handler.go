@@ -43,7 +43,7 @@ func findSituationAlert(alerts []internalgtfs.FeedAlert, agencyID, requested str
 		if alert.ID == "" {
 			continue
 		}
-		if internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert.Alert, agencyID)) == requested {
+		if internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert, agencyID)) == requested {
 			return alert, true
 		}
 		if !foundRaw && alert.ID == requested {

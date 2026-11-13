@@ -1073,7 +1073,7 @@ func situationRefsFromAlerts(alerts []internalgtfs.FeedAlert, agencyID string) [
 		if alert.ID == "" {
 			continue
 		}
-		refs = append(refs, situationRef{ID: internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert.Alert, agencyID)), Alert: alert})
+		refs = append(refs, situationRef{ID: internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert, agencyID)), Alert: alert})
 	}
 	return refs
 }
@@ -1095,17 +1095,22 @@ func dedupeSituationRefs(refs []situationRef) []situationRef {
 }
 
 // agencyIDForAlert returns the agency whose prefix an alert's situation ID
-// carries, preferring the alert's own informed entity over the caller's agency.
+// carries. It prefers the alert's own informed entity, then the feed's first
+// configured agency, which is what Java's createId uses. The caller's agency is
+// only a last resort for a feed with no agency-ids.
 //
 // One alert is reachable by more than one path: a stop served by another
 // agency's route matches the same alert through both the route and the stop, and
 // each path knows a different agency. Scoping the ID to the caller's agency
 // would then publish that alert twice under two IDs, and an entry's
 // situationIds would resolve to whichever one it happened to be built from.
-// The informed entity is the only source that does not vary by lookup path.
-func agencyIDForAlert(alert gtfs.Alert, fallbackAgencyID string) string {
-	if agencyID := internalgtfs.AlertAgencyID(alert); agencyID != "" {
+// Neither the informed entity nor the feed depends on the lookup path.
+func agencyIDForAlert(alert internalgtfs.FeedAlert, fallbackAgencyID string) string {
+	if agencyID := internalgtfs.AlertAgencyID(alert.Alert); agencyID != "" {
 		return agencyID
+	}
+	if alert.FeedAgencyID != "" {
+		return alert.FeedAgencyID
 	}
 	return fallbackAgencyID
 }
