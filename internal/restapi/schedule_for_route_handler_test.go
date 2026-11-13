@@ -286,6 +286,48 @@ func TestScheduleForRouteHandler_WithReferences(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.StopTimes)
 }
 
+func TestScheduleForRouteHandler_StopRouteIDsResolve(t *testing.T) {
+	api := newScheduleForRouteAPI(t)
+	defer api.Shutdown()
+
+	routeID := testdata.Route1.ID
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025-06-12"))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	refs := model.Data.References
+	routes := make(map[string]bool, len(refs.Routes))
+	for _, rt := range refs.Routes {
+		routes[rt.ID] = true
+	}
+	agencies := make(map[string]bool, len(refs.Agencies))
+	for _, ag := range refs.Agencies {
+		agencies[ag.ID] = true
+	}
+
+	require.NotEmpty(t, refs.Stops)
+	var stop2000RouteIDs, stop2000StaticRouteIDs []string
+	for _, stop := range refs.Stops {
+		if stop.ID == "25_2000" {
+			stop2000RouteIDs, stop2000StaticRouteIDs = stop.RouteIDs, stop.StaticRouteIDs
+		}
+		for _, rid := range stop.RouteIDs {
+			assert.True(t, routes[rid], "stop %s routeId %s missing from references.routes", stop.ID, rid)
+		}
+		for _, rid := range stop.StaticRouteIDs {
+			assert.True(t, routes[rid], "stop %s staticRouteId %s missing from references.routes", stop.ID, rid)
+		}
+	}
+
+	// Stop references are full stop records: 25_2000 lists every route serving it.
+	require.NotNil(t, stop2000RouteIDs, "stop 25_2000 missing from references.stops")
+	assert.Subset(t, stop2000RouteIDs, []string{"25_151", "25_24", "25_157"})
+	assert.Subset(t, stop2000StaticRouteIDs, []string{"25_151", "25_24", "25_157"})
+
+	for _, rt := range refs.Routes {
+		assert.True(t, agencies[rt.AgencyID], "route %s agency %s missing from references.agencies", rt.ID, rt.AgencyID)
+	}
+}
+
 func TestScheduleForRouteHandler_TripIDsSorted(t *testing.T) {
 	api := newScheduleForRouteAPI(t)
 	defer api.Shutdown()
