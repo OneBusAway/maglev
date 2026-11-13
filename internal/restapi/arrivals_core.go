@@ -985,7 +985,7 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 	// tripStatus.vehicleId (set by BuildTripStatus below). Internal
 	// lookups (GetVehicleForTrip / GetVehicleByID) use the raw RT id
 	// unchanged; the combined form is an output-only concern.
-	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
+	vehicle := api.vehicleForTrip(ctx, st.TripID, in.serviceDate.Midnight(in.location))
 	vehicleID := api.combinedVehicleID(ctx, vehicle, route.AgencyID, st.TripID)
 
 	// The raw feed stop_sequence, not in.stopPosition: GTFS-RT
@@ -1001,6 +1001,9 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 		scheduledArrivalTime,
 		scheduledDepartureTime,
 	)
+	if isCanceledVehicle(vehicle) {
+		predictedArrivalTime, predictedDepartureTime, predicted = time.Time{}, time.Time{}, false
+	}
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 
@@ -1117,10 +1120,10 @@ func startTripStatusAtServiceStart(status *models.TripStatus, freqMap map[string
 	status.Frequency = &converted
 }
 
-// combinedVehicleID renders a vehicle's ID in the combined {agency}_{id} form
-// the spec requires, or empty when the trip has no vehicle assigned.
+// combinedVehicleID renders a vehicle's ID for an arrival: see responseVehicleID.
+// It is empty when the trip has no vehicle assigned or is canceled.
 func (api *RestAPI) combinedVehicleID(ctx context.Context, vehicle *gtfs.Vehicle, agencyID, tripID string) string {
-	if vehicle == nil || vehicle.Trip == nil {
+	if vehicle == nil || vehicle.Trip == nil || isCanceledVehicle(vehicle) {
 		return ""
 	}
 	reqLogger := logging.ForComponent(ctx, "http_server")
@@ -1128,7 +1131,7 @@ func (api *RestAPI) combinedVehicleID(ctx context.Context, vehicle *gtfs.Vehicle
 		reqLogger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
 		return ""
 	}
-	return utils.FormCombinedID(agencyID, vehicle.ID.ID)
+	return responseVehicleID(agencyID, vehicle)
 }
 
 // tripStatusForArrival builds the trip status attached to every arrival, along
@@ -1146,9 +1149,9 @@ func (api *RestAPI) tripStatusForArrival(
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	st := in.stopTime
 
-	// The vehicle is passed through rather than left nil so BuildTripStatus
-	// does not repeat the GetVehicleForTrip lookup the caller already did.
-	status, extras, err := api.BuildTripStatus(ctx, in.route.AgencyID, st.TripID, vehicle, in.serviceDate.Midnight(in.location), in.queryTime, in.freqMap)
+	// The caller already looked up the vehicle, so a nil one means there is none:
+	// this does not repeat that lookup for every arrival row.
+	status, extras, err := api.buildTripStatusForVehicle(ctx, in.route.AgencyID, st.TripID, vehicle, in.serviceDate.Midnight(in.location), in.queryTime, in.freqMap)
 	if err != nil {
 		reqLogger.Warn("BuildTripStatus failed for arrival",
 			"tripID", st.TripID, "error", err)
