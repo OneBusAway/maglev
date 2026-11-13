@@ -6,6 +6,7 @@ import (
 	"io"
 	"iter"
 	"log/slog"
+	"slices"
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/internal/logging"
@@ -38,6 +39,11 @@ type feedRows struct {
 	// tripEnds holds the ends of every stored trip once stopTimes has been
 	// read to the end.
 	tripEnds []tripEnds
+	// flexTrips holds a copy of every stored trip with a flex record, its
+	// stop times included, once stopTimes has been read to the end. The flex
+	// import needs a trip's windowed and timed records together, and a flex
+	// feed has few such trips.
+	flexTrips []gtfs.ScheduledTrip
 	// err holds the first error reading from the stream.
 	err error
 }
@@ -53,8 +59,9 @@ func (data *GtfsData) rows() *feedRows {
 // errStopped ends a stream early when the rows' consumer stops reading.
 var errStopped = errors.New("stopped reading")
 
-// stopTimes yields the stop times of the stored trips, one trip at a time,
-// and records each trip's ends.
+// stopTimes yields the timed stop times of the stored trips, one trip at a
+// time, and records each trip's ends. A trip with only windowed (flex)
+// records has no ends, so the block indexes skip it.
 func (r *feedRows) stopTimes() iter.Seq[CreateStopTimeParams] {
 	return func(yield func(CreateStopTimeParams) bool) {
 		err := r.stream.EachTripStopTimes(func(tripIndex int, stopTimes []gtfs.ScheduledStopTime) error {
@@ -62,8 +69,13 @@ func (r *feedRows) stopTimes() iter.Seq[CreateStopTimeParams] {
 			if !r.storedTrips[trip.ID] {
 				return nil
 			}
-			r.tripEnds = append(r.tripEnds, newTripEnds(trip, stopTimes[0], stopTimes[len(stopTimes)-1]))
-			for _, stopTime := range stopTimes {
+			r.keepFlexTrip(trip, stopTimes)
+			timed := timedStopTimes(stopTimes)
+			if len(timed) == 0 {
+				return nil
+			}
+			r.tripEnds = append(r.tripEnds, newTripEnds(trip, timed[0], timed[len(timed)-1]))
+			for _, stopTime := range timed {
 				if !yield(stopTimeParams(trip.ID, stopTime)) {
 					return errStopped
 				}
@@ -72,6 +84,26 @@ func (r *feedRows) stopTimes() iter.Seq[CreateStopTimeParams] {
 		})
 		r.recordError(err)
 	}
+}
+
+// keepFlexTrip keeps a copy of trip, with its stop times, when it has a flex
+// record.
+func (r *feedRows) keepFlexTrip(trip *gtfs.ScheduledTrip, stopTimes []gtfs.ScheduledStopTime) {
+	if !slices.ContainsFunc(stopTimes, gtfs.ScheduledStopTime.IsFlex) {
+		return
+	}
+	flexTrip := *trip
+	flexTrip.StopTimes = slices.Clone(stopTimes)
+	r.flexTrips = append(r.flexTrips, flexTrip)
+}
+
+// flexStatic returns static with only the flex trips, each with its stop
+// times, for the flex import. Call it after stopTimes has been read to the
+// end.
+func (r *feedRows) flexStatic(static *gtfs.Static) *gtfs.Static {
+	flex := *static
+	flex.Trips = r.flexTrips
+	return &flex
 }
 
 // shapes yields the points of every shape, one shape at a time.
