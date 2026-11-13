@@ -73,9 +73,13 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	_, err = api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
 	if err != nil {
 		api.dbErrorResponse(w, r, err)
+		return
+	}
+	if route.ID == "" || route.AgencyID != agencyID {
+		api.sendNotFound(w, r)
 		return
 	}
 
