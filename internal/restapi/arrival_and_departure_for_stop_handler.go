@@ -490,28 +490,25 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// Build stops references
 	stopIDSet := make(map[string]bool)
+	// statusStopAgency records the route agency for status stops (nextStop, closestStop)
+	// so they are emitted under the same combined ID that tripStatus carries.
+	statusStopAgency := make(map[string]string)
 	routeIDSet := make(map[string]*gtfsdb.Route)
 
 	stopIDSet[stop.ID] = true
 
-	// Include the next and closest stops if trip status is not null to stops reference
+	// Include the next and closest stops from trip status.
+	// Use extractBareEntityID with the route's agency so that agency IDs
+	// containing underscores are stripped correctly instead of splitting at the
+	// first underscore.
 	if tripStatus != nil {
-		if tripStatus.NextStop != "" {
-			_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.NextStop)
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
-			}
-
+		if nextStopID := extractBareEntityID(tripStatus.NextStop, route.AgencyID); nextStopID != "" {
 			stopIDSet[nextStopID] = true
+			statusStopAgency[nextStopID] = route.AgencyID
 		}
-		if tripStatus.ClosestStop != "" {
-			_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ClosestStop)
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
-			}
+		if closestStopID := extractBareEntityID(tripStatus.ClosestStop, route.AgencyID); closestStopID != "" {
 			stopIDSet[closestStopID] = true
+			statusStopAgency[closestStopID] = route.AgencyID
 		}
 	}
 	// batch fetch
@@ -559,13 +556,17 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			routeIDSet[route.ID] = &routeCopy
 		}
 
+		refAgencyID := stopAgencyID
+		if ag, ok := statusStopAgency[sid]; ok {
+			refAgencyID = ag
+		}
 		stopRef := models.Stop{
-			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
+			ID:                 utils.FormCombinedID(refAgencyID, stopData.ID),
 			Name:               nulls.StringOrEmpty(stopData.Name),
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
-			Parent:             parentStationID(stopAgencyID, stopData),
+			Parent:             parentStationID(refAgencyID, stopData),
 			Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),

@@ -2169,3 +2169,87 @@ func TestArrivalAndDepartureForStopHandler_CrossAgencyTimezone(t *testing.T) {
 	assert.True(t, entry.ServiceDate.In(locLA).Equal(expectedMidnightLA),
 		"service date must be midnight in the trip agency timezone, got %v", entry.ServiceDate)
 }
+
+// TestArrivalAndDepartureForStop_UnderscoreAgencyStatusStops verifies that
+// nextStop and closestStop from tripStatus resolve in references.stops when
+// the route agency ID contains underscores. The old code split combined IDs at
+// the first underscore, so "AGENCY_ONE_s2" became "ONE_s2" (not found) instead
+// of the correct bare id "s2".
+//
+// URL-facing IDs use the queried stop's agency (plain "A", no underscore) so
+// that ExtractAgencyIDAndCodeID parses the path correctly. The route belongs to
+// AGENCY_ONE, so BuildTripStatus emits status stop IDs under that prefix.
+func TestArrivalAndDepartureForStop_UnderscoreAgencyStatusStops(t *testing.T) {
+	const (
+		stopAgency  = "A"          // used in URL — no underscores
+		routeAgency = "AGENCY_ONE" // underscore agency, owns the route/trip
+		routeID     = "ROUTE_A"
+		serviceID   = "svc1"
+		tripID      = "t1"
+		stopAID     = "s1"
+		stopBID     = "s2"
+		stopCID     = "s3"
+	)
+	// Two agencies: a plain one for the queried stop and a underscore one that
+	// owns the route. Both share the same stops and calendar.
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			stopAgency + ",Agency A,http://a.example.com,UTC\n" +
+			routeAgency + ",Agency One,http://one.example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			routeID + "," + routeAgency + ",A,Route A,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			serviceID + ",1,1,1,1,1,1,1,20100101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			stopAID + ",Stop A,47.0,-122.0\n" +
+			stopBID + ",Stop B,47.1,-122.0\n" +
+			stopCID + ",Stop C,47.2,-122.0\n",
+		"trips.txt": "route_id,service_id,trip_id\n" +
+			routeID + "," + serviceID + "," + tripID + "\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			tripID + ",08:00:00,08:00:00," + stopAID + ",1\n" +
+			tripID + ",08:10:00,08:10:00," + stopBID + ",2\n" +
+			tripID + ",08:20:00,08:20:00," + stopCID + ",3\n",
+	}
+
+	// Clock at 08:05 — vehicle reported at sequence 1 (stopA), making stopA the
+	// closest stop and stopB the next stop.
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 5, 0, 0, time.UTC))
+	api := createTestApiWithGTFSFixture(t, mockClock, "underscore-agency-status.zip", files)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	seq := uint32(1)
+	api.GtfsManager.MockAddVehicleWithOptions("v1", tripID, routeID, internalgtfs.MockVehicleOptions{
+		CurrentStopSequence: &seq,
+	})
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	// URL uses stopAgency (plain "A") so the path parses without underscore issues.
+	// tripId also uses "A" prefix; the handler strips it and looks up bare tripID.
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=3",
+		utils.FormCombinedID(stopAgency, stopCID),
+		utils.FormCombinedID(stopAgency, tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	status := model.Data.Entry.TripStatus
+	require.NotNil(t, status, "tripStatus must be present when vehicle is on trip")
+
+	// Status stop IDs are prefixed with the route's agency (AGENCY_ONE) which
+	// contains underscores. Both must resolve in references.stops.
+	stopsByID := make(map[string]models.Stop, len(model.Data.References.Stops))
+	for _, s := range model.Data.References.Stops {
+		stopsByID[s.ID] = s
+	}
+	require.NotEmpty(t, status.NextStop, "tripStatus.nextStop must be set")
+	require.NotEmpty(t, status.ClosestStop, "tripStatus.closestStop must be set")
+	for _, combinedID := range []string{status.NextStop, status.ClosestStop} {
+		_, ok := stopsByID[combinedID]
+		assert.Truef(t, ok, "references.stops must contain %q (route agency has underscores)", combinedID)
+	}
+}
