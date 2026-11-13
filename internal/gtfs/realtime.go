@@ -52,6 +52,7 @@ type mergedRealtime struct {
 	vehiclePositionsByAgency map[string]AgencyVehiclePositions
 	alerts                   alertIndex
 	alertFeedsByAgency       map[string]agencyAlertFeed
+	regionalAlertFeed        agencyAlertFeed
 	tripUpdatesByAgency      map[string]AgencyTripUpdates
 	// alertsSince is the first snapshot's build time, the header time of an
 	// agency that has had no alerts since then.
@@ -77,6 +78,7 @@ var emptyMergedRealtime = &mergedRealtime{
 		byStop:   map[string][]FeedAlert{},
 	},
 	alertFeedsByAgency:  map[string]agencyAlertFeed{},
+	regionalAlertFeed:   agencyAlertFeed{},
 	tripUpdatesByAgency: map[string]AgencyTripUpdates{},
 }
 
@@ -112,6 +114,7 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 			all:      slices.Clone(m.alerts.all),
 		},
 		alertFeedsByAgency:  maps.Clone(m.alertFeedsByAgency),
+		regionalAlertFeed:   m.regionalAlertFeed,
 		tripUpdatesByAgency: maps.Clone(m.tripUpdatesByAgency),
 		alertsSince:         m.alertsSince,
 		builtAt:             m.builtAt,
@@ -1496,6 +1499,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		vehiclePositionsByAgency: manager.buildVehiclePositionsByAgency(vehicleFeedIDs, builtAt),
 		alerts:                   idx,
 		alertFeedsByAgency:       manager.buildAlertFeedsByAgency(alertFeedIDs, previous, builtAt),
+		regionalAlertFeed:        manager.buildRegionalAlertFeed(alertFeedIDs, previous, builtAt),
 		tripUpdatesByAgency:      manager.buildTripUpdatesByAgency(feedIDs, builtAt),
 		alertsSince:              alertsSince,
 		builtAt:                  builtAt,

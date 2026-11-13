@@ -42,6 +42,24 @@ func (manager *Manager) AlertFeedForAgency(agencyID string) ([]byte, error) {
 	return encodeAlertFeed(nil, since)
 }
 
+// RegionalAlertFeed returns the current snapshot's serialized GTFS-RT
+// regional alerts feed containing every alert across all agencies (ADR-0003).
+// A server with no alerts since it started gets a header-only feed dated at
+// the first snapshot, so its bytes stay the same across rebuilds. The bytes
+// are shared with every other reader and must not be modified.
+func (manager *Manager) RegionalAlertFeed() ([]byte, error) {
+	merged := manager.mergedRealtime()
+	if len(merged.regionalAlertFeed.body) > 0 {
+		return merged.regionalAlertFeed.body, nil
+	}
+	since := merged.alertsSince
+	// No snapshot is built on a server without realtime feeds.
+	if since.IsZero() {
+		since = time.Now()
+	}
+	return encodeAlertFeed(nil, since)
+}
+
 // buildAlertFeedsByAgency serializes every agency's alerts for the export.
 // An agency whose alerts match the previous snapshot's keeps its bytes and
 // change time; any other agency is dated builtAt. Agencies that had alerts
@@ -69,6 +87,52 @@ func (manager *Manager) buildAlertFeedsByAgency(feedIDs []string, previous *merg
 		feeds[agencyID] = feed
 	}
 	return feeds
+}
+
+// buildRegionalAlertFeed serializes every alert across the region into a
+// single GTFS-RT feed (ADR-0003). An alert set matching the previous
+// snapshot keeps its bytes and change time; otherwise it is dated builtAt.
+// feedIDs must be sorted. Caller must hold realTimeMutex.
+func (manager *Manager) buildRegionalAlertFeed(feedIDs []string, previous *mergedRealtime, builtAt time.Time) agencyAlertFeed {
+	entities := manager.collectRegionalAlertEntities(feedIDs)
+	slices.SortFunc(entities, func(a, b *gtfsrt.FeedEntity) int {
+		return strings.Compare(a.GetId(), b.GetId())
+	})
+	feed, err := nextAgencyAlertFeed(entities, previous.regionalAlertFeed, builtAt)
+	if err != nil {
+		logging.LogError(slog.Default(), "Error encoding GTFS-RT regional alerts feed", err)
+		return previous.regionalAlertFeed
+	}
+	return feed
+}
+
+// collectRegionalAlertEntities collects all alerts across configured feeds in
+// config order, deduplicating by combined situation ID. Unlike the per-agency
+// export, alerts with no agency are included.
+func (manager *Manager) collectRegionalAlertEntities(feedIDs []string) []*gtfsrt.FeedEntity {
+	fallbackAgencies := manager.feedFallbackAgencies()
+	seen := make(map[string]bool)
+	var entities []*gtfsrt.FeedEntity
+
+	for _, feedID := range manager.feedIDsInConfigOrder(feedIDs) {
+		fallbackAgency := fallbackAgencies[feedID]
+		for _, alert := range manager.feedAlerts[feedID] {
+			if alert.ID == "" {
+				continue
+			}
+			agencyID := exportAgencyID(alert, fallbackAgency)
+			entityID := SituationID(alert.ID, agencyID)
+			if seen[entityID] {
+				continue
+			}
+			seen[entityID] = true
+			entities = append(entities, &gtfsrt.FeedEntity{
+				Id:    proto.String(entityID),
+				Alert: exportAlert(alert),
+			})
+		}
+	}
+	return entities
 }
 
 // collectAlertEntitiesByAgency attributes each alert to one agency and
