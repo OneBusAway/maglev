@@ -493,6 +493,9 @@ func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []t
 
 	for _, t := range tripUpdates {
 		for _, stu := range t.tu.StopTimeUpdates {
+			if stu.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED {
+				continue
+			}
 			schedArr, schedDep := scheduleEntryForSTU(scheduled[t.tripID], stu, serviceDate, currentTime)
 			picker.consider(schedArr, stuPredictedFromEvent(stu.Arrival, schedArr, serviceDate))
 			picker.consider(schedDep, stuPredictedFromEvent(stu.Departure, schedDep, serviceDate))
@@ -566,6 +569,9 @@ func absInt64(v int64) int64 {
 func pickFirstAvailableSTUDelay(tripUpdates []tripUpdateForTrip) (int, bool) {
 	for _, t := range tripUpdates {
 		for _, stu := range t.tu.StopTimeUpdates {
+			if stu.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED {
+				continue
+			}
 			if stu.Arrival != nil && stu.Arrival.Delay != nil {
 				return int(stu.Arrival.Delay.Seconds()), true
 			}
