@@ -39,6 +39,17 @@ type tripStatusExtras struct {
 	// tripBlockSequence is the queried trip's position in its block. It can
 	// differ from status.BlockTripSequence, which follows the active trip.
 	tripBlockSequence int
+	// hasVehicleRecord reports that the vehicle has the kind of record Java
+	// builds from trip updates, which fixes its position and update time.
+	hasVehicleRecord bool
+}
+
+// applyVehicleRecordUpdateTime reports the record's time on an arrival. Java's
+// arrival reads it from the same record as its trip status.
+func applyVehicleRecordUpdateTime(arrival *models.ArrivalAndDeparture, status *models.TripStatus, extras *tripStatusExtras) {
+	if status != nil && extras != nil && extras.hasVehicleRecord {
+		arrival.LastUpdateTime = status.LastUpdateTime
+	}
 }
 
 // tripStatusInput holds what the steps of building one trip status read.
@@ -155,7 +166,7 @@ func (api *RestAPI) buildTripStatusForVehicle(
 	if len(stopTimes) > 0 {
 		snap = api.statusBlockSnapshot(ctx, status, input, extras.blockTripIDs, scheduleDeviation)
 	}
-	api.applySnapshotToStatus(ctx, status, input, snap)
+	api.applySnapshotToStatus(ctx, status, extras, input, snap)
 	api.applyShapeToStatus(ctx, status, input, snap, shapeRows, stopTimes)
 
 	extras.snapshot = snap
@@ -250,6 +261,11 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 	}
 	extras.deviationResolved = hasRealtimeTripUpdate
 	extras.blockTripIDs = blockTripIDs
+
+	if recordTime, hasRecord := api.vehicleRecordTime(input.vehicle, blockTripIDs); hasRecord {
+		extras.hasVehicleRecord = true
+		status.LastUpdateTime = models.NewModelTime(recordTime)
+	}
 
 	hasVehicleRealtimeData := input.vehicle != nil && !defaultStaleDetector.Check(input.vehicle, input.currentTime)
 	status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
@@ -371,7 +387,13 @@ func snapshotLocatesActiveTrip(snap *scheduledBlockSnapshot) bool {
 
 // applySnapshotToStatus sets the snapshot-derived status fields, which don't
 // depend on the target trip's shape.
-func (api *RestAPI) applySnapshotToStatus(ctx context.Context, status *models.TripStatus, input tripStatusInput, snap *scheduledBlockSnapshot) {
+func (api *RestAPI) applySnapshotToStatus(
+	ctx context.Context,
+	status *models.TripStatus,
+	extras *tripStatusExtras,
+	input tripStatusInput,
+	snap *scheduledBlockSnapshot,
+) {
 	if !snapshotLocatesActiveTrip(snap) {
 		return
 	}
@@ -384,7 +406,7 @@ func (api *RestAPI) applySnapshotToStatus(ctx context.Context, status *models.Tr
 	if snap.ActiveTripTotalDistance > 0 {
 		status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
 	}
-	applySnapshotDistanceAlongTrip(status, input, snap)
+	applySnapshotDistanceAlongTrip(status, extras, input, snap)
 }
 
 // applySnapshotDistanceAlongTrip sets distanceAlongTrip, a distinct field from
@@ -414,7 +436,7 @@ func (api *RestAPI) applySnapshotToStatus(ctx context.Context, status *models.Tr
 //     but is never wildly wrong.
 //
 // Both are gated on the shift check to match Java's per-BlockInstance semantics.
-func applySnapshotDistanceAlongTrip(status *models.TripStatus, input tripStatusInput, snap *scheduledBlockSnapshot) {
+func applySnapshotDistanceAlongTrip(status *models.TripStatus, extras *tripStatusExtras, input tripStatusInput, snap *scheduledBlockSnapshot) {
 	vehicle := input.vehicle
 	if vehicle == nil || vehicle.Trip == nil || snap.ShiftTripIDs == nil {
 		return
@@ -422,6 +444,10 @@ func applySnapshotDistanceAlongTrip(status *models.TripStatus, input tripStatusI
 	_, sameShift := snap.ShiftTripIDs[vehicle.Trip.ID.ID]
 	_, arrivalInShift := snap.ShiftTripIDs[input.tripID]
 	if !sameShift || !arrivalInShift {
+		return
+	}
+	if extras.hasVehicleRecord {
+		status.DistanceAlongTrip = snap.ActiveTripScheduledDistance
 		return
 	}
 	if distance, ok := liveVehicleDistanceOnSnapshot(input, snap); ok {

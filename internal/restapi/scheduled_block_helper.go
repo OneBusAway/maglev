@@ -253,13 +253,20 @@ func buildSnapshotFromStops(
 		shiftTripIDs[t.id] = struct{}{}
 	}
 
+	nextStopIndex := findNextStopIndex(stops, currentSeconds, monotonic)
+	distanceAlongBlock := interpolateBlockDistance(stops, currentSeconds, monotonic)
+	if dwellingAtPreviousStop(stops, nextStopIndex, currentSeconds) {
+		nextStopIndex--
+		distanceAlongBlock = stops[nextStopIndex].DistanceAlongBlock
+	}
+
 	firstStopSec := stops[0].EffectiveStopSeconds
 	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
 	return &scheduledBlockSnapshot{
 		Stops:              stops,
 		StopIndex:          stopIndex,
-		NextStopIndex:      findNextStopIndex(stops, currentSeconds, monotonic),
-		DistanceAlongBlock: interpolateBlockDistance(stops, currentSeconds, monotonic),
+		NextStopIndex:      nextStopIndex,
+		DistanceAlongBlock: distanceAlongBlock,
 		InRange:            currentSeconds >= firstStopSec && currentSeconds <= lastStopSec,
 		ShiftTripIDs:       shiftTripIDs,
 	}
@@ -889,6 +896,18 @@ func findNextStopIndex(stops []blockStopMetric, currentSeconds int64, monotonic 
 	return -1
 }
 
+// dwellingAtPreviousStop reports whether currentSeconds falls between the arrival
+// and departure of the stop before nextStopIndex. Java treats that as being at
+// the stop (ScheduledBlockLocationServiceImpl.java:218), so it is still the next
+// stop, and its distance is the vehicle's.
+func dwellingAtPreviousStop(stops []blockStopMetric, nextStopIndex int, currentSeconds int64) bool {
+	if nextStopIndex <= 0 {
+		return false
+	}
+	previous := stops[nextStopIndex-1]
+	return previous.ArrivalSeconds <= currentSeconds && currentSeconds <= previous.DepartureSeconds
+}
+
 // interpolateBlockDistance linearly interpolates the block's distance-along-block
 // at currentSeconds between the two surrounding stops. Clamped to the first /
 // last stop when currentSeconds is outside the block's scheduled span.
@@ -934,11 +953,14 @@ func interpolateBlockDistance(stops []blockStopMetric, currentSeconds int64, mon
 		from = stops[idx-1]
 		to = stops[idx]
 	}
-	span := to.EffectiveStopSeconds - from.EffectiveStopSeconds
-	if span == 0 {
+	// Java moves the vehicle only from the departure of one stop to the arrival
+	// of the next.
+	fromSeconds := max(from.EffectiveStopSeconds, from.DepartureSeconds)
+	span := to.EffectiveStopSeconds - fromSeconds
+	if span <= 0 {
 		return from.DistanceAlongBlock
 	}
-	ratio := float64(currentSeconds-from.EffectiveStopSeconds) / float64(span)
+	ratio := float64(currentSeconds-fromSeconds) / float64(span)
 	return from.DistanceAlongBlock + ratio*(to.DistanceAlongBlock-from.DistanceAlongBlock)
 }
 

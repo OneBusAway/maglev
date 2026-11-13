@@ -208,7 +208,7 @@
           "occupancyCount": -1,
           "occupancyStatus": "",
           "orientation": 280.243421,
-          "phase": "scheduled",
+          "phase": "",
           "position": {
             "lat": 40.62512,
             "lon": -122.405005

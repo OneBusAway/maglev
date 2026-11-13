@@ -1055,6 +1055,7 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 	api.applyTripStatusPrediction(ctx, arrival, tripStatus, statusExtras, in, acc.deviationSamples)
 
 	arrival.TripStatus = tripStatus
+	applyVehicleRecordUpdateTime(arrival, tripStatus, statusExtras)
 	arrival.DistanceFromStop = distanceFromStop
 	arrival.NumberOfStopsAway = numberOfStopsAway
 	// Already computed by BuildTripStatus; reuse rather than redoing the block

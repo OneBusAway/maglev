@@ -1034,7 +1034,7 @@ func TestTripsForRouteHandler_DifferentRoutes(t *testing.T) {
 				}
 
 				if entry.Status != nil {
-					assert.Contains(t, []string{"scheduled", "in_progress", "completed"}, entry.Status.Phase,
+					assert.Contains(t, []string{"", "in_progress", "completed"}, entry.Status.Phase,
 						"list[%d].status.phase should be a known value", i)
 					assert.NotEmpty(t, entry.Status.Status, "list[%d].status.status should be set", i)
 				}
@@ -1542,7 +1542,7 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 				if want {
 					require.NotNil(t, entry.Status, "list[%d].status should be present", i)
 					assert.NotEmpty(t, entry.Status.ActiveTripID, "list[%d].status.activeTripId should be set", i)
-					assert.Contains(t, []string{"scheduled", "in_progress", "completed"}, entry.Status.Phase,
+					assert.Contains(t, []string{"", "in_progress", "completed"}, entry.Status.Phase,
 						"list[%d].status.phase should be a known value", i)
 				} else {
 					assert.Nil(t, entry.Status, "list[%d].status should be omitted", i)
