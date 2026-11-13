@@ -18,6 +18,20 @@ import (
 // vehiclesForAgencyHandler returns real-time vehicle positions for all vehicles operated by a given agency.
 func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Request) {
 	includeReferences, fieldErrors := ShouldIncludeReferences(r, nil)
+
+	var ageInSeconds *int32
+	if val := r.URL.Query().Get("ageInSeconds"); val != "" {
+		if parsed, err := strconv.ParseInt(val, 10, 32); err == nil {
+			v := int32(parsed)
+			ageInSeconds = &v
+		} else {
+			if fieldErrors == nil {
+				fieldErrors = make(map[string][]string)
+			}
+			fieldErrors["ageInSeconds"] = []string{`Invalid field value for field "ageInSeconds".`}
+		}
+	}
+
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -70,19 +84,16 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// ageInSeconds: absent = no filter; any value >= 0 applies a strict cutoff.
-	const maxAgeInSeconds = int64((1<<63 - 1) / int64(time.Second))
-	if val := r.URL.Query().Get("ageInSeconds"); val != "" {
-		if ageInSeconds, err := strconv.ParseInt(val, 10, 64); err == nil && ageInSeconds >= 0 && ageInSeconds <= maxAgeInSeconds {
-			cutoff := referenceTime.Add(-time.Duration(ageInSeconds) * time.Second)
-			filtered := vehiclesForAgency[:0]
-			for _, vehicle := range vehiclesForAgency {
-				if !api.GtfsManager.GetVehicleLastUpdateTime(&vehicle).Before(cutoff) {
-					filtered = append(filtered, vehicle)
-				}
+	// ageInSeconds: absent or negative = no filter; any value >= 0 applies a strict cutoff.
+	if ageInSeconds != nil && *ageInSeconds >= 0 {
+		cutoff := referenceTime.Add(-time.Duration(*ageInSeconds) * time.Second)
+		filtered := vehiclesForAgency[:0]
+		for _, vehicle := range vehiclesForAgency {
+			if !api.GtfsManager.GetVehicleLastUpdateTime(&vehicle).Before(cutoff) {
+				filtered = append(filtered, vehicle)
 			}
-			vehiclesForAgency = filtered
 		}
+		vehiclesForAgency = filtered
 	}
 
 	vehiclesList := make([]models.VehicleStatus, 0, len(vehiclesForAgency))
