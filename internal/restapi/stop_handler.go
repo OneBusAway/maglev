@@ -1,8 +1,6 @@
 package restapi
 
 import (
-	"database/sql"
-	"errors"
 	"net/http"
 	"sort"
 
@@ -27,7 +25,11 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	stop, err := api.GtfsManager.GtfsDB.Queries.GetStop(ctx, stopID)
-	if err != nil || stop.ID == "" {
+	if err != nil {
+		api.dbErrorResponse(w, r, err)
+		return
+	}
+	if stop.ID == "" {
 		api.sendNotFound(w, r)
 		return
 	}
@@ -74,8 +76,8 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parentID := ""
-	if nulls.StringOrEmpty(stop.ParentStation) != "" {
-		parentID = utils.FormCombinedID(agencyID, stop.ParentStation.String)
+	if parentStation := nulls.StringOrEmpty(stop.ParentStation); parentStation != "" {
+		parentID = utils.FormCombinedID(agencyID, parentStation)
 	}
 
 	stopData := &models.Stop{
@@ -108,21 +110,21 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 				routeModel := models.NewRoute(
 					combinedRouteID,
 					route.AgencyID,
-					route.ShortName.String,
-					route.LongName.String,
-					route.Desc.String,
+					nulls.StringOrEmpty(route.ShortName),
+					nulls.StringOrEmpty(route.LongName),
+					nulls.StringOrEmpty(route.Desc),
 					models.RouteType(route.Type),
-					route.Url.String,
-					route.Color.String,
-					route.TextColor.String)
+					nulls.StringOrEmpty(route.Url),
+					nulls.StringOrEmpty(route.Color),
+					nulls.StringOrEmpty(route.TextColor))
 
 				references.Routes = append(references.Routes, routeModel)
 				uniqueRouteIDs[combinedRouteID] = true
 			}
 		}
 
-		if nulls.StringOrEmpty(stop.ParentStation) != "" {
-			parentRefs, parentRoutesMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, []string{stop.ParentStation.String})
+		if parentStation := nulls.StringOrEmpty(stop.ParentStation); parentStation != "" {
+			parentRefs, parentRoutesMap, err := BuildStopReferencesAndRouteIDsForStops(api, ctx, agencyID, []string{parentStation})
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return
@@ -135,13 +137,13 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 					routeModel := models.NewRoute(
 						combinedRouteID,
 						pr.AgencyID,
-						pr.ShortName.String,
-						pr.LongName.String,
-						pr.Desc.String,
+						nulls.StringOrEmpty(pr.ShortName),
+						nulls.StringOrEmpty(pr.LongName),
+						nulls.StringOrEmpty(pr.Desc),
 						models.RouteType(pr.Type),
-						pr.Url.String,
-						pr.Color.String,
-						pr.TextColor.String)
+						nulls.StringOrEmpty(pr.Url),
+						nulls.StringOrEmpty(pr.Color),
+						nulls.StringOrEmpty(pr.TextColor))
 					references.Routes = append(references.Routes, routeModel)
 					uniqueRouteIDs[combinedRouteID] = true
 					uniqueAgencyIDs[pr.AgencyID] = true
@@ -159,13 +161,8 @@ func (api *RestAPI) stopHandler(w http.ResponseWriter, r *http.Request) {
 
 		for _, aid := range agencyIDs {
 			agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, aid)
-
 			if err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					api.sendNotFound(w, r)
-					return
-				}
-				api.serverErrorResponse(w, r, err)
+				api.dbErrorResponse(w, r, err)
 				return
 			}
 

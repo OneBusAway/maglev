@@ -27,7 +27,7 @@ func createLargeAgencyApi(tb testing.TB) *RestAPI {
 		GtfsURL:      zipPath,
 		GTFSDataPath: dbPath,
 	}
-	mgr, err := gtfs.InitGTFSManager(cfg)
+	mgr, err := gtfs.InitGTFSManager(tb.Context(), cfg)
 	if err != nil {
 		tb.Fatalf("init GTFS manager for perf: %v", err)
 	}

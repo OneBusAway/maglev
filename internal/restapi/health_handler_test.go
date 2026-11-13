@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
 )
 
 func TestHealthHandlerWithNilApplication(t *testing.T) {
@@ -43,6 +44,7 @@ func TestHealthHandlerReturnsOK(t *testing.T) {
 
 	app := &app.Application{
 		GtfsManager: manager,
+		Clock:       clock.RealClock{},
 		Config: appconf.Config{
 			RateLimit: 100,
 		},
@@ -76,6 +78,7 @@ func TestHealthHandlerReturnsExpired(t *testing.T) {
 
 	app := &app.Application{
 		GtfsManager: manager,
+		Clock:       clock.RealClock{},
 		Config: appconf.Config{
 			RateLimit: 100,
 		},
@@ -101,12 +104,77 @@ func TestHealthHandlerReturnsExpired(t *testing.T) {
 	assert.True(t, healthResp.DataExpired)
 }
 
+func TestHealthHandlerFeedExpiryUsesUTC(t *testing.T) {
+	// Do not parallelize: time.Local is process-wide.
+	originalLocal := time.Local
+	time.Local = time.FixedZone("host", -8*60*60)
+	t.Cleanup(func() { time.Local = originalLocal })
+
+	manager := newTestManagerNoData(t)
+	manager.MarkReady()
+	expiresAt := time.Date(2027, time.March, 14, 4, 59, 59, 0, time.UTC)
+	manager.SetFeedExpiresAtForTest(t.Context(), expiresAt)
+	api := NewRestAPI(&app.Application{
+		GtfsManager: manager,
+		Clock:       clock.RealClock{},
+	})
+	w := httptest.NewRecorder()
+	api.healthHandler(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var response HealthResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	assert.Equal(t, "2027-03-14T04:59:59Z", response.FeedExpiresAt)
+}
+
+func TestHealthHandlerFeedExpiryUsesClock(t *testing.T) {
+	manager := newTestManagerNoData(t)
+	manager.MarkReady()
+
+	expiresAt := time.Date(2025, time.June, 15, 0, 0, 0, 0, time.UTC)
+	manager.SetFeedExpiresAtForTest(t.Context(), expiresAt)
+
+	tests := []struct {
+		name        string
+		clockTime   time.Time
+		wantExpired bool
+	}{
+		{
+			name:        "before expiry",
+			clockTime:   time.Date(2025, time.June, 10, 0, 0, 0, 0, time.UTC),
+			wantExpired: false,
+		},
+		{
+			name:        "after expiry",
+			clockTime:   time.Date(2025, time.June, 20, 0, 0, 0, 0, time.UTC),
+			wantExpired: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := NewRestAPI(&app.Application{
+				GtfsManager: manager,
+				Clock:       clock.NewMockClock(tt.clockTime),
+			})
+
+			w := httptest.NewRecorder()
+			api.healthHandler(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+			require.Equal(t, http.StatusOK, w.Code)
+
+			var resp HealthResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			assert.Equal(t, tt.wantExpired, resp.DataExpired)
+		})
+	}
+}
+
 func TestHealthHandlerStarting(t *testing.T) {
 	// Create a minimal manager but DON'T mark as ready to simulate startup phase
 	manager := newTestManagerNoData(t)
 
 	app := &app.Application{
 		GtfsManager: manager,
+		Clock:       clock.RealClock{},
 		Config: appconf.Config{
 			RateLimit: 100,
 		},
@@ -139,6 +207,7 @@ func TestHealthHandlerVerboseMode(t *testing.T) {
 
 	app := &app.Application{
 		GtfsManager: manager,
+		Clock:       clock.RealClock{},
 		Config: appconf.Config{
 			RateLimit: 100,
 		},
@@ -175,4 +244,33 @@ func TestHealthHandlerVerboseMode(t *testing.T) {
 	require.NotNil(t, healthRespVerbose.DataFreshness)
 	assert.NotNil(t, healthRespVerbose.DataFreshness.StaticGtfsLastUpdated)
 	assert.Contains(t, healthRespVerbose.DataFreshness.RealtimeFeeds, "feed-1")
+}
+
+func TestHealthHandler_VerboseIncludesHash(t *testing.T) {
+	api := createTestApi(t)
+
+	resp, health := callAPIHandler[HealthResponse](t, api, "/healthz?verbose=true")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotNil(t, health.DataFreshness)
+	assert.Equal(t, rabaZipSha256(t), health.DataFreshness.StaticGtfsHash)
+}
+
+func TestHealthHandler_VerboseImportMetadataQueryFails(t *testing.T) {
+	manager := newTestManagerWithoutImportMetadata(t)
+	manager.MarkReady()
+	api := NewRestAPI(&app.Application{
+		GtfsManager: manager,
+		Clock:       clock.RealClock{},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz?verbose=true", nil)
+	rr := httptest.NewRecorder()
+	api.healthHandler(rr, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+	var health HealthResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &health))
+	assert.Equal(t, "unavailable", health.Status)
+	assert.Nil(t, health.DataFreshness)
 }

@@ -20,20 +20,6 @@ func CalculateServiceDate(currentTime time.Time) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, currentTime.Location())
 }
 
-func ServiceDateMidnight(explicitServiceDate *time.Time, currentTime time.Time) (time.Time, time.Time) {
-	var serviceDate time.Time
-	if explicitServiceDate != nil {
-		serviceDate = *explicitServiceDate
-	} else {
-		serviceDate = CalculateServiceDate(currentTime)
-	}
-	// Always return midnight of the service date in the date's own timezone.
-	// This ensures all endpoints return a consistent serviceDate millis value.
-	midnight := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(),
-		0, 0, 0, 0, serviceDate.Location())
-	return serviceDate, midnight
-}
-
 // CalculateSecondsSinceServiceDate returns the number of wall-clock seconds elapsed
 // since the start of the service date (midnight in the agency's timezone).
 //
@@ -114,6 +100,14 @@ func FormCombinedID(agencyID, codeID string) string {
 	return fmt.Sprintf("%s_%s", agencyID, codeID)
 }
 
+// FormBlockID forms a trip's combined block ID; a trip with no block_id is its own block, as in Java.
+func FormBlockID(agencyID, blockID, tripID string) string {
+	if blockID == "" {
+		blockID = tripID
+	}
+	return FormCombinedID(agencyID, blockID)
+}
+
 // MapWheelchairBoarding converts GTFS wheelchair boarding values to our API format
 func MapWheelchairBoarding(wheelchairBoarding gtfs.WheelchairBoarding) string {
 	switch wheelchairBoarding {
@@ -179,6 +173,9 @@ func isFinite(f float64) bool {
 	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }
 
+// ParseTimeParameter parses an epoch millisecond timestamp or legacy date-time
+// string (yyyy-MM-dd_HH-mm-ss) in the provided location. If timeParam is empty,
+// it uses the current time from the provided clock.
 func ParseTimeParameter(timeParam string, currentLocation *time.Location, c clock.Clock) (string, time.Time, map[string][]string, bool) {
 	if timeParam == "" {
 		// No time parameter, use the provided clock's current time
@@ -190,19 +187,13 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location, c cloc
 	validFormat := false
 
 	// Check if it's epoch timestamp
-	if epochTime, err := strconv.ParseInt(timeParam, 10, 64); err == nil {
-		// Convert epoch to time
-		parsedTime = time.Unix(epochTime/1000, 0).In(currentLocation)
+	if epochTime, ok := ParseEpochMillis(timeParam); ok {
+		// Convert epoch to time preserving milliseconds
+		parsedTime = time.UnixMilli(epochTime).In(currentLocation)
 		validFormat = true
 	} else if strings.Contains(timeParam, "-") {
-		// Try yyyy-MM-dd_HH-mm-ss first (e.g. "2024-03-15_12-00-00")
+		// Try yyyy-MM-dd_HH-mm-ss (e.g. "2024-03-15_12-00-00") matching Java DateTimeConverter
 		parsed, err := time.ParseInLocation("2006-01-02_15-04-05", timeParam, currentLocation)
-		if err != nil {
-			// If it fails, fall back to yyyy-MM-dd (e.g. "2024-03-15")
-			parsed, err = time.ParseInLocation("2006-01-02", timeParam, currentLocation)
-		}
-
-		// If either parsing attempt succeeded, apply the result
 		if err == nil {
 			parsedTime = parsed
 			validFormat = true
@@ -219,6 +210,61 @@ func ParseTimeParameter(timeParam string, currentLocation *time.Location, c cloc
 
 	// Valid date, use it
 	return parsedTime.Format("20060102"), parsedTime, nil, true
+}
+
+// ParseTimeParameterOrNow is ParseTimeParameter for endpoints where Java treats
+// time=0 as "not supplied" (`if (_time != 0)`), so an epoch of 0 resolves to the
+// clock's current time instead of 1970-01-01.
+func ParseTimeParameterOrNow(timeParam string, currentLocation *time.Location, c clock.Clock) (string, time.Time, map[string][]string, bool) {
+	if isZeroEpoch(timeParam) {
+		timeParam = ""
+	}
+	return ParseTimeParameter(timeParam, currentLocation, c)
+}
+
+// LocationDateTimeLayout is the only datetime format the arrivals time
+// parameter accepts besides epoch millis.
+const LocationDateTimeLayout = "2006-01-02_15-04-05"
+
+// ParseArrivalTimeParam validates that a time query parameter is either
+// absent, empty, an ASCII non-negative integer representing epoch milliseconds,
+// or a local datetime formatted as yyyy-MM-dd_HH-mm-ss. Bare dates, negative
+// numbers, and unparseable values add an error to fieldErrors matching Java.
+func ParseArrivalTimeParam(timeParam string, fieldErrors map[string][]string) (string, map[string][]string) {
+	if timeParam == "" {
+		return "", fieldErrors
+	}
+	if _, ok := ParseEpochMillis(timeParam); ok {
+		return timeParam, fieldErrors
+	}
+	if _, err := time.ParseInLocation(LocationDateTimeLayout, timeParam, time.UTC); err == nil {
+		return timeParam, fieldErrors
+	}
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+	fieldErrors["time"] = append(fieldErrors["time"], `Invalid field value for field "time".`)
+	return "", fieldErrors
+}
+
+// ResolveArrivalTime turns a validated time parameter into the query instant.
+// Epoch millis are absolute; datetime values are read in the agency's timezone.
+// An empty value falls back to now in the given location.
+func ResolveArrivalTime(timeParam string, loc *time.Location, now time.Time) time.Time {
+	if timeParam == "" {
+		return now.In(loc)
+	}
+	if ms, ok := ParseEpochMillis(timeParam); ok {
+		return time.UnixMilli(ms).In(loc)
+	}
+	parsed, _ := time.ParseInLocation(LocationDateTimeLayout, timeParam, loc)
+	return parsed
+}
+
+// isZeroEpoch reports whether value is an epoch timestamp equal to 0.
+func isZeroEpoch(value string) bool {
+	epochMillis, ok := ParseEpochMillis(value)
+	return ok && epochMillis == 0
 }
 
 // maxCountOverflow selects how values above models.MaxAllowedCount are handled.
@@ -255,9 +301,9 @@ func parseMaxCount(queryParams url.Values, defaultCount, ceiling int, overflow m
 
 	maxCount := defaultCount
 	if maxCountStr := queryParams.Get("maxCount"); maxCountStr != "" {
-		parsedMaxCount, err := strconv.Atoi(maxCountStr)
+		parsedMaxCount, err := strconv.ParseInt(maxCountStr, 10, 32)
 		if err == nil {
-			maxCount = parsedMaxCount
+			maxCount = int(parsedMaxCount)
 			if maxCount <= 0 {
 				fieldErrors["maxCount"] = []string{"must be greater than zero"}
 				maxCount = defaultCount
@@ -315,6 +361,9 @@ func ParsePaginationParams(r *http.Request) (offset int, limit int) {
 // PaginateSlice slices a slice based on offset and limit.
 // Returns the sliced items and a boolean indicating if the limit was exceeded (more items exist).
 func PaginateSlice[T any](items []T, offset, limit int) ([]T, bool) {
+	if offset < 0 {
+		offset = 0
+	}
 	if offset >= len(items) {
 		return []T{}, false
 	}
@@ -322,6 +371,9 @@ func PaginateSlice[T any](items []T, offset, limit int) ([]T, bool) {
 	// If limit is -1, return everything from offset
 	if limit == -1 {
 		return items[offset:], false
+	}
+	if limit < 0 {
+		limit = 0
 	}
 
 	end := offset + limit
@@ -379,7 +431,7 @@ func ParseDate(date string, loc *time.Location) (time.Time, error) {
 
 	// Parsing as an integer (Unix milliseconds)
 	if v, err := strconv.ParseInt(date, 10, 64); err == nil {
-		if v < minUnixMillis || v > maxUnixMillis {
+		if strings.HasPrefix(date, "+") || strings.HasPrefix(date, "-") || v < minUnixMillis || v > maxUnixMillis {
 			return time.Time{}, errors.New("unix millisecond timestamp out of reasonable bounds")
 		}
 		// Convert to the provided timezone and explicitly set to midnight

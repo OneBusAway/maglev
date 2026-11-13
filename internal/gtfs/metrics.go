@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -16,10 +17,11 @@ import (
 // MetricsSnapshot captures a point-in-time view of agency coverage, scheduled
 // trip counts, and GTFS-RT matching health, keyed by agency ID.
 //
-// "Matched" means a real-time trip/stop ID resolves against the static
-// schedule and, for trips, that its block has a currently active prediction
-// window (see isCombinedRecordActive), mirroring Java's
-// GtfsRealtimeTripLibrary#isTripActive gate. Record counting and
+// "Matched" means a real-time trip ID resolves against the static schedule
+// and its block has a currently active prediction window (see
+// isCombinedRecordActive), mirroring Java's
+// GtfsRealtimeTripLibrary#isTripActive gate, or that a stop_time_update's
+// stop is scheduled on its own trip (see matchScheduledStop). Record counting and
 // matched/unmatched ID deduplication follow Java's semantics too: see
 // matchedTripIDsByAgency and computeFeedMetrics.
 type MetricsSnapshot struct {
@@ -390,9 +392,9 @@ type feedMetrics struct {
 	stopIDsUnmatched       []string
 }
 
-// computeFeedMetrics cross-references a feed's real-time trips (and the stops
-// referenced in their stop_time_updates) against the static schedule to
-// determine what matched.
+// computeFeedMetrics cross-references a feed's real-time trips against the
+// static schedule, and the stops in their stop_time_updates against those
+// trips' scheduled stops, to determine what matched.
 //
 // recordsTotal and stop matching are deduplicated, mirroring the upstream
 // Java implementation (GtfsRealtimeSource#handleUpdates groups trip updates
@@ -417,7 +419,7 @@ func (manager *Manager) computeFeedMetrics(ctx context.Context, trips []gtfs.Tri
 		return feedMetrics{}, err
 	}
 
-	staticStopIDs, err := manager.staticStopIDsForTrips(ctx, trips)
+	stopsByTrip, err := manager.staticStopTimesByTrip(ctx, tripRouteByID)
 	if err != nil {
 		return feedMetrics{}, err
 	}
@@ -431,7 +433,7 @@ func (manager *Manager) computeFeedMetrics(ctx context.Context, trips []gtfs.Tri
 	metrics.recordsTotal = len(tripGroups)
 	metrics.tripIDsMatchedByAgency = matchedTripIDsByAgency(tripGroups, tripRouteByID, agencyByRouteID, now)
 
-	classification := classifyTrips(trips, tripRouteByID, staticStopIDs)
+	classification := classifyTrips(trips, tripRouteByID, stopsByTrip)
 	metrics.tripIDsUnmatched = sortedKeys(classification.unmatchedTripIDs)
 	metrics.stopIDsMatched = sortedKeys(classification.matchedStopIDs)
 	metrics.stopIDsUnmatched = sortedKeys(classification.unmatchedStopIDs)
@@ -458,19 +460,27 @@ func (manager *Manager) staticTripLookups(ctx context.Context, trips []gtfs.Trip
 	return tripRouteByID, tripBlockByID, nil
 }
 
-// staticStopIDsForTrips resolves the stop IDs referenced by a feed poll's
-// stop_time_updates against the static schedule.
-func (manager *Manager) staticStopIDsForTrips(ctx context.Context, trips []gtfs.Trip) (map[string]bool, error) {
-	staticStops, err := utils.QueryInBatches(ctx, collectStopIDs(trips), manager.GtfsDB.Queries.GetStopsByIDs)
+// scheduledStop is one static stop_times row of a trip, as stop matching
+// needs it.
+type scheduledStop struct {
+	stopID       string
+	stopSequence int64
+}
+
+// staticStopTimesByTrip loads the scheduled stops of every statically
+// resolved trip in a feed poll, keyed by trip ID.
+func (manager *Manager) staticStopTimesByTrip(ctx context.Context, tripRouteByID map[string]string) (map[string][]scheduledStop, error) {
+	stopTimes, err := utils.QueryInBatches(ctx, slices.Sorted(maps.Keys(tripRouteByID)), manager.GtfsDB.Queries.GetStopTimesForTripIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	staticStopIDs := make(map[string]bool, len(staticStops))
-	for _, staticStop := range staticStops {
-		staticStopIDs[staticStop.ID] = true
+	stopsByTrip := make(map[string][]scheduledStop, len(tripRouteByID))
+	for _, stopTime := range stopTimes {
+		stopsByTrip[stopTime.TripID] = append(stopsByTrip[stopTime.TripID],
+			scheduledStop{stopID: stopTime.StopID, stopSequence: stopTime.StopSequence})
 	}
-	return staticStopIDs, nil
+	return stopsByTrip, nil
 }
 
 // tripClassification is the per-trip breakdown computeFeedMetrics needs:
@@ -482,7 +492,11 @@ type tripClassification struct {
 	unmatchedStopIDs map[string]bool
 }
 
-func classifyTrips(trips []gtfs.Trip, tripRouteByID map[string]string, staticStopIDs map[string]bool) tripClassification {
+// classifyTrips only classifies the stops of trip updates that resolve to a
+// static trip, as Java only matches stops for trip updates that resolve to a
+// block. ADDED and DUPLICATED trip updates are skipped too: Java applies them
+// through applyDynamicTripUpdatesToRecord, which never records stop matches.
+func classifyTrips(trips []gtfs.Trip, tripRouteByID map[string]string, stopsByTrip map[string][]scheduledStop) tripClassification {
 	result := tripClassification{
 		unmatchedTripIDs: make(map[string]bool),
 		matchedStopIDs:   make(map[string]bool),
@@ -492,24 +506,65 @@ func classifyTrips(trips []gtfs.Trip, tripRouteByID map[string]string, staticSto
 	for _, trip := range trips {
 		if _, matched := tripRouteByID[trip.ID.ID]; !matched {
 			result.unmatchedTripIDs[trip.ID.ID] = true
+			continue
 		}
-		classifyStopTimeUpdates(trip.StopTimeUpdates, staticStopIDs, &result)
+		if isAddedOrDuplicated(trip) {
+			continue
+		}
+		classifyStopTimeUpdates(trip.StopTimeUpdates, stopsByTrip[trip.ID.ID], &result)
 	}
 
 	return result
 }
 
-func classifyStopTimeUpdates(updates []gtfs.StopTimeUpdate, staticStopIDs map[string]bool, result *tripClassification) {
+func isAddedOrDuplicated(trip gtfs.Trip) bool {
+	relationship := trip.ID.ScheduleRelationship
+	return relationship == gtfsrt.TripDescriptor_ADDED || relationship == gtfsrt.TripDescriptor_DUPLICATED
+}
+
+// classifyStopTimeUpdates skips an update that matches nothing and has no
+// stop_id: Java records it as an unmatched empty stop ID, which only reflects
+// the protobuf default for an unset field.
+func classifyStopTimeUpdates(updates []gtfs.StopTimeUpdate, tripStops []scheduledStop, result *tripClassification) {
 	for _, stopTimeUpdate := range updates {
-		if stopTimeUpdate.StopID == nil {
-			continue
-		}
-		if staticStopIDs[*stopTimeUpdate.StopID] {
-			result.matchedStopIDs[*stopTimeUpdate.StopID] = true
-		} else {
+		if stopID, matched := matchScheduledStop(stopTimeUpdate, tripStops); matched {
+			result.matchedStopIDs[stopID] = true
+		} else if stopTimeUpdate.StopID != nil {
 			result.unmatchedStopIDs[*stopTimeUpdate.StopID] = true
 		}
 	}
+}
+
+// matchScheduledStop finds the stop a stop_time_update refers to among its
+// trip's scheduled stops, in GtfsRealtimeTripLibrary#getBlockStopTimeForStopTimeUpdate
+// order: by stop_sequence when the scheduled stop there agrees with any
+// stop_id given, otherwise by stop_id alone.
+func matchScheduledStop(stopTimeUpdate gtfs.StopTimeUpdate, tripStops []scheduledStop) (string, bool) {
+	if stop, found := scheduledStopAtSequence(tripStops, stopTimeUpdate.StopSequence); found {
+		if stopTimeUpdate.StopID == nil || *stopTimeUpdate.StopID == stop.stopID {
+			return stop.stopID, true
+		}
+	}
+	if stopTimeUpdate.StopID == nil {
+		return "", false
+	}
+	isScheduled := slices.ContainsFunc(tripStops, func(stop scheduledStop) bool {
+		return stop.stopID == *stopTimeUpdate.StopID
+	})
+	return *stopTimeUpdate.StopID, isScheduled
+}
+
+func scheduledStopAtSequence(tripStops []scheduledStop, stopSequence *uint32) (scheduledStop, bool) {
+	if stopSequence == nil {
+		return scheduledStop{}, false
+	}
+	index := slices.IndexFunc(tripStops, func(stop scheduledStop) bool {
+		return stop.stopSequence == int64(*stopSequence)
+	})
+	if index < 0 {
+		return scheduledStop{}, false
+	}
+	return tripStops[index], true
 }
 
 // matchedTripIDsByAgency lists, per agency, one trip ID for each
@@ -690,21 +745,6 @@ func collectTripIDs(trips []gtfs.Trip) []string {
 		if !seen[trip.ID.ID] {
 			seen[trip.ID.ID] = true
 			ids = append(ids, trip.ID.ID)
-		}
-	}
-	return ids
-}
-
-func collectStopIDs(trips []gtfs.Trip) []string {
-	seen := make(map[string]bool)
-	var ids []string
-	for _, trip := range trips {
-		for _, stopTimeUpdate := range trip.StopTimeUpdates {
-			if stopTimeUpdate.StopID == nil || seen[*stopTimeUpdate.StopID] {
-				continue
-			}
-			seen[*stopTimeUpdate.StopID] = true
-			ids = append(ids, *stopTimeUpdate.StopID)
 		}
 	}
 	return ids

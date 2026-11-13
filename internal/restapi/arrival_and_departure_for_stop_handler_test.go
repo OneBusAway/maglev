@@ -181,6 +181,84 @@ func TestArrivalAndDepartureForStopHandlerWithTimeParameter(t *testing.T) {
 	assert.Equal(t, tripID, model.Data.Entry.TripID)
 }
 
+func TestArrivalAndDepartureForStopHandlerWithDateTimeFormat(t *testing.T) {
+	ctx := t.Context()
+	mockNow := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(mockNow)
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+
+	queries := api.GtfsManager.GtfsDB.Queries
+	const (
+		agencyID  = "DateTimeLoopAgency"
+		routeID   = "DateTimeLoopRoute"
+		tripID    = "DateTimeLoopTrip"
+		stopID    = "DateTimeLoopStop"
+		serviceID = "DateTimeLoopService"
+	)
+
+	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "DateTime Loop Transit", Url: "https://example.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID, Type: 3,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: stopID, Name: nulls.String("DateTime Loop Stop"), Lat: 47.0, Lon: -122.0,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:     serviceID,
+		Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20200101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: routeID, ServiceID: serviceID,
+	})
+	require.NoError(t, err)
+
+	firstVisit := int64(8 * time.Hour)
+	secondVisit := int64(9 * time.Hour)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: 1,
+		ArrivalTime: firstVisit, DepartureTime: firstVisit,
+	})
+	require.NoError(t, err)
+
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: 8,
+		ArrivalTime: secondVisit, DepartureTime: secondVisit,
+	})
+	require.NoError(t, err)
+
+	combinedStopID := utils.FormCombinedID(agencyID, stopID)
+	combinedTripID := utils.FormCombinedID(agencyID, tripID)
+
+	serviceMidnight := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	// Query time near the 09:00 visit (08:55), while clock is pinned at midnight.
+	queryTime := serviceMidnight.Add(8*time.Hour + 55*time.Minute)
+	timeFormatted := queryTime.Format(utils.LocationDateTimeLayout)
+
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&time=%s",
+		combinedStopID, combinedTripID, serviceMidnight.UnixMilli(), timeFormatted)
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, combinedStopID, model.Data.Entry.StopID)
+	assert.Equal(t, combinedTripID, model.Data.Entry.TripID)
+	assert.Equal(t, 1, model.Data.Entry.StopSequence,
+		"datetime query near 09:00 should select the second visit (stopSequence index 1) despite clock at midnight")
+}
+
 func TestArrivalAndDepartureForStopHandlerRequiresTripId(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -198,6 +276,25 @@ func TestArrivalAndDepartureForStopHandlerRequiresTripId(t *testing.T) {
 	assert.Contains(t, model.Data.FieldErrors, "tripId")
 	assert.Len(t, model.Data.FieldErrors["tripId"], 1)
 	assert.Equal(t, "missingRequiredField", model.Data.FieldErrors["tripId"][0])
+}
+
+func TestArrivalAndDepartureForStopHandlerValidatesTripIDFormat(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	agency := mustGetAgencies(t, api)[0]
+	stop := mustGetStop(t, api)
+
+	stopID := utils.FormCombinedID(agency.ID, stop.ID)
+	serviceDate := time.Now().UnixMilli()
+
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=invalid&serviceDate=%d", stopID, serviceDate)
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, model.Data.FieldErrors, "tripId")
+	assert.NotContains(t, model.Data.FieldErrors, "id")
+	assert.Equal(t, "invalid format: invalid", model.Data.FieldErrors["tripId"][0])
 }
 
 func TestArrivalAndDepartureForStopHandlerRequiresServiceDate(t *testing.T) {
@@ -287,6 +384,41 @@ func TestArrivalAndDepartureForStopHandlerWithMinutesParameters(t *testing.T) {
 	assert.Equal(t, http.StatusOK, model.Code)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, stopID, model.Data.Entry.StopID)
+}
+
+func TestArrivalAndDepartureForStopHandlerValidatesIntegerParamsRange(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	api.rateLimiter = NewRateLimitMiddleware(100, time.Second, nil)
+
+	stopID := utils.FormCombinedID("25", "3028")
+	tripID := utils.FormCombinedID("25", "03969589-98dc-4fcd-a1c2-ce084b4ca5d2")
+	serviceDate := time.Now().UnixMilli()
+
+	tests := []struct {
+		name       string
+		paramQuery string
+		field      string
+	}{
+		{"minutesAfter 64-bit overflow", "minutesAfter=99999999999", "minutesAfter"},
+		{"minutesAfter int32 overflow", "minutesAfter=2147483648", "minutesAfter"},
+		{"minutesBefore 64-bit overflow", "minutesBefore=99999999999", "minutesBefore"},
+		{"minutesBefore int32 overflow", "minutesBefore=2147483648", "minutesBefore"},
+		{"stopSequence 64-bit overflow", "stopSequence=99999999999", "stopSequence"},
+		{"stopSequence int32 overflow", "stopSequence=2147483648", "stopSequence"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&%s",
+				stopID, tripID, serviceDate, tt.paramQuery)
+			resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			assert.Contains(t, model.Data.FieldErrors, tt.field)
+			assert.Equal(t, "must be a valid integer", model.Data.FieldErrors[tt.field][0])
+		})
+	}
 }
 
 func TestArrivalAndDepartureForStopHandlerWithNonexistentTripID(t *testing.T) {
@@ -456,6 +588,102 @@ func TestArrivalAndDepartureForStop_NoRealTimeDataUsesZeroPredictionTimes(t *tes
 	assert.True(t, entry.LastUpdateTime.IsZero())
 }
 
+// TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictedWithoutTimes
+// verifies that a StopTimeUpdate only for a later stop marks the arrival
+// predicted without propagating its deviation upstream, matching Java's
+// getBestScheduleDeviation.
+func TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictedWithoutTimes(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addDownstreamSTU(t, api, tripID, 174*time.Second)
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID("dp-agency", tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	require.NotNil(t, entry.TripStatus)
+	assert.True(t, entry.TripStatus.Predicted)
+	assert.Equal(t, 174, entry.TripStatus.ScheduleDeviation)
+	assert.True(t, entry.Predicted, "arrival.predicted should agree with tripStatus.predicted")
+	assert.True(t, entry.PredictedArrivalTime.IsZero(), "deviation must not propagate upstream")
+	assert.True(t, entry.PredictedDepartureTime.IsZero(), "deviation must not propagate upstream")
+}
+
+// TestArrivalAndDepartureForStop_EarlierBlockTripSTUPropagatesDownstream
+// verifies that a StopTimeUpdate on an earlier trip in the block predicts a
+// later trip's stop, matching Java's getBestScheduleDeviation carrying the
+// last deviation sample downstream.
+func TestArrivalAndDepartureForStop_EarlierBlockTripSTUPropagatesDownstream(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addEarlierBlockTripSTU(t, api, 174*time.Second)
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID("dp-agency", tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	assert.True(t, entry.Predicted)
+	// The stop's 5-minute dwell absorbs the delay before departure.
+	assert.Equal(t, entry.ScheduledArrivalTime.Add(174*time.Second).UnixMilli(), entry.PredictedArrivalTime.UnixMilli())
+	assert.Equal(t, entry.ScheduledDepartureTime.UnixMilli(), entry.PredictedDepartureTime.UnixMilli())
+}
+
+// TestArrivalAndDepartureForStop_LayoverAbsorbsEarlierTripDelay verifies
+// that a delay on an earlier block trip is absorbed by the layover before
+// the queried trip, matching Java's calculateArrivalDeviation measuring
+// slack across the block rather than within the queried trip.
+func TestArrivalAndDepartureForStop_LayoverAbsorbsEarlierTripDelay(t *testing.T) {
+	// The earlier trip's 07:00 stop is still ahead of the late bus, and the
+	// queried stop is an hour later.
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 7, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addEarlierBlockTripSTU(t, api, 174*time.Second)
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID("dp-agency", tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	assert.True(t, entry.Predicted)
+	assert.Equal(t, entry.ScheduledArrivalTime.UnixMilli(), entry.PredictedArrivalTime.UnixMilli())
+	assert.Equal(t, entry.ScheduledDepartureTime.UnixMilli(), entry.PredictedDepartureTime.UnixMilli())
+}
+
 func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -508,6 +736,16 @@ func TestParseArrivalAndDepartureParams_DefaultValues(t *testing.T) {
 	assert.Nil(t, params.StopSequence)
 }
 
+func TestParseArrivalAndDepartureParams_MillisecondPrecision(t *testing.T) {
+	req := httptest.NewRequest("GET", "/test?time=1609459200123&serviceDate=1609459200456", nil)
+	params, errs := parseArrivalAndDepartureParams(req)
+	require.Empty(t, errs)
+	require.NotNil(t, params.Time)
+	require.NotNil(t, params.ServiceDate)
+	assert.Equal(t, int64(1609459200123), params.Time.UnixMilli())
+	assert.Equal(t, int64(1609459200456), params.ServiceDate.UnixMilli())
+}
+
 func TestParseArrivalAndDepartureParams_InvalidValues(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test?minutesAfter=invalid&minutesBefore=invalid&time=invalid&serviceDate=invalid&stopSequence=invalid", nil)
 
@@ -520,6 +758,7 @@ func TestParseArrivalAndDepartureParams_InvalidValues(t *testing.T) {
 	assert.Contains(t, errs, "stopSequence")
 
 	assert.Equal(t, "must be a valid integer", errs["minutesAfter"][0])
+	assert.Equal(t, `Invalid field value for field "time".`, errs["time"][0])
 	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["serviceDate"][0])
 }
 
@@ -1317,6 +1556,95 @@ func TestArrivalAndDepartureForStopHandler_NoStopSequence_PicksClosestToQueryTim
 	require.Equal(t, http.StatusOK, model2.Code)
 	assert.Equal(t, 1, model2.Data.Entry.StopSequence,
 		"time near 09:00 should select the second visit (zero-based position 1)")
+}
+
+// TestArrivalAndDepartureForStop_TimeZeroUsesNow verifies that time=0 on the
+// singular arrival endpoint is "not supplied". A loop stop is visited at
+// 08:00 and 09:00; the clock sits at 08:50, so now selects the 09:00 visit.
+// time=0 must select that same visit. An explicit non-zero time still
+// selects the 08:00 visit. The plural endpoint keeps time=0 as 1970 and
+// therefore returns no arrivals.
+func TestArrivalAndDepartureForStop_TimeZeroUsesNow(t *testing.T) {
+	when := time.Date(2025, 6, 1, 8, 50, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(when))
+	defer api.Shutdown()
+
+	ctx := t.Context()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	const (
+		agencyID  = "TimeZeroAgency"
+		routeID   = "TimeZeroRoute"
+		tripID    = "TimeZeroTrip"
+		stopID    = "TimeZeroStop"
+		serviceID = "TimeZeroService"
+	)
+
+	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "Time Zero Transit", Url: "https://example.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID, Type: 3,
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: stopID, Name: nulls.String("Time Zero Stop"), Lat: 47.0, Lon: -122.0,
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID:     serviceID,
+		Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20200101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: routeID, ServiceID: serviceID,
+	})
+	require.NoError(t, err)
+
+	firstVisit := int64(8 * time.Hour)
+	secondVisit := int64(9 * time.Hour)
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: 1,
+		ArrivalTime: firstVisit, DepartureTime: firstVisit,
+	})
+	require.NoError(t, err)
+	_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: 8,
+		ArrivalTime: secondVisit, DepartureTime: secondVisit,
+	})
+	require.NoError(t, err)
+
+	combinedStopID := utils.FormCombinedID(agencyID, stopID)
+	combinedTripID := utils.FormCombinedID(agencyID, tripID)
+	serviceMidnight := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	base := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d",
+		combinedStopID, combinedTripID, serviceMidnight.UnixMilli(),
+	)
+
+	respOmit, omit := callAPIHandler[ArrivalAndDepartureResponse](t, api, base)
+	require.Equal(t, http.StatusOK, respOmit.StatusCode)
+	respZero, zero := callAPIHandler[ArrivalAndDepartureResponse](t, api, base+"&time=0")
+	require.Equal(t, http.StatusOK, respZero.StatusCode)
+	assert.Equal(t, omit.Data.Entry.StopSequence, zero.Data.Entry.StopSequence)
+	assert.Equal(t, 1, zero.Data.Entry.StopSequence, "time=0 must use now and select the 09:00 visit")
+	assert.Equal(t, omit.Data.Entry.ScheduledArrivalTime.UnixMilli(), zero.Data.Entry.ScheduledArrivalTime.UnixMilli())
+
+	nearFirst := serviceMidnight.Add(8*time.Hour + 5*time.Minute)
+	respFirst, first := callAPIHandler[ArrivalAndDepartureResponse](t, api, fmt.Sprintf("%s&time=%d", base, nearFirst.UnixMilli()))
+	require.Equal(t, http.StatusOK, respFirst.StatusCode)
+	assert.Equal(t, 0, first.Data.Entry.StopSequence, "an explicit non-zero time is still honored")
+
+	pluralOmitURL := "/api/where/arrivals-and-departures-for-stop/" + combinedStopID + ".json?key=TEST"
+	pluralZeroURL := pluralOmitURL + "&time=0"
+	respPluralOmit, pluralOmit := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, pluralOmitURL)
+	respPluralZero, pluralZero := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, pluralZeroURL)
+	require.Equal(t, http.StatusOK, respPluralOmit.StatusCode)
+	require.Equal(t, http.StatusOK, respPluralZero.StatusCode)
+	require.NotEmpty(t, pluralOmit.Data.Entry.ArrivalsAndDepartures, "omitted time on the plural endpoint uses now")
+	assert.Empty(t, pluralZero.Data.Entry.ArrivalsAndDepartures, "the plural endpoint must keep time=0 as 1970")
 }
 
 func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {

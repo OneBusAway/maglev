@@ -27,11 +27,17 @@ func TestDebugIndexHandler_ProductionReturns404(t *testing.T) {
 }
 
 func TestDebugIndexHandler_DevelopmentReturns200(t *testing.T) {
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("Recovered from panic as expected: %v", r)
-		}
-	}()
+	webUI := createTestWebUI(t)
+
+	req, _ := http.NewRequest("GET", "/debug?dataType=agencies", nil)
+	rr := httptest.NewRecorder()
+
+	webUI.debugIndexHandler(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+func TestDebugIndexHandler_UninitializedDBReturns500(t *testing.T) {
 	webUI := &WebUI{
 		Application: &app.Application{
 			Config:      appconf.Config{Env: appconf.Development},
@@ -44,9 +50,7 @@ func TestDebugIndexHandler_DevelopmentReturns200(t *testing.T) {
 
 	webUI.debugIndexHandler(rr, req)
 
-	if rr.Code == http.StatusNotFound {
-		t.Errorf("expected 200 (or non-404) in Development, got 404")
-	}
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
 func TestWriteDebugData(t *testing.T) {

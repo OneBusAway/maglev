@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -166,13 +168,17 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
 	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
+		return
+	}
+	if route.AgencyID != agencyID {
+		api.sendNotFound(w, r)
 		return
 	}
 
@@ -198,24 +204,21 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	currentTime := api.resolveTripQueryTime(params.Time, loc)
 
-	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
+	date := servicedate.Of(currentTime)
+	if params.ServiceDate != nil {
+		date = servicedate.FromInstant(*params.ServiceDate, loc)
+	}
+	serviceDate := date.Midnight(loc)
+	serviceStart := date.Start(loc)
 
 	// When serviceDate is explicitly provided, validate that the trip operates on
 	// that date. Per the wiki spec: "serviceDate is provided but no
 	// block instance exists for that service date → HTTP 404".
 	if params.ServiceDate != nil {
-		formattedDate := serviceDate.Format("20060102")
-		activeServiceIDs, svcErr := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+		serviceActive, svcErr := api.serviceActiveOn(ctx, trip.ServiceID, serviceDate)
 		if svcErr != nil {
 			api.serverErrorResponse(w, r, svcErr)
 			return
-		}
-		serviceActive := false
-		for _, svcID := range activeServiceIDs {
-			if svcID == trip.ServiceID {
-				serviceActive = true
-				break
-			}
 		}
 		if !serviceActive {
 			api.sendNotFound(w, r)
@@ -250,22 +253,45 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		requestedVehicle = v
 	}
 
+	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
+	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+
 	var schedule *models.Schedule
 	var status *models.TripStatus
 	var statusExtras *tripStatusExtras
+	statusFreqMap := map[string][]gtfsdb.Frequency{trip.ID: freqRows}
 
 	if params.IncludeStatus {
 		var statusErr error
-		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime, nil)
+		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime, statusFreqMap)
 		if statusErr != nil {
 			api.serverErrorResponse(w, r, statusErr)
 			return
 		}
 
-		// Extension 4e: Explicitly nil out the status if there is no actual tracking record.
-		// BuildTripStatus returns a default placeholder when tracking is absent, so we nil it to trigger JSON omitempty.
+		// Without a tracking record Java still reports where the schedule puts
+		// the trip (AbstractBlockLocationServiceImpl.getBlockLocation); it has no
+		// status only when the schedule places it nowhere. So drop the untracked
+		// placeholder only when the trip is not scheduled to be running.
 		if status != nil && status.IsUntracked() {
-			status = nil
+			// The serviceDate check above already returned 404 unless the
+			// trip's service runs that day.
+			serviceConfirmed := params.ServiceDate != nil
+			scheduled, schedErr := api.tripScheduledToRunAt(ctx, trip, freqRows, serviceDate, currentTime.Sub(serviceStart), serviceConfirmed)
+			if schedErr != nil {
+				api.serverErrorResponse(w, r, schedErr)
+				return
+			}
+			if !scheduled {
+				status = nil
+			}
+		}
+		if status != nil {
+			startTripStatusAtServiceStart(status, statusFreqMap, trip.ID, serviceStart, currentTime)
 		}
 	}
 
@@ -283,26 +309,18 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	// the status was built its situations are this trip's and are reused here.
 	situationsIDs, situationRefs := api.tripSituationsFor(ctx, tripID, statusExtras)
 
-	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
-	if err != nil {
-		reqLogger.Warn("GetFrequenciesForTrip failed",
-			"trip_id", tripID,
-			"error", err.Error())
-		freqRows = nil
-	}
-
 	var frequency *models.Frequency
 	if len(freqRows) > 0 {
 		// TripDetails has only one frequency field, but GetFrequenciesForTrip query can return multiple rows
 		// when there are multiple frequency entries for the same trip. In order to adhere to the API contract,
 		// we take the first row which gives us the frequency with the earliest start_time
-		converted := models.NewFrequencyFromDB(freqRows[0], serviceDate)
+		converted := models.NewFrequencyFromServiceStart(freqRows[0], serviceStart)
 		frequency = &converted
 	}
 
 	tripDetails := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, trip.ID),
-		ServiceDate:  models.NewModelTime(midnight),
+		ServiceDate:  models.NewModelTime(serviceStart),
 		Schedule:     schedule,
 		Frequency:    frequency,
 		SituationIDs: situationsIDs,
@@ -381,6 +399,49 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	api.sendResponse(w, r, response)
 }
 
+// serviceActiveOn reports whether serviceID runs on serviceDate.
+func (api *RestAPI) serviceActiveOn(ctx context.Context, serviceID string, serviceDate time.Time) (bool, error) {
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(activeServiceIDs, serviceID), nil
+}
+
+// tripScheduledToRunAt reports whether trip's schedule has it running at
+// scheduleOffset after the start of serviceDate: scheduleOffset falls within
+// its scheduled span and its service runs that day. serviceConfirmed skips the
+// calendar query when the caller has already checked the service.
+func (api *RestAPI) tripScheduledToRunAt(ctx context.Context, trip gtfsdb.Trip, freqs []gtfsdb.Frequency, serviceDate time.Time, scheduleOffset time.Duration, serviceConfirmed bool) (bool, error) {
+	if !tripSpanCovers(trip, freqs, scheduleOffset) {
+		return false, nil
+	}
+	if serviceConfirmed {
+		return true, nil
+	}
+	return api.serviceActiveOn(ctx, trip.ServiceID, serviceDate)
+}
+
+// tripSpanCovers reports whether offset (since the service-day start) falls in the
+// trip's scheduled span. For a frequency-based trip that span is each frequency
+// window plus one run; the template stop times give only the run's length, since
+// they may be relative to the window rather than real times of day.
+func tripSpanCovers(trip gtfsdb.Trip, freqs []gtfsdb.Frequency, offset time.Duration) bool {
+	if len(freqs) == 0 {
+		return tripWindowOverlapsRange(trip, offset, offset)
+	}
+	if !trip.MinArrivalTime.Valid || !trip.MaxDepartureTime.Valid {
+		return false
+	}
+	runDuration := trip.MaxDepartureTime.Int64 - trip.MinArrivalTime.Int64
+	for _, freq := range freqs {
+		if freq.StartTime <= offset.Nanoseconds() && offset.Nanoseconds() <= freq.EndTime+runDuration {
+			return true
+		}
+	}
+	return false
+}
+
 func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, tripsToInclude []string, mainTrip gtfsdb.Trip) ([]*models.Trip, error) {
 	referencedTrips := []*models.Trip{}
 
@@ -453,21 +514,18 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 			continue
 		}
 
-		var blockID string
-		if refTrip.BlockID.Valid && refTrip.BlockID.String != "" {
-			blockID = utils.FormCombinedID(agencyID, refTrip.BlockID.String)
-		}
+		blockID := utils.FormBlockID(agencyID, nulls.StringOrEmpty(refTrip.BlockID), refTrip.ID)
 
 		refTripModel := &models.Trip{
 			ID:             entry.combinedID,
 			RouteID:        utils.FormCombinedID(refRoute.AgencyID, refTrip.RouteID),
 			ServiceID:      utils.FormCombinedID(agencyID, refTrip.ServiceID),
-			ShapeID:        utils.FormCombinedID(agencyID, refTrip.ShapeID.String),
-			TripHeadsign:   refTrip.TripHeadsign.String,
-			TripShortName:  refTrip.TripShortName.String,
+			ShapeID:        utils.FormCombinedID(agencyID, nulls.StringOrEmpty(refTrip.ShapeID)),
+			TripHeadsign:   nulls.StringOrEmpty(refTrip.TripHeadsign),
+			TripShortName:  nulls.StringOrEmpty(refTrip.TripShortName),
 			DirectionID:    strconv.FormatInt(refTrip.DirectionID.Int64, 10),
 			BlockID:        blockID,
-			RouteShortName: refRoute.ShortName.String,
+			RouteShortName: nulls.StringOrEmpty(refRoute.ShortName),
 			TimeZone:       "",
 			PeakOffPeak:    0,
 		}

@@ -1,18 +1,19 @@
 package gtfsdb
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	_ "embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
-	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -24,11 +25,26 @@ import (
 //go:embed schema.sql
 var ddl string
 
-// GtfsData bundles parsed static GTFS data with the sha256 hash of the
-// bytes it was parsed from. The hash is used to skip reimport when the
-// source data is unchanged.
+// GtfsData bundles parsed static GTFS data with the hash that identifies the
+// feed in import_metadata. The hash is used to skip reimport when the feed is
+// unchanged. Make one with ParseGtfsStream or ParseGtfsData: StoreGtfsData
+// reads the stop times and shape points from the stream they keep.
 type GtfsData struct {
 	Static *gtfs.Static
+	Hash   string
+	Source string
+
+	// stream reads the stop times and shape points, which Static lacks.
+	stream *gtfs.StaticStream
+}
+
+// errNotParsed rejects a GtfsData built by hand: only one made by
+// ParseGtfsStream or ParseGtfsData holds the stream StoreGtfsData reads.
+var errNotParsed = errors.New("GTFS data to import must come from ParseGtfsStream or ParseGtfsData")
+
+// FeedIdentity names a feed in import_metadata: the hash it is stored under
+// and the source it came from.
+type FeedIdentity struct {
 	Hash   string
 	Source string
 }
@@ -36,19 +52,8 @@ type GtfsData struct {
 // ParseGtfsData hashes, parses, and structurally validates GTFS zip bytes.
 // The given source is stored on the returned struct for later use by StoreGtfsData.
 func ParseGtfsData(b []byte, source string) (*GtfsData, error) {
-	hash := sha256.Sum256(b)
-	hashStr := hex.EncodeToString(hash[:])
-
-	staticData, err := gtfs.ParseStatic(b, gtfs.ParseStaticOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("error parsing GTFS data: %w", err)
-	}
-
-	if err := ValidateAndFilterGTFSData(staticData, slog.Default()); err != nil {
-		return nil, fmt.Errorf("GTFS validation failed: %w", err)
-	}
-
-	return &GtfsData{Static: staticData, Hash: hashStr, Source: source}, nil
+	sum := sha256.Sum256(b)
+	return ParseGtfsStream(bytes.NewReader(b), int64(len(b)), FeedIdentity{Hash: hex.EncodeToString(sum[:]), Source: source})
 }
 
 // metricsWrapper wraps *sql.DB for metric reporting purposes
@@ -141,12 +146,11 @@ func createDB(config Config) (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Configure SQLite performance settings immediately after opening
 	ctx := context.Background()
-	err = configureSQLitePerformance(ctx, db)
+	err = enableWALMode(ctx, db)
 	if err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("error configuring SQLite performance: %w", err)
+		return nil, fmt.Errorf("error enabling SQLite WAL mode: %w", err)
 	}
 
 	err = performDatabaseMigration(ctx, db)
@@ -202,6 +206,49 @@ func (c *Client) withTransaction(ctx context.Context, tx *sql.Tx, label string, 
 	return nil
 }
 
+// SkipIfImported reports whether the database already holds the feed with
+// this identity, so a caller can skip parsing and storing it.
+// When it does, it refreshes the feed's derived metadata, as StoreGtfsData
+// does for an unchanged feed.
+func (c *Client) SkipIfImported(ctx context.Context, feed FeedIdentity) (bool, error) {
+	metadata, err := c.Queries.GetImportMetadata(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("error checking import metadata: %w", err)
+	}
+	return c.skipUnchangedFeed(ctx, metadata, feed)
+}
+
+// skipUnchangedFeed is the one rule for a feed the database already holds.
+// When import_metadata describes the feed with this identity, it
+// refreshes the derived metadata and reports true; otherwise it does nothing.
+func (c *Client) skipUnchangedFeed(ctx context.Context, metadata ImportMetadatum, feed FeedIdentity) (bool, error) {
+	if metadata.FileHash != feed.Hash || metadata.FileSource != feed.Source {
+		return false, nil
+	}
+	if err := c.refreshFeedExpiry(ctx); err != nil {
+		return false, err
+	}
+	logger := slog.Default().With(slog.String("component", "gtfs_importer"))
+	logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import", slog.String("hash", feed.Hash[:8]))
+	return true, nil
+}
+
+// refreshFeedExpiry recomputes feed_expires_at from the stored calendar. It
+// runs when a feed is found unchanged, so existing databases pick up
+// corrections to the expiry calculation on upgrade without a re-import.
+func (c *Client) refreshFeedExpiry(ctx context.Context) error {
+	err := c.withTransaction(ctx, nil, "refresh_feed_expiry", func(tx *sql.Tx) error {
+		return updateFeedExpiresAtFromCalendar(ctx, c.Queries.WithTx(tx))
+	})
+	if err != nil {
+		return fmt.Errorf("failed to refresh feed expiry: %w", err)
+	}
+	return nil
+}
+
 func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error) {
 	logger := slog.Default().With(slog.String("component", "gtfs_importer"))
 
@@ -221,15 +268,20 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	existingMetadata, err := c.Queries.GetImportMetadata(ctx)
 	if err == nil {
 		hasExisting = true
-		// We have existing metadata, check if hash matches
-		if existingMetadata.FileHash == data.Hash && existingMetadata.FileSource == data.Source {
-			logging.LogOperation(logger, "gtfs_data_unchanged_skipping_import",
-				slog.String("hash", data.Hash[:8]))
+		skipped, err := c.skipUnchangedFeed(ctx, existingMetadata, FeedIdentity{Hash: data.Hash, Source: data.Source})
+		if err != nil {
+			return false, err
+		}
+		if skipped {
 			return false, nil
 		}
 	} else if err != sql.ErrNoRows {
 		// Some other error occurred
 		return false, fmt.Errorf("error checking import metadata: %w", err)
+	}
+
+	if data.stream == nil {
+		return false, errNotParsed
 	}
 
 	logging.LogOperation(logger, "retrieved_static_data", slog.Int("warnings", len(data.Static.Warnings)))
@@ -349,7 +401,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 		allStopParams = append(allStopParams, params)
 	}
-	if err := c.bulkInsertStops(ctx, allStopParams, tx); err != nil {
+	if err := c.bulkInsertStops(ctx, slices.Values(allStopParams), tx); err != nil {
 		return false, fmt.Errorf("unable to create stops: %w", err)
 	}
 
@@ -404,31 +456,16 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 		allTripParams = append(allTripParams, params)
 	}
-	if err := c.bulkInsertTrips(ctx, allTripParams, tx); err != nil {
+	if err := c.bulkInsertTrips(ctx, slices.Values(allTripParams), tx); err != nil {
 		return false, fmt.Errorf("unable to create trips: %w", err)
 	}
 
-	var allStopTimeParams []CreateStopTimeParams
-	for _, t := range data.Static.Trips {
-		for _, st := range t.StopTimes {
-			params := CreateStopTimeParams{
-				TripID:            t.ID,
-				ArrivalTime:       int64(st.ArrivalTime),
-				DepartureTime:     int64(st.DepartureTime),
-				StopID:            st.Stop.Id,
-				StopSequence:      int64(st.StopSequence),
-				StopHeadsign:      nulls.String(st.Headsign),
-				PickupType:        toNullInt64(int64(st.PickupType)),
-				DropOffType:       toNullInt64(int64(st.DropOffType)),
-				ShapeDistTraveled: nulls.Float64FromPtr(st.ShapeDistanceTraveled),
-				Timepoint:         toNullInt64(boolToInt(st.ExactTimes)),
-			}
-
-			allStopTimeParams = append(allStopTimeParams, params)
-		}
-	}
-	if err := c.bulkInsertStopTimes(ctx, allStopTimeParams, tx); err != nil {
+	feedRows := data.rows()
+	if err := c.bulkInsertStopTimes(ctx, feedRows.stopTimes(), tx); err != nil {
 		return false, fmt.Errorf("unable to create stop times: %w", err)
+	}
+	if err := feedRows.err; err != nil {
+		return false, fmt.Errorf("unable to read stop times: %w", err)
 	}
 
 	// Collect frequency entries from all trips
@@ -446,26 +483,16 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 	}
 	if len(allFrequencyParams) > 0 {
-		if err := c.bulkInsertFrequencies(ctx, allFrequencyParams, tx); err != nil {
+		if err := c.bulkInsertFrequencies(ctx, slices.Values(allFrequencyParams), tx); err != nil {
 			return false, fmt.Errorf("unable to create frequencies: %w", err)
 		}
 	}
 
-	var allShapeParams []CreateShapeParams
-	for _, s := range data.Static.Shapes {
-		for idx, pt := range s.Points {
-			params := CreateShapeParams{
-				ShapeID:           s.ID,
-				Lat:               pt.Latitude,
-				Lon:               pt.Longitude,
-				ShapePtSequence:   int64(idx),
-				ShapeDistTraveled: nulls.Float64FromPtr(pt.Distance),
-			}
-			allShapeParams = append(allShapeParams, params)
-		}
-	}
-	if err := c.bulkInsertShapes(ctx, allShapeParams, tx); err != nil {
+	if err := c.bulkInsertShapes(ctx, feedRows.shapes(), tx); err != nil {
 		return false, fmt.Errorf("unable to create shapes: %w", err)
+	}
+	if err := feedRows.err; err != nil {
+		return false, fmt.Errorf("unable to read shapes: %w", err)
 	}
 
 	logging.LogOperation(logger, "updating_import_metadata",
@@ -509,14 +536,15 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 
 	if len(allCalendarDateParams) > 0 {
-		if err := c.bulkInsertCalendarDates(ctx, allCalendarDateParams, tx); err != nil {
+		if err := c.bulkInsertCalendarDates(ctx, slices.Values(allCalendarDateParams), tx); err != nil {
 			logging.LogError(logger, "Unable to create calendar dates", err)
 			return false, fmt.Errorf("unable to create calendar dates: %w", err)
 		}
 	}
 
 	logging.LogOperation(logger, "building_block_trip_index")
-	if err := c.buildBlockTripIndex(ctx, data.Static, tx); err != nil {
+	allTripEnds := feedRows.tripEnds
+	if err := c.buildBlockTripIndex(ctx, allTripEnds, tx); err != nil {
 		logging.LogError(logger, "Unable to build block trip index", err)
 		return false, fmt.Errorf("unable to build block trip index: %w", err)
 	}
@@ -535,7 +563,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	logging.LogOperation(logger, "stop_agency_index_built")
 
 	logging.LogOperation(logger, "building_block_layover_index")
-	if err := c.buildBlockLayoverIndex(ctx, data.Static, tx); err != nil {
+	if err := c.buildBlockLayoverIndex(ctx, allTripEnds, tx); err != nil {
 		logging.LogError(logger, "Unable to build block layover index", err)
 		return false, fmt.Errorf("unable to build block layover index: %w", err)
 	}
@@ -551,6 +579,13 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		return false, fmt.Errorf("error committing import transaction: %w", err)
 	}
 
+	logging.LogOperation(logger, "optimizing_database")
+	if err := c.OptimizeDatabase(ctx); err != nil {
+		logging.LogError(logger, "Unable to optimize database", err)
+	} else {
+		logging.LogOperation(logger, "database_optimized")
+	}
+
 	counts, err := c.TableCounts()
 	if err != nil {
 		logging.LogError(logger, "Error getting table counts", err)
@@ -563,10 +598,32 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	return true, nil
 }
 
-// updateFeedExpiresAtFromCalendar reads the latest active service date from
-// calendar / calendar_dates, parses it, and persists feed_expires_at to
-// import_metadata. Intended to be called from within the StoreGtfsData
-// transaction so the value is atomic with the calendar data it was derived from.
+func stopTimeParams(tripID string, st gtfs.ScheduledStopTime) CreateStopTimeParams {
+	return CreateStopTimeParams{
+		TripID:            tripID,
+		ArrivalTime:       int64(st.ArrivalTime),
+		DepartureTime:     int64(st.DepartureTime),
+		StopID:            st.Stop.Id,
+		StopSequence:      int64(st.StopSequence),
+		StopHeadsign:      nulls.String(st.Headsign),
+		PickupType:        toNullInt64(int64(st.PickupType)),
+		DropOffType:       toNullInt64(int64(st.DropOffType)),
+		ShapeDistTraveled: nulls.Float64FromPtr(st.ShapeDistanceTraveled),
+		Timepoint:         toNullInt64(boolToInt(st.ExactTimes)),
+	}
+}
+
+// shapePointParams numbers a shape's points by their position in the shape.
+func shapePointParams(shapeID string, idx int, pt gtfs.ShapePoint) CreateShapeParams {
+	return CreateShapeParams{
+		ShapeID:           shapeID,
+		Lat:               pt.Latitude,
+		Lon:               pt.Longitude,
+		ShapePtSequence:   int64(idx),
+		ShapeDistTraveled: nulls.Float64FromPtr(pt.Distance),
+	}
+}
+
 // buildStopAgencyIndex repopulates stop_agencies from the routes currently serving each
 // stop. The table is rebuilt rather than updated in place because an import replaces the
 // whole feed, and a stop can change agency or lose its routes between feed versions.
@@ -580,6 +637,9 @@ func buildStopAgencyIndex(ctx context.Context, qtx *Queries) error {
 	return nil
 }
 
+// updateFeedExpiresAtFromCalendar persists the end of the latest service date
+// in the latest-expiring agency timezone. Call within a transaction so expiry
+// is atomic with the calendar and agency data it was derived from.
 func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 	val, err := qtx.GetFeedEndDate(ctx)
 	if err != nil {
@@ -604,8 +664,14 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 		if err != nil {
 			return fmt.Errorf("failed to parse feed end date %q: %w", dateStr, err)
 		}
-		// 23:59:59 of the end date.
-		expiresAt := parsedTime.Add(24*time.Hour - time.Second)
+		agencies, err := qtx.ListAgencies(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get agency timezones: %w", err)
+		}
+		expiresAt, err := latestAgencyExpiry(parsedTime, agencies)
+		if err != nil {
+			return err
+		}
 		expires = sql.NullInt64{Int64: expiresAt.Unix(), Valid: true}
 	}
 
@@ -613,6 +679,35 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 		return fmt.Errorf("failed to persist feed_expires_at: %w", err)
 	}
 	return nil
+}
+
+func latestAgencyExpiry(serviceDate time.Time, agencies []Agency) (time.Time, error) {
+	if len(agencies) == 0 {
+		return time.Time{}, fmt.Errorf("cannot calculate feed expiry without an agency timezone")
+	}
+	var latest time.Time
+	seen := make(map[string]bool)
+	for _, agency := range agencies {
+		timezone := strings.TrimSpace(agency.Timezone)
+		if seen[timezone] {
+			continue
+		}
+		if timezone == "" {
+			return time.Time{}, fmt.Errorf("agency %q has empty timezone", agency.ID)
+		}
+		location, err := time.LoadLocation(timezone)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("agency %q has invalid timezone %q: %w", agency.ID, timezone, err)
+		}
+		seen[timezone] = true
+		// Construct local end-of-day directly: adding 24 hours to midnight
+		// is incorrect on daylight-saving transition dates.
+		expiresAt := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 23, 59, 59, 0, location)
+		if latest.IsZero() || expiresAt.After(latest) {
+			latest = expiresAt
+		}
+	}
+	return latest, nil
 }
 
 // clearAllGTFSDataWithQueries clears all GTFS data using the given Queries (e.g. transaction-scoped).
@@ -715,487 +810,148 @@ func pickFirstAvailable(a, b string) string {
 	return b
 }
 
-// bulkInsertStops inserts stops. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertStops(ctx context.Context, stops []CreateStopParams, tx *sql.Tx) error {
-	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+// stopInsert inserts stops rows for insertInBatches.
+var stopInsert = batchInsert[CreateStopParams]{
+	table: "stops",
+	columns: []string{"id", "code", "name", "\"desc\"", "lat", "lon", "zone_id", "url",
+		"location_type", "timezone", "wheelchair_boarding", "platform_code", "direction", "parent_station"},
+	appendArgs: func(args []any, s CreateStopParams) []any {
+		return append(args, s.ID, s.Code, s.Name, s.Desc, s.Lat, s.Lon, s.ZoneID, s.Url,
+			s.LocationType, s.Timezone, s.WheelchairBoarding, s.PlatformCode, s.Direction, s.ParentStation)
+	},
+	progressInterval: 10_000,
+	insertPrefix:     "INSERT OR REPLACE INTO",
+}
 
-	logging.LogOperation(logger, "inserting_stops",
-		slog.Int("count", len(stops)))
+// bulkInsertStops inserts stops in the order they arrive, holding one batch at
+// a time. If tx is non-nil it uses that transaction and does not commit; if
+// nil it starts its own and commits.
+func (c *Client) bulkInsertStops(ctx context.Context, stops iter.Seq[CreateStopParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, stopInsert, stops)
+}
 
-	if err := c.withTransaction(ctx, tx, "bulk_insert_stops", func(tx *sql.Tx) error {
-		qtx := queries.WithTx(tx)
-		for _, params := range stops {
-			_, err := qtx.CreateStop(ctx, params)
-			if err != nil {
-				if isConstraintErr(err) {
-					return fmt.Errorf("constraint violation inserting stop %+v: %w", params, err)
-				}
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
+// tripInsert inserts trips rows for insertInBatches.
+var tripInsert = batchInsert[CreateTripParams]{
+	table: "trips",
+	columns: []string{"id", "route_id", "service_id", "trip_headsign", "trip_short_name",
+		"direction_id", "block_id", "shape_id", "wheelchair_accessible", "bikes_allowed",
+		"min_arrival_time", "max_departure_time"},
+	appendArgs: func(args []any, t CreateTripParams) []any {
+		return append(args, t.ID, t.RouteID, t.ServiceID, t.TripHeadsign, t.TripShortName,
+			t.DirectionID, t.BlockID, t.ShapeID, t.WheelchairAccessible, t.BikesAllowed,
+			t.MinArrivalTime, t.MaxDepartureTime)
+	},
+	progressInterval: 25_000,
+	insertPrefix:     "INSERT OR REPLACE INTO",
+}
+
+// bulkInsertTrips inserts trips in the order they arrive, holding one batch at
+// a time. If tx is non-nil it uses that transaction and does not commit; if
+// nil it starts its own and commits.
+func (c *Client) bulkInsertTrips(ctx context.Context, trips iter.Seq[CreateTripParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, tripInsert, trips)
+}
+
+// stopTimeInsert inserts stop_times rows for insertInBatches.
+var stopTimeInsert = batchInsert[CreateStopTimeParams]{
+	table: "stop_times",
+	columns: []string{"trip_id", "arrival_time", "departure_time", "stop_id", "stop_sequence",
+		"stop_headsign", "pickup_type", "drop_off_type", "shape_dist_traveled", "timepoint"},
+	appendArgs: func(args []any, st CreateStopTimeParams) []any {
+		return append(args, st.TripID, st.ArrivalTime, st.DepartureTime, st.StopID, st.StopSequence,
+			st.StopHeadsign, st.PickupType, st.DropOffType, st.ShapeDistTraveled, st.Timepoint)
+	},
+	progressInterval: 100_000,
+}
+
+// bulkInsertStopTimes inserts stop times in the order they arrive, holding one
+// batch at a time. If tx is non-nil it uses that transaction and does not
+// commit; if nil it starts its own and commits.
+func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes iter.Seq[CreateStopTimeParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, stopTimeInsert, stopTimes)
+}
+
+// shapeInsert inserts shapes rows for insertInBatches.
+var shapeInsert = batchInsert[CreateShapeParams]{
+	table:   "shapes",
+	columns: []string{"shape_id", "lat", "lon", "shape_pt_sequence", "shape_dist_traveled"},
+	appendArgs: func(args []any, s CreateShapeParams) []any {
+		return append(args, s.ShapeID, s.Lat, s.Lon, s.ShapePtSequence, s.ShapeDistTraveled)
+	},
+	progressInterval: 50_000,
+}
+
+// bulkInsertShapes inserts shape points in the order they arrive, holding one
+// batch at a time. If tx is non-nil it uses that transaction and does not
+// commit; if nil it starts its own and commits.
+func (c *Client) bulkInsertShapes(ctx context.Context, shapes iter.Seq[CreateShapeParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, shapeInsert, shapes)
+}
+
+// frequencyInsert inserts frequencies rows for insertInBatches.
+var frequencyInsert = batchInsert[CreateFrequencyParams]{
+	table:   "frequencies",
+	columns: []string{"trip_id", "start_time", "end_time", "headway_secs", "exact_times"},
+	appendArgs: func(args []any, f CreateFrequencyParams) []any {
+		return append(args, f.TripID, f.StartTime, f.EndTime, f.HeadwaySecs, f.ExactTimes)
+	},
+	progressInterval: 5_000,
+	insertPrefix:     "INSERT OR IGNORE INTO",
+}
+
+// bulkInsertFrequencies inserts frequencies in the order they arrive, holding
+// one batch at a time. If tx is non-nil it uses that transaction and does not
+// commit; if nil it starts its own and commits.
+func (c *Client) bulkInsertFrequencies(ctx context.Context, frequencies iter.Seq[CreateFrequencyParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, frequencyInsert, frequencies)
+}
+
+// calendarDateInsert inserts calendar_dates rows for insertInBatches.
+var calendarDateInsert = batchInsert[CreateCalendarDateParams]{
+	table:   "calendar_dates",
+	columns: []string{"service_id", "date", "exception_type"},
+	appendArgs: func(args []any, cd CreateCalendarDateParams) []any {
+		return append(args, cd.ServiceID, cd.Date, cd.ExceptionType)
+	},
+	progressInterval: 10_000,
+	insertPrefix:     "INSERT OR REPLACE INTO",
+}
+
+// bulkInsertCalendarDates inserts calendar dates in the order they arrive,
+// holding one batch at a time. If tx is non-nil it uses that transaction and
+// does not commit; if nil it starts its own and commits.
+func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates iter.Seq[CreateCalendarDateParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, calendarDateInsert, calendarDates)
+}
+
+// OptimizeDatabase runs PRAGMA analysis_limit and ANALYZE after an import
+// so SQLite computes query planner statistics (stored in sqlite_stat1).
+func (c *Client) OptimizeDatabase(ctx context.Context) error {
+	conn, err := c.DB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection for optimization: %w", err)
 	}
+	defer func() { _ = conn.Close() }()
 
-	logging.LogOperation(logger, "stops_inserted",
-		slog.Int("count", len(stops)))
-
+	if _, err := conn.ExecContext(ctx, "PRAGMA analysis_limit = 1000"); err != nil {
+		return fmt.Errorf("failed to set analysis_limit: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "ANALYZE"); err != nil {
+		return fmt.Errorf("failed to run analyze: %w", err)
+	}
 	return nil
 }
 
-// bulkInsertTrips inserts trips. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams, tx *sql.Tx) error {
-	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
-
-	logging.LogOperation(logger, "inserting_trips",
-		slog.Int("count", len(trips)))
-
-	if err := c.withTransaction(ctx, tx, "bulk_insert_trips", func(tx *sql.Tx) error {
-		qtx := queries.WithTx(tx)
-		for _, params := range trips {
-			_, err := qtx.CreateTrip(ctx, params)
-			if err != nil {
-				if isConstraintErr(err) {
-					return fmt.Errorf("constraint violation inserting trip %+v: %w", params, err)
-				}
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
+// enableWALMode enables Write-Ahead Logging, which allows
+// concurrent readers and a single writer. journal_mode=WAL is stored in the
+// database file, so one PRAGMA applies it to every connection. That is why it
+// stays a PRAGMA, while the connection-scoped settings ride the DSN.
+func enableWALMode(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
+		logger := slog.Default().With(slog.String("component", "sqlite_performance"))
+		logging.LogError(logger, "failed to enable SQLite WAL mode", err)
+		return fmt.Errorf("failed to enable WAL mode: %w", err)
 	}
-
-	logging.LogOperation(logger, "trips_inserted",
-		slog.Int("count", len(trips)))
-
-	return nil
-}
-
-// preparedStopTimeBatch holds a prepared SQL statement with its arguments
-type preparedStopTimeBatch struct {
-	query string
-	args  []any
-	index int // Original index for ordering
-	end   int // End position for progress logging
-}
-
-// bulkInsertStopTimes inserts stop times. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertStopTimes(ctx context.Context, stopTimes []CreateStopTimeParams, tx *sql.Tx) error {
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
-
-	logging.LogOperation(logger, "inserting_stop_times",
-		slog.Int("count", len(stopTimes)))
-
-	// ===== PIPELINE: PARALLEL PREPARATION + SEQUENTIAL EXECUTION =====
-	const stopTimeFieldsPerRow = 10 // 10 fields per stop_time row
-	batchSize := c.config.SafeBatchSize(stopTimeFieldsPerRow)
-	const baseQuery = `INSERT INTO stop_times (
-		trip_id, arrival_time, departure_time, stop_id, stop_sequence,
-		stop_headsign, pickup_type, drop_off_type, shape_dist_traveled, timepoint
-	) VALUES `
-
-	// Calculate number of batches
-	numBatches := (len(stopTimes) + batchSize - 1) / batchSize
-
-	// Create channels for pipeline
-	numWorkers := runtime.NumCPU()
-	batchChan := make(chan int, numWorkers)
-	resultsChan := make(chan preparedStopTimeBatch, numWorkers*4) // Larger buffer for pipeline
-
-	// Start worker pool for parallel preparation
-	var wg sync.WaitGroup
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for batchIndex := range batchChan {
-				// Check context for cancellation
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
-				// Calculate batch boundaries
-				start := batchIndex * batchSize
-				end := start + batchSize
-				if end > len(stopTimes) {
-					end = len(stopTimes)
-				}
-				batch := stopTimes[start:end]
-
-				// Build multi-row INSERT query
-				// SECURITY: Only use placeholders (?) for values. Never concatenate user input directly
-				// into the query string to prevent SQL injection attacks.
-				var query strings.Builder
-				query.WriteString(baseQuery)
-				args := make([]any, 0, len(batch)*stopTimeFieldsPerRow)
-
-				for j, params := range batch {
-					if j > 0 {
-						query.WriteString(", ")
-					}
-					query.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-
-					args = append(args,
-						params.TripID,
-						params.ArrivalTime,
-						params.DepartureTime,
-						params.StopID,
-						params.StopSequence,
-						params.StopHeadsign,
-						params.PickupType,
-						params.DropOffType,
-						params.ShapeDistTraveled,
-						params.Timepoint,
-					)
-				}
-
-				// Send prepared batch to results channel
-				resultsChan <- preparedStopTimeBatch{
-					query: query.String(),
-					args:  args,
-					index: batchIndex,
-					end:   end,
-				}
-			}
-		}()
-	}
-
-	// Feed batch indices to workers
-	go func() {
-		defer close(batchChan)
-		for i := 0; i < numBatches; i++ {
-			select {
-			case <-ctx.Done():
-				return
-			case batchChan <- i:
-			}
-		}
-	}()
-
-	// Close results channel when all workers are done
-	go func() {
-		wg.Wait()
-		close(resultsChan)
-	}()
-
-	// Execute batches as they're prepared (overlapping preparation and execution)
-	// Collect batches and sort them to maintain insertion order
-	preparedBatches := make([]preparedStopTimeBatch, 0, numBatches)
-	for batch := range resultsChan {
-		preparedBatches = append(preparedBatches, batch)
-	}
-
-	// Check if context was canceled during preparation
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-
-	// Sort batches by index to maintain insertion order
-	slices.SortFunc(preparedBatches, func(a, b preparedStopTimeBatch) int {
-		return cmp.Compare(a.index, b.index)
-	})
-
-	logging.LogOperation(
-		logger,
-		"stop_times_progress",
-		slog.Int("inserted", 0),
-		slog.Int("total", len(stopTimes)),
-	)
-
-	if err := c.withTransaction(ctx, tx, "bulk_insert_stop_times", func(tx *sql.Tx) error {
-		// Execute sorted batches
-		for _, batch := range preparedBatches {
-			// Check context before executing
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-
-			// Execute the batch insert
-			_, err := tx.ExecContext(ctx, batch.query, batch.args...)
-			if err != nil {
-				return fmt.Errorf("failed to insert stop_times batch: %w", err)
-			}
-
-			// Log progress every 100k records
-			if (batch.end)%100000 == 0 || batch.end == len(stopTimes) {
-				logging.LogOperation(logger, "stop_times_progress",
-					slog.Int("inserted", batch.end),
-					slog.Int("total", len(stopTimes)))
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "stop_times_inserted",
-		slog.Int("count", len(stopTimes)))
-
-	return nil
-}
-
-// preparedShapeBatch holds a prepared SQL statement with its arguments
-type preparedShapeBatch struct {
-	query string
-	args  []any
-	index int // Original index for ordering
-	end   int // End position for progress logging
-}
-
-// bulkInsertShapes inserts shapes. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertShapes(ctx context.Context, shapes []CreateShapeParams, tx *sql.Tx) error {
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
-
-	logging.LogOperation(logger, "inserting_shapes",
-		slog.Int("count", len(shapes)))
-
-	// ===== PHASE 1: PARALLEL STATEMENT PREPARATION =====
-	const shapeFieldsPerRow = 5 // 5 fields per shape row
-	batchSize := c.config.SafeBatchSize(shapeFieldsPerRow)
-	const baseQuery = `INSERT INTO shapes (
-		shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
-	) VALUES `
-
-	// Calculate number of batches
-	numBatches := (len(shapes) + batchSize - 1) / batchSize
-
-	// Create worker pool for parallel statement preparation
-	numWorkers := runtime.NumCPU()
-	batchChan := make(chan int, numWorkers)
-	resultsChan := make(chan preparedShapeBatch, numWorkers*2)
-
-	// Start worker pool
-	var wg sync.WaitGroup
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for batchIndex := range batchChan {
-				// Check context for cancellation
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
-				// Calculate batch boundaries
-				start := batchIndex * batchSize
-				end := start + batchSize
-				if end > len(shapes) {
-					end = len(shapes)
-				}
-				batch := shapes[start:end]
-
-				// Build multi-row INSERT query
-				// SECURITY: Only use placeholders (?) for values. Never concatenate user input directly
-				// into the query string to prevent SQL injection attacks.
-				var query strings.Builder
-				query.WriteString(baseQuery)
-				args := make([]any, 0, len(batch)*shapeFieldsPerRow)
-
-				for j, params := range batch {
-					if j > 0 {
-						query.WriteString(", ")
-					}
-					query.WriteString("(?, ?, ?, ?, ?)")
-
-					args = append(args,
-						params.ShapeID,
-						params.Lat,
-						params.Lon,
-						params.ShapePtSequence,
-						params.ShapeDistTraveled,
-					)
-				}
-
-				// Send prepared batch to results channel
-				resultsChan <- preparedShapeBatch{
-					query: query.String(),
-					args:  args,
-					index: batchIndex,
-					end:   end,
-				}
-			}
-		}()
-	}
-
-	// Feed batch indices to workers
-	go func() {
-		defer close(batchChan)
-		for i := 0; i < numBatches; i++ {
-			select {
-			case <-ctx.Done():
-				return
-			case batchChan <- i:
-			}
-		}
-	}()
-
-	// ===== PHASE 2: COLLECT PREPARED BATCHES =====
-	// Close results channel when all workers are done
-	go func() {
-		wg.Wait()
-		close(resultsChan)
-	}()
-
-	// Collect prepared batches as they arrive with progress logging
-	preparedBatches := make([]preparedShapeBatch, 0, numBatches)
-	lastLoggedCount := 0
-	for batch := range resultsChan {
-		preparedBatches = append(preparedBatches, batch)
-
-		// Log preparation progress every 50 batches (~327k records with batch size 6553)
-		if len(preparedBatches)-lastLoggedCount >= 50 {
-			logging.LogOperation(logger, "shapes_preparation_progress",
-				slog.Int("batches_prepared", len(preparedBatches)),
-				slog.Int("total_batches", numBatches))
-			lastLoggedCount = len(preparedBatches)
-		}
-	}
-
-	logging.LogOperation(logger, "shapes_preparation_complete",
-		slog.Int("batches_prepared", len(preparedBatches)),
-		slog.Int("total_batches", numBatches))
-
-	// Check if context was canceled during preparation
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-
-	// Sort batches by index to maintain insertion order
-	slices.SortFunc(preparedBatches, func(a, b preparedShapeBatch) int {
-		return cmp.Compare(a.index, b.index)
-	})
-
-	// ===== PHASE 3: SEQUENTIAL DATABASE EXECUTION =====
-	if err := c.withTransaction(ctx, tx, "bulk_insert_shapes", func(tx *sql.Tx) error {
-		for _, batch := range preparedBatches {
-			// Check context before executing
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-
-			// Execute the batch insert
-			_, err := tx.ExecContext(ctx, batch.query, batch.args...)
-			if err != nil {
-				return fmt.Errorf("failed to insert shapes batch: %w", err)
-			}
-
-			// Log progress every 50k records
-			if (batch.end)%50000 == 0 || batch.end == len(shapes) {
-				logging.LogOperation(logger, "shapes_progress",
-					slog.Int("inserted", batch.end),
-					slog.Int("total", len(shapes)))
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "shapes_inserted",
-		slog.Int("count", len(shapes)))
-
-	return nil
-}
-
-// bulkInsertFrequencies inserts frequencies. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertFrequencies(ctx context.Context, frequencies []CreateFrequencyParams, tx *sql.Tx) error {
-	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
-
-	logging.LogOperation(logger, "inserting_frequencies",
-		slog.Int("count", len(frequencies)))
-
-	if err := c.withTransaction(ctx, tx, "bulk_insert_frequencies", func(tx *sql.Tx) error {
-		qtx := queries.WithTx(tx)
-		for _, params := range frequencies {
-			err := qtx.CreateFrequency(ctx, params)
-			if err != nil {
-				if isConstraintErr(err) {
-					return fmt.Errorf("constraint violation inserting frequency %+v: %w", params, err)
-				}
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "frequencies_inserted",
-		slog.Int("count", len(frequencies)))
-
-	return nil
-}
-
-// bulkInsertCalendarDates inserts calendar dates. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []CreateCalendarDateParams, tx *sql.Tx) error {
-	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
-
-	logging.LogOperation(logger, "inserting_calendar_dates",
-		slog.Int("count", len(calendarDates)))
-
-	if err := c.withTransaction(ctx, tx, "bulk_insert_calendar_dates", func(tx *sql.Tx) error {
-		qtx := queries.WithTx(tx)
-		for _, params := range calendarDates {
-			_, err := qtx.CreateCalendarDate(ctx, params)
-			if err != nil {
-				if isConstraintErr(err) {
-					return fmt.Errorf("constraint violation inserting calendar date %+v: %w", params, err)
-				}
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "calendar_dates_inserted",
-		slog.Int("count", len(calendarDates)))
-
-	return nil
-}
-
-// configureSQLitePerformance applies PRAGMA settings to optimize SQLite performance
-// for bulk GTFS data imports and queries.
-func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
-	pragmas := []struct {
-		name        string
-		description string
-	}{
-		// Increase cache size to 64MB (negative value means KB)
-		{"PRAGMA cache_size=-64000", "Set cache size to 64MB"},
-		// Store temp tables and indices in memory for faster operations
-		{"PRAGMA temp_store=MEMORY", "Store temporary data in memory"},
-		// Enable Write-Ahead Logging to allow concurrent readers and a single writer
-		{"PRAGMA journal_mode=WAL", "Enable WAL mode"},
-	}
-
-	logger := slog.Default().With(slog.String("component", "sqlite_performance"))
-
-	for _, pragma := range pragmas {
-		_, err := db.ExecContext(ctx, pragma.name)
-		if err != nil {
-			logging.LogError(logger, "failed to set SQLite pragma", err, slog.String("pragma", pragma.description))
-			return fmt.Errorf("failed to execute %s: %w", pragma.name, err)
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-	}
-
-	logging.LogOperation(logger, "sqlite_performance_settings_applied",
-		slog.Int("pragma_count", len(pragmas)))
-
 	return nil
 }
 
@@ -1208,8 +964,8 @@ func configureSQLitePerformance(ctx context.Context, db *sql.DB) error {
 //     connection to a :memory: database creates a separate database instance, so we
 //     must limit to 1 connection to maintain data integrity.
 //
-//   - File databases: MaxOpenConns=25 to allow concurrent access. SQLite with WAL mode
-//     supports concurrent readers and a single writer.
+//   - File databases: up to maxOpenConnections connections to allow concurrent
+//     access. SQLite with WAL mode supports concurrent readers and a single writer.
 //
 // For production deployments with high concurrency requirements, consider using a
 // file-based database instead of :memory: to take advantage of concurrent connections.
@@ -1220,14 +976,37 @@ func configureConnectionPool(db *sql.DB, config Config) {
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
 	} else {
-		// Set maximum number of open connections to 25
-		db.SetMaxOpenConns(25)
+		db.SetMaxOpenConns(maxOpenConnections)
 
 		// Set maximum number of idle connections to 5
 		db.SetMaxIdleConns(5)
 
 		// Set maximum lifetime of connections to 5 minutes
 		db.SetConnMaxLifetime(5 * time.Minute)
+	}
+}
+
+// tripEnds is what the block indexes need from a trip: who it is, and its
+// first and last stop times.
+type tripEnds struct {
+	tripID, routeID, serviceID, blockID string
+	firstStopID                         string
+	firstArrival, firstDeparture        time.Duration
+	lastStopID                          string
+	lastDeparture                       time.Duration
+}
+
+func newTripEnds(trip *gtfs.ScheduledTrip, first, last gtfs.ScheduledStopTime) tripEnds {
+	return tripEnds{
+		tripID:         trip.ID,
+		routeID:        trip.Route.Id,
+		serviceID:      trip.Service.Id,
+		blockID:        trip.BlockID,
+		firstStopID:    first.Stop.Id,
+		firstArrival:   first.ArrivalTime,
+		firstDeparture: first.DepartureTime,
+		lastStopID:     last.Stop.Id,
+		lastDeparture:  last.DepartureTime,
 	}
 }
 
@@ -1239,44 +1018,23 @@ type blockTripIndexKey struct {
 
 // buildBlockTripIndex creates BlockTripIndex entries by grouping trips with identical
 // service IDs and stop sequences. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Static, tx *sql.Tx) error {
+func (c *Client) buildBlockTripIndex(ctx context.Context, trips []tripEnds, tx *sql.Tx) error {
 	logger := slog.Default().With(slog.String("component", "block_trip_index_builder"))
 
-	// Build terminal layover location for each trip
-	type tripInfo struct {
-		tripID        string
-		routeID       string
-		serviceID     string
-		blockID       string
-		layoverStopID string
-	}
-
-	tripMap := make(map[string]*tripInfo)
-
-	for _, trip := range staticData.Trips {
-		if len(trip.StopTimes) == 0 {
-			continue
-		}
-
-		// Get the FIRST stop - this is the layover location where the trip starts
-		firstStop := trip.StopTimes[0].Stop.Id
-
-		tripMap[trip.ID] = &tripInfo{
-			tripID:        trip.ID,
-			routeID:       trip.Route.Id,
-			serviceID:     trip.Service.Id,
-			blockID:       trip.BlockID,
-			layoverStopID: firstStop,
-		}
+	// A trip's first stop is the layover location where it starts. When a
+	// trip ID repeats, the last trip with it wins.
+	tripMap := make(map[string]tripEnds)
+	for _, trip := range trips {
+		tripMap[trip.tripID] = trip
 	}
 
 	// Group trips by (serviceID, layoverStopID)
-	indexGroups := make(map[blockTripIndexKey][]*tripInfo)
+	indexGroups := make(map[blockTripIndexKey][]tripEnds)
 
 	for _, info := range tripMap {
 		key := blockTripIndexKey{
 			serviceIDs:      info.serviceID,
-			stopSequenceKey: info.layoverStopID, // Use first stop (layover) as the key
+			stopSequenceKey: info.firstStopID,
 		}
 		indexGroups[key] = append(indexGroups[key], info)
 	}
@@ -1306,7 +1064,7 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 			}
 
 			// Sort trips within the group by block_id and then trip_id for deterministic ordering
-			slices.SortFunc(trips, func(a, b *tripInfo) int {
+			slices.SortFunc(trips, func(a, b tripEnds) int {
 				if c := cmp.Compare(a.blockID, b.blockID); c != 0 {
 					return c
 				}
@@ -1349,21 +1107,20 @@ func (c *Client) buildBlockTripIndex(ctx context.Context, staticData *gtfs.Stati
 // (the gap between two consecutive trips in the same block that share a terminal
 // stop). Layover bounds are stored as nanoseconds since service-day midnight so
 // handlers can match against the same units used by stop_times.
-func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.Static, tx *sql.Tx) error {
+func (c *Client) buildBlockLayoverIndex(ctx context.Context, trips []tripEnds, tx *sql.Tx) error {
 	logger := slog.Default().With(slog.String("component", "block_layover_builder"))
 
 	type blockKey struct {
 		blockID   string
 		serviceID string
 	}
-	blockTrips := make(map[blockKey][]*gtfs.ScheduledTrip)
+	blockTrips := make(map[blockKey][]tripEnds)
 
-	for i := range staticData.Trips {
-		trip := &staticData.Trips[i]
-		if trip.BlockID == "" || len(trip.StopTimes) == 0 {
+	for _, trip := range trips {
+		if trip.blockID == "" {
 			continue
 		}
-		key := blockKey{blockID: trip.BlockID, serviceID: trip.Service.Id}
+		key := blockKey{blockID: trip.blockID, serviceID: trip.serviceID}
 		blockTrips[key] = append(blockTrips[key], trip)
 	}
 
@@ -1378,18 +1135,22 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 				continue
 			}
 
-			slices.SortFunc(trips, func(a, b *gtfs.ScheduledTrip) int {
-				return cmp.Compare(a.StopTimes[0].DepartureTime, b.StopTimes[0].DepartureTime)
+			// Trips are ordered by the arrival time at their first stop, the
+			// same start time as trips.min_arrival_time in the block queries.
+			// Trips that start at the same time are ordered by ID, so the
+			// layovers don't depend on the order of the rows in the feed.
+			slices.SortFunc(trips, func(a, b tripEnds) int {
+				return cmp.Or(
+					cmp.Compare(a.firstArrival, b.firstArrival),
+					cmp.Compare(a.tripID, b.tripID),
+				)
 			})
 
 			for i := 0; i < len(trips)-1; i++ {
 				currentTrip := trips[i]
 				nextTrip := trips[i+1]
 
-				lastStopCurrent := currentTrip.StopTimes[len(currentTrip.StopTimes)-1]
-				firstStopNext := nextTrip.StopTimes[0]
-
-				if lastStopCurrent.Stop.Id != firstStopNext.Stop.Id {
+				if currentTrip.lastStopID != nextTrip.firstStopID {
 					continue
 				}
 
@@ -1398,8 +1159,8 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 				// ARRIVAL] — i.e. the interval during which the vehicle is idle
 				// at the terminal. Using arrival/departure would widen the
 				// window across in-service dwell times at both ends.
-				layoverStart := int64(lastStopCurrent.DepartureTime)
-				layoverEnd := int64(firstStopNext.ArrivalTime)
+				layoverStart := int64(currentTrip.lastDeparture)
+				layoverEnd := int64(nextTrip.firstArrival)
 				// Skips schedule anomalies where trips overlap at the shared
 				// stop (next arrives before prev departs). Also protects the
 				// CHECK (layover_start <= layover_end) constraint from
@@ -1411,11 +1172,11 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 				err := qtx.CreateBlockLayover(ctx, CreateBlockLayoverParams{
 					BlockID:       key.blockID,
 					ServiceID:     key.serviceID,
-					RouteID:       nextTrip.Route.Id,
-					LayoverStopID: lastStopCurrent.Stop.Id,
+					RouteID:       nextTrip.routeID,
+					LayoverStopID: currentTrip.lastStopID,
 					LayoverStart:  layoverStart,
 					LayoverEnd:    layoverEnd,
-					NextTripID:    nextTrip.ID,
+					NextTripID:    nextTrip.tripID,
 				})
 				if err != nil {
 					return fmt.Errorf("failed to create block layover: %w", err)
@@ -1439,6 +1200,45 @@ func (c *Client) buildBlockLayoverIndex(ctx context.Context, staticData *gtfs.St
 // It ensures that required files are present and filters out structurally invalid trips.
 // Note: Orphaned entities (routes/stops/services with no remaining trips) are retained.
 func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
+	return validateAndFilterGTFSData(data, logger, func(tripIndex int) string {
+		return inMemoryStopTimesProblem(data.Trips[tripIndex].StopTimes)
+	})
+}
+
+// noStopTimesProblem describes a trip without stop times.
+const noStopTimesProblem = "trip has no stop times"
+
+// inMemoryStopTimesProblem checks the stop times of a trip held in memory,
+// which may have been built by hand. A parsed feed never has a stop time
+// without a stop: go-gtfs drops the rows whose stop is unknown.
+func inMemoryStopTimesProblem(stopTimes []gtfs.ScheduledStopTime) string {
+	if len(stopTimes) == 0 {
+		return noStopTimesProblem
+	}
+	for _, stopTime := range stopTimes {
+		if stopTime.Stop == nil || stopTime.Stop.Id == "" {
+			return "stop time for trip references missing stop"
+		}
+	}
+	return ""
+}
+
+// streamedStopTimesProblem checks the stop times of a trip in a streamed
+// feed, whose stop times are not in memory.
+func streamedStopTimesProblem(stream *gtfs.StaticStream) func(tripIndex int) string {
+	return func(tripIndex int) string {
+		if stream.StopTimeCount(tripIndex) == 0 {
+			return noStopTimesProblem
+		}
+		return ""
+	}
+}
+
+// validateAndFilterGTFSData is ValidateAndFilterGTFSData for a feed whose stop
+// times may not be in memory: stopTimesProblem describes what is wrong with
+// the stop times of the trip at an index in data.Trips, or returns "" when
+// the trip can be imported.
+func validateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger, stopTimesProblem func(tripIndex int) string) error {
 	if data == nil {
 		return fmt.Errorf("parsed GTFS data is nil")
 	}
@@ -1495,6 +1295,11 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 				slog.String("stop_id", data.Stops[i].Id),
 				slog.String("parent_station", parent.Id),
 			)
+			if orphanedParentRefs == 0 {
+				// A streamed feed still reads from the parsed stops, so
+				// change a copy.
+				data.Stops = slices.Clone(data.Stops)
+			}
 			data.Stops[i].Parent = nil
 			orphanedParentRefs++
 		}
@@ -1507,7 +1312,7 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 
 	// Foreign Key / Relationship Checks (Warnings & Filtering)
 	var validTrips []gtfs.ScheduledTrip
-	for _, trip := range data.Trips {
+	for i, trip := range data.Trips {
 		// Ensure the trip points to a valid route
 		if trip.Route == nil || trip.Route.Id == "" {
 			logger.Warn("trip references missing or invalid route, skipping trip", slog.String("trip_id", trip.ID))
@@ -1520,23 +1325,8 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 			continue
 		}
 
-		// Ensure the trip has stop times
-		if len(trip.StopTimes) == 0 {
-			logger.Warn("trip has no stop times, skipping trip", slog.String("trip_id", trip.ID))
-			continue
-		}
-
-		// Ensure stop times reference valid stops
-		hasInvalidStop := false
-		for _, st := range trip.StopTimes {
-			if st.Stop == nil || st.Stop.Id == "" {
-				logger.Warn("stop time for trip references missing stop, skipping trip", slog.String("trip_id", trip.ID))
-				hasInvalidStop = true
-				break
-			}
-		}
-
-		if hasInvalidStop {
+		if problem := stopTimesProblem(i); problem != "" {
+			logger.Warn(problem+", skipping trip", slog.String("trip_id", trip.ID))
 			continue
 		}
 

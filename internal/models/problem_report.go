@@ -2,6 +2,7 @@ package models
 
 import (
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 // ProblemReportTrip represents a trip problem report in API responses.
@@ -27,16 +28,16 @@ func NewProblemReportTrip(report gtfsdb.ProblemReportsTrip) ProblemReportTrip {
 	return ProblemReportTrip{
 		ID:                   report.ID,
 		TripID:               report.TripID,
-		ServiceDate:          report.ServiceDate.String,
-		VehicleID:            report.VehicleID.String,
-		StopID:               report.StopID.String,
-		Code:                 report.Code.String,
-		UserComment:          report.UserComment.String,
+		ServiceDate:          nulls.StringOrEmpty(report.ServiceDate),
+		VehicleID:            nulls.StringOrEmpty(report.VehicleID),
+		StopID:               nulls.StringOrEmpty(report.StopID),
+		Code:                 nulls.StringOrEmpty(report.Code),
+		UserComment:          nulls.StringOrEmpty(report.UserComment),
 		UserLat:              report.UserLat.Float64,
 		UserLon:              report.UserLon.Float64,
 		UserLocationAccuracy: report.UserLocationAccuracy.Float64,
 		UserOnVehicle:        report.UserOnVehicle.Int64 == 1,
-		UserVehicleNumber:    report.UserVehicleNumber.String,
+		UserVehicleNumber:    nulls.StringOrEmpty(report.UserVehicleNumber),
 		CreatedAt:            report.CreatedAt,
 		SubmittedAt:          report.SubmittedAt,
 	}
@@ -60,8 +61,8 @@ func NewProblemReportStop(report gtfsdb.ProblemReportsStop) ProblemReportStop {
 	return ProblemReportStop{
 		ID:                   report.ID,
 		StopID:               report.StopID,
-		Code:                 report.Code.String,
-		UserComment:          report.UserComment.String,
+		Code:                 nulls.StringOrEmpty(report.Code),
+		UserComment:          nulls.StringOrEmpty(report.UserComment),
 		UserLat:              report.UserLat.Float64,
 		UserLon:              report.UserLon.Float64,
 		UserLocationAccuracy: report.UserLocationAccuracy.Float64,

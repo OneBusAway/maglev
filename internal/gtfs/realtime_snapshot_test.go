@@ -75,7 +75,7 @@ func TestMergedRealtimeBeforeFirstPublish(t *testing.T) {
 	assert.Empty(t, manager.GetRealTimeVehicles())
 	assert.Empty(t, manager.GetAllTripUpdates())
 	assert.Empty(t, manager.GetDuplicatedVehiclesForRoute("route-1"))
-	assert.Empty(t, manager.GetAlertsForStop("stop-1"))
+	assert.Empty(t, manager.GetAlertsForStop("stop-1", ""))
 	assert.Empty(t, manager.GetTripUpdatesForTrip("trip-1"))
 
 	_, err := manager.GetVehicleByID("veh-1")
@@ -212,4 +212,46 @@ func TestConcurrentGetterReadsDuringRebuild(t *testing.T) {
 
 	stop.Store(true)
 	wg.Wait()
+}
+
+// TestVehicleAgencyID checks that the snapshot's vehicle agency follows the
+// same vehicle that GetVehicleByID returns when two feeds report one ID.
+func TestVehicleAgencyID(t *testing.T) {
+	vehicle := func(id string) gtfs.Vehicle { return gtfs.Vehicle{ID: &gtfs.VehicleID{ID: id}} }
+	manager := snapshotTestManager()
+	manager.feedVehicles["feed-a"] = []gtfs.Vehicle{vehicle("attributed"), vehicle("unattributed"), vehicle("reattributed"), vehicle("cleared")}
+	manager.feedVehicles["feed-b"] = []gtfs.Vehicle{vehicle("reattributed"), vehicle("cleared")}
+	manager.feedVehicleAgency = map[string]map[vehicleKey]string{
+		"feed-a": {
+			newVehicleKey(&gtfs.VehicleID{ID: "attributed"}):   "A",
+			newVehicleKey(&gtfs.VehicleID{ID: "reattributed"}): "A",
+			newVehicleKey(&gtfs.VehicleID{ID: "cleared"}):      "A",
+		},
+		"feed-b": {
+			newVehicleKey(&gtfs.VehicleID{ID: "reattributed"}): "B",
+		},
+	}
+	manager.realTimeMutex.Lock()
+	manager.rebuildMergedRealtimeLocked()
+	manager.realTimeMutex.Unlock()
+
+	tests := []struct {
+		name         string
+		vehicleID    string
+		wantAgencyID string
+		wantOK       bool
+	}{
+		{"attributed vehicle", "attributed", "A", true},
+		{"vehicle with no attributed agency", "unattributed", "", false},
+		{"later feed's report of the same ID wins", "reattributed", "B", true},
+		{"later unattributed report clears the agency", "cleared", "", false},
+		{"unknown vehicle", "missing", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			agencyID, ok := manager.VehicleAgencyID(tt.vehicleID)
+			assert.Equal(t, tt.wantAgencyID, agencyID)
+			assert.Equal(t, tt.wantOK, ok)
+		})
+	}
 }

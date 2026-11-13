@@ -275,7 +275,7 @@ func TestSituationRefsFromAlertsAgencyScope(t *testing.T) {
 			collected := newSituationCollector()
 
 			for i, callerAgencyID := range tt.callerAgencyIDs {
-				refs := situationRefsFromAlerts([]gogtfs.Alert{tt.alert}, callerAgencyID)
+				refs := situationRefsFromAlerts(feedAlertsForTest("", []gogtfs.Alert{tt.alert}), callerAgencyID)
 				require.Len(t, refs, 1)
 				assert.Equal(t, tt.wantSituationIDs[i], refs[0].ID,
 					"alert reached with caller agency %q", callerAgencyID)
@@ -288,48 +288,6 @@ func TestSituationRefsFromAlertsAgencyScope(t *testing.T) {
 			}
 			assert.Equal(t, tt.wantCollected, collectedIDs,
 				"references.situations must carry the alert once per distinct ID")
-		})
-	}
-}
-
-func TestSituationID(t *testing.T) {
-	tests := []struct {
-		name     string
-		alertID  string
-		agencyID string
-		want     string
-	}{
-		{
-			name:     "Bare alert ID gets the agency prefix",
-			alertID:  "92239",
-			agencyID: "1",
-			want:     "1_92239",
-		},
-		{
-			// Puget Sound's feed is exported by an OBA instance, so its alert
-			// IDs already carry the prefix. Upstream reports "1_92239".
-			name:     "Already-prefixed alert ID is left alone",
-			alertID:  "1_92239",
-			agencyID: "1",
-			want:     "1_92239",
-		},
-		{
-			name:     "A different agency's prefix is not mistaken for ours",
-			alertID:  "40_92239",
-			agencyID: "1",
-			want:     "1_40_92239",
-		},
-		{
-			name:     "Unknown agency leaves the ID untouched",
-			alertID:  "92239",
-			agencyID: "",
-			want:     "92239",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, situationID(tt.alertID, tt.agencyID))
 		})
 	}
 }

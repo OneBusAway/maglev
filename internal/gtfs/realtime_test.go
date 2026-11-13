@@ -65,7 +65,7 @@ func TestGetAlertsForStop(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	alerts := manager.GetAlertsForStop("stop123")
+	alerts := manager.GetAlertsForStop("stop123", "")
 
 	assert.Len(t, alerts, 1)
 	assert.Equal(t, "alert1", alerts[0].ID)
@@ -330,6 +330,218 @@ func TestClearFeedData(t *testing.T) {
 	assert.Len(t, manager.GetRealTimeVehicles(), 0, "Global vehicle lookup should be empty")
 }
 
+func TestClearFeedData_StalePayloadStaysRejected(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	freshAt := time.Unix(1_700_000_000, 0).UTC()
+	payload := encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-fresh")},
+		Timestamp: proto.Uint64(uint64(freshAt.Unix())),
+	}})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "cleared-feed",
+		VehiclePositionsURL: server.URL,
+	}
+
+	require.True(t, manager.updateFeedRealtime(ctx, feed))
+	require.NotEmpty(t, manager.GetRealTimeVehicles())
+
+	manager.realTimeMutex.RLock()
+	stamp := manager.feedVehicleTimestamp[feed.ID]
+	manager.realTimeMutex.RUnlock()
+	require.NotZero(t, stamp)
+
+	manager.clearFeedData(feed.ID)
+	assert.Empty(t, manager.GetRealTimeVehicles())
+
+	manager.realTimeMutex.RLock()
+	kept := manager.feedVehicleTimestamp[feed.ID]
+	manager.realTimeMutex.RUnlock()
+	assert.Equal(t, stamp, kept, "clearing a feed should keep the vehicle freshness watermark")
+
+	assert.False(t, manager.updateFeedRealtime(ctx, feed), "the same payload must stay stale after the feed is cleared")
+	assert.Empty(t, manager.GetRealTimeVehicles(), "a rejected stale payload must not republish vehicles")
+}
+
+func TestDecideVehicleFeedTimestamp(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	prevAt := now.Add(-time.Minute)
+	prev := uint64(prevAt.UnixNano())
+	futureWatermark := uint64(now.Add(time.Hour).UnixNano())
+
+	tests := []struct {
+		name          string
+		prev          uint64
+		createdAt     time.Time
+		wantApply     bool
+		wantWatermark uint64
+		wantReason    vehicleFeedTimestampReason
+	}{
+		{
+			name:          "missing header applies without moving the watermark",
+			prev:          prev,
+			wantApply:     true,
+			wantWatermark: prev,
+			wantReason:    vehicleFeedAccept,
+		},
+		{
+			name:          "explicit epoch header applies without moving the watermark",
+			prev:          prev,
+			createdAt:     time.Unix(0, 0).UTC(),
+			wantApply:     true,
+			wantWatermark: prev,
+			wantReason:    vehicleFeedAccept,
+		},
+		{
+			name:          "newer header applies",
+			prev:          prev,
+			createdAt:     now,
+			wantApply:     true,
+			wantWatermark: uint64(now.UnixNano()),
+			wantReason:    vehicleFeedAccept,
+		},
+		{
+			name:          "equal header is stale",
+			prev:          prev,
+			createdAt:     prevAt,
+			wantApply:     false,
+			wantWatermark: prev,
+			wantReason:    vehicleFeedSkipStale,
+		},
+		{
+			name:          "older header is stale",
+			prev:          prev,
+			createdAt:     now.Add(-2 * time.Minute),
+			wantApply:     false,
+			wantWatermark: prev,
+			wantReason:    vehicleFeedSkipStale,
+		},
+		{
+			name:          "header at the future skew bound applies",
+			createdAt:     now.Add(maxVehicleFeedFutureSkew),
+			wantApply:     true,
+			wantWatermark: uint64(now.Add(maxVehicleFeedFutureSkew).UnixNano()),
+			wantReason:    vehicleFeedAccept,
+		},
+		{
+			name:          "header beyond the future skew applies without moving the watermark",
+			prev:          prev,
+			createdAt:     now.Add(maxVehicleFeedFutureSkew + time.Second),
+			wantApply:     true,
+			wantWatermark: prev,
+			wantReason:    vehicleFeedSkipFuture,
+		},
+		{
+			name:          "first future header applies and leaves a zero watermark",
+			createdAt:     now.Add(time.Hour),
+			wantApply:     true,
+			wantWatermark: 0,
+			wantReason:    vehicleFeedSkipFuture,
+		},
+		{
+			name:          "millisecond header applies without becoming the watermark",
+			createdAt:     time.Unix(now.UnixMilli(), 0),
+			wantApply:     true,
+			wantWatermark: 0,
+			wantReason:    vehicleFeedSkipFuture,
+		},
+		{
+			name:          "header behind an existing watermark is stale",
+			prev:          futureWatermark,
+			createdAt:     now,
+			wantApply:     false,
+			wantWatermark: futureWatermark,
+			wantReason:    vehicleFeedSkipStale,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := decideVehicleFeedTimestamp(tt.prev, tt.createdAt, now)
+			assert.Equal(t, tt.wantApply, got.apply)
+			assert.Equal(t, tt.wantWatermark, got.watermark)
+			assert.Equal(t, tt.wantReason, got.reason)
+		})
+	}
+}
+
+func TestUpdateFeedRealtime_FutureHeaderThenClearAcceptsCorrectedHeader(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var payload []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "clock-correction",
+		VehiclePositionsURL: server.URL,
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	futureAt := now.Add(time.Hour)
+	mu.Lock()
+	payload = encodeVehicleFeed(futureAt, []*gtfsrt.VehiclePosition{{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-future")},
+		Timestamp: proto.Uint64(uint64(futureAt.Unix())),
+	}})
+	mu.Unlock()
+
+	var buf bytes.Buffer
+	futureCtx := logging.WithLogger(ctx, logging.NewStructuredLogger(&buf, slog.LevelDebug))
+	assert.True(t, manager.updateFeedRealtime(futureCtx, feed), "a future vehicle header still publishes its vehicles")
+	vehicles := manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1)
+	require.NotNil(t, vehicles[0].ID)
+	assert.Equal(t, "veh-future", vehicles[0].ID.ID)
+	manager.realTimeMutex.RLock()
+	assert.Zero(t, manager.feedVehicleTimestamp[feed.ID], "a future header must not become the watermark")
+	manager.realTimeMutex.RUnlock()
+	assert.Contains(t, buf.String(), "ignoring_future_vehicle_feed_timestamp")
+	assert.NotContains(t, buf.String(), "realtime feed update failed")
+
+	manager.clearFeedData(feed.ID)
+
+	correctedAt := now
+	mu.Lock()
+	payload = encodeVehicleFeed(correctedAt, []*gtfsrt.VehiclePosition{{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-corrected")},
+		Timestamp: proto.Uint64(uint64(correctedAt.Unix())),
+	}})
+	mu.Unlock()
+
+	require.True(t, manager.updateFeedRealtime(ctx, feed), "a corrected header must apply after a future header")
+	vehicles = manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1)
+	require.NotNil(t, vehicles[0].ID)
+	assert.Equal(t, "veh-corrected", vehicles[0].ID.ID)
+	manager.realTimeMutex.RLock()
+	correctedStamp := manager.feedVehicleTimestamp[feed.ID]
+	manager.realTimeMutex.RUnlock()
+	assert.Equal(t, correctedAt.Unix(), time.Unix(0, int64(correctedStamp)).Unix())
+
+	manager.clearFeedData(feed.ID)
+	assert.Empty(t, manager.GetRealTimeVehicles())
+	assert.False(t, manager.updateFeedRealtime(ctx, feed), "the same corrected payload must stay stale after clearing")
+	assert.Empty(t, manager.GetRealTimeVehicles(), "a rejected stale payload must not republish vehicles")
+	manager.realTimeMutex.RLock()
+	assert.Equal(t, correctedStamp, manager.feedVehicleTimestamp[feed.ID])
+	manager.realTimeMutex.RUnlock()
+}
+
 func TestUpdateFeedRealtime_RouteAgencyLookupErrorPreservesFeed(t *testing.T) {
 	manager := newTestManager()
 	manager.feedAgencyFilter["lookup-fail"] = map[string]bool{"agency-A": true}
@@ -459,6 +671,159 @@ func TestStaleFeedRejected(t *testing.T) {
 			assert.True(t, firstIDs[v.ID.ID], "vehicle should come from first poll, not stale feed")
 		}
 	}
+}
+
+// TestUpdateFeedRealtime_StaleVehicleFeedReportsNoNewData verifies that a
+// vehicle feed fetched successfully with an unchanged header timestamp does
+// not report new data. That return value is what resets the poller circuit breaker.
+func TestUpdateFeedRealtime_StaleVehicleFeedReportsNoNewData(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var payload []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "stale-health",
+		VehiclePositionsURL: server.URL,
+	}
+
+	freshAt := time.Unix(1_700_000_000, 0).UTC()
+	freshVehicle := &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-fresh")},
+		Timestamp: proto.Uint64(uint64(freshAt.Unix())),
+	}
+	mu.Lock()
+	payload = encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{freshVehicle})
+	mu.Unlock()
+
+	assert.True(t, manager.updateFeedRealtime(ctx, feed), "a fresh vehicle feed should count as new data")
+	require.Len(t, manager.GetRealTimeVehicles(), 1)
+
+	var buf bytes.Buffer
+	staleCtx := logging.WithLogger(ctx, logging.NewStructuredLogger(&buf, slog.LevelDebug))
+	assert.False(t, manager.updateFeedRealtime(staleCtx, feed), "an unchanged vehicle feed timestamp should not count as new data")
+	vehicles := manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1)
+	require.NotNil(t, vehicles[0].ID)
+	assert.Equal(t, "veh-fresh", vehicles[0].ID.ID)
+	logOutput := buf.String()
+	assert.Contains(t, logOutput, "skipping_stale_vehicle_realtime_feed")
+	assert.NotContains(t, logOutput, "realtime feed update failed")
+
+	newerAt := freshAt.Add(time.Minute)
+	newerVehicle := &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-newer")},
+		Timestamp: proto.Uint64(uint64(newerAt.Unix())),
+	}
+	mu.Lock()
+	payload = encodeVehicleFeed(newerAt, []*gtfsrt.VehiclePosition{newerVehicle})
+	mu.Unlock()
+
+	assert.True(t, manager.updateFeedRealtime(ctx, feed), "a newer vehicle feed timestamp should count as new data")
+	foundNewer := false
+	for _, vehicle := range manager.GetRealTimeVehicles() {
+		if vehicle.ID != nil && vehicle.ID.ID == "veh-newer" {
+			foundNewer = true
+		}
+	}
+	assert.True(t, foundNewer, "a newer vehicle feed timestamp should be applied")
+}
+
+// TestUpdateFeedRealtime_StaleVehiclesWithSuccessfulTripsStillSucceed verifies
+// that a stale vehicle feed does not hide a trip update that was actually stored.
+func TestUpdateFeedRealtime_StaleVehiclesWithSuccessfulTripsStillSucceed(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	freshAt := time.Unix(1_700_000_000, 0).UTC()
+	var mu sync.Mutex
+	vehiclePayload := encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-fresh")},
+		Timestamp: proto.Uint64(uint64(freshAt.Unix())),
+	}})
+	vehicleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(vehiclePayload)
+	}))
+	defer vehicleServer.Close()
+
+	tripServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(encodeTripFeed(freshAt.Add(time.Minute), "trip-kept", "route-1"))
+	}))
+	defer tripServer.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "mixed-stale-vehicles",
+		TripUpdatesURL:      tripServer.URL,
+		VehiclePositionsURL: vehicleServer.URL,
+	}
+
+	assert.True(t, manager.updateFeedRealtime(ctx, feed), "the first poll should store both sub-feeds")
+
+	staleOnly := &gtfsrt.VehiclePosition{
+		Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-should-not-apply")},
+		Timestamp: proto.Uint64(uint64(freshAt.Add(time.Minute).Unix())),
+	}
+	mu.Lock()
+	vehiclePayload = encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{staleOnly})
+	mu.Unlock()
+
+	assert.True(t, manager.updateFeedRealtime(ctx, feed), "successful trip updates should still count when vehicles are stale")
+
+	vehicles := manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1)
+	require.NotNil(t, vehicles[0].ID)
+	assert.Equal(t, "veh-fresh", vehicles[0].ID.ID, "stale vehicle payload should not replace stored vehicles")
+
+	trips := manager.GetRealTimeTrips()
+	require.Len(t, trips, 1)
+	assert.Equal(t, "trip-kept", trips[0].ID.ID)
+}
+
+// TestUpdateFeedRealtime_StaleVehiclesWithFailedTripsStillFail verifies that a
+// stale vehicle skip does not hide a trip-update fetch that actually failed.
+func TestUpdateFeedRealtime_StaleVehiclesWithFailedTripsStillFail(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	freshAt := time.Unix(1_700_000_000, 0).UTC()
+	vehicleServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(encodeVehicleFeed(freshAt, []*gtfsrt.VehiclePosition{{
+			Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("veh-fresh")},
+			Timestamp: proto.Uint64(uint64(freshAt.Unix())),
+		}}))
+	}))
+	defer vehicleServer.Close()
+
+	tripServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer tripServer.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "stale-vehicles-failed-trips",
+		TripUpdatesURL:      tripServer.URL,
+		VehiclePositionsURL: vehicleServer.URL,
+	}
+
+	assert.True(t, manager.updateFeedRealtime(ctx, feed), "the first vehicle poll should count before the feed is stale")
+
+	var buf bytes.Buffer
+	staleCtx := logging.WithLogger(ctx, logging.NewStructuredLogger(&buf, slog.LevelDebug))
+	assert.False(t, manager.updateFeedRealtime(staleCtx, feed), "a failed trip update should still fail the poll when vehicles are stale")
+	assert.Contains(t, buf.String(), "realtime feed update failed")
 }
 
 // TestVehicleMerge_StaleIgnored ensures that when a feed update contains a
@@ -632,6 +997,47 @@ func TestVehicleMerge_MissingTimestamp(t *testing.T) {
 	vehicles := manager.GetRealTimeVehicles()
 	require.Len(t, vehicles, 1)
 	assert.Nil(t, vehicles[0].Timestamp, "incoming nil timestamp should replace existing")
+}
+
+func TestVehicleMerge_EpochZeroHeaderTimestamp(t *testing.T) {
+	manager := newTestManager()
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var payload []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	feed := RTFeedConfig{
+		ID:                  "epoch-zero-feed",
+		AgencyIDs:           []string{"40"},
+		VehiclePositionsURL: server.URL,
+		RefreshInterval:     30,
+		Enabled:             true,
+	}
+	veh := &gtfsrt.VehiclePosition{
+		Vehicle:  &gtfsrt.VehicleDescriptor{Id: proto.String("epochveh")},
+		Position: &gtfsrt.Position{Latitude: proto.Float32(47.6), Longitude: proto.Float32(-122.3)},
+	}
+	mu.Lock()
+	payload = encodeVehicleFeed(time.Unix(0, 0), []*gtfsrt.VehiclePosition{veh})
+	mu.Unlock()
+
+	before := time.Now()
+	manager.updateFeedRealtime(ctx, feed)
+
+	vehicles := manager.GetRealTimeVehicles()
+	require.Len(t, vehicles, 1, "a feed whose header timestamp is 0 must still be applied")
+
+	positions := manager.VehiclePositionsForAgency("40")
+	require.Len(t, positions.Vehicles, 1, "the vehicle must be exported for its agency")
+	assert.False(t, positions.Timestamp.Before(before),
+		"export timestamp must fall back to the fetch time, not the epoch")
 }
 
 func TestNewVehicleKey(t *testing.T) {
@@ -840,6 +1246,59 @@ func TestVehicleMerge_RetainedVehicleKeepsUntakenTrip(t *testing.T) {
 	assert.Equal(t, "V1", vehicle.ID.ID)
 }
 
+// TestVehicleMerge_RetainedVehicleReleasesTripTakenInAnotherFeed checks that a
+// retained vehicle loses its trip to a live vehicle from a different feed,
+// whichever feed sorts first.
+func TestVehicleMerge_RetainedVehicleReleasesTripTakenInAnotherFeed(t *testing.T) {
+	tests := []struct {
+		name          string
+		retainedFeed  string
+		liveFeed      string
+		liveTripID    string
+		takerDropsOut bool
+		wantTripOwner string
+	}{
+		{"retained feed sorts first", "feed-a", "feed-b", "trip-x", false, "V2"},
+		{"retained feed sorts last", "feed-b", "feed-a", "trip-x", false, "V2"},
+		{"live vehicle serves another trip", "feed-a", "feed-b", "trip-y", false, "V1"},
+		{"taker drops out, retained feed sorts first", "feed-a", "feed-b", "trip-x", true, "V2"},
+		{"taker drops out, retained feed sorts last", "feed-b", "feed-a", "trip-x", true, "V2"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := newTestManager()
+			now := time.Now().Truncate(time.Second)
+			updateFeed := func(feedID string, feedTime time.Time, positions ...*gtfsrt.VehiclePosition) {
+				feed := serveVehicleFeed(t, feedTime, positions)
+				feed.ID = feedID
+				manager.updateFeedRealtime(context.Background(), feed)
+			}
+
+			updateFeed(tc.retainedFeed, now.Add(-time.Minute), positionOnTrip("V1", "trip-x", 47.1, nil))
+			updateFeed(tc.retainedFeed, now.Add(-30*time.Second))
+			updateFeed(tc.liveFeed, now, positionOnTrip("V2", tc.liveTripID, 47.4, nil))
+			if tc.takerDropsOut {
+				// Both vehicles are now retained; V1 must not get the trip back.
+				updateFeed(tc.liveFeed, now.Add(30*time.Second))
+			}
+
+			vehicle := manager.GetVehicleForTrip(context.Background(), "trip-x")
+			require.NotNil(t, vehicle)
+			assert.Equal(t, tc.wantTripOwner, vehicle.ID.ID)
+
+			var routeVehicleIDs []string
+			for _, v := range manager.mergedRealtime().vehiclesByRoute["route-x"] {
+				if v.Trip.ID.ID == "trip-x" {
+					routeVehicleIDs = append(routeVehicleIDs, v.ID.ID)
+				}
+			}
+			assert.Equal(t, []string{tc.wantTripOwner}, routeVehicleIDs, "only the trip's owner should be listed on it")
+			assert.Len(t, manager.GetRealTimeVehicles(), 2, "V1 should still be retained within the stale-vehicle window")
+		})
+	}
+}
+
 // TestIsVehicleStale verifies the isVehicleStale function correctly compares
 // vehicle timestamps to determine staleness.
 func TestIsVehicleStale(t *testing.T) {
@@ -1022,7 +1481,7 @@ func TestAlertIndex_RouteTripEntityIndexedUnderByTrip(t *testing.T) {
 }
 
 // TestGetAlertsByIDs_AgencyScoping verifies that agency-wide matching only fires
-// for entities that have agencyId with no route or trip restriction.
+// for entities that have agencyId with no route, trip or stop restriction.
 func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
 	agencyID := "agency40"
 	routeID := "route123"
@@ -1049,11 +1508,11 @@ func TestGetAlertsByIDs_AgencyScoping(t *testing.T) {
 			expectMatch: false,
 		},
 		{
-			// {agencyID+stopID} has no route/trip restriction, so it is filed in byAgency
-			// AND byStop. An agency-only lookup should therefore still match.
-			name:        "agency+stop entity matches agency-only query",
+			// {agencyID+stopID} is stop-specific: it is filed in byStop only, so an
+			// agency-only lookup must not match it (as in Java's AffectsAgencyKeyFactory).
+			name:        "agency+stop entity does not match agency-only query",
 			entities:    []gtfs.AlertInformedEntity{{AgencyID: &agencyID, StopID: func() *string { s := "stop99"; return &s }()}},
-			expectMatch: true,
+			expectMatch: false,
 		},
 	}
 
@@ -1154,7 +1613,7 @@ func TestAlertIndex_ByStopID(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	alerts := manager.GetAlertsForStop("stop1")
+	alerts := manager.GetAlertsForStop("stop1", "")
 
 	require.Len(t, alerts, 1)
 	assert.Equal(t, "alert1", alerts[0].ID)
@@ -1194,7 +1653,7 @@ func TestAlertIndex_EmptyAlerts(t *testing.T) {
 	manager.rebuildMergedRealtimeLocked()
 
 	assert.Empty(t, manager.GetAlertsByIDs("trip1", "route1", "agency1"))
-	assert.Empty(t, manager.GetAlertsForStop("stop1"))
+	assert.Empty(t, manager.GetAlertsForStop("stop1", ""))
 }
 
 func TestAlertIndex_NoDuplicatesFromRepeatedEntityKeys(t *testing.T) {
@@ -1225,7 +1684,7 @@ func TestAlertIndex_NoDuplicatesFromRepeatedEntityKeys(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	assert.Len(t, manager.GetAlertsForStop("stop1"), 1)
+	assert.Len(t, manager.GetAlertsForStop("stop1", ""), 1)
 	assert.Len(t, manager.GetAlertsByIDs("trip1", "route1", "agency1"), 1)
 }
 
@@ -1250,7 +1709,7 @@ func TestAlertIndex_EmptyIDAlertExcluded(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	stopAlerts := manager.GetAlertsForStop("stop1")
+	stopAlerts := manager.GetAlertsForStop("stop1", "")
 	require.Len(t, stopAlerts, 1)
 	assert.Equal(t, "alert-valid", stopAlerts[0].ID)
 
@@ -1258,10 +1717,11 @@ func TestAlertIndex_EmptyIDAlertExcluded(t *testing.T) {
 	assert.Empty(t, tripAlerts)
 }
 
-// TestAlertIndex_AgencyStopEntityAlsoIndexedByStop verifies the symmetric half
-// of the agency+stop scoping rule: an entity with both agencyID and stopID is
-// filed in byStop (so stop-scoped lookups find it) in addition to byAgency.
-func TestAlertIndex_AgencyStopEntityAlsoIndexedByStop(t *testing.T) {
+// TestAlertIndex_AgencyStopEntityIndexedByStopOnly verifies the agency+stop
+// scoping rule: an entity with both agencyID and stopID is filed in byStop (so
+// stop-scoped lookups find it) but not in byAgency, so it doesn't reach every
+// trip of the agency.
+func TestAlertIndex_AgencyStopEntityIndexedByStopOnly(t *testing.T) {
 	agencyID := "agency40"
 	stopID := "stop99"
 
@@ -1278,13 +1738,54 @@ func TestAlertIndex_AgencyStopEntityAlsoIndexedByStop(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	stopAlerts := manager.GetAlertsForStop(stopID)
+	stopAlerts := manager.GetAlertsForStop(stopID, "")
 	assert.Len(t, stopAlerts, 1, "agency+stop entity should appear in byStop")
 	assert.Equal(t, "alert1", stopAlerts[0].ID)
 
-	agencyAlerts := manager.GetAlertsByIDs("", "", agencyID)
-	assert.Len(t, agencyAlerts, 1, "agency+stop entity should also appear in byAgency")
-	assert.Equal(t, "alert1", agencyAlerts[0].ID)
+	agencyAlerts := manager.GetAlertsByIDs("unrelated-trip", "unrelated-route", agencyID)
+	assert.Empty(t, agencyAlerts, "agency+stop entity should not reach other trips of the agency")
+}
+
+func TestGetAlertsForStop_IncludesStopAgencyAlerts(t *testing.T) {
+	agencyID := "agency40"
+	otherAgencyID := "agency41"
+	stopID := "stop99"
+
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{ID: "stop-alert", InformedEntities: []gtfs.AlertInformedEntity{{StopID: &stopID}}},
+				{ID: "agency-alert", InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &agencyID}}},
+				{ID: "other-agency-alert", InformedEntities: []gtfs.AlertInformedEntity{{AgencyID: &otherAgencyID}}},
+				{ID: "stop-and-agency-alert", InformedEntities: []gtfs.AlertInformedEntity{
+					{StopID: &stopID},
+					{AgencyID: &agencyID},
+				}},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	tests := []struct {
+		name     string
+		stopID   string
+		agencyID string
+		wantIDs  []string
+	}{
+		{"stop and its agency", stopID, agencyID, []string{"stop-alert", "stop-and-agency-alert", "agency-alert"}},
+		{"stop without an agency", stopID, "", []string{"stop-alert", "stop-and-agency-alert"}},
+		{"stop with no alerts of its own", "quiet-stop", agencyID, []string{"agency-alert", "stop-and-agency-alert"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotIDs []string
+			for _, alert := range manager.GetAlertsForStop(tt.stopID, tt.agencyID) {
+				gotIDs = append(gotIDs, alert.ID)
+			}
+			assert.Equal(t, tt.wantIDs, gotIDs)
+		})
+	}
 }
 
 // TestAlertIndex_RouteStopEntityAlsoIndexedByStop verifies the positive half
@@ -1308,7 +1809,7 @@ func TestAlertIndex_RouteStopEntityAlsoIndexedByStop(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	stopAlerts := manager.GetAlertsForStop(stopID)
+	stopAlerts := manager.GetAlertsForStop(stopID, "")
 	assert.Len(t, stopAlerts, 1, "route+stop entity should appear in byStop")
 	assert.Equal(t, "alert1", stopAlerts[0].ID)
 
@@ -1352,7 +1853,7 @@ func TestMockAddAlert_IndexIsImmediatelySynced(t *testing.T) {
 	})
 
 	t.Run("byStop bucket is populated", func(t *testing.T) {
-		alerts := manager.GetAlertsForStop(stopID)
+		alerts := manager.GetAlertsForStop(stopID, "")
 		require.Len(t, alerts, 1)
 		assert.Equal(t, "alert-synced", alerts[0].ID)
 	})
@@ -1392,7 +1893,7 @@ func TestAlertIndex_NilInformedEntitiesExcludedFromAllBuckets(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	assert.Empty(t, manager.GetAlertsForStop("any-stop"))
+	assert.Empty(t, manager.GetAlertsForStop("any-stop", ""))
 	assert.Empty(t, manager.GetAlertsByIDs("any-trip", "any-route", "any-agency"))
 }
 
@@ -1410,7 +1911,7 @@ func TestAlertIndex_CrossFeedDeduplication(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	stopAlerts := manager.GetAlertsForStop(stopID)
+	stopAlerts := manager.GetAlertsForStop(stopID, "")
 	assert.Len(t, stopAlerts, 1, "GetAlertsForStop deduplicates by alert ID across feeds")
 	assert.Equal(t, "alert1", stopAlerts[0].ID)
 }
@@ -1454,6 +1955,29 @@ func encodeVehicleFeed(createdAt time.Time, positions []*gtfsrt.VehiclePosition)
 	b, err := proto.Marshal(feed)
 	if err != nil {
 		panic(fmt.Sprintf("failed to marshal realtime feed: %s", err))
+	}
+	return b
+}
+
+func encodeTripFeed(createdAt time.Time, tripID, routeID string) []byte {
+	feed := &gtfsrt.FeedMessage{
+		Header: &gtfsrt.FeedHeader{
+			GtfsRealtimeVersion: proto.String("2.0"),
+			Timestamp:           proto.Uint64(uint64(createdAt.Unix())),
+		},
+		Entity: []*gtfsrt.FeedEntity{{
+			Id: proto.String("trip-entity"),
+			TripUpdate: &gtfsrt.TripUpdate{
+				Trip: &gtfsrt.TripDescriptor{
+					TripId:  proto.String(tripID),
+					RouteId: proto.String(routeID),
+				},
+			},
+		}},
+	}
+	b, err := proto.Marshal(feed)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal trip feed: %s", err))
 	}
 	return b
 }
@@ -1765,4 +2289,234 @@ func TestGetDuplicatedVehiclesForRoute_NoMatchReturnsEmpty(t *testing.T) {
 	result := manager.GetDuplicatedVehiclesForRoute("route-unknown")
 
 	assert.Empty(t, result, "route miss should return empty result")
+}
+
+func TestNextTripUpdatesSeen(t *testing.T) {
+	timestamp := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	firstFeed := timestamp.Add(10 * time.Second)
+	laterFeed := timestamp.Add(40 * time.Second)
+	previous := map[string]tripUpdateSeen{"trip": {timestamp: timestamp, at: firstFeed}}
+	newerTimestamp := timestamp.Add(30 * time.Second)
+
+	tests := []struct {
+		name      string
+		previous  map[string]tripUpdateSeen
+		trip      gtfs.Trip
+		wantAt    time.Time
+		wantEntry bool
+	}{
+		{name: "new trip is seen at the feed's time", trip: gtfs.Trip{ID: gtfs.TripID{ID: "trip"}, Timestamp: &timestamp}, wantAt: laterFeed, wantEntry: true},
+		{name: "repeated timestamp keeps the first time", previous: previous, trip: gtfs.Trip{ID: gtfs.TripID{ID: "trip"}, Timestamp: &timestamp}, wantAt: firstFeed, wantEntry: true},
+		{name: "advanced timestamp is seen again", previous: previous, trip: gtfs.Trip{ID: gtfs.TripID{ID: "trip"}, Timestamp: &newerTimestamp}, wantAt: laterFeed, wantEntry: true},
+		{name: "no timestamp has no entry", previous: previous, trip: gtfs.Trip{ID: gtfs.TripID{ID: "trip"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			seen := nextTripUpdatesSeen(tt.previous, []gtfs.Trip{tt.trip}, laterFeed)
+
+			entry, ok := seen["trip"]
+			assert.Equal(t, tt.wantEntry, ok)
+			assert.Equal(t, tt.wantAt, entry.at)
+		})
+	}
+}
+
+// Polls a feed through the real ingestion path: the first-seen time holds while
+// an update's timestamp repeats and moves when the timestamp advances.
+func TestTripUpdateFirstSeen_FollowsFeedPolls(t *testing.T) {
+	const tripID = "trip"
+	updateTimestamp := uint64(1_767_268_800)
+	feedTime := updateTimestamp + 10
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		feed := &gtfsrt.FeedMessage{
+			Header: &gtfsrt.FeedHeader{GtfsRealtimeVersion: proto.String("2.0"), Timestamp: proto.Uint64(feedTime)},
+			Entity: []*gtfsrt.FeedEntity{{
+				Id: proto.String("entity"),
+				TripUpdate: &gtfsrt.TripUpdate{
+					Trip:      &gtfsrt.TripDescriptor{TripId: proto.String(tripID)},
+					Timestamp: proto.Uint64(updateTimestamp),
+				},
+			}},
+		}
+		data, err := proto.Marshal(feed)
+		assert.NoError(t, err)
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+
+	manager := newTestManager()
+	poll := func() time.Time {
+		t.Helper()
+		manager.updateFeedRealtime(context.Background(), RTFeedConfig{ID: "feed", TripUpdatesURL: server.URL, Enabled: true})
+		seenAt, ok := manager.TripUpdateFirstSeen(tripID)
+		require.True(t, ok)
+		return seenAt
+	}
+
+	firstSeen := poll()
+	assert.Equal(t, time.Unix(int64(feedTime), 0).Unix(), firstSeen.Unix())
+
+	feedTime += 30
+	assert.Equal(t, firstSeen.Unix(), poll().Unix(), "a repeated timestamp keeps the first time")
+
+	feedTime += 30
+	updateTimestamp += 60
+	assert.Equal(t, int64(feedTime), poll().Unix(), "an advanced timestamp is seen again")
+}
+
+func TestUpdateFeedRealtime_NormalizesTripUpdateTimestamps(t *testing.T) {
+	headerTime := time.Now().Add(-time.Minute).Truncate(time.Second)
+	updateTime := headerTime.Add(-30 * time.Second)
+
+	tests := []struct {
+		name      string
+		timestamp *uint64
+		want      time.Time
+	}{
+		{name: "seconds are kept", timestamp: proto.Uint64(uint64(updateTime.Unix())), want: updateTime},
+		{name: "milliseconds are converted", timestamp: proto.Uint64(uint64(updateTime.UnixMilli())), want: updateTime},
+		{name: "a missing timestamp takes the header time", want: headerTime},
+		{name: "a zero timestamp takes the header time", timestamp: proto.Uint64(0), want: headerTime},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const tripID = "trip"
+			manager := newTestManager()
+			serveTripUpdate(t, manager, tripID, tt.timestamp, proto.Uint64(uint64(headerTime.Unix())))
+
+			updates := manager.GetTripUpdatesForTrip(tripID)
+			require.Len(t, updates, 1)
+			require.NotNil(t, updates[0].Timestamp)
+			assert.Equal(t, tt.want.Unix(), updates[0].Timestamp.Unix())
+		})
+	}
+
+	t.Run("no header falls back to the fetch time", func(t *testing.T) {
+		const tripID = "trip"
+		manager := newTestManager()
+		before := time.Now().Truncate(time.Second)
+		serveTripUpdate(t, manager, tripID, nil, nil)
+
+		updates := manager.GetTripUpdatesForTrip(tripID)
+		require.Len(t, updates, 1)
+		require.NotNil(t, updates[0].Timestamp)
+		assert.GreaterOrEqual(t, updates[0].Timestamp.Unix(), before.Unix())
+	})
+}
+
+func TestUpdateFeedRealtime_FirstSeenUsesNormalizedFeedTime(t *testing.T) {
+	headerTime := time.Now().Add(-time.Minute).Truncate(time.Second)
+	updateTime := proto.Uint64(uint64(headerTime.Add(-30 * time.Second).Unix()))
+
+	t.Run("a millisecond header is converted", func(t *testing.T) {
+		const tripID = "trip"
+		manager := newTestManager()
+		serveTripUpdate(t, manager, tripID, updateTime, proto.Uint64(uint64(headerTime.UnixMilli())))
+
+		seenAt, ok := manager.TripUpdateFirstSeen(tripID)
+		require.True(t, ok)
+		assert.Equal(t, headerTime.Unix(), seenAt.Unix())
+	})
+
+	t.Run("a zero header takes the fetch time", func(t *testing.T) {
+		const tripID = "trip"
+		manager := newTestManager()
+		before := time.Now().Truncate(time.Second)
+		serveTripUpdate(t, manager, tripID, updateTime, proto.Uint64(0))
+
+		seenAt, ok := manager.TripUpdateFirstSeen(tripID)
+		require.True(t, ok)
+		assert.GreaterOrEqual(t, seenAt.Unix(), before.Unix())
+	})
+}
+
+func TestLatestFeedUpdateTime_FollowsRemainingFeeds(t *testing.T) {
+	manager := newTestManager()
+	older := time.Now().Add(-time.Minute).Truncate(time.Second)
+	newer := older.Add(30 * time.Second)
+	manager.SetFeedUpdateTimeForTest("older", older)
+	manager.SetFeedUpdateTimeForTest("newer", newer)
+
+	manager.clearFeedData("newer")
+	latest, ok := manager.LatestFeedUpdateTime()
+	require.True(t, ok)
+	assert.True(t, older.Equal(latest), "expected the remaining feed's time, got %s", latest)
+
+	manager.clearFeedData("older")
+	_, ok = manager.LatestFeedUpdateTime()
+	assert.False(t, ok)
+}
+
+func TestMockResetRealTimeData_ClearsLatestFeedUpdate(t *testing.T) {
+	manager := newTestManager()
+	manager.SetFeedUpdateTimeForTest("feed", time.Now())
+
+	manager.MockResetRealTimeData()
+
+	_, ok := manager.LatestFeedUpdateTime()
+	assert.False(t, ok)
+}
+
+func TestUpdateFeedRealtime_KeepsOnlyTripUpdateEntities(t *testing.T) {
+	const (
+		tripUpdateTrip  = "trip-update"
+		vehicleOnlyTrip = "vehicle-only"
+		alertOnlyTrip   = "alert-only"
+	)
+	vehiclePosition := func(tripID, vehicleID string) *gtfsrt.VehiclePosition {
+		return &gtfsrt.VehiclePosition{
+			Trip:    &gtfsrt.TripDescriptor{TripId: proto.String(tripID)},
+			Vehicle: &gtfsrt.VehicleDescriptor{Id: proto.String(vehicleID)},
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		feed := &gtfsrt.FeedMessage{
+			Header: &gtfsrt.FeedHeader{GtfsRealtimeVersion: proto.String("2.0"), Timestamp: proto.Uint64(uint64(time.Now().Unix()))},
+			Entity: []*gtfsrt.FeedEntity{
+				{Id: proto.String("update"), TripUpdate: &gtfsrt.TripUpdate{Trip: &gtfsrt.TripDescriptor{TripId: proto.String(tripUpdateTrip)}}},
+				{Id: proto.String("update-vehicle"), Vehicle: vehiclePosition(tripUpdateTrip, "bus-1")},
+				{Id: proto.String("vehicle"), Vehicle: vehiclePosition(vehicleOnlyTrip, "bus-2")},
+				{Id: proto.String("alert"), Alert: &gtfsrt.Alert{InformedEntity: []*gtfsrt.EntitySelector{
+					{Trip: &gtfsrt.TripDescriptor{TripId: proto.String(alertOnlyTrip)}},
+				}}},
+			},
+		}
+		data, err := proto.Marshal(feed)
+		assert.NoError(t, err)
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+
+	manager := newTestManager()
+	manager.updateFeedRealtime(context.Background(), RTFeedConfig{ID: "feed", TripUpdatesURL: server.URL, Enabled: true})
+
+	assert.Len(t, manager.GetTripUpdatesForTrip(tripUpdateTrip), 1, "a trip update also named by a vehicle stays")
+	assert.Empty(t, manager.GetTripUpdatesForTrip(vehicleOnlyTrip))
+	assert.Empty(t, manager.GetTripUpdatesForTrip(alertOnlyTrip))
+	_, seen := manager.TripUpdateFirstSeen(vehicleOnlyTrip)
+	assert.False(t, seen)
+}
+
+func serveTripUpdate(t *testing.T, manager *Manager, tripID string, timestamp, headerTime *uint64) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		feed := &gtfsrt.FeedMessage{
+			Header: &gtfsrt.FeedHeader{GtfsRealtimeVersion: proto.String("2.0"), Timestamp: headerTime},
+			Entity: []*gtfsrt.FeedEntity{{
+				Id: proto.String("entity"),
+				TripUpdate: &gtfsrt.TripUpdate{
+					Trip:      &gtfsrt.TripDescriptor{TripId: proto.String(tripID)},
+					Timestamp: timestamp,
+				},
+			}},
+		}
+		data, err := proto.Marshal(feed)
+		assert.NoError(t, err)
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	manager.updateFeedRealtime(context.Background(), RTFeedConfig{ID: "feed", TripUpdatesURL: server.URL, Enabled: true})
 }

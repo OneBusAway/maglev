@@ -1,0 +1,188 @@
+{
+  "code": 200,
+  "currentTime": 1749740400000,
+  "data": {
+    "limitExceeded": false,
+    "list": [
+      {
+        "agencyId": "25",
+        "color": "55d1b0",
+        "description": "",
+        "id": "25_151",
+        "longName": "Route 1",
+        "nullSafeShortName": "1",
+        "shortName": "1",
+        "textColor": "000000",
+        "type": 3,
+        "url": "https://rabaride.com/Document%20Center/Services/Bus/Route01.pdf"
+      },
+      {
+        "agencyId": "25",
+        "color": "93ea5f",
+        "description": "",
+        "id": "25_159",
+        "longName": "Route 11",
+        "nullSafeShortName": "11",
+        "shortName": "11",
+        "textColor": "000000",
+        "type": 3,
+        "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route11.pdf"
+      },
+      {
+        "agencyId": "25",
+        "color": "8c08b1",
+        "description": "",
+        "id": "25_160",
+        "longName": "Route 14",
+        "nullSafeShortName": "14",
+        "shortName": "14",
+        "textColor": "ffffff",
+        "type": 3,
+        "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route14.pdf"
+      },
+      {
+        "agencyId": "25",
+        "color": "00dffb",
+        "description": "",
+        "id": "25_161",
+        "longName": "Route 299X",
+        "nullSafeShortName": "299X",
+        "shortName": "299X",
+        "textColor": "ffffff",
+        "type": 3,
+        "url": "https://rabaride.com/services/burney_express.php"
+      },
+      {
+        "agencyId": "25",
+        "color": "fbef00",
+        "description": "",
+        "id": "25_1885",
+        "longName": "Shasta View/Shasta College",
+        "nullSafeShortName": "17",
+        "shortName": "17",
+        "textColor": "0e0e0e",
+        "type": 3,
+        "url": "https://cms3.revize.com/revize/reddingbusauthority/17.pdf"
+      },
+      {
+        "agencyId": "25",
+        "color": "1bb1f6",
+        "description": "",
+        "id": "25_153",
+        "longName": "Route 3",
+        "nullSafeShortName": "3",
+        "shortName": "3",
+        "textColor": "ffffff",
+        "type": 3,
+        "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route03.pdf"
+      },
+      {
+        "agencyId": "25",
+        "color": "bdadd1",
+        "description": "",
+        "id": "25_154",
+        "longName": "Route 4",
+        "nullSafeShortName": "4",
+        "shortName": "4",
+        "textColor": "ffffff",
+        "type": 3,
+        "url": "https://rabaride.com/Document%20Center/Services/Bus/Route04.pdf"
+      },
+      {
+        "agencyId": "25",
+        "color": "1886c7",
+        "description": "",
+        "id": "25_157",
+        "longName": "Route 7",
+        "nullSafeShortName": "7",
+        "shortName": "7",
+        "textColor": "ffffff",
+        "type": 3,
+        "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route07.pdf"
+      },
+      {
+        "agencyId": "25",
+        "color": "ec191c",
+        "description": "",
+        "id": "25_6446",
+        "longName": "Route 9",
+        "nullSafeShortName": "9",
+        "shortName": "9",
+        "textColor": "000000",
+        "type": 3,
+        "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/Route09.pdf"
+      },
+      {
+        "agencyId": "25",
+        "color": "2738ec",
+        "description": "",
+        "id": "25_3779",
+        "longName": "Route 19",
+        "nullSafeShortName": "19",
+        "shortName": "19",
+        "textColor": "ffffff",
+        "type": 3,
+        "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/SRTA_BeachBus_20230302_ful.pdf"
+      },
+      {
+        "agencyId": "25",
+        "color": "800000",
+        "description": "",
+        "id": "25_15",
+        "longName": "Churn Creek/Knightson/Airport",
+        "nullSafeShortName": "15",
+        "shortName": "15",
+        "textColor": "FFFFFF",
+        "type": 3,
+        "url": "https://cms3.revize.com/revize/reddingbusauthority/Document%20Center/Services/Bus/15-18.pdf"
+      },
+      {
+        "agencyId": "25",
+        "color": "9F472E",
+        "description": "",
+        "id": "25_24",
+        "longName": "Route 99X/Amtrak Thruway Route 3",
+        "nullSafeShortName": "99X",
+        "shortName": "99X",
+        "textColor": "FFFFFF",
+        "type": 3,
+        "url": ""
+      },
+      {
+        "agencyId": "25",
+        "color": "F84DF7",
+        "description": "",
+        "id": "25_44X",
+        "longName": "Shingletown Flex",
+        "nullSafeShortName": "44X",
+        "shortName": "44X",
+        "textColor": "000000",
+        "type": 3,
+        "url": ""
+      }
+    ],
+    "references": {
+      "agencies": [
+        {
+          "disclaimer": "",
+          "email": "",
+          "fareUrl": "",
+          "id": "25",
+          "lang": "en",
+          "name": "Redding Area Bus Authority",
+          "phone": "530-241-2877",
+          "privateService": false,
+          "timezone": "America/Los_Angeles",
+          "url": "http://www.rabaride.com/"
+        }
+      ],
+      "routes": [],
+      "situations": [],
+      "stopTimes": [],
+      "stops": [],
+      "trips": []
+    }
+  },
+  "text": "OK",
+  "version": 2
+}

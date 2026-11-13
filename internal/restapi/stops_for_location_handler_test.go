@@ -415,9 +415,31 @@ func TestStopsForLocationReturnsParentStation(t *testing.T) {
 
 func TestStopsForLocationHandlerValidatesMaxCount(t *testing.T) {
 	api := createTestApi(t)
-	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&maxCount=invalid")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
+
+	tests := []struct {
+		name        string
+		maxCount    string
+		wantStatus  int
+		wantMessage string
+	}{
+		{"non-numeric string", "invalid", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"64-bit integer overflow", "99999999999", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"int32 overflow 2147483648", "2147483648", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"int32 underflow -2147483649", "-2147483649", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"max int32 2147483647 accepted", "2147483647", http.StatusOK, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=1000&maxCount=" + tt.maxCount
+			resp, model := callAPIHandler[models.ResponseModel](t, api, url)
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+			assert.Equal(t, tt.wantStatus, model.Code)
+			if tt.wantMessage != "" {
+				assert.Contains(t, maxCountFieldErrors(t, model.Data), tt.wantMessage)
+			}
+		})
+	}
 }
 
 func TestStopsForLocationHandlerRouteTypeErrorLimit(t *testing.T) {
@@ -432,6 +454,55 @@ func TestStopsForLocationHandlerRouteTypeErrorLimit(t *testing.T) {
 	routeTypeErrors := model.Data.FieldErrors["routeType"]
 	assert.Len(t, routeTypeErrors, 1, "Should return a single error for invalid routeType")
 	assert.Contains(t, routeTypeErrors[0], "Invalid field value for field", "Error should use standard generic message")
+}
+
+func TestStopsForLocationHandlerRouteTypeInvalidTokens(t *testing.T) {
+	tests := []struct {
+		name      string
+		routeType string
+	}{
+		{
+			name:      "trailing letters after digit",
+			routeType: "3abc",
+		},
+		{
+			name:      "alphanumeric identifier",
+			routeType: "bus",
+		},
+		{
+			name:      "trailing letters in list",
+			routeType: "1,2,bad3",
+		},
+		{
+			name:      "trailing underscore",
+			routeType: "3_extra",
+		},
+		{
+			name:      "64-bit integer overflow exceeding int32",
+			routeType: "99999999999",
+		},
+		{
+			name:      "int32 max plus one",
+			routeType: "2147483648",
+		},
+		{
+			name:      "int32 min minus one",
+			routeType: "-2147483649",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			url := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&routeType=" + tt.routeType
+			resp, model := callAPIHandler[StopsResponse](t, api, url)
+
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			routeTypeErrors := model.Data.FieldErrors["routeType"]
+			require.Len(t, routeTypeErrors, 1, "Should return a single error for invalid routeType")
+			assert.Contains(t, routeTypeErrors[0], "Invalid field value for field", "Error should use standard generic message")
+		})
+	}
 }
 
 func TestStopsForLocationHandlerRouteTypeTooManyTokens(t *testing.T) {
@@ -746,7 +817,7 @@ func TestStopsForLocationAcceptsDocumentedTimeFormats(t *testing.T) {
 	}{
 		{name: "epoch millis", timeParam: serviceDateEpochMs, expectStops: true},
 		{name: "date and time", timeParam: "2025-06-13_14-00-00", expectStops: true},
-		{name: "date only", timeParam: "2025-06-13", expectStops: true},
+		{name: "date only", timeParam: "2025-06-13", expectStops: false},
 		{name: "malformed", timeParam: "garbage", expectStops: false},
 		{name: "absent", timeParam: "", expectStops: false},
 	}
@@ -812,13 +883,15 @@ func TestStopsForLocationUsesAgencyDateForCurrentTime(t *testing.T) {
 		return stopIDs
 	}
 
-	// Both routes to the fallback have to land on the agency's date.
+	// Each route to the fallback has to land on the agency's date.
 	tests := []struct {
 		name      string
 		timeParam string
 	}{
 		{name: "absent", timeParam: ""},
 		{name: "malformed", timeParam: "garbage"},
+		{name: "zero epoch", timeParam: "0"},
+		{name: "negative epoch", timeParam: "-5"},
 	}
 
 	for _, tt := range tests {
@@ -827,6 +900,32 @@ func TestStopsForLocationUsesAgencyDateForCurrentTime(t *testing.T) {
 			require.NotEmpty(t, expected)
 			assert.Equal(t, expected, stopIDsAt(lateEveningLocal, tt.timeParam),
 				"the same local service date must select the same stops on both sides of UTC midnight")
+		})
+	}
+}
+
+// TestStopsForLocationNegativeEpochFallsBackToCurrentTime verifies that passing a negative
+// epoch timestamp (e.g. time=-5) is treated as an unparseable time and falls back to the
+// current time ("now") rather than 1969/1970, matching Java reference server behavior.
+func TestStopsForLocationNegativeEpochFallsBackToCurrentTime(t *testing.T) {
+	// A mock clock on a service date when RABA has active service (2025-06-13 14:00:00 local).
+	serviceClock := clock.NewMockClock(time.Date(2025, 6, 13, 21, 0, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, serviceClock)
+
+	baseURL := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=2500"
+
+	respDefault, modelDefault := callAPIHandler[StopsResponse](t, api, baseURL)
+	require.Equal(t, http.StatusOK, respDefault.StatusCode)
+	require.NotEmpty(t, modelDefault.Data.List, "stops must be returned for active service date")
+
+	for _, rawTime := range []string{"-5", "-1", "-0"} {
+		t.Run("time="+rawTime, func(t *testing.T) {
+			respNeg, modelNeg := callAPIHandler[StopsResponse](t, api, baseURL+"&time="+rawTime)
+			require.Equal(t, http.StatusOK, respNeg.StatusCode)
+			assert.Equal(t, modelDefault.Data.List, modelNeg.Data.List,
+				"negative epoch time=%s must fall back to current time and return identical stops", rawTime)
+			assert.Equal(t, modelDefault.Data.References, modelNeg.Data.References,
+				"negative epoch time=%s references must match current time fallback", rawTime)
 		})
 	}
 }
@@ -872,4 +971,38 @@ func TestStopsForLocationStopCodeFallback(t *testing.T) {
 	stop := model.Data.List[0]
 
 	assert.Equal(t, stopID, stop.Code, "stop_code should fall back to the raw stop entity id when stop_code is not defined in the feed")
+}
+
+func TestStopsForLocation_AgencyWithUnderscore(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 12, 0, 0, 0, time.UTC))
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"AGENCY_ONE,Agency One,http://example.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"ROUTE_100,AGENCY_ONE,100,Route 100,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20241231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1,Stop 1,47.6062,-122.3321\n",
+		"trips.txt": "route_id,service_id,trip_id\n" +
+			"ROUTE_100,svc1,t1\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,12:00:00,12:00:00,s1,1\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, mockClock, "agency-underscore-location.zip", files)
+
+	endpoint := "/api/where/stops-for-location.json?key=TEST&lat=47.6062&lon=-122.3321&radius=1000"
+	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, model.Data.List, 1)
+
+	assert.Equal(t, []string{"AGENCY_ONE_ROUTE_100"}, model.Data.List[0].RouteIDs)
+
+	require.Len(t, model.Data.References.Agencies, 1)
+	assert.Equal(t, "AGENCY_ONE", model.Data.References.Agencies[0].ID)
+
+	require.Len(t, model.Data.References.Routes, 1)
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", model.Data.References.Routes[0].ID)
+	assert.Equal(t, "AGENCY_ONE", model.Data.References.Routes[0].AgencyID)
 }

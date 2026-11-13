@@ -118,6 +118,18 @@ func mustCreateStop(t *testing.T, manager *Manager, stopID string) {
 	require.NoError(t, err)
 }
 
+// mustCreateStopTime schedules stopID on tripID at stopSequence, so stop
+// matching finds that stop on that trip.
+func mustCreateStopTime(t *testing.T, manager *Manager, tripID, stopID string, stopSequence int64) {
+	t.Helper()
+	_, err := manager.GtfsDB.Queries.CreateStopTime(context.Background(), gtfsdb.CreateStopTimeParams{
+		TripID:       tripID,
+		StopID:       stopID,
+		StopSequence: stopSequence,
+	})
+	require.NoError(t, err)
+}
+
 func TestGetMetrics_NoRealtimeFeeds(t *testing.T) {
 	routes := map[string]*gtfs.Route{
 		"RA": {Id: "RA", Agency: &gtfs.Agency{Id: "A"}},
@@ -315,6 +327,8 @@ func TestGetMetrics_StopIDsDeduplicatedAcrossTrips(t *testing.T) {
 	mustCreateTrip(t, manager, "T1", "R1")
 	mustCreateTrip(t, manager, "T2", "R1")
 	mustCreateStop(t, manager, "SHARED_STOP")
+	mustCreateStopTime(t, manager, "T1", "SHARED_STOP", 1)
+	mustCreateStopTime(t, manager, "T2", "SHARED_STOP", 1)
 
 	knownStop := "SHARED_STOP"
 	unknownStop := "GHOST_STOP"
@@ -344,6 +358,7 @@ func TestGetMetrics_UnmatchedStops(t *testing.T) {
 	manager := newTestManagerWithRoutes(routes)
 	mustCreateTrip(t, manager, "T1", "R1")
 	mustCreateStop(t, manager, "S1")
+	mustCreateStopTime(t, manager, "T1", "S1", 1)
 
 	knownStop := "S1"
 	unknownStop := "GHOST_STOP"
@@ -363,6 +378,83 @@ func TestGetMetrics_UnmatchedStops(t *testing.T) {
 	assert.Equal(t, 1, snapshot.StopIDsMatchedCount["A"])
 	assert.Equal(t, 1, snapshot.StopIDsUnmatchedCount["A"])
 	assert.Equal(t, []string{"GHOST_STOP"}, snapshot.StopIDsUnmatched["A"])
+}
+
+// TestGetMetrics_StopIDsMatchedAgainstTripStopTimes follows
+// GtfsRealtimeTripLibrary#getBlockStopTimeForStopTimeUpdate: a
+// stop_time_update matches only a stop scheduled on its own trip, by
+// stop_sequence first and then by stop_id, so a stop that exists in the
+// static GTFS but not on that trip is unmatched. Stops are only classified
+// for trip updates that resolve to a static trip and take Java's scheduled
+// path, which excludes ADDED and DUPLICATED trips.
+func TestGetMetrics_StopIDsMatchedAgainstTripStopTimes(t *testing.T) {
+	stopID := func(id string) *string { return &id }
+	stopSequence := func(sequence uint32) *uint32 { return &sequence }
+
+	tests := []struct {
+		name               string
+		tripID             string
+		relationship       gtfsrt.TripDescriptor_ScheduleRelationship
+		update             gtfs.StopTimeUpdate
+		wantMatchedStops   int
+		wantUnmatchedStops []string
+	}{
+		{name: "stop on the trip", tripID: "T1",
+			update: gtfs.StopTimeUpdate{StopID: stopID("S1")}, wantMatchedStops: 1, wantUnmatchedStops: []string{}},
+		{name: "stop only on another trip", tripID: "T1",
+			update: gtfs.StopTimeUpdate{StopID: stopID("S3")}, wantUnmatchedStops: []string{"S3"}},
+		{name: "unknown stop", tripID: "T1",
+			update: gtfs.StopTimeUpdate{StopID: stopID("GHOST_STOP")}, wantUnmatchedStops: []string{"GHOST_STOP"}},
+		{name: "sequence without stop ID", tripID: "T1",
+			update: gtfs.StopTimeUpdate{StopSequence: stopSequence(2)}, wantMatchedStops: 1, wantUnmatchedStops: []string{}},
+		{name: "sequence and stop ID agree", tripID: "T1",
+			update:           gtfs.StopTimeUpdate{StopSequence: stopSequence(1), StopID: stopID("S1")},
+			wantMatchedStops: 1, wantUnmatchedStops: []string{}},
+		{name: "sequence disagrees, stop ID on the trip", tripID: "T1",
+			update:           gtfs.StopTimeUpdate{StopSequence: stopSequence(1), StopID: stopID("S2")},
+			wantMatchedStops: 1, wantUnmatchedStops: []string{}},
+		{name: "sequence disagrees, stop ID off the trip", tripID: "T1",
+			update:             gtfs.StopTimeUpdate{StopSequence: stopSequence(1), StopID: stopID("S3")},
+			wantUnmatchedStops: []string{"S3"}},
+		{name: "unknown sequence without stop ID", tripID: "T1",
+			update: gtfs.StopTimeUpdate{StopSequence: stopSequence(9)}, wantUnmatchedStops: []string{}},
+		{name: "unknown trip", tripID: "GHOST_TRIP",
+			update: gtfs.StopTimeUpdate{StopID: stopID("S3")}, wantUnmatchedStops: []string{}},
+		{name: "added trip", tripID: "T1", relationship: gtfsrt.TripDescriptor_ADDED,
+			update: gtfs.StopTimeUpdate{StopID: stopID("S3")}, wantUnmatchedStops: []string{}},
+		{name: "duplicated trip", tripID: "T1", relationship: gtfsrt.TripDescriptor_DUPLICATED,
+			update: gtfs.StopTimeUpdate{StopID: stopID("S3")}, wantUnmatchedStops: []string{}},
+		{name: "canceled trip", tripID: "T1", relationship: gtfsrt.TripDescriptor_CANCELED,
+			update: gtfs.StopTimeUpdate{StopID: stopID("S3")}, wantUnmatchedStops: []string{"S3"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			routes := map[string]*gtfs.Route{
+				"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
+			}
+			manager := newTestManagerWithRoutes(routes)
+			mustCreateTrip(t, manager, "T1", "R1")
+			mustCreateTrip(t, manager, "T2", "R1")
+			for _, id := range []string{"S1", "S2", "S3"} {
+				mustCreateStop(t, manager, id)
+			}
+			mustCreateStopTime(t, manager, "T1", "S1", 1)
+			mustCreateStopTime(t, manager, "T1", "S2", 2)
+			mustCreateStopTime(t, manager, "T2", "S3", 1)
+
+			manager.feedTrips["feed-1"] = []gtfs.Trip{{
+				ID:              gtfs.TripID{ID: tt.tripID, RouteID: "R1", ScheduleRelationship: tt.relationship},
+				StopTimeUpdates: []gtfs.StopTimeUpdate{tt.update},
+			}}
+
+			snapshot, err := manager.GetMetrics(context.Background(), metricsTestNow)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.wantMatchedStops, snapshot.StopIDsMatchedCount["A"])
+			assert.Equal(t, tt.wantUnmatchedStops, snapshot.StopIDsUnmatched["A"])
+		})
+	}
 }
 
 // TestGetMetrics_FilteredFeedReportsUnattributableTrips runs trip updates
@@ -385,9 +477,9 @@ func TestGetMetrics_FilteredFeedReportsUnattributableTrips(t *testing.T) {
 		wantUnmatchedStops []string
 	}{
 		{name: "unknown trip, missing route ID", tripID: "GHOST", routeID: "", stopID: "GHOST_STOP",
-			wantRecordsForA: 1, wantUnmatchedTrips: []string{"GHOST"}, wantUnmatchedStops: []string{"GHOST_STOP"}},
+			wantRecordsForA: 1, wantUnmatchedTrips: []string{"GHOST"}, wantUnmatchedStops: []string{}},
 		{name: "unknown trip, unknown route ID", tripID: "GHOST", routeID: "NOPE", stopID: "GHOST_STOP",
-			wantRecordsForA: 1, wantUnmatchedTrips: []string{"GHOST"}, wantUnmatchedStops: []string{"GHOST_STOP"}},
+			wantRecordsForA: 1, wantUnmatchedTrips: []string{"GHOST"}, wantUnmatchedStops: []string{}},
 		{name: "unknown trip, route of another agency", tripID: "GHOST", routeID: "RB", stopID: "GHOST_STOP",
 			wantUnmatchedTrips: []string{}, wantUnmatchedStops: []string{}},
 		{name: "other agency's trip, missing route ID", tripID: "TB", routeID: "", stopID: "SB",
@@ -410,6 +502,8 @@ func TestGetMetrics_FilteredFeedReportsUnattributableTrips(t *testing.T) {
 			mustCreateTrip(t, manager, "TB", "RB")
 			mustCreateStop(t, manager, "SA")
 			mustCreateStop(t, manager, "SB")
+			mustCreateStopTime(t, manager, "TA", "SA", 1)
+			mustCreateStopTime(t, manager, "TB", "SB", 1)
 			manager.feedAgencyFilter["feed-1"] = map[string]bool{"A": true}
 
 			payload := encodeTripUpdateFeed(time.Now(), tt.tripID, tt.routeID, tt.stopID)
@@ -623,6 +717,8 @@ func TestGetMetrics_MatchedStopIDsDeduplicatedAcrossFeeds(t *testing.T) {
 	mustCreateTrip(t, manager, "T1", "R1")
 	mustCreateTrip(t, manager, "T2", "R1")
 	mustCreateStop(t, manager, "SHARED_STOP")
+	mustCreateStopTime(t, manager, "T1", "SHARED_STOP", 1)
+	mustCreateStopTime(t, manager, "T2", "SHARED_STOP", 1)
 
 	knownStop := "SHARED_STOP"
 	manager.feedTrips["feed-a"] = []gtfs.Trip{

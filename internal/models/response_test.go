@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
 )
 
@@ -234,6 +235,23 @@ func TestNewArrivalsAndDepartureResponseNilSlices(t *testing.T) {
 	assert.Contains(t, jsonTypedStr, `"arrivalsAndDepartures":[]`)
 	assert.Contains(t, jsonTypedStr, `"nearbyStopIds":[]`)
 	assert.Contains(t, jsonTypedStr, `"situationIds":[]`)
+}
+
+func TestNewArrivalsAndDepartureResponseNilSlicesEncodeAsEmptyArrays(t *testing.T) {
+	response := NewArrivalsAndDepartureResponse(nil, *NewEmptyReferences(), nil, nil, "stop_1", clock.RealClock{})
+
+	body, err := json.Marshal(response)
+	require.NoError(t, err)
+
+	var decoded struct {
+		Data struct {
+			Entry map[string]json.RawMessage `json:"entry"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(body, &decoded))
+	for _, key := range []string{"arrivalsAndDepartures", "nearbyStopIds", "situationIds"} {
+		assert.JSONEq(t, "[]", string(decoded.Data.Entry[key]), key)
+	}
 }
 
 func TestResponseModelJSON(t *testing.T) {

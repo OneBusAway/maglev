@@ -35,6 +35,18 @@ func TestRoutesForLocationHandlerEndToEnd(t *testing.T) {
 	assert.ElementsMatch(t, model.Data.References.Agencies, []models.AgencyReference{testdata.Raba})
 }
 
+// TestRoutesForLocationHandlerCenteredOnStop checks that centering the search
+// exactly on a stop (here stop 4000, Canby Transfer Center) still returns the
+// routes around it.
+func TestRoutesForLocationHandlerCenteredOnStop(t *testing.T) {
+	api := createTestApi(t)
+
+	resp, model := callAPIHandler[RoutesResponse](t, api, "/api/where/routes-for-location.json?key=TEST&lat=40.589312&lon=-122.353633&radius=50")
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NotEmpty(t, model.Data.List)
+}
+
 func TestRoutesForLocationHandlerIncludeReferences(t *testing.T) {
 	const baseURL = "/api/where/routes-for-location.json?key=TEST&lat=40.583321&lon=-122.426966"
 
@@ -568,6 +580,9 @@ func TestRoutesForLocationHandlerInvalidMaxCount(t *testing.T) {
 		{"zero", "0", "must be greater than zero"},
 		{"negative", "-5", "must be greater than zero"},
 		{"unparseable", "invalid", `Invalid field value for field "maxCount".`},
+		{"64-bit overflow", "99999999999", `Invalid field value for field "maxCount".`},
+		{"int32 overflow 2147483648", "2147483648", `Invalid field value for field "maxCount".`},
+		{"int32 underflow -2147483649", "-2147483649", `Invalid field value for field "maxCount".`},
 	}
 
 	for _, tt := range tests {

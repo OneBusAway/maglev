@@ -218,6 +218,36 @@ func TestStopsForRouteTimeFilter_NoServiceDate(t *testing.T) {
 	assert.Empty(t, entry.StopGroupings[0].StopGroups, "no-service date should return empty direction groups")
 }
 
+// TestStopsForRouteTimeFilter_EpochMillis verifies that supplying an epoch millisecond
+// timestamp resolves to the service date in the agency's timezone.
+func TestStopsForRouteTimeFilter_EpochMillis(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	// 2025-01-06 noon in America/Los_Angeles (1736193600000). RABA route 151 has weekday service.
+	_, model := callAPIHandler[StopsForRouteResponse](t, api,
+		"/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST&time=1736193600000")
+
+	entry := model.Data.Entry
+	assert.NotEmpty(t, entry.StopIds, "weekday epoch timestamp should return stops")
+	require.Len(t, entry.StopGroupings, 1)
+	assert.NotEmpty(t, entry.StopGroupings[0].StopGroups, "weekday epoch timestamp should produce direction groups")
+}
+
+// TestStopsForRouteTimeFilter_InvalidTime verifies that unparseable time parameters
+// return HTTP 400 Bad Request with a "time" field error.
+func TestStopsForRouteTimeFilter_InvalidTime(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[StopsForRouteResponse](t, api,
+		"/api/where/stops-for-route/"+testdata.Route1.ID+".json?key=TEST&time=garbage")
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+	assert.Equal(t, `Invalid field value for field "time".`, model.Text)
+}
+
 // TestStopsForRouteNoDuplicateStopGroups guards against the regression where
 // trips with different headsigns in the same direction produced duplicate group
 // IDs (e.g. "0", "0", "1" instead of "0", "1").

@@ -10,6 +10,8 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -36,7 +38,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -56,7 +58,12 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	currentTime := api.resolveTripQueryTime(params.Time, loc)
 
-	serviceDate, midnight := utils.ServiceDateMidnight(params.ServiceDate, currentTime)
+	date := servicedate.Of(currentTime)
+	if params.ServiceDate != nil {
+		date = servicedate.FromInstant(*params.ServiceDate, loc)
+	}
+	serviceDate := date.Midnight(loc)
+	serviceStart := date.Start(loc)
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
 	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
@@ -76,6 +83,9 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 				"tripID", tripID,
 				"error", statusErr)
 			status = nil
+		}
+		if status != nil {
+			startTripStatusAtServiceStart(status, freqMap, tripID, serviceStart, currentTime)
 		}
 	}
 
@@ -101,13 +111,13 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	var frequency *models.Frequency
 	if len(freqRows) > 0 {
 		// TripDetails has one frequency field; take the window-matched row.
-		converted := models.NewFrequencyFromDB(*selectFrequency(freqRows, serviceDate, currentTime), serviceDate)
+		converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqRows, serviceStart, currentTime), serviceStart)
 		frequency = &converted
 	}
 
 	entry := &models.TripDetails{
 		TripID:       utils.FormCombinedID(agencyID, tripID),
-		ServiceDate:  models.NewModelTime(midnight),
+		ServiceDate:  models.NewModelTime(serviceStart),
 		Frequency:    frequency,
 		Status:       status,
 		Schedule:     schedule,
@@ -183,11 +193,11 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 			utils.FormCombinedID(agencyID, trip.ID),
 			combinedRouteID,
 			utils.FormCombinedID(agencyID, trip.ServiceID),
-			trip.TripHeadsign.String,
-			trip.TripShortName.String,
+			nulls.StringOrEmpty(trip.TripHeadsign),
+			nulls.StringOrEmpty(trip.TripShortName),
 			strconv.FormatInt(trip.DirectionID.Int64, 10),
-			utils.FormCombinedID(agencyID, trip.BlockID.String),
-			utils.FormCombinedID(agencyID, trip.ShapeID.String),
+			utils.FormBlockID(agencyID, nulls.StringOrEmpty(trip.BlockID), trip.ID),
+			utils.FormCombinedID(agencyID, nulls.StringOrEmpty(trip.ShapeID)),
 		)
 		references.Trips = append(references.Trips, *tripRef)
 	}
@@ -254,6 +264,17 @@ func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request
 	}
 
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
+	// Like Java, the agency prefix is part of the vehicle's identity. A vehicle
+	// with no attributed agency can't be checked, so it is still found.
+	attributedAgencyID, attributed := api.GtfsManager.VehicleAgencyID(vehicleID)
+	belongsToAnotherAgency := attributed && attributedAgencyID != agencyID
+	if belongsToAnotherAgency {
+		reqLogger.Debug("vehicle belongs to another agency",
+			"vehicleID", vehicleID, "agencyID", agencyID, "vehicleAgencyID", attributedAgencyID)
+		api.sendNotFound(w, r)
+		return "", false
+	}
+
 	// Return 404 when vehicle has no associated trip (idle vehicle)
 	// or when the trip ID is empty (avoiding a futile DB lookup)
 	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {

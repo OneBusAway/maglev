@@ -2,8 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -11,6 +9,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -37,21 +36,13 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 
 	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-			return
-		}
-		api.serverErrorResponse(w, r, err)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			api.sendNotFound(w, r)
-			return
-		}
-		api.serverErrorResponse(w, r, err)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 	loc, err := loadAgencyLocation(agency.ID, agency.Timezone)
@@ -71,13 +62,13 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	routeModel := models.NewRoute(
 		utils.FormCombinedID(agencyID, route.ID),
 		route.AgencyID,
-		route.ShortName.String,
-		route.LongName.String,
-		route.Desc.String,
+		nulls.StringOrEmpty(route.ShortName),
+		nulls.StringOrEmpty(route.LongName),
+		nulls.StringOrEmpty(route.Desc),
 		models.RouteType(route.Type),
-		route.Url.String,
-		route.Color.String,
-		route.TextColor.String)
+		nulls.StringOrEmpty(route.Url),
+		nulls.StringOrEmpty(route.Color),
+		nulls.StringOrEmpty(route.TextColor))
 
 	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, targetDate)
 	if err != nil {
@@ -192,7 +183,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		var fallbackStopIDs []string
 		seenFallbackStops := make(map[string]bool)
 		for _, trip := range tripsInGroup {
-			hs := trip.TripHeadsign.String
+			hs := nulls.StringOrEmpty(trip.TripHeadsign)
 			if hs != "" {
 				if !seenHeadsigns[hs] {
 					seenHeadsigns[hs] = true
@@ -213,7 +204,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 				return
 			}
 			for _, s := range lastStops {
-				name := s.Name.String
+				name := nulls.StringOrEmpty(s.Name)
 				if name != "" && !seenHeadsigns[name] {
 					seenHeadsigns[name] = true
 					headsigns = append(headsigns, name)
@@ -242,7 +233,7 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 					DepartureEnabled: departureDur > 0,
 					DepartureTime:    models.NewModelDuration(departureDur),
 					ServiceID:        utils.FormCombinedID(agencyID, trip.ServiceID),
-					StopHeadsign:     st.StopHeadsign.String,
+					StopHeadsign:     nulls.StringOrEmpty(st.StopHeadsign),
 					StopID:           utils.FormCombinedID(agencyID, st.StopID),
 					TripID:           combinedTripID,
 				})
@@ -290,11 +281,11 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 				combinedTripID,
 				utils.FormCombinedID(agencyID, t.RouteID),
 				utils.FormCombinedID(agencyID, t.ServiceID),
-				t.TripHeadsign.String,
-				t.TripShortName.String,
+				nulls.StringOrEmpty(t.TripHeadsign),
+				nulls.StringOrEmpty(t.TripShortName),
 				strconv.FormatInt(t.DirectionID.Int64, 10),
-				utils.FormCombinedID(agencyID, t.BlockID.String),
-				utils.FormCombinedID(agencyID, t.ShapeID.String),
+				utils.FormBlockID(agencyID, nulls.StringOrEmpty(t.BlockID), t.ID),
+				utils.FormCombinedID(agencyID, nulls.StringOrEmpty(t.ShapeID)),
 			)
 			references.Trips = append(references.Trips, *tripRef)
 		}

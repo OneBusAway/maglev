@@ -84,26 +84,33 @@ func TestRouteSearchHandlerMissingInputParam(t *testing.T) {
 }
 
 func TestRouteSearchHandlerValidatesMaxCount(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
 	tests := []struct {
-		name       string
-		maxCount   string
-		wantStatus int
+		name        string
+		maxCount    string
+		wantStatus  int
+		wantMessage string
 	}{
-		{"negative", "-1", http.StatusBadRequest},
-		{"zero", "0", http.StatusBadRequest},
-		{"non-numeric", "abc", http.StatusBadRequest},
-		{"at max allowed", "250", http.StatusOK},
-		{"above max allowed", "251", http.StatusBadRequest},
+		{"negative", "-1", http.StatusBadRequest, "must be greater than zero"},
+		{"zero", "0", http.StatusBadRequest, "must be greater than zero"},
+		{"non-numeric", "abc", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"at max allowed", "250", http.StatusOK, ""},
+		{"above max allowed", "251", http.StatusBadRequest, "must not exceed 250"},
+		{"64-bit int overflow", "99999999999", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"int32 overflow 2147483648", "2147483648", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"int32 underflow -2147483649", "-2147483649", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, _ := callAPIHandler[RoutesResponse](t, api,
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			resp, model := callAPIHandler[RoutesResponse](t, api,
 				routeSearchURL(url.Values{"input": {"shasta"}, "maxCount": {tt.maxCount}}))
 			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+			if tt.wantMessage != "" {
+				assert.Contains(t, model.Data.FieldErrors["maxCount"], tt.wantMessage)
+			}
 		})
 	}
 }

@@ -1090,3 +1090,78 @@ func TestKeepShiftContainingTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestAccumulateBlockSlack(t *testing.T) {
+	// Trip A covers 6000m in 600s of travel (10 m/s) and its shape runs 500m
+	// past its last stop. Trip B's first stop is 500m along its shape, and
+	// both shapes meet at the same point, so the deadhead is 1000m: 100s.
+	tripStops := func(tripID string, stops ...blockStopMetric) []blockStopMetric {
+		for i := range stops {
+			stops[i].TripID = tripID
+			stops[i].StopSequenceInTrip = i + 1
+		}
+		return stops
+	}
+	sharedPoint := gtfs.ShapePoint{Latitude: 47.6, Longitude: -122.3}
+	tripA := blockTripData{
+		id:          "A",
+		stopTimes:   make([]gtfsdb.StopTime, 2),
+		shapePoints: []gtfs.ShapePoint{{Latitude: 47.5, Longitude: -122.3}, sharedPoint},
+	}
+	tripB := blockTripData{
+		id:          "B",
+		stopTimes:   make([]gtfsdb.StopTime, 2),
+		shapePoints: []gtfs.ShapePoint{sharedPoint, {Latitude: 47.7, Longitude: -122.3}},
+	}
+	tripOffsets := []float64{0, 6500}
+
+	tests := []struct {
+		name              string
+		tripBStartSeconds int64
+		wantSlack         []int64
+	}{
+		{
+			name:              "layover less deadhead and dwell accumulate",
+			tripBStartSeconds: 1800,
+			// A dwells 60s at its first stop. The layover is 1800-660 =
+			// 1140s, less 100s of deadhead. B dwells 60s at its first stop.
+			wantSlack: []int64{0, 60, 1100, 1160},
+		},
+		{
+			name:              "deadhead longer than the layover leaves no slack",
+			tripBStartSeconds: 700,
+			wantSlack:         []int64{0, 60, 60, 120},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stops := append(
+				tripStops("A",
+					blockStopMetric{ArrivalSeconds: 0, DepartureSeconds: 60, DistanceAlongTrip: 0},
+					blockStopMetric{ArrivalSeconds: 660, DepartureSeconds: 660, DistanceAlongTrip: 6000},
+				),
+				tripStops("B",
+					blockStopMetric{ArrivalSeconds: tt.tripBStartSeconds, DepartureSeconds: tt.tripBStartSeconds + 60, DistanceAlongTrip: 500},
+					blockStopMetric{ArrivalSeconds: tt.tripBStartSeconds + 600, DepartureSeconds: tt.tripBStartSeconds + 600, DistanceAlongTrip: 5000},
+				)...,
+			)
+			accumulateBlockSlack(stops, []blockTripData{tripA, tripB}, tripOffsets)
+
+			gotSlack := make([]int64, len(stops))
+			for i, stop := range stops {
+				gotSlack[i] = stop.AccumulatedSlack
+			}
+			assert.Equal(t, tt.wantSlack, gotSlack)
+		})
+	}
+}
+
+func TestShapeGapDistance(t *testing.T) {
+	withShape := blockTripData{shapePoints: []gtfs.ShapePoint{{Latitude: 47.6, Longitude: -122.3}}}
+	nextShape := blockTripData{shapePoints: []gtfs.ShapePoint{{Latitude: 47.61, Longitude: -122.3}}}
+
+	assert.InDelta(t, 1112, shapeGapDistance(withShape, nextShape), 1)
+	assert.Zero(t, shapeGapDistance(withShape, blockTripData{}))
+	assert.Zero(t, shapeGapDistance(blockTripData{}, nextShape))
+}

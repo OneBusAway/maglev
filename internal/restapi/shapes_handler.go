@@ -44,9 +44,9 @@ func (api *RestAPI) shapesHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Include every point with no simplification or consecutive-duplicate
 	// filtering, matching the Java reference (ShapeBeanServiceImpl.getPolylineForShapeId).
-	lineCoords := make([][]float64, 0, len(shapes))
+	lineCoords := make([][2]float64, 0, len(shapes))
 	for _, point := range shapes {
-		lineCoords = append(lineCoords, []float64{point.Lat, point.Lon})
+		lineCoords = append(lineCoords, [2]float64{point.Lat, point.Lon})
 	}
 
 	// Encode using a floor-based encoder to stay byte-for-byte identical to the

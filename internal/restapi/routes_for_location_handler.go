@@ -44,7 +44,11 @@ func (api *RestAPI) routesForLocationHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	ctx := r.Context()
-	routes, isLimitExceeded := api.GtfsManager.GetRoutesForLocation(ctx, loc, query, maxCount)
+	routes, isLimitExceeded, err := api.GtfsManager.GetRoutesForLocation(ctx, loc, query, maxCount)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
 	if len(routes) == 0 {
 		references := models.NewEmptyReferences()
 		response := models.NewListResponseWithRange([]models.Route{}, *references, api.GtfsManager.CheckIfOutOfBounds(loc), api.Clock, false)

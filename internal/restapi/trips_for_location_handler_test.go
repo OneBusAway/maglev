@@ -634,6 +634,24 @@ func TestTripsForLocationHandler_TimeParameter(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 		assert.Equal(t, http.StatusBadRequest, model.Code)
 	})
+
+	t.Run("Zero Time Means Now", func(t *testing.T) {
+		loc, err := time.LoadLocation("America/Los_Angeles")
+		require.NoError(t, err)
+		// Pin the clock to a date with service so the comparison cannot pass on two empty lists.
+		mockAPI, cleanupMock := createTestApiWithRealTimeData(t, clock.NewMockClock(time.Date(2025, 6, 15, 14, 30, 0, 0, loc)))
+		defer cleanupMock()
+
+		_, omittedModel := callAPIHandler[TripsForLocationResponse](t, mockAPI, tripsForLocationURL(1.0, 1.0, "includeStatus=true"))
+		require.NotEmpty(t, omittedModel.Data.List, "the fixture date must have trips in range")
+		resp, zeroModel := callAPIHandler[TripsForLocationResponse](t, mockAPI, tripsForLocationURL(1.0, 1.0, "includeStatus=true&time=0"))
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Len(t, zeroModel.Data.List, len(omittedModel.Data.List), "time=0 must return the same entries as an omitted time")
+		for i, entry := range zeroModel.Data.List {
+			assert.Equal(t, omittedModel.Data.List[i].ServiceDate, entry.ServiceDate, "entry %d ServiceDate must match the omitted-time request", i)
+		}
+	})
 }
 
 func TestTripsForLocationHandler_RadiusAndPrecedence(t *testing.T) {
@@ -713,12 +731,12 @@ func TestTripsForLocationHandler_TimeParameterVariations(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	t.Run("Date String YYYY-MM-DD", func(t *testing.T) {
+	t.Run("Date String YYYY-MM-DD_HH-mm-ss", func(t *testing.T) {
 		loc, err := time.LoadLocation("America/Los_Angeles")
 		require.NoError(t, err)
 
-		dateStr := "2025-06-15"
-		parsedDate, err := time.ParseInLocation("2006-01-02", dateStr, loc)
+		dateStr := "2025-06-15_00-00-00"
+		parsedDate, err := time.ParseInLocation("2006-01-02_15-04-05", dateStr, loc)
 		require.NoError(t, err)
 		targetMidnight := time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, loc)
 
@@ -733,6 +751,15 @@ func TestTripsForLocationHandler_TimeParameterVariations(t *testing.T) {
 				assert.Equal(t, targetMidnight.UnixMilli(), entry.Status.ServiceDate.UnixMilli())
 			}
 		}
+	})
+
+	t.Run("Date String YYYY-MM-DD Rejected", func(t *testing.T) {
+		url := tripsForLocationURL(1.0, 1.0, "time=2025-06-15")
+		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, model.Code)
+		assert.Equal(t, `Invalid field value for field "time".`, model.Text)
 	})
 
 	t.Run("Query Time Far Outside Service Window", func(t *testing.T) {

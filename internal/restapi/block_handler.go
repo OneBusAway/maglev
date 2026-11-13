@@ -35,30 +35,12 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hasTrip, err := api.GtfsManager.GtfsDB.Queries.BlockHasTripForAgency(ctx, gtfsdb.BlockHasTripForAgencyParams{
-		BlockID:  nulls.String(blockID),
-		AgencyID: agencyID,
-	})
+	block, err := api.getBlockRows(ctx, agencyID, blockID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
 	}
-	if hasTrip == 0 {
-		api.sendNotFound(w, r)
-		return
-	}
-
-	block, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, nulls.String(blockID))
-	if err != nil {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-			return
-		}
-		api.sendNotFound(w, r)
-		return
-	}
-
-	//  Return JSON 404 response if no block data is found
+	// Return JSON 404 response if no block data is found
 	if len(block) == 0 {
 		api.sendNotFound(w, r)
 		return
@@ -74,6 +56,33 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := models.NewEntryResponse(blockEntry, references, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+func (api *RestAPI) getBlockRows(ctx context.Context, agencyID, blockID string) ([]gtfsdb.GetBlockDetailsRow, error) {
+	hasTrip, err := api.GtfsManager.GtfsDB.Queries.BlockHasTripForAgency(ctx, gtfsdb.BlockHasTripForAgencyParams{
+		BlockID:  nulls.String(blockID),
+		AgencyID: agencyID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if hasTrip > 0 {
+		return api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, nulls.String(blockID))
+	}
+
+	tripRows, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetailsForTrip(ctx, gtfsdb.GetBlockDetailsForTripParams{
+		TripID:   blockID,
+		AgencyID: agencyID,
+	})
+	if err != nil || len(tripRows) == 0 {
+		return nil, err
+	}
+
+	block := make([]gtfsdb.GetBlockDetailsRow, len(tripRows))
+	for i, row := range tripRows {
+		block[i] = gtfsdb.GetBlockDetailsRow(row)
+	}
+	return block, nil
 }
 
 func transformBlockToEntry(block []gtfsdb.GetBlockDetailsRow, blockID, agencyID string) models.BlockEntry {
@@ -213,12 +222,12 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		routes = append(routes, models.Route{
 			ID:          routeID,
 			AgencyID:    agencyID,
-			ShortName:   route.ShortName.String,
-			LongName:    route.LongName.String,
-			Description: route.Desc.String,
+			ShortName:   nulls.StringOrEmpty(route.ShortName),
+			LongName:    nulls.StringOrEmpty(route.LongName),
+			Description: nulls.StringOrEmpty(route.Desc),
 			Type:        models.RouteType(route.Type),
-			Color:       route.Color.String,
-			TextColor:   route.TextColor.String,
+			Color:       nulls.StringOrEmpty(route.Color),
+			TextColor:   nulls.StringOrEmpty(route.TextColor),
 		})
 	}
 
@@ -232,8 +241,8 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 	for _, stop := range batchedStops {
 		stops = append(stops, models.Stop{
 			ID:             utils.FormCombinedID(agencyID, stop.ID),
-			Name:           stop.Name.String,
-			Code:           stop.Code.String,
+			Name:           nulls.StringOrEmpty(stop.Name),
+			Code:           nulls.StringOrEmpty(stop.Code),
 			Lat:            stop.Lat,
 			Lon:            stop.Lon,
 			Direction:      api.DirectionCalculator.CalculateStopDirection(ctx, stop.ID, stop.Direction),
@@ -260,9 +269,9 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 			RouteID:      utils.FormCombinedID(agencyID, trip.RouteID),
 			ServiceID:    utils.FormCombinedID(agencyID, trip.ServiceID),
 			DirectionID:  strconv.FormatInt(trip.DirectionID.Int64, 10),
-			BlockID:      utils.FormCombinedID(agencyID, trip.BlockID.String),
-			ShapeID:      utils.FormCombinedID(agencyID, trip.ShapeID.String),
-			TripHeadsign: trip.TripHeadsign.String,
+			BlockID:      utils.FormBlockID(agencyID, nulls.StringOrEmpty(trip.BlockID), trip.ID),
+			ShapeID:      utils.FormCombinedID(agencyID, nulls.StringOrEmpty(trip.ShapeID)),
+			TripHeadsign: nulls.StringOrEmpty(trip.TripHeadsign),
 		})
 	}
 

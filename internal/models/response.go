@@ -53,23 +53,16 @@ func NewEntryResponse(entry any, references ReferencesModel, c clock.Clock) Resp
 	return NewOKResponse(data, c)
 }
 
-func NewArrivalsAndDepartureResponse(arrivalsAndDepartures any, references ReferencesModel, nearbyStopIds []string, situationIds []string, stopId string, c clock.Clock) ResponseModel {
-	if arrivalsAndDepartures == nil {
-		arrivalsAndDepartures = []ArrivalAndDeparture{}
-	} else if arr, ok := arrivalsAndDepartures.([]ArrivalAndDeparture); ok && arr == nil {
-		arrivalsAndDepartures = []ArrivalAndDeparture{}
-	}
-	if nearbyStopIds == nil {
-		nearbyStopIds = []string{}
-	}
-	if situationIds == nil {
-		situationIds = []string{}
-	}
-
+// NewArrivalsAndDepartureResponse builds the entry envelope for
+// arrivals-and-departures-for-stop. Nil slices are emitted as empty JSON arrays.
+// This matches Java for arrivalsAndDepartures and nearbyStopIds; clients such as
+// OBAKit reject "nearbyStopIds": null. Unlike Java, Maglev always emits situationIds
+// as an array because iOS clients require it, as documented in the endpoint spec.
+func NewArrivalsAndDepartureResponse(arrivalsAndDepartures []ArrivalAndDeparture, references ReferencesModel, nearbyStopIds []string, situationIds []string, stopId string, c clock.Clock) ResponseModel {
 	entryData := map[string]any{
-		"arrivalsAndDepartures": arrivalsAndDepartures,
-		"nearbyStopIds":         nearbyStopIds,
-		"situationIds":          situationIds,
+		"arrivalsAndDepartures": emptyIfNil(arrivalsAndDepartures),
+		"nearbyStopIds":         emptyIfNil(nearbyStopIds),
+		"situationIds":          emptyIfNil(situationIds),
 		"stopId":                stopId,
 	}
 	data := map[string]any{
@@ -92,31 +85,28 @@ func NewArrivalsAndDeparturesForLocationResponse(
 	limitExceeded bool,
 	c clock.Clock,
 ) ResponseModel {
-	if arrivalsAndDepartures == nil {
-		arrivalsAndDepartures = []ArrivalAndDeparture{}
-	}
-	if stopIds == nil {
-		stopIds = []string{}
-	}
-	if nearbyStopIds == nil {
-		nearbyStopIds = []StopWithDistance{}
-	}
-	if situationIds == nil {
-		situationIds = []string{}
-	}
-
 	entryData := map[string]any{
-		"arrivalsAndDepartures": arrivalsAndDepartures,
+		"arrivalsAndDepartures": emptyIfNil(arrivalsAndDepartures),
 		"limitExceeded":         limitExceeded,
-		"nearbyStopIds":         nearbyStopIds,
-		"situationIds":          situationIds,
-		"stopIds":               stopIds,
+		"nearbyStopIds":         emptyIfNil(nearbyStopIds),
+		"situationIds":          emptyIfNil(situationIds),
+		"stopIds":               emptyIfNil(stopIds),
 	}
 	data := map[string]any{
 		"entry":      entryData,
 		"references": references,
 	}
 	return NewOKResponse(data, c)
+}
+
+// emptyIfNil returns an empty slice for nil, so that the field encodes as []
+// and not as null. It lives here and not in internal/utils because utils
+// imports this package.
+func emptyIfNil[T any](items []T) []T {
+	if items == nil {
+		return []T{}
+	}
+	return items
 }
 
 // NewEmptyArrivalsAndDeparturesForLocationResponse builds the envelope for a

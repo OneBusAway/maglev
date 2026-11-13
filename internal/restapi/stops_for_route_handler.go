@@ -39,7 +39,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	currentAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -57,11 +57,15 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	var serviceIDs []string
 	if filterByDate {
-		formattedDate, _, fieldErrors, success := utils.ParseTimeParameter(timeParam, currentLocation, api.Clock)
-		if !success {
+		parsedDate, err := utils.ParseDate(timeParam, currentLocation)
+		if err != nil {
+			fieldErrors := map[string][]string{
+				"time": {`Invalid field value for field "time".`},
+			}
 			api.validationErrorResponse(w, r, fieldErrors)
 			return
 		}
+		formattedDate := parsedDate.Format("20060102")
 		serviceIDs, err = api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
@@ -71,7 +75,7 @@ func (api *RestAPI) stopsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	_, err = api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
 	if err != nil {
-		api.sendNotFound(w, r)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -196,12 +200,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, stops []
 	// Organize Routes in Memory
 	routesMap := make(map[string][]string)
 	for _, row := range routeRows {
-		routeID, ok := row.RouteID.(string)
-		stopID := row.StopID
-
-		if ok {
-			routesMap[stopID] = append(routesMap[stopID], routeID)
-		}
+		routesMap[row.StopID] = append(routesMap[row.StopID], utils.FormCombinedID(row.AgencyID, row.RouteID))
 	}
 
 	stopsList := make([]models.Stop, 0, len(stops))
@@ -227,7 +226,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, stops []
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),
 			Lon:                stop.Lon,
-			Name:               stop.Name.String,
+			Name:               nulls.StringOrEmpty(stop.Name),
 			Parent:             parentStationID(agencyID, stop),
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
@@ -361,7 +360,7 @@ func buildStopGroup(ctx context.Context, api *RestAPI, agencyID string, group di
 func countHeadsigns(trips []gtfsdb.Trip) map[string]int {
 	headsignCounts := make(map[string]int)
 	for _, trip := range trips {
-		headsignCounts[trip.TripHeadsign.String]++
+		headsignCounts[nulls.StringOrEmpty(trip.TripHeadsign)]++
 	}
 	return headsignCounts
 }
@@ -470,14 +469,12 @@ func distinctShapeIDs(trips []gtfsdb.Trip) []string {
 	seen := make(map[string]bool)
 	var shapeIDs []string
 	for _, trip := range trips {
-		if !trip.ShapeID.Valid || trip.ShapeID.String == "" {
+		shapeID := nulls.StringOrEmpty(trip.ShapeID)
+		if shapeID == "" || seen[shapeID] {
 			continue
 		}
-		if seen[trip.ShapeID.String] {
-			continue
-		}
-		seen[trip.ShapeID.String] = true
-		shapeIDs = append(shapeIDs, trip.ShapeID.String)
+		seen[shapeID] = true
+		shapeIDs = append(shapeIDs, shapeID)
 	}
 	slices.Sort(shapeIDs)
 	return shapeIDs
@@ -533,7 +530,7 @@ func (api *RestAPI) mergePolylinesForShapeIDs(ctx context.Context, shapeIDs []st
 // shared undirected edge set across all shapes added to it.
 type polylineMerger struct {
 	edges       map[edgeKey]struct{}
-	currentLine [][]float64
+	currentLine [][2]float64
 	polylines   []models.Polyline
 }
 
@@ -573,7 +570,7 @@ func (m *polylineMerger) addShape(points []gtfsdb.Shape) {
 			}
 		}
 		if !havePrev || prev != loc {
-			m.currentLine = append(m.currentLine, []float64{loc.lat, loc.lon})
+			m.currentLine = append(m.currentLine, [2]float64{loc.lat, loc.lon})
 		}
 		prev = loc
 		havePrev = true

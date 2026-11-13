@@ -27,7 +27,7 @@ go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
 
 ### Heap Profiling
 ```bash
-go tool pprof http://localhost:4000/debug/pprof/heap
+go tool pprof http://localhost:6060/debug/pprof/heap
 ```
 
 ### Mutex Contention
@@ -59,7 +59,7 @@ Run the perftest-tagged hot-swap memory test:
 ./scripts/download-perf-data.sh
 
 # Run the hot-swap memory test
-go test -tags=perftest -v -run TestHotSwapMemory_LargeAgency ./internal/gtfs/
+go test -tags=perftest -v -run TestReloadMemory_LargeAgency ./internal/gtfs/
 ```
 
 This will output:
@@ -95,10 +95,10 @@ k6 run loadtest/k6/hotswap_scenario.js
 while true; do ps -o rss= -p $(pgrep maglev); sleep 1; done
 
 # Terminal 4: Capture heap profiles periodically
-go tool pprof http://localhost:4000/debug/pprof/heap  # baseline
+go tool pprof http://localhost:6060/debug/pprof/heap  # baseline
 # <trigger ForceUpdate>
-go tool pprof http://localhost:4000/debug/pprof/heap  # during
-go tool pprof http://localhost:4000/debug/pprof/heap  # after
+go tool pprof http://localhost:6060/debug/pprof/heap  # during
+go tool pprof http://localhost:6060/debug/pprof/heap  # after
 ```
 
 ### Key Metrics to Record
@@ -136,7 +136,7 @@ If memory spikes are problematic:
 
 - `internal/gtfs/static.go` — ForceUpdate implementation (hot-swap logic)
 - `internal/gtfs/gtfs_manager.go` — staticMutex write lock during swap
-- `internal/gtfs/hot_swap_memory_test.go` — Memory profiling tests
+- `internal/gtfs/reload_memory_test.go` — Memory profiling tests
 - `scripts/hotswap-memory-test.sh` — Live server memory monitoring script
 - `loadtest/k6/hotswap_scenario.js` — k6 scenario for hot-swap testing
 
@@ -246,7 +246,7 @@ Based on the TriMet results:
 
 ## Test Artifacts
 
-- Test code: `internal/gtfs/hot_swap_memory_test.go`
+- Test code: `internal/gtfs/reload_memory_test.go`
 - Test data: `testdata/perf/trimet.zip`
 - Log file: `loadtest/results/hotswap_trimet_*.log`
 - Monitoring script: `scripts/hotswap-memory-test.sh`
@@ -260,7 +260,7 @@ Based on the TriMet results:
 
 # 2. Run the memory test
 go test -tags=perftest -v -timeout 20m \
-    -run TestHotSwapMemory_LargeAgency ./internal/gtfs/
+    -run TestReloadMemory_LargeAgency ./internal/gtfs/
 
 # 3. For live server testing
 MAGLEV_ENABLE_PPROF=1 make run

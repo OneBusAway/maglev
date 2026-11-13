@@ -223,17 +223,9 @@ FROM
     routes r
     JOIN agencies a ON r.agency_id = a.id
 WHERE
-    a.id = ?;
-
--- name: GetRouteIDsForStop :many
-SELECT DISTINCT
-    (routes.agency_id || '_' || routes.id) AS route_id
-FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
-WHERE
-    stop_times.stop_id = ?;
+    a.id = ?
+ORDER BY
+    r.rowid;
 
 -- name: GetRoutesForAgency :many
 SELECT
@@ -248,7 +240,9 @@ SELECT
 FROM
     routes
 WHERE
-    routes.agency_id = ?;
+    routes.agency_id = ?
+ORDER BY
+    routes.rowid;
 
 -- name: GetAgencyForStop :one
 SELECT DISTINCT
@@ -284,7 +278,9 @@ SELECT
 FROM
     stop_agencies
 WHERE
-    agency_id = ?;
+    agency_id = ?
+ORDER BY
+    stop_id;
 
 -- name: GetTrip :one
 SELECT
@@ -408,12 +404,6 @@ FROM
     JOIN routes ON trips.route_id = routes.id
 WHERE
     stop_times.stop_id = ?;
-
--- name: GetAllShapes :many
-SELECT
-    *
-FROM
-    shapes;
 
 -- name: GetShapeByID :many
 SELECT
@@ -677,7 +667,8 @@ ORDER BY
 
 -- name: GetRouteIDsForStops :many
 SELECT DISTINCT
-    routes.agency_id || '_' || routes.id AS route_id,
+    routes.id AS route_id,
+    routes.agency_id,
     stop_times.stop_id
 FROM
     stop_times
@@ -688,7 +679,8 @@ WHERE
 
 -- name: GetActiveRouteIDsForStopsOnDate :many
 SELECT DISTINCT
-    routes.agency_id || '_' || routes.id AS route_id,
+    routes.id AS route_id,
+    routes.agency_id,
     stop_times.stop_id
 FROM
     stop_times
@@ -861,6 +853,34 @@ WHERE
     id IN (sqlc.slice('trip_ids'))
 ORDER BY
     id;
+
+-- name: GetBlockDetailsForTrip :many
+SELECT
+    t.service_id,
+    t.id as trip_id,
+    t.route_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.pickup_type,
+    st.drop_off_type,
+    s.lat,
+    s.lon
+FROM
+    trips t
+        JOIN
+    routes r ON r.id = t.route_id
+        JOIN
+    stop_times st ON t.id = st.trip_id
+        JOIN
+    stops s ON st.stop_id = s.id
+WHERE
+    t.id = sqlc.arg(trip_id)
+    AND r.agency_id = sqlc.arg(agency_id)
+    AND (t.block_id IS NULL OR length(t.block_id) = 0)
+ORDER BY
+    t.id ASC, st.stop_sequence ASC;
 
 -- name: GetBlockDetails :many
 SELECT
@@ -1090,11 +1110,8 @@ SELECT
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
 WHERE st.stop_id = @stop_id
-  AND (
-    (st.arrival_time BETWEEN @window_start_nanos AND @window_end_nanos)
-        OR
-    (st.departure_time BETWEEN @window_start_nanos AND @window_end_nanos)
-    )
+  AND st.departure_time >= @window_start_nanos
+  AND st.arrival_time <= @window_end_nanos
 ORDER BY st.arrival_time;
 
 -- name: GetStopTimesForStopsInWindow :many
@@ -1111,11 +1128,8 @@ SELECT
     t.block_id
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
-WHERE (
-    (st.arrival_time BETWEEN @window_start_nanos AND @window_end_nanos)
-        OR
-    (st.departure_time BETWEEN @window_start_nanos AND @window_end_nanos)
-    )
+WHERE st.departure_time >= @window_start_nanos
+  AND st.arrival_time <= @window_end_nanos
   AND st.stop_id IN (sqlc.slice('stop_ids'))
 ORDER BY st.stop_id, st.arrival_time;
 

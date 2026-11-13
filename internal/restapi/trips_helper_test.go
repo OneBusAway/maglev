@@ -1668,43 +1668,6 @@ func TestInterpolateDistanceAtScheduledTime_MultipleSegments(t *testing.T) {
 	assert.InDelta(t, 1000.0, d, 0.01)
 }
 
-func TestGetDistanceAlongShape_Projection(t *testing.T) {
-	shape := []gtfs.ShapePoint{
-		{Latitude: 0.0, Longitude: 0.0},
-		{Latitude: 0.01, Longitude: 0.0},
-	}
-
-	vehicleLat := 0.005
-	vehicleLon := 0.0001
-
-	expectedDist := utils.Distance(0.0, 0.0, 0.005, 0.0)
-
-	actualDist := getDistanceAlongShape(vehicleLat, vehicleLon, shape)
-
-	assert.InDelta(t, expectedDist, actualDist, 1.0,
-		"Distance calculation should use projection logic, not vertex snapping")
-}
-
-func TestGetDistanceAlongShape_LoopingRoute(t *testing.T) {
-	shape := []gtfs.ShapePoint{
-		{Latitude: 0.0, Longitude: 0.0},
-		{Latitude: 0.01, Longitude: 0.0},
-		{Latitude: 0.01, Longitude: 0.01},
-		{Latitude: 0.0, Longitude: 0.01},
-		{Latitude: 0.0001, Longitude: 0.0001},
-	}
-
-	vehicleLat := 0.00005
-	vehicleLon := 0.0
-
-	expectedDist := utils.Distance(0.0, 0.0, vehicleLat, vehicleLon)
-
-	actualDist := getDistanceAlongShapeInRange(vehicleLat, vehicleLon, shape, 0, 100)
-
-	assert.InDelta(t, expectedDist, actualDist, 5.0,
-		"Should identify distance at the start of the loop, not jump to the end")
-}
-
 // TestFindStopsByScheduleDeviation_Early verifies that a negative deviation (early vehicle)
 // produces correct offsets. effectiveScheduleTime = currentSeconds - (-300) = currentSeconds + 300,
 // which shifts the "effective" clock forward, making the vehicle appear ahead of schedule.
@@ -2282,6 +2245,8 @@ func TestBuildTripSchedule_ShapeLookupFailureLogsAndContinues(t *testing.T) {
 	loc, err := time.LoadLocation(agency.Timezone)
 	require.NoError(t, err)
 
+	originalQueries := api.GtfsManager.GtfsDB.Queries
+	t.Cleanup(func() { api.GtfsManager.GtfsDB.Queries = originalQueries })
 	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(&shapeFetchFailureDB{
 		DBTX:     api.GtfsManager.GtfsDB.DB,
 		failWith: errors.New("forced shape lookup failure"),
@@ -2316,4 +2281,144 @@ func TestBuildTripSchedule_ShapeLookupFailureLogsAndContinues(t *testing.T) {
 	)
 	assert.Contains(t, logBuf.String(), tripRow.ID)
 	assert.Contains(t, logBuf.String(), "forced shape lookup failure")
+}
+
+func TestAbsorbSlack(t *testing.T) {
+	clockSeconds := func(hour, minute int) int64 { return int64(hour*3600 + minute*60) }
+	// Trip A dwells 2 minutes at seq 1, 5 minutes at seq 2 and none at
+	// seq 3. Trip B starts after a 40-minute layover.
+	snap := slackTestSnapshot(
+		slackTestTrip{id: "A", stops: [][2]int64{
+			{clockSeconds(8, 0), clockSeconds(8, 2)},
+			{clockSeconds(8, 10), clockSeconds(8, 15)},
+			{clockSeconds(8, 20), clockSeconds(8, 20)},
+		}},
+		slackTestTrip{id: "B", stops: [][2]int64{
+			{clockSeconds(9, 0), clockSeconds(9, 0)},
+		}},
+	)
+
+	tests := []struct {
+		name                     string
+		target                   scheduledStopKey
+		blockScheduleSeconds     int64
+		effectiveScheduleSeconds int64
+		deviation                int
+		wantArrivalDeviation     int
+		wantDepartureDeviation   int
+	}{
+		{
+			name:                     "early vehicle keeps its deviation",
+			target:                   scheduledStopKey{TripID: "A", StopSequenceInTrip: 2},
+			blockScheduleSeconds:     clockSeconds(7, 58),
+			effectiveScheduleSeconds: clockSeconds(7, 58),
+			deviation:                -60,
+			wantArrivalDeviation:     -60,
+			wantDepartureDeviation:   -60,
+		},
+		{
+			name:                     "next stop past target keeps raw deviation",
+			target:                   scheduledStopKey{TripID: "A", StopSequenceInTrip: 2},
+			blockScheduleSeconds:     clockSeconds(8, 16),
+			effectiveScheduleSeconds: clockSeconds(8, 16),
+			deviation:                200,
+			wantArrivalDeviation:     200,
+			wantDepartureDeviation:   200,
+		},
+		{
+			name:                     "unknown target keeps raw deviation",
+			target:                   scheduledStopKey{TripID: "A", StopSequenceInTrip: 9},
+			blockScheduleSeconds:     clockSeconds(7, 58),
+			effectiveScheduleSeconds: clockSeconds(7, 58),
+			deviation:                200,
+			wantArrivalDeviation:     200,
+			wantDepartureDeviation:   200,
+		},
+		{
+			name:                     "dwell at intermediate stops is absorbed",
+			target:                   scheduledStopKey{TripID: "A", StopSequenceInTrip: 3},
+			blockScheduleSeconds:     clockSeconds(7, 58),
+			effectiveScheduleSeconds: clockSeconds(7, 58),
+			deviation:                500,
+			wantArrivalDeviation:     80,
+			wantDepartureDeviation:   80,
+		},
+		{
+			name:                     "dwell already spent at next stop is not absorbed",
+			target:                   scheduledStopKey{TripID: "A", StopSequenceInTrip: 2},
+			blockScheduleSeconds:     clockSeconds(8, 11),
+			effectiveScheduleSeconds: clockSeconds(8, 11),
+			deviation:                300,
+			wantArrivalDeviation:     300,
+			wantDepartureDeviation:   60,
+		},
+		{
+			name:                     "layover before a later trip is absorbed",
+			target:                   scheduledStopKey{TripID: "B", StopSequenceInTrip: 1},
+			blockScheduleSeconds:     clockSeconds(8, 16),
+			effectiveScheduleSeconds: clockSeconds(8, 16),
+			deviation:                174,
+			wantArrivalDeviation:     0,
+			wantDepartureDeviation:   0,
+		},
+		{
+			// The block-level schedule time puts the vehicle past seq 1, so
+			// only seq 2's dwell lies ahead of it.
+			name:                     "next stop comes from the block-level deviation",
+			target:                   scheduledStopKey{TripID: "A", StopSequenceInTrip: 3},
+			blockScheduleSeconds:     clockSeconds(8, 3),
+			effectiveScheduleSeconds: clockSeconds(7, 59),
+			deviation:                500,
+			wantArrivalDeviation:     200,
+			wantDepartureDeviation:   200,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			arrivalDeviation, departureDeviation := absorbSlack(snap, slackPosition{
+				target:                   tt.target,
+				blockScheduleSeconds:     tt.blockScheduleSeconds,
+				effectiveScheduleSeconds: tt.effectiveScheduleSeconds,
+			}, tt.deviation)
+			assert.Equal(t, tt.wantArrivalDeviation, arrivalDeviation)
+			assert.Equal(t, tt.wantDepartureDeviation, departureDeviation)
+		})
+	}
+
+	t.Run("no snapshot keeps raw deviation", func(t *testing.T) {
+		arrivalDeviation, departureDeviation := absorbSlack(nil, slackPosition{}, 200)
+		assert.Equal(t, 200, arrivalDeviation)
+		assert.Equal(t, 200, departureDeviation)
+	})
+}
+
+// slackTestTrip is one block trip for slackTestSnapshot: its ID and each
+// stop's scheduled arrival and departure seconds, in stop sequence order
+// starting at 1.
+type slackTestTrip struct {
+	id    string
+	stops [][2]int64
+}
+
+// slackTestSnapshot builds a shapeless block snapshot with accumulated slack
+// from trips in block order.
+func slackTestSnapshot(trips ...slackTestTrip) *scheduledBlockSnapshot {
+	snap := &scheduledBlockSnapshot{StopIndex: map[scheduledStopKey]int{}}
+	blockTrips := make([]blockTripData, len(trips))
+	for i, trip := range trips {
+		blockTrips[i] = blockTripData{id: trip.id, stopTimes: make([]gtfsdb.StopTime, len(trip.stops))}
+		for k, times := range trip.stops {
+			snap.StopIndex[scheduledStopKey{TripID: trip.id, StopSequenceInTrip: k + 1}] = len(snap.Stops)
+			snap.Stops = append(snap.Stops, blockStopMetric{
+				TripID:             trip.id,
+				StopSequenceInTrip: k + 1,
+				BlockSequence:      len(snap.Stops),
+				ArrivalSeconds:     times[0],
+				DepartureSeconds:   times[1],
+			})
+		}
+	}
+	accumulateBlockSlack(snap.Stops, blockTrips, make([]float64, len(trips)))
+	return snap
 }

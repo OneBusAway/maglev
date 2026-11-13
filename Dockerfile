@@ -102,7 +102,7 @@ USER maglev
 # Expose API port
 EXPOSE 4000
 
-# Health check using the current-time endpoint
+# Health check using the /healthz endpoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget --spider "http://localhost:4000/healthz" 2>&1 || exit 1
 
