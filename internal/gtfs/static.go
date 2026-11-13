@@ -204,7 +204,7 @@ func (manager *Manager) logFeedExpiry(ctx context.Context, logger *slog.Logger) 
 		manager.Metrics.FeedExpiresAt.Set(float64(expiresAt.Unix()))
 	}
 
-	daysUntil := time.Until(expiresAt).Hours() / 24
+	daysUntil := expiresAt.Sub(manager.config.Clock.Now()).Hours() / 24
 	switch {
 	case daysUntil < 0:
 		logger.Warn("GTFS feed has expired", slog.Time("expires_at", expiresAt), slog.Float64("days_overdue", -daysUntil))

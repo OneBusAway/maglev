@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -215,7 +216,13 @@ func TestCurrentTimeHandler_EnvelopeMatchesEntryTime(t *testing.T) {
 	clk := &advancingClock{now: fixedTime, step: time.Millisecond}
 	api := createTestApiWithClock(t, clk)
 
-	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/current-time.json?key=TEST")
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/where/current-time.json?key=TEST", nil)
+
+	api.currentTimeHandler(w, r)
+
+	var model models.ResponseModel
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &model))
 
 	responseData, ok := model.Data.(map[string]any)
 	require.True(t, ok, "could not cast data to expected type")
