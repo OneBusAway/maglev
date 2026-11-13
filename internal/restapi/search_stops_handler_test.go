@@ -232,18 +232,22 @@ func TestSearchStopsHandlerSpecialCharactersOnly(t *testing.T) {
 
 func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
 	tests := []struct {
-		name           string
-		maxCount       string
-		expectedStatus int
-		expectError    bool
+		name                 string
+		maxCount             string
+		expectedStatus       int
+		expectError          bool
+		expectedErrorMessage string
 	}{
-		{"omitted", "", http.StatusOK, false},
-		{"valid", "10", http.StatusOK, false},
-		{"atCeiling", "250", http.StatusOK, false},
-		{"zero", "0", http.StatusBadRequest, true},
-		{"negative", "-1", http.StatusBadRequest, true},
-		{"tooLarge", "251", http.StatusBadRequest, true},
-		{"nonInteger", "abc", http.StatusBadRequest, true},
+		{"omitted", "", http.StatusOK, false, ""},
+		{"valid", "10", http.StatusOK, false, ""},
+		{"atCeiling", "250", http.StatusOK, false, ""},
+		{"zero", "0", http.StatusBadRequest, true, "must be greater than zero"},
+		{"negative", "-1", http.StatusBadRequest, true, "must be greater than zero"},
+		{"tooLarge", "251", http.StatusBadRequest, true, "must not exceed 250"},
+		{"nonInteger", "abc", http.StatusBadRequest, true, `Invalid field value for field "maxCount".`},
+		{"64BitOverflow", "99999999999", http.StatusBadRequest, true, `Invalid field value for field "maxCount".`},
+		{"int32Overflow", "2147483648", http.StatusBadRequest, true, `Invalid field value for field "maxCount".`},
+		{"int32Underflow", "-2147483649", http.StatusBadRequest, true, `Invalid field value for field "maxCount".`},
 	}
 
 	for _, tt := range tests {
@@ -260,6 +264,9 @@ func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
 			if tt.expectError {
 				assert.Contains(t, stopsResp.Data.FieldErrors, "maxCount")
+				if tt.expectedErrorMessage != "" {
+					assert.Contains(t, stopsResp.Data.FieldErrors["maxCount"], tt.expectedErrorMessage)
+				}
 			} else {
 				assert.NotEmpty(t, stopsResp.Data.List)
 			}
