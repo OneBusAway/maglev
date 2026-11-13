@@ -165,7 +165,9 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			tripStatus := models.NewTripStatus()
 			// Resolve the executing trip; may differ from the nominal trip when interlining.
 			activeTripID := api.resolveActiveTripID(ctx, vehicle.Trip.ID.ID, referenceTime)
-			tripStatus.ActiveTripID = utils.FormCombinedID(id, activeTripID)
+			// activeTripAgency is set to the executing trip's route agency once known;
+			// it falls back to the requested agency when the route lookup fails.
+			activeTripAgency := id
 			// Resolve the block trip sequence for the active (not nominal) trip,
 			// so it reflects the position of the trip actually being executed.
 			if seq, ok := api.blockTripSequence(ctx, activeTripID, referenceTime); ok {
@@ -223,6 +225,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 
 			// Add the nominal trip's route to references (from batch-fetched map).
 			if route, ok := routeByID[vehicle.Trip.ID.RouteID]; ok {
+				activeTripAgency = route.AgencyID
 				addRouteReference(routeRefs, route)
 			}
 
@@ -234,10 +237,6 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			if activeTripID != vehicle.Trip.ID.ID {
 				if activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID); err == nil {
 					activeRouteID = activeTrip.RouteID
-					tripRefs[activeTripID] = models.Trip{
-						ID:      utils.FormCombinedID(id, activeTripID),
-						RouteID: utils.FormCombinedID(id, activeTrip.RouteID),
-					}
 					activeRoute, ok := routeByID[activeTrip.RouteID]
 					if !ok {
 						if fetched, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID); err == nil {
@@ -247,10 +246,16 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 						}
 					}
 					if ok {
+						activeTripAgency = activeRoute.AgencyID
 						addRouteReference(routeRefs, activeRoute)
+					}
+					tripRefs[activeTripID] = models.Trip{
+						ID:      utils.FormCombinedID(activeTripAgency, activeTripID),
+						RouteID: utils.FormCombinedID(activeTripAgency, activeTrip.RouteID),
 					}
 				}
 			}
+			tripStatus.ActiveTripID = utils.FormCombinedID(activeTripAgency, activeTripID)
 
 			tripStatus.SituationIDs = situations.addRefs(api.vehicleSituationRefs(ctx,
 				tripRouteRef{tripID: activeTripID, routeID: activeRouteID},
