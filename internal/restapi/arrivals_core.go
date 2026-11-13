@@ -10,6 +10,7 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -40,10 +41,11 @@ type stopArrivalsInput struct {
 // stops reference, so a caller looping over several stops builds a single
 // deduplicated references block. Construct it with newArrivalsAccumulator.
 type arrivalsAccumulator struct {
-	trips      map[string]*gtfsdb.Trip
-	routes     map[string]*gtfsdb.Route
-	stopIDs    map[string]bool
-	situations *situationCollector
+	trips       map[string]*gtfsdb.Trip
+	routes      map[string]*gtfsdb.Route
+	stopIDs     map[string]bool
+	statusStops map[string]statusStopReference
+	situations  *situationCollector
 
 	// alertAgencyID is the fallback agency the single-stop handler passes to
 	// situations.add for the stop-level alert lookup. It starts as that
@@ -63,6 +65,7 @@ func newArrivalsAccumulator(primaryAgencyID string) *arrivalsAccumulator {
 		trips:            make(map[string]*gtfsdb.Trip),
 		routes:           make(map[string]*gtfsdb.Route),
 		stopIDs:          make(map[string]bool),
+		statusStops:      make(map[string]statusStopReference),
 		situations:       newSituationCollector(),
 		alertAgencyID:    primaryAgencyID,
 		deviationSamples: deviationSampleCache{},
@@ -1161,7 +1164,7 @@ func (api *RestAPI) tripStatusForArrival(
 	}
 	startTripStatusAtServiceStart(status, in.freqMap, st.TripID, in.serviceDate.Start(in.location), in.queryTime)
 
-	api.recordTripStatusReferences(ctx, status, st.TripID, acc)
+	api.recordTripStatusReferences(ctx, status, in.route.AgencyID, st.TripID, acc)
 
 	// Reuse the snapshot BuildTripStatus already computed for this trip.
 	// BuildTripStatus applies the same schedule-deviation shift internally,
@@ -1178,27 +1181,41 @@ func (api *RestAPI) tripStatusForArrival(
 	return status, extras, distanceFromStop, numberOfStopsAway
 }
 
+// extractBareEntityID strips the agency prefix used to produce the ID.
+func extractBareEntityID(combinedID, agencyID string) string {
+	if agencyID != "" {
+		if bareID, ok := strings.CutPrefix(combinedID, agencyID+"_"); ok {
+			return bareID
+		}
+	}
+	return ""
+}
+
+type statusStopReference struct {
+	stopID   string
+	agencyID string
+}
+
+// A shared stop can appear under more than one route agency in trip status.
+func recordStatusStop(acc *arrivalsAccumulator, combinedStopID, agencyID string) {
+	if stopID := extractBareEntityID(combinedStopID, agencyID); stopID != "" {
+		acc.statusStops[combinedStopID] = statusStopReference{stopID: stopID, agencyID: agencyID}
+	}
+}
+
 // recordTripStatusReferences pulls the stops and the reassigned active trip that
 // a trip status points at into the references accumulator, so every ID the
 // arrival emits resolves in the response.
-func (api *RestAPI) recordTripStatusReferences(ctx context.Context, status *models.TripStatus, scheduledTripID string, acc *arrivalsAccumulator) {
+func (api *RestAPI) recordTripStatusReferences(ctx context.Context, status *models.TripStatus, agencyID, scheduledTripID string, acc *arrivalsAccumulator) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
-	if status.NextStop != "" {
-		if _, nextStopID, err := utils.ExtractAgencyIDAndCodeID(status.NextStop); err == nil {
-			acc.stopIDs[nextStopID] = true
-		}
-	}
-	if status.ClosestStop != "" {
-		if _, closestStopID, err := utils.ExtractAgencyIDAndCodeID(status.ClosestStop); err == nil {
-			acc.stopIDs[closestStopID] = true
-		}
-	}
+	recordStatusStop(acc, status.NextStop, agencyID)
+	recordStatusStop(acc, status.ClosestStop, agencyID)
 
 	if status.ActiveTripID == "" {
 		return
 	}
-	_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
-	if err != nil || activeTripID == scheduledTripID {
+	activeTripID := extractBareEntityID(status.ActiveTripID, agencyID)
+	if activeTripID == "" || activeTripID == scheduledTripID {
 		return
 	}
 	if _, exists := acc.trips[activeTripID]; exists {
@@ -1300,14 +1317,41 @@ func (api *RestAPI) appendTripReferences(ctx context.Context, references *models
 	}
 }
 
+func resolveStopAgency(stopID string, stopAgencies map[string]string, fallbackAgencyID string) string {
+	if agencyID := stopAgencies[stopID]; agencyID != "" {
+		return agencyID
+	}
+	return fallbackAgencyID
+}
+
+func stopReferenceAgencies(in arrivalsReferencesInput, acc *arrivalsAccumulator) map[string][]string {
+	agenciesByStop := make(map[string][]string, len(acc.stopIDs))
+	canonicalIDs := make(map[string]struct{}, len(acc.stopIDs))
+	for stopID := range acc.stopIDs {
+		agencyID := resolveStopAgency(stopID, in.stopAgencies, in.fallbackAgencyID)
+		agenciesByStop[stopID] = []string{agencyID}
+		canonicalIDs[utils.FormCombinedID(agencyID, stopID)] = struct{}{}
+	}
+	// Different agency and stop pairs can serialize to the same ID.
+	// Keep the canonical stop when an alias collides with its ID.
+	for combinedID, ref := range acc.statusStops {
+		if _, exists := canonicalIDs[combinedID]; !exists {
+			agenciesByStop[ref.stopID] = append(agenciesByStop[ref.stopID], ref.agencyID)
+		}
+	}
+	return agenciesByStop
+}
+
 func (api *RestAPI) appendStopReferences(ctx context.Context, references *models.ReferencesModel, in arrivalsReferencesInput, acc *arrivalsAccumulator) error {
 	reqLogger := logging.ForComponent(ctx, "http_server")
-	stopsByID, routesByStop, err := api.loadStopReferenceData(ctx, slices.Collect(maps.Keys(acc.stopIDs)))
+	agenciesByStop := stopReferenceAgencies(in, acc)
+	stopsByID, routesByStop, err := api.loadStopReferenceData(ctx, slices.Collect(maps.Keys(agenciesByStop)))
 	if err != nil {
 		return err
 	}
 
-	for stopID := range acc.stopIDs {
+	agenciesByReferenceID := make(map[string]string)
+	for stopID, agencyIDs := range agenciesByStop {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -1319,28 +1363,28 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 		}
 
 		combinedRouteIDs := collectStopRoutes(routesByStop[stopID], acc)
-
-		stopAgencyID := in.fallbackAgencyID
-		if agencyID, ok := in.stopAgencies[stopID]; ok && agencyID != "" {
-			stopAgencyID = agencyID
-		}
-
-		references.Stops = append(references.Stops, models.Stop{
-			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
+		stop := models.Stop{
 			Name:               nulls.StringOrEmpty(stopData.Name),
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
-			Parent:             parentStationID(stopAgencyID, stopData),
 			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
 			StaticRouteIDs:     combinedRouteIDs,
-		})
+		}
+		for _, agencyID := range agencyIDs {
+			stop.ID = utils.FormCombinedID(agencyID, stopID)
+			stop.Parent = parentStationID(agencyID, stopData)
+			if stop.Parent != "" {
+				agenciesByReferenceID[stop.ID] = agencyID
+			}
+			references.Stops = append(references.Stops, stop)
+		}
 	}
 
-	added, parentRoutes, err := api.missingParentStops(ctx, references.Stops)
+	added, parentRoutes, err := api.missingParentStopsWithAgencies(ctx, references.Stops, agenciesByReferenceID)
 	if err != nil {
 		reqLogger.Warn("failed to resolve parent stops", slog.Any("error", err))
 		return nil
