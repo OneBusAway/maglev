@@ -244,6 +244,23 @@
             "25_151"
           ],
           "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1064",
+          "direction": "W",
+          "id": "25_1064",
+          "lat": 40.680597,
+          "locationType": 0,
+          "lon": -122.364431,
+          "name": "Shasta Dam Blvd at Farmers Marketplace (MB)",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
         }
       ],
       "trips": [
