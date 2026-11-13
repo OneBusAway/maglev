@@ -63,7 +63,7 @@ func main() {
 	// Parse command-line flags
 	flag.StringVar(&configFile, "f", "", "Path to JSON configuration file (mutually exclusive with other flags)")
 	flag.BoolVar(&dumpConfig, "dump-config", false, "Dump current configuration as JSON and exit")
-	flag.StringVar(&roleFlag, "role", "all", "Server role (all|ingester|server)")
+	flag.StringVar(&roleFlag, "role", appconf.RoleAll, "Server role (all|ingester|server)")
 	flag.IntVar(&cfg.Port, "port", 4000, "API server port")
 	flag.StringVar(&cfg.Host, "host", "", "Address to bind the server to (default: all interfaces)")
 	flag.StringVar(&envFlag, "env", "development", "Environment (development|test|production)")
@@ -190,7 +190,7 @@ func main() {
 	logger := slog.New(newLogHandler(cfg.LogFormat, level))
 	slog.SetDefault(logger)
 
-	if cfg.Role != "all" {
+	if cfg.Role != appconf.RoleAll {
 		logger.Warn("role isolation is pending phase 2 runtime support; running in monolithic mode",
 			slog.String("configured_role", cfg.Role))
 	}

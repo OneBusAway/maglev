@@ -20,6 +20,13 @@ type Config struct {
 	TLSKeyPath       string
 }
 
+// Role constants representing the horizontal scaling mode of the application.
+const (
+	RoleAll      = "all"
+	RoleIngester = "ingester"
+	RoleServer   = "server"
+)
+
 // Environment is an enumerated type representing various stages or configurations in the system's lifecycle.
 type Environment int
 

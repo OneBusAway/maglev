@@ -181,7 +181,7 @@ func ProtectedAPIKeysFromEnv() []string {
 // setDefaults applies default values to the JSON config if fields are missing or zero
 func (j *JSONConfig) setDefaults() {
 	if j.Role == "" {
-		j.Role = "all"
+		j.Role = RoleAll
 	}
 	if j.Port == 0 {
 		j.Port = 4000
@@ -313,9 +313,9 @@ func (j *JSONConfig) Validate() error {
 	}
 
 	validRoles := map[string]bool{
-		"all":      true,
-		"ingester": true,
-		"server":   true,
+		RoleAll:      true,
+		RoleIngester: true,
+		RoleServer:   true,
 	}
 	if !validRoles[j.Role] {
 		return fmt.Errorf("role must be one of [all, ingester, server], got %q", j.Role)

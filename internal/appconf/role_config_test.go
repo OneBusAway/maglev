@@ -139,3 +139,9 @@ func TestRoleJSONLoading(t *testing.T) {
 		assert.Contains(t, err.Error(), `role must be one of [all, ingester, server], got "unsupported-role"`)
 	})
 }
+
+func TestRoleConstants(t *testing.T) {
+	assert.Equal(t, "all", RoleAll)
+	assert.Equal(t, "ingester", RoleIngester)
+	assert.Equal(t, "server", RoleServer)
+}
