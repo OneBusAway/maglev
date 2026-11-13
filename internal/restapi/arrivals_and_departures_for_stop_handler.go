@@ -139,12 +139,17 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 
 	// Nothing scheduled in the window: skip the reference lookups, but keep
 	// the stop's alerts and neighbours, which don't depend on arrivals.
-	if !result.Matched {
+	// A stop with on-demand services takes the full path instead, because its
+	// stop reference carries the onDemandServiceIds pointer: for a stop no
+	// fixed route serves, that is the only way a client learns which
+	// on-demand service covers it.
+	if !result.Matched && !api.stopHasOnDemandServices(stopCode) {
 		situationIDs := api.addStopSituations(ctx, references, acc, stopCode, stopAgencyID)
 		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nearbyStopIDs, situationIDs, stopID, api.Clock)
 		api.sendResponse(w, r, response)
 		return
 	}
+	acc.stopIDs[stopCode] = true
 
 	references, err = api.buildArrivalsReferences(ctx, arrivalsReferencesInput{
 		fallbackAgencyID: stopAgencyID,
