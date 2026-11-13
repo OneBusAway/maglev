@@ -1,52 +1,91 @@
 name: Docker Release
+
 on:
   release:
-    types: [ published ]
+    types: [published]
 
 permissions:
   contents: read
 
+concurrency:
+  group: dockerhub-maglev-release
+  cancel-in-progress: false
+
+env:
+  IMAGE: opentransitsoftwarefoundation/maglev
+  VERSION: ${{ github.event.release.tag_name }}
+
 jobs:
-  # Push to Docker Hub on published releases (non-prerelease only)
-  buildx-release:
-    if: ${{ !github.event.release.prerelease }}
+  promote:
+    if: github.repository == 'OneBusAway/maglev'
     runs-on: ubuntu-latest
-    concurrency:
-      group: ${{ github.workflow }}-release
-      cancel-in-progress: false
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Compute image tag names
-        run: |
-          echo "IMAGE_TAG=$(echo $GITHUB_REF_NAME)" >> $GITHUB_ENV
-      - name: Checkout code
-        uses: actions/checkout@v7
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+      - name: Parse release version
+        id: metadata
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          platforms: linux/amd64,linux/arm64
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v4
-      - name: Inspect builder
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: type=semver,pattern={{version}},value=${{ env.VERSION }}
+
+      - name: Validate release version
+        env:
+          PARSED_VERSION: ${{ steps.metadata.outputs.version }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
-          echo "Name:      ${{ steps.buildx.outputs.name }}"
-          echo "Endpoint:  ${{ steps.buildx.outputs.endpoint }}"
-          echo "Status:    ${{ steps.buildx.outputs.status }}"
-          echo "Flags:     ${{ steps.buildx.outputs.flags }}"
-          echo "Platforms: ${{ steps.buildx.outputs.platforms }}"
+          if [[ -z "$PARSED_VERSION" || "$PARSED_VERSION" != "$VERSION" ||
+                ${#VERSION} -gt 128 ]]; then
+            echo '::error::Release tag must be valid SemVer, match the generated Docker version exactly (no leading v or build metadata), and be at most 128 characters.'
+            exit 1
+          fi
+          expected_prerelease=false
+          if [[ "$VERSION" == *-* ]]; then
+            expected_prerelease=true
+          fi
+          if [[ "$PRERELEASE" != "$expected_prerelease" ]]; then
+            echo '::error::The GitHub prerelease flag must match the SemVer prerelease suffix.'
+            exit 1
+          fi
+
+      - name: Resolve release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name }}
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
       - name: Login to Docker Hub
-        uses: docker/login-action@v4.7.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Build and push images
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            opentransitsoftwarefoundation/maglev:${{ env.IMAGE_TAG }}
-            opentransitsoftwarefoundation/maglev:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+
+      - name: Promote existing image
+        run: |
+          commit=$(git rev-parse 'HEAD^{commit}')
+          # Resolve the mutable SHA tag once; a missing build fails rather than rebuilding.
+          digest=$(docker buildx imagetools inspect "$IMAGE:sha-$commit" --format '{{.Manifest.Digest}}')
+
+          if existing=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{.Manifest.Digest}}' 2> "$RUNNER_TEMP/version-inspect.err"); then
+            if [[ "$existing" != "$digest" ]]; then
+              echo '::error::The version tag already exists at a different digest; refusing to replace it.'
+              exit 1
+            fi
+          else
+            # Authentication/network failures must not be treated as a missing tag.
+            if ! grep -Fq "$IMAGE:$VERSION: not found" "$RUNNER_TEMP/version-inspect.err"; then
+              tee < "$RUNNER_TEMP/version-inspect.err" >&2
+              exit 1
+            fi
+            docker buildx imagetools create --prefer-index=false \
+              --tag "$IMAGE:$VERSION" "$IMAGE@$digest"
+          fi
+
+          promoted=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{.Manifest.Digest}}')
+          test "$promoted" = "$digest"
