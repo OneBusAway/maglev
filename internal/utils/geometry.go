@@ -1,6 +1,7 @@
 // Geometry lives in internal/geo because internal/utils imports gtfsdb, and
-// gtfsdb must be able to use geometry at import time. This file re-exports it
-// so existing utils call sites keep compiling unchanged.
+// gtfsdb must be able to use geometry at import time. This file re-exports the
+// helpers utils always had so existing call sites keep compiling unchanged;
+// new geometry callers import internal/geo directly.
 
 package utils
 

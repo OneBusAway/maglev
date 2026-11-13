@@ -56,6 +56,10 @@ type Manager struct {
 
 	staticMutex  sync.RWMutex
 	regionBounds map[string]*RegionBounds
+	flexIndex    *FlexIndex // on-demand view of the static data; see flex_index.go
+	// systemETag is published together with flexIndex, so no response pairs
+	// the new feed's ETag with the previous feed's index.
+	systemETag string
 
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
@@ -873,12 +877,20 @@ func (manager *Manager) IsServiceActiveOnDate(ctx context.Context, serviceID str
 	}
 }
 
-// GetSystemETag reads the system ETag from the database.
+// GetSystemETag returns the ETag of the static data currently being served.
+// ReloadStatic publishes it in the same swap as the on-demand index.
+func (manager *Manager) GetSystemETag() string {
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+	return manager.systemETag
+}
+
+// readSystemETag reads the imported feed's hash and formats it as the ETag.
 // It returns a weak entity tag as required by RFC 9110 section 8.8.3,
 // because compression middleware serves the same validator for identity
 // and compressed representations.
-func (manager *Manager) GetSystemETag(ctx context.Context) string {
-	metadata, err := manager.GtfsDB.Queries.GetImportMetadata(ctx)
+func readSystemETag(ctx context.Context, gtfsDB *gtfsdb.Client) string {
+	metadata, err := gtfsDB.Queries.GetImportMetadata(ctx)
 	if err != nil || metadata.FileHash == "" {
 		return ""
 	}

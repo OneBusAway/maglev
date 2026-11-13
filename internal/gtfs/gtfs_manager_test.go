@@ -589,7 +589,7 @@ func TestManager_GetSystemETag(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, metadata.FileHash)
 
-	etag := manager.GetSystemETag(context.Background())
+	etag := manager.GetSystemETag()
 	assert.Equal(t, `W/"`+metadata.FileHash+`"`, etag, "system ETag must match stored FileHash formatted as a weak quoted entity tag")
 }
 
