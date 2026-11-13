@@ -1988,3 +1988,26 @@ func TestArrivalsAndDeparturesForStopHandler_NoArrivalsStillListsNearbyStops(t *
 	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures, "precondition: no service at 03:00")
 	assert.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
 }
+
+func TestArrivalsAndDeparturesForStopHandler_MultiDayWindow(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	endpoint := arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{
+		"minutesBefore": {"60"},
+		"minutesAfter":  {"2000"},
+	})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	beyondDay := 0
+	for _, arrival := range model.Data.Entry.ArrivalsAndDepartures {
+		if arrival.ScheduledArrivalTime.Time.Sub(arrivalsTestClock) > 1440*time.Minute {
+			beyondDay++
+		}
+	}
+	// The 1440-minute arrivals-window cap Maglev applied hid arrivals beyond
+	// the first day; the scan extended to the full window (capped at
+	// 35,791 minutes) surfaces stop 4062's next-day service.
+	assert.Positive(t, beyondDay, "multi-day window should return arrivals beyond 1440 minutes out")
+}

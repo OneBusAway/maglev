@@ -37,19 +37,13 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 	// Initialize errors map
 	fieldErrors := make(map[string][]string)
 
-	// Cap at one service day. Java has no cap; we keep one to bound
-	// per-request work — the handler iterates only ±1 day of stop_times,
-	// so anything larger returns the same data anyway.
-	const maxMinutesAfter = 24 * 60
-	const maxMinutesBefore = 24 * 60
-
 	// Validate minutesAfter
 	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
 		if minutesAfter, err := strconv.ParseInt(minutesAfterStr, 10, 32); err == nil {
 			if minutesAfter < 0 {
 				fieldErrors["minutesAfter"] = []string{"must be a non-negative integer"}
-			} else if minutesAfter > maxMinutesAfter {
-				params.MinutesAfter = maxMinutesAfter
+			} else if minutesAfter > maxArrivalWindowMinutes {
+				params.MinutesAfter = maxArrivalWindowMinutes
 			} else {
 				params.MinutesAfter = int(minutesAfter)
 			}
@@ -63,8 +57,8 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 		if minutesBefore, err := strconv.ParseInt(minutesBeforeStr, 10, 32); err == nil {
 			if minutesBefore < 0 {
 				fieldErrors["minutesBefore"] = []string{"must be a non-negative integer"}
-			} else if minutesBefore > maxMinutesBefore {
-				params.MinutesBefore = maxMinutesBefore
+			} else if minutesBefore > maxArrivalWindowMinutes {
+				params.MinutesBefore = maxArrivalWindowMinutes
 			} else {
 				params.MinutesBefore = int(minutesBefore)
 			}

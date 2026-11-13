@@ -209,7 +209,7 @@ func TestParseArrivalFrequencyWindows(t *testing.T) {
 		{"empty uses defaults", url.Values{"frequencyMinutesBefore": {""}, "frequencyMinutesAfter": {""}}, 2 * time.Minute, 30 * time.Minute, nil},
 		{"custom", url.Values{"frequencyMinutesBefore": {"10"}, "frequencyMinutesAfter": {"45"}}, 10 * time.Minute, 45 * time.Minute, nil},
 		{"zero", url.Values{"frequencyMinutesBefore": {"0"}, "frequencyMinutesAfter": {"0"}}, 0, 0, nil},
-		{"capped", url.Values{"frequencyMinutesBefore": {"999999999"}, "frequencyMinutesAfter": {"999999999"}}, maxArrivalWindow, maxArrivalWindow, nil},
+		{"capped", url.Values{"frequencyMinutesBefore": {"999999999"}, "frequencyMinutesAfter": {"999999999"}}, time.Duration(maxArrivalWindowMinutes) * time.Minute, time.Duration(maxArrivalWindowMinutes) * time.Minute, nil},
 		{"invalid", url.Values{"frequencyMinutesBefore": {"abc"}, "frequencyMinutesAfter": {"1.5"}}, 2 * time.Minute, 30 * time.Minute, []string{"frequencyMinutesBefore", "frequencyMinutesAfter"}},
 		{"negative", url.Values{"frequencyMinutesBefore": {"-1"}, "frequencyMinutesAfter": {"-2"}}, 2 * time.Minute, 30 * time.Minute, []string{"frequencyMinutesBefore", "frequencyMinutesAfter"}},
 		{"integer overflow", url.Values{"frequencyMinutesBefore": {"999999999999999999999"}}, 2 * time.Minute, 30 * time.Minute, []string{"frequencyMinutesBefore"}},
@@ -309,10 +309,92 @@ func TestArrivalFrequencyWindowsSharedStopTimezones(t *testing.T) {
 	}
 }
 
+// TestArrivalFrequencyWindowReachesServiceDayTwo verifies the day scan is driven
+// by the window the day queries use, not the ordinary minutes: a frequency window
+// reaching two days out must surface the third service day's frequency arrivals,
+// which the old after/24h+1 range cut off.
+func TestArrivalFrequencyWindowReachesServiceDayTwo(t *testing.T) {
+	files := frequencyFixtureFiles()
+	files["stop_times.txt"] = strings.ReplaceAll(files["stop_times.txt"], "06:00:00", "24:00:00")
+	files["stop_times.txt"] = strings.ReplaceAll(files["stop_times.txt"], "06:10:00", "24:10:00")
+	files["stop_times.txt"] = strings.ReplaceAll(files["stop_times.txt"], "06:15:00", "24:15:00")
+	files["frequencies.txt"] = strings.ReplaceAll(files["frequencies.txt"], "06:00:00,09:00:00", "23:00:00,26:00:00")
+	queryTime := time.Date(2025, 6, 12, 23, 0, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(queryTime), "frequency-day-two.zip", files)
+	defer api.Shutdown()
+
+	// The frequency block runs 23:00-26:00 on every service day. Querying at
+	// 23:00 with frequencyMinutesAfter=2960 reaches 49h20m out: inside the
+	// third service day's (Jun 14) block, whose 24:00 row lands 49h after the
+	// query. The fixed range (after/24h+1 while after=0) never reached it.
+	params := url.Values{
+		"minutesBefore":          {"0"},
+		"minutesAfter":           {"0"},
+		"frequencyMinutesBefore": {"0"},
+		"frequencyMinutesAfter":  {"2960"},
+	}
+	for _, endpoint := range []string{"stop", "location"} {
+		t.Run(endpoint, func(t *testing.T) {
+			arrivals := frequencyWindowArrivals(t, api, endpoint, params)
+			serviceDays := make(map[string]int)
+			for _, arrival := range arrivals {
+				serviceDays[arrival.ServiceDate.UTC().Format("2006-01-02")]++
+			}
+			// The frequency block runs 23:00-26:00 every service day, so its
+			// departures land in the window on day 0 (Jun 12), day 1 (Jun 13)
+			// and day 2 (Jun 14): the block starts 48h after the query.
+			assert.Positive(t, serviceDays["2025-06-12"], "day-0 frequency arrivals expected")
+			assert.Positive(t, serviceDays["2025-06-13"], "day-one frequency arrivals expected")
+			// The third service day (Jun 14) departs 48h after the query: the
+			// fixed range (after/24h+1 while after=0) never scanned it.
+			assert.Positive(t, serviceDays["2025-06-14"], "day-two frequency arrivals expected but never scanned")
+			beyondTwoDays := 0
+			for _, arrival := range arrivals {
+				if arrival.ScheduledArrivalTime.Time.Sub(queryTime) >= 48*time.Hour {
+					beyondTwoDays++
+				}
+			}
+			assert.Positive(t, beyondTwoDays, "expected an arrival at least 48h out")
+		})
+	}
+}
+
+// TestArrivalWindowLookbackSpansMidnight verifies the lookback side of the day
+// scan: a trip whose 24:30 stop time departs two days and 22 hours behind the
+// query must surface when minutesBefore extends the window just past it, which
+// needs the service day of the window start (minus one spillover day) on the
+// lookback side, not the fixed before/24h+1 estimate.
+func TestArrivalWindowLookbackSpansMidnight(t *testing.T) {
+	files := frequencyFixtureFiles()
+	const lookbackTripID = "lookback-trip"
+	files["trips.txt"] += freqRouteID + "," + freqServiceID + "," + lookbackTripID + ",Lookback Trip,0,lookback-block\n"
+	files["stop_times.txt"] += lookbackTripID + ",24:30:00,24:30:00," + freqStopAID + ",1\n"
+
+	queryTime := time.Date(2025, 6, 13, 0, 10, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(queryTime), "lookback-midnight.zip", files)
+	defer api.Shutdown()
+
+	// minutesBefore=2865 reaches 47h45m back: Jun 11 00:25, just before the
+	// 24:30 departure on the Jun 10 service date (Jun 11 00:30 absolute).
+	// int(before/24h)+1 still misses that service day entirely.
+	params := url.Values{"minutesBefore": {"2865"}, "minutesAfter": {"0"}}
+	for _, endpoint := range []string{"stop", "location"} {
+		t.Run(endpoint, func(t *testing.T) {
+			arrivals := frequencyWindowArrivals(t, api, endpoint, params)
+			// The window covers Jun 11 00:25 to Jun 13 00:10. Midnight-spanning
+			// rows can match two service days ("24:30" departs Jun 11 00:30 on
+			// the Jun 10 date and Jun 12 00:30 on the Jun 11 date), and the
+			// scheduled 08:00 runs of Jun 11 and Jun 12 are also inside. All
+			// four must be present; the fixed lookback only found the day -2
+			// base and dropped the Jun 10 instance.
+			assertFrequencyWindowTrips(t, arrivals, []string{
+				lookbackTripID, lookbackTripID, freqNormalTripD, freqNormalTripD,
+			})
+		})
+	}
+}
+
 // TestArrivalWindow_StopTimeSpanningQueryWindow verifies that a scheduled stop time
-// spanning the entire query window is excluded by the endpoint filter (matching Java parity),
-// but when its predicted arrival falls within the window, the wider SQL candidate query
-// ensures the trip is retained.
 func TestArrivalWindow_StopTimeSpanningQueryWindow(t *testing.T) {
 	files := frequencyFixtureFiles()
 	const spanningTripID = "spanning-trip"
@@ -413,6 +495,46 @@ func TestArrivalWindow_RunningLateAndEarlyCandidates(t *testing.T) {
 				assert.Equal(t, tc.wantIncluded, arrivalsIncludeTrip(t, arrivals, tc.tripID))
 			})
 		}
+	}
+}
+
+// TestArrivalWindow_RunningEarlyCrossesMidnight verifies that the service-day
+// scan covers the padded candidate window: a trip scheduled on the next
+// service date whose predicted time falls before midnight is still returned.
+func TestArrivalWindow_RunningEarlyCrossesMidnight(t *testing.T) {
+	// Query at 23:50 with a ±5 minute window: 23:45–23:55. Padded by
+	// runningLate (30m) and runningEarly (10m), the day queries search
+	// 23:15–00:05, which reaches the next service date. A trip scheduled
+	// 00:02 running 9 minutes early is predicted at 23:53, inside the
+	// requested window. Unpadded, the window ends at 23:55 and maxDay is 0,
+	// so service day +1 is never scanned and the arrival is dropped.
+	files := frequencyFixtureFiles()
+	files["trips.txt"] += freqRouteID + "," + freqServiceID + ",early-midnight-trip,Buffered Trip,0,early-midnight-block\n"
+	files["stop_times.txt"] += "early-midnight-trip,00:02:00,00:02:00," + freqStopAID + ",1\n"
+	files["stop_times.txt"] += "early-midnight-trip,11:00:00,11:00:00," + freqStopBID + ",2\n"
+
+	queryTime := time.Date(2025, 6, 12, 23, 50, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(queryTime), "early-midnight-window.zip", files)
+	defer api.Shutdown()
+
+	stopID := freqStopAID
+	firstStop := uint32(1)
+	api.GtfsManager.MockAddTripUpdate("early-midnight-trip", nil, []gtfs.StopTimeUpdate{
+		{StopID: &stopID, StopSequence: &firstStop, Arrival: &gtfs.StopTimeEvent{Delay: ptrDuration(-9 * time.Minute)}},
+	})
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	params := url.Values{
+		"time":                   {fmt.Sprint(queryTime.UnixMilli())},
+		"minutesBefore":          {"5"},
+		"minutesAfter":           {"5"},
+		"frequencyMinutesBefore": {"5"},
+		"frequencyMinutesAfter":  {"5"},
+	}
+	for _, endpoint := range []string{"stop", "location"} {
+		arrivals := frequencyWindowArrivals(t, api, endpoint, params)
+		assert.True(t, arrivalsIncludeTrip(t, arrivals, "early-midnight-trip"),
+			"arrival predicted at 23:53 (scheduled 00:02 on the next service day, 9 min early) should be returned")
 	}
 }
 

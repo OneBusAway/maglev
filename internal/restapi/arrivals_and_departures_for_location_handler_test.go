@@ -806,12 +806,12 @@ func TestParseMinutesValueCapsBeforeDurationOverflow(t *testing.T) {
 		collected[field] = append(collected[field], msg)
 	}
 
-	assert.Equal(t, maxArrivalWindow,
-		parseMinutesValue(url.Values{"minutesAfter": {"153722868"}}, "minutesAfter", 35*time.Minute, maxArrivalWindow, addError))
+	assert.Equal(t, 35791*time.Minute,
+		parseMinutesValue(url.Values{"minutesAfter": {"153722868"}}, "minutesAfter", 35*time.Minute, addError))
 	assert.Empty(t, collected)
 
 	assert.Equal(t, 5*time.Minute,
-		parseMinutesValue(url.Values{"minutesBefore": {"-5"}}, "minutesBefore", 5*time.Minute, maxArrivalWindow, addError))
+		parseMinutesValue(url.Values{"minutesBefore": {"-5"}}, "minutesBefore", 5*time.Minute, addError))
 	assert.Contains(t, collected, "minutesBefore")
 }
 
@@ -1064,4 +1064,25 @@ func TestRetainRoute_EmptyCombinedID(t *testing.T) {
 	retainRoute(refAcc, acc, "")
 
 	assert.Empty(t, refAcc.routes)
+}
+
+func TestArrivalsAndDeparturesForLocationHandler_MultiDayWindow(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+
+	resp, model := callArrivalsForLocation(t, api, url.Values{
+		"minutesBefore": {"60"},
+		"minutesAfter":  {"2000"},
+	})
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	beyondDay := 0
+	for _, arrival := range model.Data.Entry.ArrivalsAndDepartures {
+		if arrival.ScheduledArrivalTime.Time.Sub(arrivalsTestClock) > 1440*time.Minute {
+			beyondDay++
+		}
+	}
+	// The 1440-minute cap Maglev applied hid arrivals beyond the first day;
+	// the scan extended to the full window surfaces next-day service.
+	assert.Positive(t, beyondDay, "multi-day window should return arrivals beyond 1440 minutes out")
 }

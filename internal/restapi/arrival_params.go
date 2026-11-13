@@ -1,14 +1,18 @@
 package restapi
 
 import (
+	"math"
 	"net/url"
 	"strconv"
 	"time"
 )
 
-// maxArrivalWindow caps minute-valued arrival-window parameters at one service
-// day to bound the per-request stop_time scan.
-const maxArrivalWindow = 24 * time.Hour
+// maxArrivalWindowMinutes caps minute-valued arrival-window parameters.
+// Java's effective ceiling is 35,791 minutes (math.MaxInt32 / 60000) because
+// its internal time calculations multiply integer minutes by 60,000 milliseconds,
+// overflowing 32-bit signed integers above that value. Capping at 35,791 minutes
+// preserves parity for every window Java answers while bounding multi-day scans.
+const maxArrivalWindowMinutes = math.MaxInt32 / 60000
 
 const (
 	defaultFrequencyBefore = 2 * time.Minute
@@ -16,9 +20,9 @@ const (
 )
 
 // parseMinutesValue reads a minute-valued window parameter, bounding it at
-// maxWindow. The bound is applied before the time.Duration conversion so huge
+// maxArrivalWindowMinutes. The bound is applied before the time.Duration conversion so huge
 // values cannot overflow into a negative duration.
-func parseMinutesValue(queryParams url.Values, key string, fallback, maxWindow time.Duration, addError func(string, string)) time.Duration {
+func parseMinutesValue(queryParams url.Values, key string, fallback time.Duration, addError func(string, string)) time.Duration {
 	values, ok := queryParams[key]
 	if !ok || len(values) == 0 || values[0] == "" {
 		return fallback
@@ -33,8 +37,8 @@ func parseMinutesValue(queryParams url.Values, key string, fallback, maxWindow t
 		addError(key, "must be a non-negative integer")
 		return fallback
 	}
-	if minutes > int64(maxWindow/time.Minute) {
-		return maxWindow
+	if minutes > maxArrivalWindowMinutes {
+		return time.Duration(maxArrivalWindowMinutes) * time.Minute
 	}
 	return time.Duration(minutes) * time.Minute
 }
