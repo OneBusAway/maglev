@@ -1141,8 +1141,8 @@ func (c *situationCollector) addRefs(refs []situationRef) []string {
 }
 
 // situationReferences converts collected alerts into situation references,
-// stamping the same IDs the list entries use. BuildSituationReferences emits raw
-// alert IDs and preserves input order one-for-one.
+// attaching the IDs and alert creation times retained by the collector.
+// BuildSituationReferences emits raw alert IDs and preserves input order one-for-one.
 func (api *RestAPI) situationReferences(ctx context.Context, refs []situationRef) []models.Situation {
 	if len(refs) == 0 {
 		return []models.Situation{}
@@ -1156,8 +1156,8 @@ func (api *RestAPI) situationReferences(ctx context.Context, refs []situationRef
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	situations := api.BuildSituationReferences(ctx, alerts)
 	if len(situations) != len(refs) {
-		// The ID stamping below pairs by position, so a length change in
-		// BuildSituationReferences would silently mislabel every situation.
+		// Metadata is paired by position, so a length change in
+		// BuildSituationReferences would silently misattribute it.
 		reqLogger.Error("situation reference count does not match the alerts it was built from", "error",
 			fmt.Errorf("built %d situations from %d alerts", len(situations), len(refs)))
 		return situations
@@ -1165,6 +1165,7 @@ func (api *RestAPI) situationReferences(ctx context.Context, refs []situationRef
 
 	for i := range situations {
 		situations[i].ID = refs[i].ID
+		situations[i].CreationTime = models.NewModelTime(refs[i].Alert.CreatedAt)
 	}
 	return situations
 }
