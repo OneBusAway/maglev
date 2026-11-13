@@ -584,6 +584,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	var vehicleAgencies map[vehicleKey]string
 	if vehicleData != nil && vehicleErr == nil {
+		normalizeVehicleTimestamps(vehicleData.Vehicles, time.Now())
 		var ok bool
 		vehicleData.Vehicles, vehicleAgencies, ok = manager.attributeFeedVehicles(ctx, logger, feedCfg, vehicleData.Vehicles)
 		if !ok {
@@ -872,6 +873,20 @@ func normalizeTripUpdateTimestamps(tripData *gtfs.Realtime, fetchedAt time.Time)
 		tripData.Trips[i].Timestamp = &normalized
 	}
 	return feedTime
+}
+
+// normalizeVehicleTimestamps corrects vehicle timestamps that a feed sent in
+// milliseconds, as Java's ensureMillis does for vehicle positions too. Each
+// vehicle gets a new pointer because the parsed feed may share the old one.
+func normalizeVehicleTimestamps(vehicles []gtfs.Vehicle, fetchedAt time.Time) {
+	for i := range vehicles {
+		timestamp := vehicles[i].Timestamp
+		if timestamp == nil {
+			continue
+		}
+		normalized := timestampInSeconds(*timestamp, fetchedAt)
+		vehicles[i].Timestamp = &normalized
+	}
 }
 
 // timestampInSeconds corrects a time parsed from a millisecond value as seconds.

@@ -2407,6 +2407,32 @@ func TestUpdateFeedRealtime_NormalizesTripUpdateTimestamps(t *testing.T) {
 	})
 }
 
+func TestUpdateFeedRealtime_NormalizesVehicleTimestamps(t *testing.T) {
+	reportTime := time.Now().Add(-time.Minute).Truncate(time.Second)
+
+	tests := []struct {
+		name      string
+		timestamp uint64
+	}{
+		{name: "seconds are kept", timestamp: uint64(reportTime.Unix())},
+		{name: "milliseconds are converted", timestamp: uint64(reportTime.UnixMilli())},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := newTestManager()
+			position := labelOnlyPosition("101", 47.1, reportTime)
+			position.Timestamp = proto.Uint64(tt.timestamp)
+			manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, reportTime, []*gtfsrt.VehiclePosition{position}))
+
+			vehicles := manager.GetRealTimeVehicles()
+			require.Len(t, vehicles, 1)
+			require.NotNil(t, vehicles[0].Timestamp)
+			assert.Equal(t, reportTime.Unix(), vehicles[0].Timestamp.Unix())
+		})
+	}
+}
+
 func TestUpdateFeedRealtime_FirstSeenUsesNormalizedFeedTime(t *testing.T) {
 	headerTime := time.Now().Add(-time.Minute).Truncate(time.Second)
 	updateTime := proto.Uint64(uint64(headerTime.Add(-30 * time.Second).Unix()))
