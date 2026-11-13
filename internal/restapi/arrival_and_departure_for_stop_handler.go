@@ -305,8 +305,14 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// If vehicleId is provided, validate it matches the trip
 	var vehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
-		_, providedVehicleID, err := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
+		providedAgencyID, providedVehicleID, err := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
 		if err == nil {
+			// Like Java, {agencyId}_{vehicleId} is the vehicle's whole identity: a
+			// vehicle attributed to another agency is not found under this prefix.
+			if _, otherAgency := api.vehicleBelongsToAnotherAgency(providedAgencyID, providedVehicleID); otherAgency {
+				api.sendNotFound(w, r)
+				return
+			}
 			v, err := api.GtfsManager.GetVehicleByID(providedVehicleID)
 			// If vehicle is found, validate it matches the trip
 			if err == nil && v != nil && v.Trip != nil && v.Trip.ID.ID == tripID {

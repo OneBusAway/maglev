@@ -256,6 +256,14 @@ func referencedStopIDs(status *models.TripStatus, schedule *models.Schedule) ([]
 	return stopIDs, nil
 }
 
+// vehicleBelongsToAnotherAgency reports whether vehicleID was attributed at
+// ingestion to an agency other than agencyID. A vehicle with no attributed
+// agency can't be checked, so it never counts as belonging to another agency.
+func (api *RestAPI) vehicleBelongsToAnotherAgency(agencyID, vehicleID string) (attributedAgencyID string, belongs bool) {
+	attributedAgencyID, attributed := api.GtfsManager.VehicleAgencyID(vehicleID)
+	return attributedAgencyID, attributed && attributedAgencyID != agencyID
+}
+
 func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request, agencyID, vehicleID string) (string, bool) {
 	vehicle, err := api.GtfsManager.GetVehicleByID(vehicleID)
 	if err != nil {
@@ -266,9 +274,7 @@ func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	// Like Java, the agency prefix is part of the vehicle's identity. A vehicle
 	// with no attributed agency can't be checked, so it is still found.
-	attributedAgencyID, attributed := api.GtfsManager.VehicleAgencyID(vehicleID)
-	belongsToAnotherAgency := attributed && attributedAgencyID != agencyID
-	if belongsToAnotherAgency {
+	if attributedAgencyID, belongsToAnotherAgency := api.vehicleBelongsToAnotherAgency(agencyID, vehicleID); belongsToAnotherAgency {
 		reqLogger.Debug("vehicle belongs to another agency",
 			"vehicleID", vehicleID, "agencyID", agencyID, "vehicleAgencyID", attributedAgencyID)
 		api.sendNotFound(w, r)

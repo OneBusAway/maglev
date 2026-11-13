@@ -242,6 +242,12 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			api.sendNotFound(w, r)
 			return
 		}
+		// Like Java, {agencyId}_{vehicleId} is the vehicle's whole identity: a
+		// vehicle attributed to another agency is not found under this prefix.
+		if _, otherAgency := api.vehicleBelongsToAnotherAgency(vehicleAgencyID, rawVehicleID); otherAgency {
+			api.sendNotFound(w, r)
+			return
+		}
 		// The trip-details endpoint must not accept a vehicle currently on
 		// a different trip. Java's TripDetailsBeanService restricts the
 		// vehicle argument to the trip we're describing; a mismatch is 404
