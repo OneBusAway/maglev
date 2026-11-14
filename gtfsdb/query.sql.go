@@ -682,8 +682,7 @@ func (q *Queries) CreateShape(ctx context.Context, arg CreateShapeParams) (Shape
 }
 
 const createStop = `-- name: CreateStop :one
-INSERT
-OR REPLACE INTO stops (
+INSERT INTO stops (
     id,
     code,
     name,
@@ -700,7 +699,22 @@ OR REPLACE INTO stops (
     parent_station
 )
 VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    code                = excluded.code,
+    name                = excluded.name,
+    desc                = excluded.desc,
+    lat                 = excluded.lat,
+    lon                 = excluded.lon,
+    zone_id             = excluded.zone_id,
+    url                 = excluded.url,
+    location_type       = excluded.location_type,
+    timezone            = excluded.timezone,
+    wheelchair_boarding = excluded.wheelchair_boarding,
+    platform_code       = excluded.platform_code,
+    direction           = excluded.direction,
+    parent_station      = excluded.parent_station
+RETURNING id, code, name, "desc", lat, lon, zone_id, url, location_type, timezone, wheelchair_boarding, platform_code, direction, parent_station
 `
 
 type CreateStopParams struct {
