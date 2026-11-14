@@ -2,8 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -13,6 +11,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -40,13 +39,59 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 		return []models.Route{}, nil
 	}
 
-	routes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, originalRouteIDs)
+	routes, err := utils.QueryInBatches(ctx, originalRouteIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
 	if err != nil {
 		return nil, err
 	}
 
+	// The query orders each batch by ID. Preserve that ordering across batches.
+	if len(originalRouteIDs) > utils.IDsPerBatchedQuery {
+		slices.SortFunc(routes, func(a, b gtfsdb.Route) int { return strings.Compare(a.ID, b.ID) })
+	}
 	filteredRoutes := filterRoutesByExpectedCombinedID(routes, expectedCombinedIDs, agencyID)
 	return buildRouteModels(ctx, agencyID, filteredRoutes)
+}
+
+// candidateRouteIDs returns all possible bare route IDs for a route ID string,
+// including every underscore-separated suffix and the full string itself.
+func candidateRouteIDs(routeID string) []string {
+	parts := strings.Split(routeID, "_")
+	candidates := make([]string, 0, len(parts))
+	for i := 1; i < len(parts); i++ {
+		bareID := strings.Join(parts[i:], "_")
+		if !slices.Contains(candidates, bareID) {
+			candidates = append(candidates, bareID)
+		}
+	}
+	if !slices.Contains(candidates, routeID) {
+		candidates = append(candidates, routeID)
+	}
+	return candidates
+}
+
+// recordRouteCandidates records routeID and its agency-qualified variant into
+// expectedCombinedIDs, and appends previously unseen bare candidates to
+// candidateIDs using seen for deduplication.
+func recordRouteCandidates(
+	routeID, agencyID string,
+	expectedCombinedIDs map[string]bool,
+	seen map[string]bool,
+	candidateIDs []string,
+) []string {
+	if routeID == "" {
+		return candidateIDs
+	}
+	expectedCombinedIDs[routeID] = true
+	if !strings.Contains(routeID, "_") && agencyID != "" {
+		expectedCombinedIDs[utils.FormCombinedID(agencyID, routeID)] = true
+	}
+	for _, candID := range candidateRouteIDs(routeID) {
+		if !seen[candID] {
+			seen[candID] = true
+			candidateIDs = append(candidateIDs, candID)
+		}
+	}
+	return candidateIDs
 }
 
 // expectedRouteIDsForStops walks every stop's StaticRouteIDs and returns the
@@ -64,18 +109,7 @@ func expectedRouteIDsForStops(ctx context.Context, stops []models.Stop, agencyID
 		}
 
 		for _, routeID := range stop.StaticRouteIDs {
-			routeAgencyID, originalRouteID, err := utils.ExtractAgencyIDAndCodeID(routeID)
-			if err != nil {
-				originalRouteID = routeID
-				routeAgencyID = agencyID
-			}
-
-			expectedCombinedIDs[utils.FormCombinedID(routeAgencyID, originalRouteID)] = true
-
-			if !routeIDSet[originalRouteID] {
-				routeIDSet[originalRouteID] = true
-				originalRouteIDs = append(originalRouteIDs, originalRouteID)
-			}
+			originalRouteIDs = recordRouteCandidates(routeID, agencyID, expectedCombinedIDs, routeIDSet, originalRouteIDs)
 		}
 	}
 
@@ -217,6 +251,23 @@ func scheduleLinkedTripIDs(schedule *models.Schedule) []string {
 	return linked
 }
 
+// tripRouteCandidates collects expected combined route IDs and bare route ID
+// candidates for trips whose route is not already present in references.Routes.
+func tripRouteCandidates(trips []models.Trip, present map[string]bool, requestAgencyID string) (map[string]bool, []string) {
+	expectedCombinedIDs := make(map[string]bool)
+	candidateSet := make(map[string]bool)
+	candidateIDs := make([]string, 0)
+
+	for _, trip := range trips {
+		if trip.RouteID == "" || present[trip.RouteID] {
+			continue
+		}
+		candidateIDs = recordRouteCandidates(trip.RouteID, requestAgencyID, expectedCombinedIDs, candidateSet, candidateIDs)
+	}
+
+	return expectedCombinedIDs, candidateIDs
+}
+
 // appendTripRouteReferences adds the route of every referenced trip whose routeId
 // is not already in references.routes, plus that route's agency when it is not
 // requestAgencyID. A route that no longer exists costs the reference, not the
@@ -227,26 +278,29 @@ func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *m
 		present[route.ID] = true
 	}
 
-	for _, trip := range references.Trips {
-		if trip.RouteID == "" || present[trip.RouteID] {
-			continue
-		}
-		_, routeID, err := utils.ExtractAgencyIDAndCodeID(trip.RouteID)
-		if err != nil {
-			continue
-		}
+	expectedCombinedIDs, candidateIDs := tripRouteCandidates(references.Trips, present, requestAgencyID)
+	if len(candidateIDs) == 0 {
+		return nil
+	}
 
-		route, err := api.routeReferenceByID(ctx, routeID)
-		if errors.Is(err, sql.ErrNoRows) {
+	routes, err := utils.QueryInBatches(ctx, candidateIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
+	if err != nil {
+		return err
+	}
+
+	filteredRoutes := filterRoutesByExpectedCombinedID(routes, expectedCombinedIDs, requestAgencyID)
+	routeModels, err := buildRouteModels(ctx, requestAgencyID, filteredRoutes)
+	if err != nil {
+		return err
+	}
+
+	for _, routeModel := range routeModels {
+		if present[routeModel.ID] {
 			continue
 		}
-		if err != nil {
-			return err
-		}
-
-		present[route.ID] = true
-		references.Routes = append(references.Routes, route)
-		api.appendRouteAgencyReference(ctx, references, route.AgencyID, requestAgencyID)
+		present[routeModel.ID] = true
+		references.Routes = append(references.Routes, routeModel)
+		api.appendRouteAgencyReference(ctx, references, routeModel.AgencyID, requestAgencyID)
 	}
 
 	return nil
@@ -381,8 +435,11 @@ func agencyReferencesForStops(agencyRows []gtfsdb.GetAgenciesForStopsRow) []mode
 // BuildSituationReferences converts GTFS-RT alerts into situation models,
 // prefixing route, stop, and trip IDs in allAffects with their agency from
 // the database, and emitting Java-parity consequence entries.
-func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.Alert) []models.Situation {
+// NOSONAR: the cognitive complexity predates #1920; splitting the function
+// is tracked in #2009.
+func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []internalgtfs.FeedAlert) []models.Situation { // NOSONAR
 	situations := make([]models.Situation, 0, len(alerts))
+	logger := logging.ForComponent(ctx, "http_server")
 
 	// Pre-collect candidate IDs for batch database lookup to avoid N+1 queries.
 	var routeCandidateIDs []string
@@ -415,6 +472,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 	}
 
 	knownAgencies := make(map[string]struct{})
+	firstStaticAgencyID := ""
 	routeAgencyMap := make(map[string]string)
 	stopAgencyMap := make(map[string]string)
 	tripAgencyMap := make(map[string]string)
@@ -424,6 +482,11 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 			for _, id := range agencyIDs {
 				knownAgencies[id] = struct{}{}
 			}
+			if len(agencyIDs) > 0 {
+				firstStaticAgencyID = agencyIDs[0]
+			}
+		} else {
+			logQueryError(logger, "failed to fetch agencies for situation reference", err)
 		}
 
 		if len(routeCandidateIDs) > 0 {
@@ -433,6 +496,8 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 				for _, r := range routes {
 					routeAgencyMap[r.ID] = r.AgencyID
 				}
+			} else {
+				logQueryError(logger, "failed to fetch routes for situation reference", err)
 			}
 		}
 
@@ -445,6 +510,8 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 						stopAgencyMap[row.StopID] = row.ID
 					}
 				}
+			} else {
+				logQueryError(logger, "failed to fetch stops for situation reference", err)
 			}
 		}
 
@@ -472,8 +539,12 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 								tripAgencyMap[t.ID] = agency
 							}
 						}
+					} else {
+						logQueryError(logger, "failed to fetch missing routes for situation reference", err)
 					}
 				}
+			} else {
+				logQueryError(logger, "failed to fetch trips for situation reference", err)
 			}
 		}
 	}
@@ -512,14 +583,10 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 			}
 			situation.ActiveWindows = append(situation.ActiveWindows, window)
 		}
-
 		for _, entity := range alert.InformedEntities {
 			rawRouteID, rawStopID, rawTripID := extractRawEntityIDs(entity)
 
-			fallbackAgency := getStringValue(entity.AgencyID)
-			if fallbackAgency == "" {
-				fallbackAgency = agencyIDForAlert(alert, "")
-			}
+			fallbackAgency := entityFallbackAgency(alert, entity, firstStaticAgencyID)
 
 			routeID := qualifyEntityID(rawRouteID, fallbackAgency, routeAgencyMap, knownAgencies)
 			stopID := qualifyEntityID(rawStopID, fallbackAgency, stopAgencyMap, knownAgencies)
@@ -562,6 +629,22 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []gtfs.
 	}
 
 	return situations
+}
+
+// entityFallbackAgency returns the agency an unknown entity ID gets qualified
+// with: the publishing feed's first configured agency, then the entity's own
+// declared agency (a declared difference from Java, see the PR description),
+// then firstStaticAgencyID. Keeping the chain here keeps
+// BuildSituationReferences at its pre-existing cognitive complexity.
+func entityFallbackAgency(alert internalgtfs.FeedAlert, entity gtfs.AlertInformedEntity, firstStaticAgencyID string) string {
+	fallbackAgency := alert.FeedAgencyID
+	if fallbackAgency == "" {
+		fallbackAgency = getStringValue(entity.AgencyID)
+	}
+	if fallbackAgency == "" {
+		fallbackAgency = firstStaticAgencyID
+	}
+	return fallbackAgency
 }
 
 // qualifyEntityID formats an entity identifier with its owning agency ID.
@@ -872,18 +955,18 @@ func (api *RestAPI) buildStopModel(ctx context.Context, agencyID string, stop gt
 	}
 }
 
-// stopReferences builds the stop reference block for a set of list entries,
-// labelling each stop with the combined ID the entries actually referred to it
-// by — the referring trip's agency need not own the stop's first route. A stop
-// whose routes do not resolve still gets a reference, with an empty route list,
-// so every stop ID an entry emits resolves in the block.
-//
 // stopRoute pairs a route with the agency that owns it.
 type stopRoute struct {
 	agencyID string
 	routeID  string
 }
 
+// stopReferences builds the stop reference block for a set of list entries,
+// labelling each stop with the combined ID the entries actually referred to it
+// by — the referring trip's agency need not own the stop's first route. A stop
+// whose routes do not resolve still gets a reference, with an empty route list,
+// so every stop ID an entry emits resolves in the block.
+//
 // The routes each stop serves are returned alongside the references, for callers
 // that collect route references from them. idsByBareId is a map of a bare stop id
 // to combined agencyId_stopId
@@ -979,18 +1062,18 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 // situation references use to refer to it.
 type situationRef struct {
 	ID    string
-	Alert gtfs.Alert
+	Alert internalgtfs.FeedAlert
 }
 
 // situationRefsFromAlerts drops alerts with no ID and pairs the rest with the
 // situation ID used to refer to them.
-func situationRefsFromAlerts(alerts []gtfs.Alert, agencyID string) []situationRef {
+func situationRefsFromAlerts(alerts []internalgtfs.FeedAlert, agencyID string) []situationRef {
 	refs := make([]situationRef, 0, len(alerts))
 	for _, alert := range alerts {
 		if alert.ID == "" {
 			continue
 		}
-		refs = append(refs, situationRef{ID: situationID(alert.ID, agencyIDForAlert(alert, agencyID)), Alert: alert})
+		refs = append(refs, situationRef{ID: internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert.Alert, agencyID)), Alert: alert})
 	}
 	return refs
 }
@@ -1021,25 +1104,10 @@ func dedupeSituationRefs(refs []situationRef) []situationRef {
 // situationIds would resolve to whichever one it happened to be built from.
 // The informed entity is the only source that does not vary by lookup path.
 func agencyIDForAlert(alert gtfs.Alert, fallbackAgencyID string) string {
-	for _, entity := range alert.InformedEntities {
-		if entity.AgencyID != nil && *entity.AgencyID != "" {
-			return *entity.AgencyID
-		}
+	if agencyID := internalgtfs.AlertAgencyID(alert); agencyID != "" {
+		return agencyID
 	}
 	return fallbackAgencyID
-}
-
-// situationID returns the combined-form ID for an alert.
-//
-// Prefixing is idempotent, not unconditional: a GTFS-RT feed exported by an OBA
-// instance already carries the agency prefix on its alert IDs — Puget Sound
-// ships "1_92239" — and prefixing again would publish "1_1_92239", which
-// resolves against nothing a client has seen. Upstream reports "1_92239".
-func situationID(alertID, agencyID string) string {
-	if agencyID == "" || strings.HasPrefix(alertID, agencyID+"_") {
-		return alertID
-	}
-	return utils.FormCombinedID(agencyID, alertID)
 }
 
 // situationCollector deduplicates the alerts referenced by list entries so the
@@ -1054,7 +1122,7 @@ func newSituationCollector() *situationCollector {
 }
 
 // add records the alerts affecting one trip and returns their situation IDs.
-func (c *situationCollector) add(alerts []gtfs.Alert, agencyID string) []string {
+func (c *situationCollector) add(alerts []internalgtfs.FeedAlert, agencyID string) []string {
 	return c.addRefs(situationRefsFromAlerts(alerts, agencyID))
 }
 
@@ -1080,7 +1148,7 @@ func (api *RestAPI) situationReferences(ctx context.Context, refs []situationRef
 		return []models.Situation{}
 	}
 
-	alerts := make([]gtfs.Alert, 0, len(refs))
+	alerts := make([]internalgtfs.FeedAlert, 0, len(refs))
 	for _, ref := range refs {
 		alerts = append(alerts, ref.Alert)
 	}

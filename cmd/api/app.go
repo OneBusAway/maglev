@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -18,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/bundleinputs"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
@@ -32,13 +32,18 @@ const gtfsShutdownTimeout = 30 * time.Second
 
 func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 	gtfsCfg := gtfs.Config{
-		GtfsURL:               gtfsCfgData.GtfsURL,
-		StaticAuthHeaderKey:   gtfsCfgData.StaticAuthHeaderKey,
-		StaticAuthHeaderValue: gtfsCfgData.StaticAuthHeaderValue,
-		GTFSDataPath:          gtfsCfgData.GTFSDataPath,
-		Env:                   gtfsCfgData.Env,
-
-		EnableGTFSTidy: gtfsCfgData.EnableGTFSTidy,
+		StaticFeeds:     gtfsCfgData.StaticFeeds,
+		BundleInputsURL: gtfsCfgData.BundleInputsURL,
+		GTFSDataPath:    gtfsCfgData.GTFSDataPath,
+		Env:             gtfsCfgData.Env,
+	}
+	// The importer still loads only the first static feed.
+	if len(gtfsCfgData.StaticFeeds) > 0 {
+		first := gtfsCfgData.StaticFeeds[0]
+		gtfsCfg.GtfsURL = first.URL
+		gtfsCfg.StaticAuthHeaderKey = first.AuthHeaderName
+		gtfsCfg.StaticAuthHeaderValue = first.AuthHeaderValue
+		gtfsCfg.EnableGTFSTidy = first.EnableGTFSTidy
 	}
 
 	for _, feedData := range gtfsCfgData.RTFeeds {
@@ -55,6 +60,27 @@ func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 	}
 
 	return gtfsCfg
+}
+
+// resolveBundleInputs fills the static feed list from the bundle-inputs
+// manifest when gtfs-bundle-inputs-url is set. The manifest is read once,
+// at startup: the periodic static reload keeps the feeds resolved here and
+// does not read the manifest again until multi-feed import lands.
+func resolveBundleInputs(ctx context.Context, gtfsCfgData *appconf.GtfsConfigData) error {
+	if gtfsCfgData.BundleInputsURL == "" {
+		return nil
+	}
+	manifest, err := bundleinputs.Fetch(ctx, gtfsCfgData.BundleInputsURL)
+	if err != nil {
+		return fmt.Errorf("failed to load gtfs-bundle-inputs-url: %w", err)
+	}
+	gtfsCfgData.UseStaticFeeds(manifest.StaticFeeds())
+	slog.Info("loaded static feeds from bundle inputs manifest",
+		"component", "config_loader",
+		"source", appconf.RedactURL(gtfsCfgData.BundleInputsURL),
+		"feed_count", len(manifest.Feeds),
+		"has_stop_consolidation_url", manifest.StopConsolidationURL != "")
+	return nil
 }
 
 // ParseAPIKeys splits a comma-separated string of API keys and trims whitespace from each key.
@@ -141,11 +167,11 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 
 	// Start DB stats collector using a provider so metrics follow DB hot-swap.
 	if gtfsManager != nil {
-		appMetrics.StartDBStatsCollector(func() *sql.DB {
+		appMetrics.StartDBStatsCollector(func() metrics.DBStatsProvider {
 			if gtfsManager.GtfsDB == nil {
 				return nil
 			}
-			return gtfsManager.GtfsDB.DB
+			return gtfsManager.GtfsDB
 		}, 15*time.Second)
 	}
 
@@ -309,38 +335,29 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 		envStr = "production"
 	}
 
-	// Build gtfs-static-feed object
-	staticAuthValue := gtfsCfg.StaticAuthHeaderValue
-	if staticAuthValue != "" {
-		staticAuthValue = "***REDACTED***"
-	}
-	staticFeed := map[string]string{
-		"url": gtfsCfg.GtfsURL,
-	}
-	if gtfsCfg.StaticAuthHeaderKey != "" {
-		staticFeed["auth-header-name"] = gtfsCfg.StaticAuthHeaderKey
-		staticFeed["auth-header-value"] = staticAuthValue
-	}
-
 	// Build JSON config structure
 	jsonConfig := map[string]any{
+		"role":               cfg.Role,
 		"port":               cfg.Port,
 		"env":                envStr,
-		"api-keys":           fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ApiKeys)),
-		"exempt-api-keys":    fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ExemptApiKeys)),
-		"protected-api-keys": fmt.Sprintf("***REDACTED*** (%d keys)", len(cfg.ProtectedApiKeys)),
+		"api-keys":           fmt.Sprintf("%s (%d keys)", appconf.RedactedValue, len(cfg.ApiKeys)),
+		"exempt-api-keys":    fmt.Sprintf("%s (%d keys)", appconf.RedactedValue, len(cfg.ExemptApiKeys)),
+		"protected-api-keys": fmt.Sprintf("%s (%d keys)", appconf.RedactedValue, len(cfg.ProtectedApiKeys)),
 		"rate-limit":         cfg.RateLimit,
-		"gtfs-static-feed":   staticFeed,
 		"data-path":          gtfsCfg.GTFSDataPath,
+	}
+
+	// In manifest mode the manifest is the source of truth, and the config
+	// rejects it next to gtfs-static-feeds. The startup log lists the feeds
+	// it resolved to.
+	if gtfsCfg.BundleInputsURL != "" {
+		jsonConfig["gtfs-bundle-inputs-url"] = appconf.RedactURL(gtfsCfg.BundleInputsURL)
+	} else {
+		jsonConfig["gtfs-static-feeds"] = dumpStaticFeeds(gtfsCfg.StaticFeeds)
 	}
 
 	var feeds []map[string]any
 	for _, feedCfg := range gtfsCfg.RTFeeds {
-		redactedHeaders := make(map[string]string)
-		for k := range feedCfg.Headers {
-			redactedHeaders[k] = "***REDACTED***"
-		}
-
 		feed := map[string]any{
 			"id":                    feedCfg.ID,
 			"trip-updates-url":      feedCfg.TripUpdatesURL,
@@ -352,8 +369,8 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 		if len(feedCfg.AgencyIDs) > 0 {
 			feed["agency-ids"] = feedCfg.AgencyIDs
 		}
-		if len(redactedHeaders) > 0 {
-			feed["headers"] = redactedHeaders
+		if len(feedCfg.Headers) > 0 {
+			feed["headers"] = appconf.RedactHeaderValues(feedCfg.Headers)
 		}
 		feeds = append(feeds, feed)
 	}
@@ -368,4 +385,15 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	}
 
 	fmt.Println(string(output))
+}
+
+// dumpStaticFeeds returns the static feeds with their secrets redacted.
+// GtfsStaticFeed carries the config-file keys, so the dump loads again
+// through appconf.LoadFromFile.
+func dumpStaticFeeds(feeds []appconf.GtfsStaticFeed) []appconf.GtfsStaticFeed {
+	dumped := make([]appconf.GtfsStaticFeed, 0, len(feeds))
+	for _, feed := range feeds {
+		dumped = append(dumped, feed.Redacted())
+	}
+	return dumped
 }

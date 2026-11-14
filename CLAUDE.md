@@ -189,6 +189,8 @@ All endpoints are registered in `internal/restapi/routes.go`:
 | `/api/where/problem-reports-for-trip/{id}` | `problem_reports_for_trip_handler.go` | Problem reports for a trip (protected key) |
 | `/api/where/problem-reports-for-stop/{id}` | `problem_reports_for_stop_handler.go` | Problem reports for a stop (protected key) |
 | `/api/gtfs_realtime/vehicle-positions-for-agency/{id}.pb` | `vehicle_positions_for_agency_handler.go` | GTFS-RT vehicle positions for an agency |
+| `/api/gtfs_realtime/alerts-for-agency/{id}.pb` | `alerts_for_agency_handler.go` | GTFS-RT service alerts for an agency |
+| `/api/gtfs_realtime/trip-updates-for-agency/{id}.pb` | `trip_updates_for_agency_handler.go` | GTFS-RT trip updates for an agency |
 
 ## Middleware Components
 
@@ -241,8 +243,8 @@ distance := utils.Haversine(lat1, lon1, lat2, lon2)
 // Parse float parameters with validation
 lat, fieldErrors := utils.ParseFloatParam(r.URL.Query(), "lat", nil)
 
-// Parse time parameter (epoch ms or YYYY-MM-DD)
-dateStr, parsedTime, fieldErrors, ok := utils.ParseTimeParameter(timeParam, location)
+// Parse time parameter (epoch ms or yyyy-MM-dd_HH-mm-ss)
+dateStr, parsedTime, fieldErrors, ok := utils.ParseTimeParameter(timeParam, location, clock)
 ```
 
 ### Vehicle Status (`internal/restapi/vehicles_helper.go`)
@@ -279,7 +281,7 @@ After modifying SQL queries or schema, run `make models` to regenerate the Go co
 
 **Route/Trip Relations:**
 - `GetStopIDsForRoute`, `GetStopIDsForTrip` - Stop IDs on route/trip
-- `GetRoutesForStop`, `GetRouteIDsForStop` - Routes serving a stop
+- `GetRoutesForStop`, `GetRouteIDsForStops` - Routes serving a stop
 - `GetAllTripsForRoute`, `GetTripsForRouteInActiveServiceIDs` - Trips on route
 - `GetStopsForRoute` - All stops on a route
 
@@ -330,6 +332,9 @@ The manager keeps two kinds of static state in memory:
 - `feedVehicleLastSeen` - `map[string]map[vehicleKey]time.Time` — per-feed, per-vehicle last-seen timestamps for stale vehicle expiry (15 min window)
 - `feedVehicleAgency` - `map[string]map[vehicleKey]string`: the one agency each vehicle was attributed to at ingestion (its route's agency, else the feed's first `agency-ids` entry)
 - `feedVehicleDataTime` - `map[string]time.Time`: when each feed's vehicle data was produced (header timestamp, else fetch time)
+- `feedTripAgency` - `map[string]map[string]string`: the one agency each trip update was attributed to at ingestion, by trip ID (its route's agency, else its static trip's, else the feed's first `agency-ids` entry)
+- `feedTripDataTime` - `map[string]time.Time`: when each feed's trip data was produced (header timestamp, else fetch time)
+- `feedTripUpdateSeen` - `map[string]map[string]tripUpdateSeen`: per-feed, per-trip feed time at which each trip update's timestamp was first seen
 
 *Derived merged view*, published by `rebuildMergedRealtimeLocked` after each feed
 update as one immutable `mergedRealtime` snapshot held in `merged
@@ -343,6 +348,9 @@ needs **no lock**. Never mutate what it returns:
 - `duplicatedVehicleByRoute` - Map of route ID → DUPLICATED-trip vehicles
 - `vehiclePositionsByAgency` - Map of agency ID → `AgencyVehiclePositions` (fresh, one per vehicle ID, sorted, plus the feed data time) for the GTFS-RT export, read with `VehiclePositionsForAgency`
 - `alerts` - `alertIndex` of alerts by trip, route, agency and stop
+- `alertFeedsByAgency` - Map of agency ID → serialized GTFS-RT alerts feed and the build time its alerts last changed, for the GTFS-RT export, read with `AlertFeedForAgency`; `alertsSince` dates the header-only feed of an agency with no alerts
+- `tripUpdatesByAgency` - Map of agency ID → `AgencyTripUpdates` (one per entity ID, sorted, plus the newest feed data time) for the GTFS-RT export, read with `TripUpdatesForAgency`; its bytes are encoded on the first request per snapshot
+- `tripUpdateSeenAt` - Map of trip ID → first-seen time, read with `TripUpdateFirstSeen`
 
 When a single feed refreshes, only its per-feed sub-map is overwritten; other feeds' data is untouched. A fresh snapshot is then built from all sub-maps and swapped in.
 
@@ -571,7 +579,15 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
   "env": "development",
   "api-keys": ["test"],
   "rate-limit": 100,
-  "gtfs-static-feed": { "url": "..." },
+  "gtfs-static-feeds": [
+    {
+      "id": "sound-transit",
+      "url": "...",
+      "default-agency-id": "40",
+      "auth-header-name": "Authorization",
+      "auth-header-value": "Bearer ..."
+    }
+  ],
   "gtfs-rt-feeds": [
     {
       "id": "my-feed",
@@ -586,6 +602,17 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
   ]
 }
 ```
+
+### Static Feeds
+- `gtfs-static-feeds` is a list of static feeds. The older `gtfs-static-feed` object still works and is read as a one-element list. Setting both keys, or an empty list, is an error.
+- Each feed takes `id`, `url`, `default-agency-id`, `agency-id-mappings`, `auth-header-name`/`auth-header-value`, `headers` and `enable-gtfs-tidy`.
+- `id` — defaults to `"feed-0"`, `"feed-1"`, …; must be unique
+- `default-agency-id` — must be unique across feeds; it and `agency-id-mappings` targets must not contain `_`
+- `url` is required on every feed. The Sound Transit default URL is filled in when neither key is set, or when the `gtfs-static-feed` object has no `url`; never for a list entry
+- In code, `JSONConfig.normalizeStaticFeeds` moves the singular key into `GtfsStaticFeeds` (and fills in ids), so read `GtfsStaticFeeds` only; the `GtfsStaticFeed` pointer is set only by JSON decoding
+- `GTFS_STATIC_AUTH_NAME`/`GTFS_STATIC_AUTH_VALUE` apply only when exactly one static feed is configured; with more feeds they are a startup error, so a secret is never dropped silently
+- `gtfs-bundle-inputs-url` (manifest mode) points at an obacloud `bundle-inputs.json` (version 1, URL or local path) instead of listing feeds. It cannot be combined with either static feed key, and no default feed is added. `cmd/api` `resolveBundleInputs` fetches it at startup with `internal/bundleinputs` and fills `GtfsConfigData.StaticFeeds` with each feed's `id`, `url` and `defaultAgencyId`; a fetch or parse failure stops startup. The periodic static reload does not read the manifest again yet. Manifest feeds take no auth headers, so `GTFS_STATIC_AUTH_*` is a startup error in this mode
+- For now the importer loads only the first feed. `default-agency-id` and `agency-id-mappings` are validated but not yet applied, and `headers` is accepted but not sent (use `auth-header-name`/`auth-header-value`); `ToGtfsConfigData` logs a warning when `agency-id-mappings` or `headers` is set
 
 ### GTFS-RT Feed Defaults
 - `id` — auto-generated as `"feed-0"`, `"feed-1"`, … when omitted

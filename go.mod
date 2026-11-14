@@ -3,18 +3,18 @@ module maglev.onebusaway.org
 go 1.26.0
 
 require (
-	github.com/OneBusAway/go-gtfs v1.4.0
-	github.com/getkin/kin-openapi v0.152.0
+	github.com/OneBusAway/go-gtfs v1.5.0
+	github.com/getkin/kin-openapi v0.153.0
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.20.3
-	github.com/mattn/go-sqlite3 v1.14.52
+	github.com/klauspost/compress v1.20.4
+	github.com/mattn/go-sqlite3 v1.14.53
 	github.com/prometheus/client_golang v1.25.0
 	github.com/stretchr/testify v1.12.1
 	github.com/twpayne/go-polyline v1.1.2
-	golang.org/x/sync v0.24.0
+	golang.org/x/sync v0.25.0
 	golang.org/x/time v0.16.0
 	google.golang.org/protobuf v1.36.12
-	modernc.org/sqlite v1.61.0
+	modernc.org/sqlite v1.61.1
 )
 
 require (
@@ -41,8 +41,6 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
-	github.com/oasdiff/yaml v0.1.1 // indirect
-	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/patrickbr/gtfsparser v0.0.0-20250811204933-790d4e1c69c1 // indirect
 	github.com/patrickbr/gtfstidy v0.0.0-20251202081335-bd68452e3a13 // indirect
 	github.com/patrickbr/gtfswriter v0.0.0-20240919073412-98e3602c6cd8 // indirect
@@ -70,6 +68,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	golang.org/x/exp v0.0.0-20250711185948-6ae5c78190dc // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect

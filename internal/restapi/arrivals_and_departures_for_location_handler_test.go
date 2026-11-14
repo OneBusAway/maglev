@@ -983,3 +983,43 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	assert.Contains(t, ids, utils.FormCombinedID(agencyID, alertID))
 	assert.NotContains(t, ids, utils.FormCombinedID("a", alertID))
 }
+
+func TestRetainRoute_AgencyWithUnderscore(t *testing.T) {
+	acc := newArrivalsAccumulator("AGENCY_ONE")
+	refAcc := newArrivalsAccumulator("AGENCY_ONE")
+
+	route := gtfsdb.Route{
+		ID:       "ROUTE_100",
+		AgencyID: "AGENCY_ONE",
+	}
+	acc.routes[route.ID] = &route
+
+	// Combined ID with underscore in agency ID
+	combinedRouteID := "AGENCY_ONE_ROUTE_100"
+	retainRoute(refAcc, acc, combinedRouteID)
+
+	assert.Contains(t, refAcc.routes, "ROUTE_100", "retainRoute must retain the route even when agency ID contains an underscore")
+}
+
+func TestRetainRoute_RejectsOtherAgency(t *testing.T) {
+	acc := newArrivalsAccumulator("AGENCY_ONE")
+	acc.routes["ROUTE_100"] = &gtfsdb.Route{ID: "ROUTE_100", AgencyID: "OTHER"}
+
+	for _, combinedID := range []string{"AGENCY_ONE_ROUTE_100", "AGENCY_ROUTE_100"} {
+		t.Run(combinedID, func(t *testing.T) {
+			refAcc := newArrivalsAccumulator("AGENCY_ONE")
+			retainRoute(refAcc, acc, combinedID)
+			assert.Empty(t, refAcc.routes)
+		})
+	}
+}
+
+func TestRetainRoute_EmptyCombinedID(t *testing.T) {
+	acc := newArrivalsAccumulator("AGENCY_ONE")
+	refAcc := newArrivalsAccumulator("AGENCY_ONE")
+	acc.routes["ROUTE_100"] = &gtfsdb.Route{ID: "ROUTE_100"}
+
+	retainRoute(refAcc, acc, "")
+
+	assert.Empty(t, refAcc.routes)
+}

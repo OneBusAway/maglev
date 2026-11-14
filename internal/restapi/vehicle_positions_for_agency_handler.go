@@ -17,17 +17,8 @@ const gtfsRealtimeExtension = ".pb"
 // attributed to an agency as a GTFS-RT feed. An unknown agency gets a feed
 // with no entities. routeFilterId and removeAgencyIds are not implemented.
 func (api *RestAPI) vehiclePositionsForAgencyHandler(w http.ResponseWriter, r *http.Request) {
-	agencyID, isProtobuf := strings.CutSuffix(r.PathValue("id"), gtfsRealtimeExtension)
-	if !isProtobuf {
-		api.sendNotFound(w, r)
-		return
-	}
-	if err := utils.ValidateID(agencyID); err != nil {
-		api.validationErrorResponse(w, r, map[string][]string{"id": {err.Error()}})
-		return
-	}
-	if err := utils.ValidateGtfsRealtimeTime(r.URL.Query().Get("time")); err != nil {
-		api.validationErrorResponse(w, r, map[string][]string{"time": {err.Error()}})
+	agencyID, ok := api.gtfsRealtimeAgencyID(w, r)
+	if !ok {
 		return
 	}
 
@@ -38,6 +29,26 @@ func (api *RestAPI) vehiclePositionsForAgencyHandler(w http.ResponseWriter, r *h
 		return
 	}
 	writeGtfsRealtimeFeed(w, r, body)
+}
+
+// gtfsRealtimeAgencyID reads the agency ID of a GTFS-RT export request and
+// checks its suffix and time parameter. On failure it has already written
+// the error response, and ok is false.
+func (api *RestAPI) gtfsRealtimeAgencyID(w http.ResponseWriter, r *http.Request) (agencyID string, ok bool) {
+	agencyID, isProtobuf := strings.CutSuffix(r.PathValue("id"), gtfsRealtimeExtension)
+	if !isProtobuf {
+		api.sendNotFound(w, r)
+		return "", false
+	}
+	if err := utils.ValidateID(agencyID); err != nil {
+		api.validationErrorResponse(w, r, map[string][]string{"id": {err.Error()}})
+		return "", false
+	}
+	if err := utils.ValidateGtfsRealtimeTime(r.URL.Query().Get("time")); err != nil {
+		api.validationErrorResponse(w, r, map[string][]string{"time": {err.Error()}})
+		return "", false
+	}
+	return agencyID, true
 }
 
 // writeGtfsRealtimeFeed sends a serialized feed with its ETag, or 304 when

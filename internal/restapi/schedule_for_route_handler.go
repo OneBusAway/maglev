@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"maglev.onebusaway.org/internal/nulls"
 	"net/http"
 	"strconv"
 	"time"
@@ -10,6 +9,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -37,6 +37,10 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
 	if err != nil {
 		api.dbErrorResponse(w, r, err)
+		return
+	}
+	if route.ID == "" || route.AgencyID != agencyID {
+		api.sendNotFound(w, r)
 		return
 	}
 

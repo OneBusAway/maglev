@@ -1,8 +1,6 @@
 package gtfsdb
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
 	"testing"
 
@@ -15,9 +13,6 @@ import (
 // buildSyntheticGTFSZip creates a minimal valid GTFS zip archive in memory,
 func buildSyntheticGTFSZip(t *testing.T, includeFrequencies bool) []byte {
 	t.Helper()
-
-	var buf bytes.Buffer
-	w := zip.NewWriter(&buf)
 
 	files := map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
@@ -72,15 +67,7 @@ func buildSyntheticGTFSZip(t *testing.T, includeFrequencies bool) []byte {
 			"trip_exact,06:00:00,09:00:00,1800,1\n"
 	}
 
-	for name, content := range files {
-		f, err := w.Create(name)
-		require.NoError(t, err)
-		_, err = f.Write([]byte(content))
-		require.NoError(t, err)
-	}
-
-	require.NoError(t, w.Close())
-	return buf.Bytes()
+	return writeGTFSZip(t, files)
 }
 
 func TestSyntheticGTFS_FrequencyIngestion(t *testing.T) {

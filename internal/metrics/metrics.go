@@ -191,13 +191,18 @@ func (m *Metrics) RecordDBQuery(queryName, op string, err error) {
 	m.DBQueryTotal.WithLabelValues(queryName, op, status).Inc()
 }
 
+// DBStatsProvider supplies database connection pool statistics.
+type DBStatsProvider interface {
+	Stats() sql.DBStats
+}
+
 // StartDBStatsCollector starts a goroutine that periodically collects database
 // connection pool statistics and updates the corresponding metrics.
 // The interval specifies how often to collect stats.
 // This method is idempotent - calling it multiple times has no effect after the first call.
 // Call Shutdown() to stop the collector.
-func (m *Metrics) StartDBStatsCollector(dbProvider func() *sql.DB, interval time.Duration) {
-	if dbProvider == nil {
+func (m *Metrics) StartDBStatsCollector(provider func() DBStatsProvider, interval time.Duration) {
+	if provider == nil {
 		return
 	}
 	if interval <= 0 {
@@ -214,7 +219,7 @@ func (m *Metrics) StartDBStatsCollector(dbProvider func() *sql.DB, interval time
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	var currentDB *sql.DB
+	var currentProvider DBStatsProvider
 	var lastWaitDuration time.Duration
 
 	// Add to WaitGroup BEFORE exposing cancel to avoid race with Shutdown
@@ -237,41 +242,46 @@ func (m *Metrics) StartDBStatsCollector(dbProvider func() *sql.DB, interval time
 		for {
 			select {
 			case <-ticker.C:
-				db := dbProvider()
-				if db == nil {
-					m.DBConnectionsOpen.Set(0)
-					m.DBConnectionsInUse.Set(0)
-					m.DBConnectionsIdle.Set(0)
-					currentDB = nil
-					lastWaitDuration = 0
-					continue
-				}
-
-				stats := db.Stats()
-				m.DBConnectionsOpen.Set(float64(stats.OpenConnections))
-				m.DBConnectionsInUse.Set(float64(stats.InUse))
-				m.DBConnectionsIdle.Set(float64(stats.Idle))
-
-				// WaitDuration is cumulative per *sql.DB pool. If hot-swap changed
-				// the DB pointer, reset baseline to this pool's current counter.
-				if db != currentDB {
-					currentDB = db
-					lastWaitDuration = stats.WaitDuration
-					continue
-				}
-
-				// Add the delta of wait duration since last check
-				waitDelta := stats.WaitDuration - lastWaitDuration
-				if waitDelta > 0 {
-					m.DBWaitSecondsTotal.Add(waitDelta.Seconds())
-				}
-				lastWaitDuration = stats.WaitDuration
-
+				m.updateDBStats(provider, &currentProvider, &lastWaitDuration)
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
+}
+
+// updateDBStats samples database connection pool statistics from the provider
+// and updates the corresponding Prometheus gauges and wait duration counters.
+func (m *Metrics) updateDBStats(provider func() DBStatsProvider, currentProvider *DBStatsProvider, lastWaitDuration *time.Duration) {
+	p := provider()
+	if p == nil {
+		m.DBConnectionsOpen.Set(0)
+		m.DBConnectionsInUse.Set(0)
+		m.DBConnectionsIdle.Set(0)
+		*currentProvider = nil
+		*lastWaitDuration = 0
+		return
+	}
+
+	stats := p.Stats()
+	m.DBConnectionsOpen.Set(float64(stats.OpenConnections))
+	m.DBConnectionsInUse.Set(float64(stats.InUse))
+	m.DBConnectionsIdle.Set(float64(stats.Idle))
+
+	// WaitDuration is cumulative per connection pool. If hot-swap changed
+	// the provider pointer, reset baseline to this pool's current counter.
+	if p != *currentProvider {
+		*currentProvider = p
+		*lastWaitDuration = stats.WaitDuration
+		return
+	}
+
+	// Add the delta of wait duration since last check
+	waitDelta := stats.WaitDuration - *lastWaitDuration
+	if waitDelta > 0 {
+		m.DBWaitSecondsTotal.Add(waitDelta.Seconds())
+	}
+	*lastWaitDuration = stats.WaitDuration
 }
 
 // Shutdown stops the DB stats collector goroutine and waits for it to exit.

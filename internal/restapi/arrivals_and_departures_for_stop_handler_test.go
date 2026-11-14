@@ -207,6 +207,19 @@ func TestArrivalsAndDeparturesForStopHandlerEndToEnd(t *testing.T) {
 
 // TestArrivalsAndDeparturesForStopHandler_StopCodeFallback tests that arrivals_and_departures_for_stop_handler
 // falls back to the raw stop entity id for code when the stop code is not supplied in the feed.
+func TestArrivalsAndDeparturesForStopHandler_TimeZeroReturnsEmpty(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{"time": {"0"}}))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	assert.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"time=0 queries epoch 0 (1970) and must return no arrivals")
+}
+
 func TestArrivalsAndDeparturesForStopHandler_StopCodeFallback(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
@@ -377,6 +390,7 @@ func TestArrivalsAndDeparturesForStopHandlerTimeParams(t *testing.T) {
 	}{
 		{"minutesAfter and minutesBefore", url.Values{"minutesAfter": {"60"}, "minutesBefore": {"10"}}},
 		{"absolute time param", url.Values{"time": {fmt.Sprintf("%d", specificTimeMs)}}},
+		{"datetime format param", url.Values{"time": {"2025-06-13_08-00-00"}}},
 	}
 
 	for _, tt := range tests {
@@ -388,6 +402,37 @@ func TestArrivalsAndDeparturesForStopHandlerTimeParams(t *testing.T) {
 			assert.Equal(t, arrivalsTestStopID, model.Data.Entry.StopID)
 			assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
 		})
+	}
+}
+
+// time accepts yyyy-MM-dd_HH-mm-ss in the agency timezone, like Java. The
+// arrivals must cluster around the requested hour, proving the value was read
+// as a datetime rather than ignored in favor of the clock.
+func TestArrivalsAndDeparturesForStopAcceptsDateTimeFormat(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{
+			"minutesBefore": {"60"},
+			"minutesAfter":  {"240"},
+			"time":          {"2025-06-13_08-00-00"},
+		}))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, model.Data.FieldErrors)
+
+	arrivals := model.Data.Entry.ArrivalsAndDepartures
+	require.NotEmpty(t, arrivals, "Friday 08:00 must have scheduled service on the fixture")
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	windowStart := time.Date(2025, 6, 13, 7, 0, 0, 0, loc).UnixMilli()
+	windowEnd := time.Date(2025, 6, 13, 12, 0, 0, 0, loc).UnixMilli()
+	for _, a := range arrivals {
+		scheduled := a.ScheduledArrivalTime.UnixMilli()
+		assert.GreaterOrEqual(t, scheduled, windowStart, "arrival scheduled before the requested window")
+		assert.LessOrEqual(t, scheduled, windowEnd, "arrival scheduled after the requested window")
 	}
 }
 
@@ -521,7 +566,8 @@ func TestArrivalsAndDeparturesForStopHandlerNoActiveServices(t *testing.T) {
 	assert.NotNil(t, model.Data.Entry.NearbyStopIDs)
 	assert.NotNil(t, model.Data.Entry.SituationIDs)
 	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
-	assert.Empty(t, model.Data.References.Routes)
+	// Routes serving the stop are referenced whether or not any service runs (Java does the same).
+	assert.NotEmpty(t, model.Data.References.Routes)
 	assert.Empty(t, model.Data.References.Trips)
 }
 
@@ -561,7 +607,7 @@ func TestParseArrivalsAndDeparturesParams_InvalidValues(t *testing.T) {
 	require.NotNil(t, errs)
 	assert.Equal(t, "must be a valid integer", errs["minutesAfter"][0])
 	assert.Equal(t, "must be a valid integer", errs["minutesBefore"][0])
-	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["time"][0])
+	assert.Equal(t, `Invalid field value for field "time".`, errs["time"][0])
 }
 
 func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
@@ -574,6 +620,8 @@ func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
 		params url.Values
 	}{
 		{"invalid time", url.Values{"time": {"invalid"}}},
+		{"date-only time rejects matching Java", url.Values{"time": {"2026-10-30"}}},
+		{"negative time", url.Values{"time": {"-1000"}}},
 		{"invalid minutesAfter", url.Values{"minutesAfter": {"invalid"}}},
 		{"invalid frequencyMinutesBefore", url.Values{"frequencyMinutesBefore": {"invalid"}}},
 		{"invalid frequencyMinutesAfter", url.Values{"frequencyMinutesAfter": {"invalid"}}},
@@ -583,8 +631,12 @@ func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, _ := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(arrivalsTestStopID, tt.params))
+			resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(arrivalsTestStopID, tt.params))
 			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			if tt.params.Has("time") {
+				assert.Contains(t, model.Data.FieldErrors, "time")
+				assert.Equal(t, `Invalid field value for field "time".`, model.Data.FieldErrors["time"][0])
+			}
 		})
 	}
 }
@@ -764,9 +816,9 @@ func delayPropBlockID(t *testing.T) string {
 	return "dp-block-" + t.Name()
 }
 
-// addDownstreamSTU adds a second stop at sequence 5 to the trip and injects a
-// TripUpdate whose only StopTimeUpdate targets that stop with the given delay.
-func addDownstreamSTU(t *testing.T, api *RestAPI, tripID string, delay time.Duration) {
+// addDownstreamStop adds a second stop at GTFS sequence 5 to the trip created
+// by setupDelayPropTestData and returns its ID.
+func addDownstreamStop(t *testing.T, api *RestAPI, tripID string) string {
 	t.Helper()
 	ctx := context.Background()
 	q := api.GtfsManager.GtfsDB.Queries
@@ -782,13 +834,17 @@ func addDownstreamSTU(t *testing.T, api *RestAPI, tripID string, delay time.Dura
 		DepartureTime: int64(9*time.Hour + 5*time.Minute),
 	})
 	require.NoError(t, err)
+	return downstreamStopID
+}
 
-	seq := uint32(5)
+// addDownstreamSTU adds a downstream stop and a TripUpdate targeting only that
+// stop. Its update names the stop by stop_id alone, which is what makes Java
+// build a deviation sample from it: see sampleEntryForSTU.
+func addDownstreamSTU(t *testing.T, api *RestAPI, tripID string, delay time.Duration) {
+	t.Helper()
+	downstreamStopID := addDownstreamStop(t, api, tripID)
 	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
-		{
-			StopID: &downstreamStopID, StopSequence: &seq,
-			Arrival: &gtfs.StopTimeEvent{Delay: &delay},
-		},
+		{StopID: &downstreamStopID, Arrival: &gtfs.StopTimeEvent{Delay: &delay}},
 	})
 }
 
@@ -1086,6 +1142,56 @@ func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 	assert.True(t, a.Predicted, "arrival.predicted should agree with tripStatus.predicted")
 	assert.True(t, a.PredictedArrivalTime.IsZero(), "deviation must not propagate upstream")
 	assert.True(t, a.PredictedDepartureTime.IsZero(), "deviation must not propagate upstream")
+}
+
+// A feed numbering stops from 1 builds Java no deviation samples, so an upstream
+// stop gets the block's deviation rather than no predicted times.
+func TestPluralArrivals_OneBasedDownstreamSTUAppliesBlockDeviation(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	downstreamStopID := addDownstreamStop(t, api, tripID)
+	delay := 174 * time.Second
+	gtfsStopSequence := uint32(5)
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{StopID: &downstreamStopID, StopSequence: &gtfsStopSequence, Arrival: &gtfs.StopTimeEvent{Delay: &delay}},
+	})
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
+
+	a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	assert.True(t, a.Predicted)
+	assert.Equal(t, a.ScheduledArrivalTime.Add(delay).UnixMilli(), a.PredictedArrivalTime.UnixMilli())
+}
+
+// Java stops using a vehicle record five minutes after its timestamp, so a
+// trip update the feed keeps repeating unchanged no longer predicts anything.
+func TestPluralArrivals_ExpiredTripUpdateIsNotPredicted(t *testing.T) {
+	now := time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopCode, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	expiredAt := now.Add(-6 * time.Minute)
+	delay := 174 * time.Second
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:              gtfs.TripID{ID: tripID},
+		Timestamp:       &expiredAt,
+		StopTimeUpdates: []gtfs.StopTimeUpdate{{StopID: &stopCode, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}},
+	})
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
+
+	a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	assert.False(t, a.Predicted)
+	assert.True(t, a.PredictedArrivalTime.IsZero())
+	require.NotNil(t, a.TripStatus)
+	assert.False(t, a.TripStatus.Predicted)
+	assert.Equal(t, 0, a.TripStatus.ScheduleDeviation)
 }
 
 func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
@@ -1405,7 +1511,8 @@ func findRABAStopWithNeighbour(t *testing.T, api *RestAPI, ctx context.Context) 
 	require.NoError(t, err)
 	require.NotEmpty(t, candidates, "precondition: RABA should have stops near Redding")
 	for _, c := range candidates {
-		nearby := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
+		nearby, err := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
+		require.NoError(t, err)
 		if len(nearby) > 0 {
 			return c
 		}
@@ -1422,7 +1529,8 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
+	result, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
+	require.NoError(t, err)
 
 	require.NotEmpty(t, result, "expected ≥1 nearby stop within 100m")
 	for _, combinedID := range result {
@@ -1439,12 +1547,27 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
+	result, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
+	require.NoError(t, err)
 
 	for _, combinedID := range result {
 		_, codeID, _ := utils.ExtractAgencyIDAndCodeID(combinedID)
 		assert.NotEqual(t, currentStop.ID, codeID, "current stop should be excluded from nearby results")
 	}
+}
+
+// A failed spatial query must surface as an error, not as an isolated stop.
+func TestGetNearbyStopIDs_ReturnsQueryError(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	stop := testdata.Stop4062
+	result, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, "4062", "25")
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, result)
 }
 
 func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
@@ -1872,4 +1995,62 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 	require.Equal(t, http.StatusOK, model.Code)
 	require.Len(t, model.Data.Entry.ArrivalsAndDepartures, 1)
 	assert.Equal(t, utils.FormCombinedID(agencyPrimary, tripPrimary), model.Data.Entry.ArrivalsAndDepartures[0].TripID)
+}
+
+// An isolated stop has no other stop within 100m. Java emits "nearbyStopIds": []
+// for it; null makes OBAKit reject the whole response. The arrivals precondition
+// keeps the request on the handler's matched path.
+func TestArrivalsAndDeparturesForStopHandler_IsolatedStopEmitsEmptyNearbyStopIDs(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+
+	const isolatedStop = "9045" // Cedars Rd at Branstetter Ln (FS)
+	resp, model := callAPIHandler[map[string]any](t, api, arrivalsAndDeparturesURL(utils.FormCombinedID("25", isolatedStop)))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	entry := model["data"].(map[string]any)["entry"].(map[string]any)
+	require.NotEmpty(t, entry["arrivalsAndDepartures"], "precondition: stop 9045 has an arrival at arrivalsTestClock")
+	assert.Equal(t, []any{}, entry["nearbyStopIds"])
+}
+
+// Java looks up nearby stops whether or not the window has arrivals, so a stop
+// keeps its neighbours when nothing is scheduled. RABA runs no service at 03:00.
+func TestArrivalsAndDeparturesForStopHandler_NoArrivalsStillListsNearbyStops(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	defer api.Shutdown()
+
+	const stopWithNeighbour = "1000" // Masonic Transfer Center
+	overnight := time.Date(2025, 6, 13, 3, 0, 0, 0, arrivalsTestClock.Location())
+	params := url.Values{"time": {fmt.Sprint(overnight.UnixMilli())}}
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(utils.FormCombinedID("25", stopWithNeighbour), params))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures, "precondition: no service at 03:00")
+	assert.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
+}
+
+// TestArrivalsAndDeparturesForStopHandler_EmptyWindowKeepsStopAndRouteReferences
+// checks that a window with no arrivals still references the requested stop and
+// the routes serving it, as Java does.
+func TestArrivalsAndDeparturesForStopHandler_EmptyWindowKeepsStopAndRouteReferences(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	requestURL := arrivalsAndDeparturesURL(arrivalsTestStopID,
+		url.Values{"minutesBefore": {"0"}, "minutesAfter": {"0"}})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the empty window must leave no arrival")
+
+	var stopIDs []string
+	for _, stop := range model.Data.References.Stops {
+		stopIDs = append(stopIDs, stop.ID)
+	}
+	assert.Contains(t, stopIDs, arrivalsTestStopID,
+		"the requested stop must be a reference even with no arrivals")
+	assert.NotEmpty(t, model.Data.References.Routes,
+		"the routes serving the requested stop must be references even with no arrivals")
 }

@@ -1,8 +1,6 @@
 package gtfsdb
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
 	"database/sql"
 	"os"
@@ -96,9 +94,6 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 
 	// 2. Create a GTFS feed that passes the parser but fails OUR structural validation
 	// We do this by creating a trip that has no stop times.
-	buf := new(bytes.Buffer)
-	w := zip.NewWriter(buf)
-
 	files := map[string]string{
 		"agency.txt":     "agency_id,agency_name,agency_url,agency_timezone\n1,BrokenFeed,http://test.com,America/Los_Angeles",
 		"routes.txt":     "route_id,agency_id,route_short_name,route_type\n1,1,BrokenRoute,3",
@@ -108,18 +103,7 @@ func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n", // But has NO stop times
 	}
 
-	for name, content := range files {
-		f, err := w.Create(name)
-		require.NoError(t, err)
-
-		_, err = f.Write([]byte(content))
-		require.NoError(t, err)
-	}
-
-	err = w.Close()
-	require.NoError(t, err)
-
-	invalidBytes := buf.Bytes()
+	invalidBytes := writeGTFSZip(t, files)
 
 	// 3. Attempt to parse+validate structurally invalid data.
 	// Validation now happens during ParseGtfsData, before the DB is touched,

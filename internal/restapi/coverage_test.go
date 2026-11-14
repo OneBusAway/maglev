@@ -25,7 +25,7 @@ func TestBuildSituationReferencesCoverage(t *testing.T) {
 	}
 
 	// Call it as a method on the API struct, passing alerts first
-	refs := api.BuildSituationReferences(context.Background(), alerts)
+	refs := api.BuildSituationReferences(context.Background(), feedAlertsForTest("", alerts))
 
 	assert.Len(t, refs, 1)
 	assert.Equal(t, "alert1", refs[0].ID)

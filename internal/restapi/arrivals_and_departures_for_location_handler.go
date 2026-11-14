@@ -33,10 +33,6 @@ type arrivalsForLocationParams struct {
 	IncludeReferences    bool
 }
 
-// locationDateTimeLayout is the only datetime format the time parameter
-// accepts besides epoch millis.
-const locationDateTimeLayout = "2006-01-02_15-04-05"
-
 // maxRouteTypeValues bounds how many routeType values one request may send, so
 // a pathological query string cannot expand the per-route filter unboundedly.
 const maxRouteTypeValues = 100
@@ -73,8 +69,12 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// The service date is a local calendar date, so datetime values resolve in
 	// the fallback agency's timezone. The format was validated during parsing,
-	// so this resolution cannot fail.
-	params.QueryTime = resolveLocationQueryTime(params, agencies, api.Clock.Now())
+	// so this resolution cannot fail. Java treats time=0 as "not supplied" (now).
+	timeParam := params.TimeParam
+	if ms, ok := utils.ParseEpochMillis(timeParam); ok && ms == 0 {
+		timeParam = ""
+	}
+	params.QueryTime = utils.ResolveArrivalTime(timeParam, agencies.fallbackLocation, api.Clock.Now())
 
 	// Nearest stop first: truncation below drops entries from the end, so the
 	// farthest stops must sort last.
@@ -345,9 +345,13 @@ func retainTrip(refAcc, acc *arrivalsAccumulator, combinedTripID string) {
 // retainRoute carries a combined route ID's entity over from acc, under the
 // same contract as retainTrip.
 func retainRoute(refAcc, acc *arrivalsAccumulator, combinedRouteID string) {
-	if _, bareID, err := utils.ExtractAgencyIDAndCodeID(combinedRouteID); err == nil {
-		if route, ok := acc.routes[bareID]; ok {
+	if combinedRouteID == "" {
+		return
+	}
+	for bareID, route := range acc.routes {
+		if utils.FormCombinedID(route.AgencyID, route.ID) == combinedRouteID {
 			refAcc.routes[bareID] = route
+			return
 		}
 	}
 }
@@ -393,9 +397,13 @@ func (api *RestAPI) sendEmptyArrivalsForLocation(w http.ResponseWriter, r *http.
 // itself).
 const nearbyBoxHalfSizeMeters = 100.0
 
+// defaultServiceIntervalEnd is the end of Java's default full-day service
+// interval (00:00-24:00). A trip reaching a stop only at 25:00 falls outside it.
+const defaultServiceIntervalEnd = 24 * time.Hour
+
 // nearbyStopsForLocation mirrors the Java nearby-stops rule: the union of the
 // stops within a 100 m square box around each matched stop (each excluding
-// itself), limited to stops served by a route running on the query date,
+// itself), limited to stops served by a route running in the service interval,
 // measured against the centre of the search area and ordered nearest first.
 //
 // It is deliberately not "every stop in the bounding box" — a matched stop with
@@ -440,7 +448,7 @@ func (api *RestAPI) nearbyStopsForLocation(
 	}
 
 	// Java drops nearby stops served only by routes not running on the query
-	// date (e.g. a seasonal shuttle outside its season). The active-date
+	// date or interval (e.g. a seasonal shuttle outside its season). The active-date
 	// result is kept per route so the route-type filter below can require
 	// the same route to satisfy both conditions.
 	activeRoutesByStop, err := api.nearbyStopsActiveOnDate(ctx, bareIDs, agencies, params.QueryTime)
@@ -516,7 +524,7 @@ func (api *RestAPI) combinedIDsForNearbyStops(ctx context.Context, bareIDs []str
 }
 
 // buildNearbyResults keeps the nearby stops passing the route-type and
-// active-on-date filters, measuring each against the centre of the search
+// service-interval filters, measuring each against the centre of the search
 // area and ordering nearest first. A nil servesRouteType means no route-type
 // filter is active, so every stop is kept rather than none.
 func buildNearbyResults(nearbyStops []gtfsdb.Stop, servesRouteType map[string]bool, activeOnDate map[string]bool, combinedByBare map[string]string, loc *internalgtfs.LocationParams) []models.StopWithDistance {
@@ -565,7 +573,7 @@ func expandLocationForNearby(loc *internalgtfs.LocationParams) *internalgtfs.Loc
 }
 
 // nearbyStopsActiveOnDate reports which routes serve each stop on the query
-// date's service day in that stop's own agency timezone. Stops sharing a
+// date's service interval in that stop's own agency timezone. Stops sharing a
 // timezone are queried together so one request still costs one service-date
 // lookup per timezone rather than one per stop.
 func (api *RestAPI) nearbyStopsActiveOnDate(ctx context.Context, stopIDs []string, agencies *stopAgencyIndex, queryTime time.Time) (map[string]map[string]bool, error) {
@@ -612,9 +620,10 @@ func (api *RestAPI) collectActiveRoutesForGroup(ctx context.Context, loc *time.L
 		return nil
 	}
 
-	rows, err := api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsOnDate(ctx, gtfsdb.GetActiveRouteIDsForStopsOnDateParams{
-		StopIds:    ids,
-		ServiceIds: serviceIDs,
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsInInterval(ctx, gtfsdb.GetActiveRouteIDsForStopsInIntervalParams{
+		StopIds:     ids,
+		ServiceIds:  serviceIDs,
+		IntervalEnd: int64(defaultServiceIntervalEnd),
 	})
 	if err != nil {
 		return err
@@ -655,8 +664,8 @@ func activeStopsFromRoutes(activeRoutesByStop map[string]map[string]bool) map[st
 
 // stopsServingRouteTypes reports which of the given stops are served by at
 // least one active route of an allowed type. The active set holds the
-// agency-prefixed route IDs running on the query date, so a stop served by
-// one route of the right type and another route on the right date is not
+// agency-prefixed route IDs running in the service interval, so a stop served by
+// one route of the right type and another route in the interval is not
 // kept unless a single route satisfies both. It returns nil when no filter
 // is active, which callers read as "keep everything" rather than
 // "keep nothing".
@@ -861,38 +870,13 @@ func (api *RestAPI) parseArrivalsForLocationParams(r *http.Request) (arrivalsFor
 	// signed values and date-only values fail here, at parse time, so a bad
 	// time reports 400 even when the stop search finds nothing. The datetime
 	// itself resolves after agencies are known; see the handler.
-	params.TimeParam = queryParams.Get("time")
-	if params.TimeParam != "" {
-		if _, ok := utils.ParseEpochMillis(params.TimeParam); !ok {
-			if _, err := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, time.UTC); err != nil {
-				addError("time", `Invalid field value for field "time".`)
-			}
-		}
-	}
+	params.TimeParam, fieldErrors = utils.ParseArrivalTimeParam(queryParams.Get("time"), fieldErrors)
 	params.MaxCount = parseArrivalsForLocationMaxCount(queryParams, addError)
 	params.RouteTypes = parseRouteTypesParam(queryParams, addError)
 	params.EmptyReturnsNotFound, fieldErrors = utils.ParseBoolParam(queryParams, "emptyReturnsNotFound", false, fieldErrors)
 	params.IncludeReferences, fieldErrors = ShouldIncludeReferences(r, fieldErrors)
 
 	return params, fieldErrors
-}
-
-// resolveLocationQueryTime turns the validated time parameter into the query
-// instant. Epoch millis are absolute; datetime values read in the fallback
-// agency's timezone. An empty value or epoch 0 falls back to now — matching
-// Java, which treats 0 as "not supplied".
-func resolveLocationQueryTime(params arrivalsForLocationParams, agencies *stopAgencyIndex, now time.Time) time.Time {
-	if params.TimeParam == "" {
-		return now
-	}
-	if ms, ok := utils.ParseEpochMillis(params.TimeParam); ok {
-		if ms == 0 {
-			return now
-		}
-		return time.UnixMilli(ms)
-	}
-	parsed, _ := time.ParseInLocation(locationDateTimeLayout, params.TimeParam, agencies.fallbackLocation)
-	return parsed
 }
 
 func parseArrivalsForLocationMaxCount(queryParams map[string][]string, addError func(string, string)) int {

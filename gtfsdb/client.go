@@ -3,6 +3,7 @@ package gtfsdb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -157,4 +158,21 @@ func recreateStopAgenciesTable(ctx context.Context, tx *sql.Tx) error {
 
 func (c *Client) Close() error {
 	return c.DB.Close()
+}
+
+// Ping verifies a connection to the database is still alive, establishing a
+// connection if necessary.
+func (c *Client) Ping(ctx context.Context) error {
+	if c == nil || c.DB == nil {
+		return errors.New("database client is not initialized")
+	}
+	return c.DB.PingContext(ctx)
+}
+
+// Stats returns database connection pool statistics.
+func (c *Client) Stats() sql.DBStats {
+	if c == nil || c.DB == nil {
+		return sql.DBStats{}
+	}
+	return c.DB.Stats()
 }

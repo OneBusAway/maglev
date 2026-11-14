@@ -90,6 +90,11 @@ func TestSubsequentDatabaseFailureIsNotReportedAsNotFound(t *testing.T) {
 			dropTable: "stop_times",
 			endpoint:  blockURL("25_1"),
 		},
+		{
+			name:      "routes-for-location text search",
+			dropTable: "routes_fts",
+			endpoint:  "/api/where/routes-for-location.json?lat=40.589123&lon=-122.390830&radius=5000&query=Redding&key=TEST",
+		},
 	}
 
 	for _, tt := range tests {
@@ -139,6 +144,10 @@ func TestLocationSpatialQueryFailure(t *testing.T) {
 		{
 			name:     "trips-for-location",
 			endpoint: tripsForLocationURL(0.1, 0.1),
+		},
+		{
+			name:     "routes-for-location",
+			endpoint: "/api/where/routes-for-location.json?lat=40.589123&lon=-122.390830&radius=5000&key=TEST",
 		},
 	}
 	for _, tt := range tests {

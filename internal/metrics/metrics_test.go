@@ -37,6 +37,7 @@ func TestNewWithLogger(t *testing.T) {
 	assert.Nil(t, m.logger)
 }
 
+// TestStartDBStatsCollector_NilProvider verifies that passing a nil provider does not start the collector.
 func TestStartDBStatsCollector_NilProvider(t *testing.T) {
 	m := New()
 	// Should not panic with nil provider
@@ -45,9 +46,10 @@ func TestStartDBStatsCollector_NilProvider(t *testing.T) {
 	assert.False(t, m.collectorStarted.Load())
 }
 
+// TestStartDBStatsCollector_ProviderCanReturnNilDB verifies that a provider returning a nil database zeroes out pool metrics without panicking.
 func TestStartDBStatsCollector_ProviderCanReturnNilDB(t *testing.T) {
 	m := New()
-	m.StartDBStatsCollector(func() *sql.DB { return nil }, 20*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return nil }, 20*time.Millisecond)
 	defer m.Shutdown()
 
 	assert.True(t, m.collectorStarted.Load())
@@ -60,6 +62,7 @@ func TestStartDBStatsCollector_ProviderCanReturnNilDB(t *testing.T) {
 	}, time.Second, 20*time.Millisecond)
 }
 
+// TestStartDBStatsCollector_NonPositiveInterval verifies that non-positive collection intervals are rejected.
 func TestStartDBStatsCollector_NonPositiveInterval(t *testing.T) {
 	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)
@@ -67,19 +70,20 @@ func TestStartDBStatsCollector_NonPositiveInterval(t *testing.T) {
 
 	m := New()
 
-	m.StartDBStatsCollector(func() *sql.DB { return db }, 0)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, 0)
 	assert.False(t, m.collectorStarted.Load(), "collector should not start with zero interval")
 
-	m.StartDBStatsCollector(func() *sql.DB { return db }, -time.Second)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, -time.Second)
 	assert.False(t, m.collectorStarted.Load(), "collector should not start with negative interval")
 
 	// A later valid start must still work.
-	m.StartDBStatsCollector(func() *sql.DB { return db }, 20*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, 20*time.Millisecond)
 	assert.True(t, m.collectorStarted.Load(), "collector should start with a positive interval")
 
 	m.Shutdown()
 }
 
+// TestStartDBStatsCollector_Idempotent verifies that repeated calls to StartDBStatsCollector are no-ops.
 func TestStartDBStatsCollector_Idempotent(t *testing.T) {
 	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)
@@ -88,23 +92,24 @@ func TestStartDBStatsCollector_Idempotent(t *testing.T) {
 	m := New()
 
 	// Start collector first time
-	m.StartDBStatsCollector(func() *sql.DB { return db }, 100*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, 100*time.Millisecond)
 	assert.True(t, m.collectorStarted.Load())
 
 	// Second call should be no-op
-	m.StartDBStatsCollector(func() *sql.DB { return db }, 100*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, 100*time.Millisecond)
 	assert.True(t, m.collectorStarted.Load())
 
 	m.Shutdown()
 }
 
+// TestStartDBStatsCollector_CollectsStats verifies that periodic collection populates connection gauges.
 func TestStartDBStatsCollector_CollectsStats(t *testing.T) {
 	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
 	m := New()
-	m.StartDBStatsCollector(func() *sql.DB { return db }, 50*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, 50*time.Millisecond)
 
 	// Wait for at least one collection cycle
 	time.Sleep(100 * time.Millisecond)
@@ -122,13 +127,14 @@ func TestStartDBStatsCollector_CollectsStats(t *testing.T) {
 	m.Shutdown()
 }
 
+// TestShutdown_StopsGoroutine verifies that Shutdown cleanly terminates the background collector.
 func TestShutdown_StopsGoroutine(t *testing.T) {
 	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
 	m := New()
-	m.StartDBStatsCollector(func() *sql.DB { return db }, 50*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return db }, 50*time.Millisecond)
 
 	// Shutdown should block until goroutine exits
 	done := make(chan struct{})
@@ -145,6 +151,7 @@ func TestShutdown_StopsGoroutine(t *testing.T) {
 	}
 }
 
+// TestStartDBStatsCollector_FollowsDBSwap verifies that metrics track underlying connection pool replacements.
 func TestStartDBStatsCollector_FollowsDBSwap(t *testing.T) {
 	db1, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)
@@ -163,7 +170,7 @@ func TestStartDBStatsCollector_FollowsDBSwap(t *testing.T) {
 	dbPtr.Store(db1)
 
 	m := New()
-	m.StartDBStatsCollector(func() *sql.DB { return dbPtr.Load() }, 20*time.Millisecond)
+	m.StartDBStatsCollector(func() DBStatsProvider { return dbPtr.Load() }, 20*time.Millisecond)
 	defer m.Shutdown()
 
 	require.Eventually(t, func() bool {
@@ -174,6 +181,38 @@ func TestStartDBStatsCollector_FollowsDBSwap(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return testutil.ToFloat64(m.DBConnectionsInUse) >= 1
+	}, time.Second, 20*time.Millisecond)
+}
+
+// TestStartDBStatsCollector_TypedNilDBProvider verifies that a provider returning a typed nil *gtfsdb.Client
+// does not panic, returns zero stats, and resumes metric collection when a valid client becomes available.
+func TestStartDBStatsCollector_TypedNilDBProvider(t *testing.T) {
+	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	client := &gtfsdb.Client{DB: db}
+
+	var active atomic.Bool
+	m := New()
+	m.StartDBStatsCollector(func() DBStatsProvider {
+		if !active.Load() {
+			var nilClient *gtfsdb.Client
+			return nilClient
+		}
+		return client
+	}, 20*time.Millisecond)
+	defer m.Shutdown()
+
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(m.DBConnectionsOpen) == 0
+	}, time.Second, 20*time.Millisecond)
+
+	require.NoError(t, db.Ping())
+	active.Store(true)
+
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(m.DBConnectionsOpen) == 1
 	}, time.Second, 20*time.Millisecond)
 }
 

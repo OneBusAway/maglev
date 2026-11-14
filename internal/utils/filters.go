@@ -2,10 +2,10 @@ package utils
 
 import (
 	"context"
-	"maglev.onebusaway.org/internal/nulls"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 // FilterAgencies filters a list of agencies based on their presence in the provided map.
