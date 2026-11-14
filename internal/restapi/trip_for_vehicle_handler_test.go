@@ -726,6 +726,8 @@ func TestTripForVehicleHandler_SharedVehicleAcrossAgencies(t *testing.T) {
 		ctx := context.Background()
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM agencies WHERE id IN (?, ?, ?)`, agency1, agency2, agency3)
 		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id IN (?, ?)`, trip1ID, trip2ID)
+		api.GtfsManager.MockSetAgencyVehicles("feed-1", "", nil)
+		api.GtfsManager.MockSetAgencyVehicles("feed-2", "", nil)
 	})
 
 	insertStubTrip(t, api, trip1ID, "route1")
