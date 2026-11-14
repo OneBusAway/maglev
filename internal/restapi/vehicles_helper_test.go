@@ -502,3 +502,28 @@ func TestVehicleSituationRefs_InterlinedActiveRouteAlert(t *testing.T) {
 	}
 	assert.True(t, found, "an alert on the active trip's route must be looked up with that route, not the nominal one")
 }
+
+// TestBuildVehicleStatus_ActiveTripUsesActiveTripOwnAgency guards #1987:
+// when a block mixes trips from two agencies and vehicle.Trip identifies
+// an active trip belonging to another agency, activeTripId must be built
+// with the active trip's own route agency (X_tA) rather than the queried
+// agency (Y_tA).
+func TestBuildVehicleStatus_ActiveTripUsesActiveTripOwnAgency(t *testing.T) {
+	api := createTestApiWithFeed(t, models.GetFixturePath(t, "two-agency-block.zip"))
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	now := time.Now()
+	vehicle := &gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: "v1"},
+		Timestamp: &now,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{ID: "tA"},
+		},
+	}
+
+	status := models.NewTripStatus()
+	api.BuildVehicleStatus(ctx, vehicle, "tB", "Y", status, now)
+
+	assert.Equal(t, "X_tA", status.ActiveTripID, "activeTripId must use active trip's own agency")
+}
