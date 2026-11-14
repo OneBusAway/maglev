@@ -2410,6 +2410,166 @@ func (q *Queries) GetFrequenciesForTrips(ctx context.Context, tripIds []string) 
 	return items, nil
 }
 
+const getFrequencyStopTimesForStopInWindow = `-- name: GetFrequencyStopTimesForStopInWindow :many
+SELECT DISTINCT
+    st.trip_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.stop_headsign,
+    t.route_id,
+    t.service_id,
+    t.trip_headsign,
+    t.block_id
+FROM stop_times st
+         JOIN trips t ON st.trip_id = t.id
+         JOIN frequencies f ON f.trip_id = st.trip_id
+WHERE st.stop_id = ?1
+  AND f.end_time >= ?2
+  AND f.start_time <= ?3
+ORDER BY st.arrival_time
+`
+
+type GetFrequencyStopTimesForStopInWindowParams struct {
+	StopID           string
+	WindowStartNanos int64
+	WindowEndNanos   int64
+}
+
+type GetFrequencyStopTimesForStopInWindowRow struct {
+	TripID        string
+	ArrivalTime   int64
+	DepartureTime int64
+	StopID        string
+	StopSequence  int64
+	StopHeadsign  sql.NullString
+	RouteID       string
+	ServiceID     string
+	TripHeadsign  sql.NullString
+	BlockID       sql.NullString
+}
+
+func (q *Queries) GetFrequencyStopTimesForStopInWindow(ctx context.Context, arg GetFrequencyStopTimesForStopInWindowParams) ([]GetFrequencyStopTimesForStopInWindowRow, error) {
+	rows, err := q.query(ctx, q.getFrequencyStopTimesForStopInWindowStmt, getFrequencyStopTimesForStopInWindow, arg.StopID, arg.WindowStartNanos, arg.WindowEndNanos)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFrequencyStopTimesForStopInWindowRow
+	for rows.Next() {
+		var i GetFrequencyStopTimesForStopInWindowRow
+		if err := rows.Scan(
+			&i.TripID,
+			&i.ArrivalTime,
+			&i.DepartureTime,
+			&i.StopID,
+			&i.StopSequence,
+			&i.StopHeadsign,
+			&i.RouteID,
+			&i.ServiceID,
+			&i.TripHeadsign,
+			&i.BlockID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFrequencyStopTimesForStopsInWindow = `-- name: GetFrequencyStopTimesForStopsInWindow :many
+SELECT DISTINCT
+    st.trip_id,
+    st.arrival_time,
+    st.departure_time,
+    st.stop_id,
+    st.stop_sequence,
+    st.stop_headsign,
+    t.route_id,
+    t.service_id,
+    t.trip_headsign,
+    t.block_id
+FROM stop_times st
+         JOIN trips t ON st.trip_id = t.id
+         JOIN frequencies f ON f.trip_id = st.trip_id
+WHERE f.end_time >= ?1
+  AND f.start_time <= ?2
+  AND st.stop_id IN (/*SLICE:stop_ids*/?)
+ORDER BY st.stop_id, st.arrival_time
+`
+
+type GetFrequencyStopTimesForStopsInWindowParams struct {
+	WindowStartNanos int64
+	WindowEndNanos   int64
+	StopIds          []string
+}
+
+type GetFrequencyStopTimesForStopsInWindowRow struct {
+	TripID        string
+	ArrivalTime   int64
+	DepartureTime int64
+	StopID        string
+	StopSequence  int64
+	StopHeadsign  sql.NullString
+	RouteID       string
+	ServiceID     string
+	TripHeadsign  sql.NullString
+	BlockID       sql.NullString
+}
+
+func (q *Queries) GetFrequencyStopTimesForStopsInWindow(ctx context.Context, arg GetFrequencyStopTimesForStopsInWindowParams) ([]GetFrequencyStopTimesForStopsInWindowRow, error) {
+	query := getFrequencyStopTimesForStopsInWindow
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.WindowStartNanos)
+	queryParams = append(queryParams, arg.WindowEndNanos)
+	if len(arg.StopIds) > 0 {
+		for _, v := range arg.StopIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", strings.Repeat(",?", len(arg.StopIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:stop_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetFrequencyStopTimesForStopsInWindowRow
+	for rows.Next() {
+		var i GetFrequencyStopTimesForStopsInWindowRow
+		if err := rows.Scan(
+			&i.TripID,
+			&i.ArrivalTime,
+			&i.DepartureTime,
+			&i.StopID,
+			&i.StopSequence,
+			&i.StopHeadsign,
+			&i.RouteID,
+			&i.ServiceID,
+			&i.TripHeadsign,
+			&i.BlockID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getFrequencyTripIDs = `-- name: GetFrequencyTripIDs :many
 SELECT DISTINCT trip_id FROM frequencies
 `

@@ -125,7 +125,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 		if len(lookups.frequencies[st.TripID]) > 0 {
 			before, after = in.FrequencyBefore, in.FrequencyAfter
 		}
-		if !api.stopTimeInArrivalWindow(ctx, ast, ast.Location, in.QueryTime, before, after) {
+		if !api.stopTimeInArrivalWindow(ctx, ast, ast.Location, in.QueryTime, before, after, lookups.frequencies[st.TripID]) {
 			continue
 		}
 
@@ -153,6 +153,8 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 			totalStopsInTrip: lookups.tripStops.stopCounts[st.TripID],
 			stopPosition:     lookups.tripStops.stopPosition(st.TripID, st.StopSequence),
 			freqMap:          lookups.frequencies,
+			freqBefore:       in.FrequencyBefore,
+			freqAfter:        in.FrequencyAfter,
 		}, acc)
 
 		result.Arrivals = append(result.Arrivals, *arrival)
@@ -372,6 +374,29 @@ func (api *RestAPI) stopTimesForGroupServiceDay(
 			slog.String("stopID", in.StopCode),
 			slog.Any("error", err))
 		return nil, nil
+	}
+
+	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequencyStopTimesForStopInWindow(ctx, gtfsdb.GetFrequencyStopTimesForStopInWindowParams{
+		StopID:           in.StopCode,
+		WindowStartNanos: windowStart.Sub(serviceStart).Nanoseconds(),
+		WindowEndNanos:   endOffset.Nanoseconds(),
+	})
+	if err != nil {
+		reqLogger.Warn("failed to query frequency stop times in window",
+			slog.String("stopID", in.StopCode),
+			slog.Any("error", err))
+	} else if len(freqRows) > 0 {
+		seen := make(map[stopTimeCandidateKey]bool, len(stopTimes)+len(freqRows))
+		for _, st := range stopTimes {
+			seen[stopTimeCandidateKey{stopID: st.StopID, tripID: st.TripID, stopSequence: st.StopSequence}] = true
+		}
+		for _, fr := range freqRows {
+			key := stopTimeCandidateKey{stopID: fr.StopID, tripID: fr.TripID, stopSequence: fr.StopSequence}
+			if !seen[key] {
+				seen[key] = true
+				stopTimes = append(stopTimes, gtfsdb.GetStopTimesForStopInWindowRow(fr))
+			}
+		}
 	}
 
 	activeServiceIDSet := make(map[string]bool, len(activeServiceIDs))
@@ -645,16 +670,43 @@ func (api *RestAPI) appendBatchedStopTimesForDay(ctx context.Context, group agen
 		return nil
 	}
 
+	convertedRows := make([]gtfsdb.GetStopTimesForStopInWindowRow, 0, len(rows))
+	seen := make(map[stopTimeCandidateKey]bool, len(rows))
 	for _, row := range rows {
-		if !activeSet[row.ServiceID] {
-			continue
+		if activeSet[row.ServiceID] {
+			cRow := convertStopsInWindowRow(row)
+			convertedRows = append(convertedRows, cRow)
+			seen[stopTimeCandidateKey{stopID: cRow.StopID, tripID: cRow.TripID, stopSequence: cRow.StopSequence}] = true
 		}
+	}
+
+	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequencyStopTimesForStopsInWindow(ctx, gtfsdb.GetFrequencyStopTimesForStopsInWindowParams{
+		StopIds:          group.stopIDs,
+		WindowStartNanos: windowStartNanos,
+		WindowEndNanos:   windowEndNanos,
+	})
+	if err != nil {
+		reqLogger.Warn("failed to query frequency stop times in window",
+			slog.Any("error", err))
+	} else {
+		for _, fr := range freqRows {
+			if activeSet[fr.ServiceID] {
+				key := stopTimeCandidateKey{stopID: fr.StopID, tripID: fr.TripID, stopSequence: fr.StopSequence}
+				if !seen[key] {
+					seen[key] = true
+					convertedRows = append(convertedRows, convertStopsInWindowRow(gtfsdb.GetStopTimesForStopsInWindowRow(fr)))
+				}
+			}
+		}
+	}
+
+	for _, st := range convertedRows {
 		*allActive = append(*allActive, batchedActiveStopTime{
 			activeStopTime: activeStopTime{
-				GetStopTimesForStopInWindowRow: convertStopsInWindowRow(row),
+				GetStopTimesForStopInWindowRow: st,
 				ServiceDate:                    serviceDate,
 			},
-			StopCode:  row.StopID,
+			StopCode:  st.StopID,
 			AgencyID:  group.agencyID,
 			Location:  group.location,
 			QueryTime: group.queryTime,
@@ -712,10 +764,11 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 		}
 
 		before, after := in.Before, in.After
-		if len(lookups.frequencies[st.TripID]) > 0 {
+		freqs := lookups.frequencies[st.TripID]
+		if len(freqs) > 0 {
 			before, after = in.FrequencyBefore, in.FrequencyAfter
 		}
-		if !api.stopTimeInArrivalWindow(ctx, b.activeStopTime, b.Location, b.QueryTime, before, after) {
+		if !api.stopTimeInArrivalWindow(ctx, b.activeStopTime, b.Location, b.QueryTime, before, after, freqs) {
 			continue
 		}
 
@@ -735,6 +788,8 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 			totalStopsInTrip: lookups.tripStops.stopCounts[st.TripID],
 			stopPosition:     lookups.tripStops.stopPosition(st.TripID, st.StopSequence),
 			freqMap:          lookups.frequencies,
+			freqBefore:       in.FrequencyBefore,
+			freqAfter:        in.FrequencyAfter,
 		}
 		arrival, vehicle := api.buildScheduledArrival(ctx, row, acc)
 		arrivals = append(arrivals, statusPendingArrival{
@@ -759,7 +814,7 @@ func arrivalCandidateWindow(queryTime time.Time, before, after time.Duration) (s
 // stopTimeInArrivalWindow checks scheduled and available predicted times against
 // the trip's window before expensive trip-status and reference construction.
 // Bounds are inclusive, matching the candidate queries and Java's range check.
-func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopTime, location *time.Location, queryTime time.Time, before, after time.Duration) bool {
+func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopTime, location *time.Location, queryTime time.Time, before, after time.Duration, freqs []gtfsdb.Frequency) bool {
 	start, end := queryTime.Add(-before), queryTime.Add(after)
 	inRange := func(t time.Time) bool {
 		return !t.IsZero() && !t.Before(start) && !t.After(end)
@@ -767,6 +822,15 @@ func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopT
 	serviceStart := ast.ServiceDate.Start(location)
 	arrival := serviceStart.Add(time.Duration(ast.ArrivalTime))
 	departure := serviceStart.Add(time.Duration(ast.DepartureTime))
+	if len(freqs) > 0 {
+		predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure)
+		if predicted {
+			return inRange(predictedArrival) || inRange(predictedDeparture)
+		}
+		freq := selectFrequencyForWindow(freqs, serviceStart, queryTime, before, after)
+		schedArrival, schedDeparture := frequencyScheduledTimes(ast.GetStopTimesForStopInWindowRow, freq, serviceStart, queryTime)
+		return inRange(schedArrival) || inRange(schedDeparture)
+	}
 	if inRange(arrival) || inRange(departure) {
 		return true
 	}
@@ -955,6 +1019,8 @@ type arrivalInput struct {
 	totalStopsInTrip int
 	stopPosition     int
 	freqMap          map[string][]gtfsdb.Frequency
+	freqBefore       time.Duration
+	freqAfter        time.Duration
 }
 
 // buildArrival turns one matched stop_time into an ArrivalAndDeparture,
@@ -1038,7 +1104,7 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 		nil,                                             // situationIDs, filled by attachTripStatus
 	)
 
-	applyFrequency(arrival, in.freqMap[st.TripID], serviceStart, in.queryTime)
+	applyFrequency(arrival, st, in.freqMap[st.TripID], serviceStart, in.queryTime, in.freqBefore, in.freqAfter)
 
 	return arrival, vehicle
 }
@@ -1088,16 +1154,84 @@ func (api *RestAPI) applyTripStatusPrediction(ctx context.Context, arrival *mode
 	arrival.Predicted = true
 }
 
-// applyFrequency sets arrival.Frequency from the trip's frequency rows, using
-// the row whose window contains queryTime. A trip with no frequency rows
-// leaves Frequency nil — selectFrequency panics on an empty slice, so this
-// guard is load-bearing, not defensive filler.
-func applyFrequency(arrival *models.ArrivalAndDeparture, freqs []gtfsdb.Frequency, serviceStart, queryTime time.Time) {
+// applyFrequency attaches the matching Frequency window to arrival and, when
+// no live prediction is present, projects the scheduled arrival/departure times
+// across the active headway interval to match Java OneBusAway.
+func applyFrequency(arrival *models.ArrivalAndDeparture, st gtfsdb.GetStopTimesForStopInWindowRow, freqs []gtfsdb.Frequency, serviceStart, queryTime time.Time, before, after time.Duration) {
 	if len(freqs) == 0 {
 		return
 	}
-	converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqs, serviceStart, queryTime), serviceStart)
+	freq := selectFrequencyForWindow(freqs, serviceStart, queryTime, before, after)
+	converted := models.NewFrequencyFromServiceStart(*freq, serviceStart)
 	arrival.Frequency = &converted
+
+	if arrival.Predicted {
+		if arrival.PredictedArrivalTime.UnixMilli() > 0 {
+			arrival.ScheduledArrivalTime = arrival.PredictedArrivalTime
+		}
+		if arrival.PredictedDepartureTime.UnixMilli() > 0 {
+			arrival.ScheduledDepartureTime = arrival.PredictedDepartureTime
+		}
+		return
+	}
+
+	schedArrival, schedDeparture := frequencyScheduledTimes(st, freq, serviceStart, queryTime)
+	arrival.ScheduledArrivalTime = models.NewModelTime(schedArrival)
+	arrival.ScheduledDepartureTime = models.NewModelTime(schedDeparture)
+}
+
+type stopTimeCandidateKey struct {
+	stopID       string
+	tripID       string
+	stopSequence int64
+}
+
+// selectFrequencyForWindow chooses the frequency entry applicable for the
+// query time and window. It prioritizes direct containment, then window overlap,
+// and falls back to the chronologically closest entry.
+func selectFrequencyForWindow(freqs []gtfsdb.Frequency, serviceStart, queryTime time.Time, before, after time.Duration) *gtfsdb.Frequency {
+	if len(freqs) == 0 {
+		return nil
+	}
+	q := queryTime.Sub(serviceStart).Nanoseconds()
+	for i := range freqs {
+		if q >= freqs[i].StartTime && q <= freqs[i].EndTime {
+			return &freqs[i]
+		}
+	}
+	wStart, wEnd := q-before.Nanoseconds(), q+after.Nanoseconds()
+	for i := range freqs {
+		if freqs[i].EndTime >= wStart && freqs[i].StartTime <= wEnd {
+			return &freqs[i]
+		}
+	}
+	best, minDist := &freqs[0], min(absInt64(q-freqs[0].StartTime), absInt64(q-freqs[0].EndTime))
+	for i := 1; i < len(freqs); i++ {
+		if d := min(absInt64(q-freqs[i].StartTime), absInt64(q-freqs[i].EndTime)); d < minDist {
+			best, minDist = &freqs[i], d
+		}
+	}
+	return best
+}
+
+// frequencyScheduledTimes projects scheduled arrival and departure times
+// for a frequency trip using queryTime + headway/2, clamped to [StartTime, EndTime],
+// preserving dwell time.
+func frequencyScheduledTimes(st gtfsdb.GetStopTimesForStopInWindowRow, freq *gtfsdb.Frequency, serviceStart, queryTime time.Time) (time.Time, time.Time) {
+	dwell := max(0, time.Duration(st.DepartureTime-st.ArrivalTime))
+	if freq == nil {
+		arr := serviceStart.Add(time.Duration(st.ArrivalTime))
+		return arr, arr.Add(dwell)
+	}
+	fStart := serviceStart.Add(time.Duration(freq.StartTime))
+	fEnd := serviceStart.Add(time.Duration(freq.EndTime))
+	dep := queryTime.Add(time.Duration(freq.HeadwaySecs) * time.Second / 2)
+	if dep.Before(fStart) {
+		dep = fStart
+	} else if dep.After(fEnd) {
+		dep = fEnd
+	}
+	return dep.Add(-dwell), dep
 }
 
 // startTripStatusAtServiceStart reports the trip status's serviceDate and frequency from serviceStart.

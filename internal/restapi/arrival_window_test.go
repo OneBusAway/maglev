@@ -67,32 +67,35 @@ func TestArrivalFrequencyWindows(t *testing.T) {
 		params    url.Values
 		want      []string
 	}{
-		{"default before boundary", "06:02:00", nil, frequencyTrips},
-		{"default before excludes regular-window match", "06:03:00", nil, nil},
+		{"default before boundary", "09:02:00", nil, frequencyTrips},
+		{"default before excludes regular-window match", "09:03:00", nil, nil},
 		{"default after boundary", "05:30:00", nil, frequencyTrips},
 		{"default after excludes regular-window match", "05:29:00", nil, nil},
-		{"wider before retrieves frequency trips", "08:00:00", url.Values{
-			"minutesBefore": {"0"}, "minutesAfter": {"0"}, "frequencyMinutesBefore": {"120"}, "frequencyMinutesAfter": {"0"},
+		{"wider before does not widen regular window", "10:00:00", url.Values{
+			"minutesBefore": {"0"}, "minutesAfter": {"0"}, "frequencyMinutesBefore": {"60"}, "frequencyMinutesAfter": {"0"},
+		}, frequencyTrips},
+		{"wider before retrieves both frequency and normal trips", "09:05:00", url.Values{
+			"minutesBefore": {"65"}, "minutesAfter": {"0"}, "frequencyMinutesBefore": {"10"}, "frequencyMinutesAfter": {"0"},
 		}, []string{freqTripID, freqExactTripID, freqNormalTripD}},
 		{"wider after does not widen regular window", "05:00:00", url.Values{
 			"minutesBefore": {"0"}, "minutesAfter": {"0"}, "frequencyMinutesAfter": {"180"},
 		}, frequencyTrips},
-		{"narrower before excludes frequency trips", "06:05:00", url.Values{
-			"minutesBefore": {"180"}, "frequencyMinutesBefore": {"4"},
+		{"narrower before excludes frequency trips", "09:05:00", url.Values{
+			"minutesBefore": {"10"}, "frequencyMinutesBefore": {"4"},
 		}, nil},
-		{"custom before boundary", "06:05:00", url.Values{
+		{"custom before boundary", "09:05:00", url.Values{
 			"minutesBefore": {"0"}, "minutesAfter": {"0"}, "frequencyMinutesBefore": {"5"},
 		}, frequencyTrips},
-		{"custom after boundary", "05:55:00", url.Values{
-			"minutesBefore": {"0"}, "minutesAfter": {"0"}, "frequencyMinutesAfter": {"5"},
+		{"custom after boundary", "05:45:00", url.Values{
+			"minutesBefore": {"0"}, "minutesAfter": {"0"}, "frequencyMinutesAfter": {"15"},
 		}, frequencyTrips},
 		{"narrower after preserves regular trips", "05:55:00", url.Values{
 			"minutesAfter": {"180"}, "frequencyMinutesAfter": {"4"},
 		}, []string{freqNormalTripD}},
-		{"zero frequency window includes exact instant", "06:00:00", url.Values{
+		{"zero frequency window includes exact instant", "09:00:00", url.Values{
 			"frequencyMinutesBefore": {"0"}, "frequencyMinutesAfter": {"0"},
 		}, frequencyTrips},
-		{"zero frequency window excludes nearby instant", "06:00:01", url.Values{
+		{"zero frequency window excludes nearby instant", "09:00:01", url.Values{
 			"frequencyMinutesBefore": {"0"}, "frequencyMinutesAfter": {"0"},
 		}, nil},
 		{"default frequency window independent of zero regular window", "05:30:00", url.Values{
@@ -130,7 +133,14 @@ func TestArrivalFrequencyWindowPredictions(t *testing.T) {
 					"time":                   {fmt.Sprint(time.Date(2025, 6, 12, 6, 5, 0, 0, time.UTC).UnixMilli())},
 					"frequencyMinutesBefore": {"0"}, "frequencyMinutesAfter": {"0"},
 				}
-				assertFrequencyWindowTrips(t, frequencyWindowArrivals(t, api, endpoint, params), []string{freqTripID})
+				arrivals := frequencyWindowArrivals(t, api, endpoint, params)
+				assertFrequencyWindowTrips(t, arrivals, []string{freqTripID})
+				require.Len(t, arrivals, 1)
+				if event == "arrival" {
+					assert.Equal(t, arrivals[0].PredictedArrivalTime.UnixMilli(), arrivals[0].ScheduledArrivalTime.UnixMilli())
+				} else {
+					assert.Equal(t, arrivals[0].PredictedDepartureTime.UnixMilli(), arrivals[0].ScheduledDepartureTime.UnixMilli())
+				}
 			})
 		}
 	}
@@ -172,7 +182,7 @@ func TestArrivalFrequencyWindowAcrossMidnight(t *testing.T) {
 	for _, endpoint := range []string{"stop", "location"} {
 		t.Run(endpoint, func(t *testing.T) {
 			arrivals := frequencyWindowArrivals(t, api, endpoint, url.Values{
-				"minutesBefore": {"0"}, "minutesAfter": {"0"}, "frequencyMinutesAfter": {"1"},
+				"minutesBefore": {"0"}, "minutesAfter": {"0"}, "frequencyMinutesAfter": {"15"},
 			})
 			assertFrequencyWindowTrips(t, arrivals, []string{freqTripID, freqExactTripID})
 			for _, arrival := range arrivals {
@@ -185,15 +195,22 @@ func TestArrivalFrequencyWindowAcrossMidnight(t *testing.T) {
 func TestArrivalFrequencyWindowScheduledDeparture(t *testing.T) {
 	files := frequencyFixtureFiles()
 	files["stop_times.txt"] = strings.ReplaceAll(files["stop_times.txt"], "06:00:00,06:00:00", "06:00:00,06:01:00")
-	queryTime := time.Date(2025, 6, 12, 6, 1, 0, 0, time.UTC)
+	// At end_time (09:00:00), projected departure clamps to 09:00:00 while projected
+	// arrival is 08:59:00 due to the 1m dwell, matching [09:00, 09:00] via departure alone.
+	queryTime := time.Date(2025, 6, 12, 9, 0, 0, 0, time.UTC)
 	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(queryTime), "frequency-departure.zip", files)
 	defer api.Shutdown()
 	for _, endpoint := range []string{"stop", "location"} {
 		t.Run(endpoint, func(t *testing.T) {
-			assertFrequencyWindowTrips(t, frequencyWindowArrivals(t, api, endpoint, url.Values{
+			arrivals := frequencyWindowArrivals(t, api, endpoint, url.Values{
 				"minutesBefore": {"0"}, "minutesAfter": {"0"},
 				"frequencyMinutesBefore": {"0"}, "frequencyMinutesAfter": {"0"},
-			}), []string{freqTripID, freqExactTripID})
+			})
+			assertFrequencyWindowTrips(t, arrivals, []string{freqTripID, freqExactTripID})
+			for _, arrival := range arrivals {
+				assert.Equal(t, time.Date(2025, 6, 12, 8, 59, 0, 0, time.UTC).UnixMilli(), arrival.ScheduledArrivalTime.UnixMilli())
+				assert.Equal(t, time.Date(2025, 6, 12, 9, 0, 0, 0, time.UTC).UnixMilli(), arrival.ScheduledDepartureTime.UnixMilli())
+			}
 		})
 	}
 }
@@ -272,18 +289,19 @@ func TestArrivalFrequencyWindowsSharedStopTimezones(t *testing.T) {
 	tests := []struct {
 		name         string
 		hour, second int
+		wantFreqHour int
 		params       url.Values
 		want         []string
 	}{
-		{"wider frequency after", 5, 0, url.Values{
+		{"wider frequency after", 5, 0, 6, url.Values{
 			"minutesBefore": {"0"}, "minutesAfter": {"0"},
 			"frequencyMinutesBefore": {"0"}, "frequencyMinutesAfter": {"60"},
 		}, frequencyTrips},
-		{"wider frequency before and regular match", 8, 0, url.Values{
-			"minutesBefore": {"0"}, "minutesAfter": {"0"},
-			"frequencyMinutesBefore": {"120"}, "frequencyMinutesAfter": {"0"},
+		{"wider frequency before and regular match", 10, 0, 9, url.Values{
+			"minutesBefore": {"120"}, "minutesAfter": {"0"},
+			"frequencyMinutesBefore": {"60"}, "frequencyMinutesAfter": {"0"},
 		}, append(append([]string{}, frequencyTrips...), regularTrips...)},
-		{"narrow frequency window preserves regular trips", 6, 1, url.Values{
+		{"narrow frequency window preserves regular trips", 6, 1, 0, url.Values{
 			"minutesBefore": {"0"}, "minutesAfter": {"120"},
 			"frequencyMinutesBefore": {"0"}, "frequencyMinutesAfter": {"0"},
 		}, regularTrips},
@@ -299,7 +317,7 @@ func TestArrivalFrequencyWindowsSharedStopTimezones(t *testing.T) {
 				require.Equal(t, http.StatusOK, resp.StatusCode)
 				assertFrequencyWindowTrips(t, model.Data.Entry.ArrivalsAndDepartures, tt.want)
 				for _, arrival := range model.Data.Entry.ArrivalsAndDepartures {
-					wantHour := 6
+					wantHour := tt.wantFreqHour
 					if arrival.Frequency == nil {
 						wantHour = 8
 					}
@@ -436,4 +454,206 @@ func referencedStopCombinedIDs(stops []models.Stop) []string {
 		ids = append(ids, stop.ID)
 	}
 	return ids
+}
+
+// TestArrivalFrequencyMidInterval verifies that frequency-based trips remain
+// surfaced throughout their active frequencies.txt interval after template
+// stop_times pass, projecting scheduled times as clamp(queryTime+headway/2,
+// startTime, endTime) across both stop and location endpoints.
+func TestArrivalFrequencyMidInterval(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+	defer api.Shutdown()
+
+	stopBURL := func(params url.Values) string {
+		return arrivalsAndDeparturesURL(utils.FormCombinedID(freqAgencyID, freqStopBID), params)
+	}
+
+	tests := []struct {
+		name      string
+		timeOfDay string
+		endpoint  string
+		wantTimes map[string]string
+	}{
+		{
+			name:      "early mid-interval stop",
+			timeOfDay: "06:40:00",
+			endpoint:  "stop",
+			wantTimes: map[string]string{
+				freqTripID:      "06:45:00",
+				freqExactTripID: "06:55:00",
+			},
+		},
+		{
+			name:      "early mid-interval location",
+			timeOfDay: "06:40:00",
+			endpoint:  "location",
+			wantTimes: map[string]string{
+				freqTripID:      "06:45:00",
+				freqExactTripID: "06:55:00",
+			},
+		},
+		{
+			name:      "mid-interval with normal trip stop",
+			timeOfDay: "07:30:00",
+			endpoint:  "stop",
+			wantTimes: map[string]string{
+				freqTripID:      "07:35:00",
+				freqExactTripID: "07:45:00",
+				freqNormalTripD: "08:00:00",
+			},
+		},
+		{
+			name:      "mid-interval with normal trip location",
+			timeOfDay: "07:30:00",
+			endpoint:  "location",
+			wantTimes: map[string]string{
+				freqTripID:      "07:35:00",
+				freqExactTripID: "07:45:00",
+				freqNormalTripD: "08:00:00",
+			},
+		},
+		{
+			name:      "late interval clamps to end_time stop",
+			timeOfDay: "08:50:00",
+			endpoint:  "stop",
+			wantTimes: map[string]string{
+				freqTripID:      "08:55:00",
+				freqExactTripID: "09:00:00",
+			},
+		},
+		{
+			name:      "late interval clamps to end_time location",
+			timeOfDay: "08:50:00",
+			endpoint:  "location",
+			wantTimes: map[string]string{
+				freqTripID:      "08:55:00",
+				freqExactTripID: "09:00:00",
+			},
+		},
+		{
+			name:      "pre-start clamps to start_time",
+			timeOfDay: "05:35:00",
+			endpoint:  "stop",
+			wantTimes: map[string]string{
+				freqTripID:      "06:00:00",
+				freqExactTripID: "06:00:00",
+			},
+		},
+		{
+			name:      "after interval excludes frequency trips",
+			timeOfDay: "09:05:00",
+			endpoint:  "stop",
+			wantTimes: map[string]string{},
+		},
+		{
+			name:      "downstream stop B stays active mid-interval",
+			timeOfDay: "07:30:00",
+			endpoint:  "stopB",
+			wantTimes: map[string]string{
+				freqTripID:      "07:35:00",
+				freqExactTripID: "07:45:00",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			queryTime, err := time.Parse("2006-01-02 15:04:05", "2025-06-12 "+tt.timeOfDay)
+			require.NoError(t, err)
+			params := url.Values{"time": {fmt.Sprint(queryTime.UnixMilli())}}
+
+			var arrivals []models.ArrivalAndDeparture
+			if tt.endpoint == "stopB" {
+				resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, stopBURL(params))
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				arrivals = model.Data.Entry.ArrivalsAndDepartures
+			} else {
+				arrivals = frequencyWindowArrivals(t, api, tt.endpoint, params)
+			}
+
+			gotTimes := make(map[string]string, len(arrivals))
+			for _, arrival := range arrivals {
+				_, id, err := utils.ExtractAgencyIDAndCodeID(arrival.TripID)
+				require.NoError(t, err)
+				gotTimes[id] = time.UnixMilli(arrival.ScheduledArrivalTime.UnixMilli()).UTC().Format("15:04:05")
+				if id != freqNormalTripD {
+					require.NotNil(t, arrival.Frequency)
+					assert.Equal(t, arrival.ScheduledArrivalTime.UnixMilli(), arrival.ScheduledDepartureTime.UnixMilli())
+				} else {
+					assert.Nil(t, arrival.Frequency)
+				}
+			}
+			assert.Equal(t, tt.wantTimes, gotTimes)
+		})
+	}
+}
+
+// TestArrivalFrequencyMultipleWindowsAndDwell verifies selecting the active
+// frequency window among multiple windows on a single trip and preserving stop
+// dwell time between projected arrival and departure.
+func TestArrivalFrequencyMultipleWindowsAndDwell(t *testing.T) {
+	files := frequencyFixtureFiles()
+	files["trips.txt"] = "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+		freqRouteID + "," + freqServiceID + "," + freqTripID + ",Downtown via Freq,0,freq-block-1\n"
+	files["stop_times.txt"] = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+		freqTripID + ",06:00:00,06:02:00," + freqStopAID + ",1\n" +
+		freqTripID + ",06:10:00,06:10:00," + freqStopBID + ",2\n"
+	files["frequencies.txt"] = "trip_id,start_time,end_time,headway_secs,exact_times\n" +
+		freqTripID + ",06:00:00,09:00:00,600,0\n" +
+		freqTripID + ",16:00:00,19:00:00,1200,0\n"
+
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(frequencyFixtureClock), "frequency-multi-window.zip", files)
+	defer api.Shutdown()
+
+	tests := []struct {
+		name        string
+		timeOfDay   string
+		wantCount   int
+		wantArr     string
+		wantDep     string
+		wantHeadway int64
+	}{
+		{
+			name:        "morning window selected with dwell preserved",
+			timeOfDay:   "07:30:00",
+			wantCount:   1,
+			wantArr:     "07:33:00",
+			wantDep:     "07:35:00",
+			wantHeadway: 600,
+		},
+		{
+			name:      "midday gap returns no arrivals",
+			timeOfDay: "12:00:00",
+			wantCount: 0,
+		},
+		{
+			name:        "evening window selected with dwell preserved",
+			timeOfDay:   "17:30:00",
+			wantCount:   1,
+			wantArr:     "17:38:00",
+			wantDep:     "17:40:00",
+			wantHeadway: 1200,
+		},
+	}
+
+	for _, endpoint := range []string{"stop", "location"} {
+		for _, tt := range tests {
+			t.Run(endpoint+"/"+tt.name, func(t *testing.T) {
+				queryTime, err := time.Parse("2006-01-02 15:04:05", "2025-06-12 "+tt.timeOfDay)
+				require.NoError(t, err)
+				arrivals := frequencyWindowArrivals(t, api, endpoint, url.Values{
+					"time": {fmt.Sprint(queryTime.UnixMilli())},
+				})
+				require.Len(t, arrivals, tt.wantCount)
+				if tt.wantCount == 0 {
+					return
+				}
+				a := arrivals[0]
+				require.NotNil(t, a.Frequency)
+				assert.Equal(t, time.Duration(tt.wantHeadway)*time.Second, a.Frequency.Headway.Duration)
+				assert.Equal(t, tt.wantArr, time.UnixMilli(a.ScheduledArrivalTime.UnixMilli()).UTC().Format("15:04:05"))
+				assert.Equal(t, tt.wantDep, time.UnixMilli(a.ScheduledDepartureTime.UnixMilli()).UTC().Format("15:04:05"))
+			})
+		}
+	}
 }
