@@ -155,12 +155,12 @@ func TestManager_GetVehicleByID(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	vehicle, err := manager.GetVehicleByID("vehicle1")
+	vehicle, err := manager.GetVehicleByID("", "vehicle1")
 	assert.Nil(t, err)
 	assert.NotNil(t, vehicle)
 	assert.Equal(t, "vehicle1", vehicle.ID.ID)
 
-	notFound, err := manager.GetVehicleByID("nonexistent")
+	notFound, err := manager.GetVehicleByID("", "nonexistent")
 	assert.NotNil(t, err)
 	assert.Nil(t, notFound)
 }

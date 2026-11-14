@@ -750,22 +750,42 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 	return nil
 }
 
-func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) {
-	merged := manager.mergedRealtime()
-	if index, exists := merged.vehicleLookupByVehicle[vehicleID]; exists {
-		vehicle := merged.vehicles[index]
-		return &vehicle, nil
+// vehicleAtIndex returns a pointer to the vehicle at index, or nil if index is out of bounds.
+func (merged *mergedRealtime) vehicleAtIndex(index int) *gtfs.Vehicle {
+	if index >= 0 && index < len(merged.vehicles) {
+		return &merged.vehicles[index]
 	}
-
-	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
+	return nil
 }
 
-// VehicleAgencyID returns the agency the vehicle GetVehicleByID finds was
-// attributed to at ingestion. ok is false when the vehicle is unknown or has
-// no attributed agency.
-func (manager *Manager) VehicleAgencyID(vehicleID string) (agencyID string, ok bool) {
-	agencyID, ok = manager.mergedRealtime().vehicleAgencyByVehicle[vehicleID]
-	return agencyID, ok
+// resolveVehicleIndex returns the index of the vehicle in merged.vehicles
+// matching the agency and vehicle ID, falling back to an unattributed vehicle
+// if agencyID is non-empty.
+func (merged *mergedRealtime) resolveVehicleIndex(agencyID, vehicleID string) (int, bool) {
+	key := agencyVehicleKey{agencyID: agencyID, vehicleID: vehicleID}
+	if idx, exists := merged.vehicleLookupByVehicle[key]; exists {
+		return idx, true
+	}
+	if agencyID != "" {
+		fallbackKey := agencyVehicleKey{agencyID: "", vehicleID: vehicleID}
+		if idx, exists := merged.vehicleLookupByVehicle[fallbackKey]; exists {
+			return idx, true
+		}
+	}
+	return 0, false
+}
+
+// GetVehicleByID returns the vehicle matching the agency and vehicle ID.
+// If not found under the requested agency, it falls back to an unattributed vehicle.
+// Callers must not modify the returned vehicle pointer.
+func (manager *Manager) GetVehicleByID(agencyID, vehicleID string) (*gtfs.Vehicle, error) {
+	merged := manager.mergedRealtime()
+	if idx, ok := merged.resolveVehicleIndex(agencyID, vehicleID); ok {
+		if v := merged.vehicleAtIndex(idx); v != nil {
+			return v, nil
+		}
+	}
+	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
 }
 
 func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {

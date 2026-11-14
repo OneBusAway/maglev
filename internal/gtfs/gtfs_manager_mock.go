@@ -60,7 +60,7 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 	merged.vehicles = append(merged.vehicles, v)
 
 	idx := len(merged.vehicles) - 1
-	merged.vehicleLookupByVehicle[vehicleID] = idx
+	merged.vehicleLookupByVehicle[agencyVehicleKey{vehicleID: vehicleID}] = idx
 	if tripID != "" {
 		merged.vehicleLookupByTrip[tripID] = idx
 	}
@@ -134,7 +134,7 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 
 	idx := len(merged.vehicles) - 1
 	if vehicleID != "" && !opts.NoID {
-		merged.vehicleLookupByVehicle[vehicleID] = idx
+		merged.vehicleLookupByVehicle[agencyVehicleKey{vehicleID: vehicleID}] = idx
 	}
 	if tripID != "" && !opts.NoTrip {
 		merged.vehicleLookupByTrip[tripID] = idx
@@ -188,7 +188,7 @@ func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, op
 	merged.vehicles = append(merged.vehicles, v)
 	idx := len(merged.vehicles) - 1
 	if vehicleID != "" {
-		merged.vehicleLookupByVehicle[vehicleID] = idx
+		merged.vehicleLookupByVehicle[agencyVehicleKey{vehicleID: vehicleID}] = idx
 	}
 	if tripID != "" {
 		merged.vehicleLookupByTrip[tripID] = idx
