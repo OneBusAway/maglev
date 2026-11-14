@@ -701,3 +701,66 @@ func TestTripForVehicleHandler_ScheduleTripsResolve(t *testing.T) {
 		}
 	}
 }
+
+// TestTripForVehicleHandler_SharedVehicleAcrossAgencies reproduces #2050:
+// two feeds attributed to different agencies report the same vehicle ID.
+// trip-for-vehicle returns each agency's own trip (both 200), and a third prefix returns 404.
+func TestTripForVehicleHandler_SharedVehicleAcrossAgencies(t *testing.T) {
+	api := createTestApi(t)
+	t.Cleanup(api.Shutdown)
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	const (
+		agency1   = "agency1"
+		agency2   = "agency2"
+		agency3   = "agency3"
+		vehicleID = "SHARED"
+		trip1ID   = "SHARED_TRIP_1"
+		trip2ID   = "SHARED_TRIP_2"
+	)
+
+	api.GtfsManager.MockAddAgency(agency1, "Agency One")
+	api.GtfsManager.MockAddAgency(agency2, "Agency Two")
+	api.GtfsManager.MockAddAgency(agency3, "Agency Three")
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM agencies WHERE id IN (?, ?, ?)`, agency1, agency2, agency3)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id IN (?, ?)`, trip1ID, trip2ID)
+	})
+
+	insertStubTrip(t, api, trip1ID, "route1")
+	insertStubTrip(t, api, trip2ID, "route2")
+
+	now := time.Now()
+	veh1 := gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: vehicleID},
+		Timestamp: &now,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{ID: trip1ID, RouteID: "route1"},
+		},
+	}
+	veh2 := gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: vehicleID},
+		Timestamp: &now,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{ID: trip2ID, RouteID: "route2"},
+		},
+	}
+
+	api.GtfsManager.MockSetAgencyVehicles("feed-1", agency1, []gtfs.Vehicle{veh1})
+	api.GtfsManager.MockSetAgencyVehicles("feed-2", agency2, []gtfs.Vehicle{veh2})
+
+	// 1. Query with agency1 prefix -> 200 with agency1's trip
+	resp1, model1 := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(utils.FormCombinedID(agency1, vehicleID)))
+	assert.Equal(t, http.StatusOK, resp1.StatusCode)
+	assert.Equal(t, utils.FormCombinedID(agency1, trip1ID), model1.Data.Entry.TripID)
+
+	// 2. Query with agency2 prefix -> 200 with agency2's trip
+	resp2, model2 := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(utils.FormCombinedID(agency2, vehicleID)))
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+	assert.Equal(t, utils.FormCombinedID(agency2, trip2ID), model2.Data.Entry.TripID)
+
+	// 3. Query with agency3 prefix -> 404
+	resp3, _ := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(utils.FormCombinedID(agency3, vehicleID)))
+	assert.Equal(t, http.StatusNotFound, resp3.StatusCode)
+}
