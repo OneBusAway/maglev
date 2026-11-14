@@ -943,7 +943,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  servicedate.OffsetBase(serviceDate).UnixMilli(),
-			SituationIds: situations.add(alerts, agencyID),
+			SituationIds: situations.add(alerts, api.GtfsManager.FirstStaticAgencyID()),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
 		result = append(result, entry)

@@ -1283,7 +1283,7 @@ func (api *RestAPI) tripSituationRefs(
 		return api.situationRefsForTrip(ctx, tripID)
 	}
 
-	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, trip.RouteID, agencyID), agencyID)
+	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, trip.RouteID, agencyID), api.GtfsManager.FirstStaticAgencyID())
 }
 
 // tripReferenceSets accumulates the entities a trips-for-route response refers

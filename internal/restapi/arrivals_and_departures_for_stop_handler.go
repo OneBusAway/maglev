@@ -104,7 +104,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 	params.Time = utils.ResolveArrivalTime(params.TimeParam, loc, api.Clock.Now())
 
-	acc := newArrivalsAccumulator(stopAgencyID)
+	acc := newArrivalsAccumulator()
 	references := models.NewEmptyReferences()
 	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
@@ -169,7 +169,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 // The list covers every alert reachable from this stop, whether it was matched
 // through an arrival's trip or through the stop itself.
 func (api *RestAPI) addStopSituations(ctx context.Context, references *models.ReferencesModel, acc *arrivalsAccumulator, stopCode, stopAgencyID string) []string {
-	acc.situations.add(api.GtfsManager.GetAlertsForStop(stopCode, stopAgencyID), acc.alertAgencyID)
+	acc.situations.add(api.GtfsManager.GetAlertsForStop(stopCode, stopAgencyID), api.GtfsManager.FirstStaticAgencyID())
 	references.Situations = append(references.Situations, api.situationReferences(ctx, acc.situations.refs)...)
 	return situationIDsFromRefs(acc.situations.refs)
 }
