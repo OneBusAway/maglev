@@ -1065,3 +1065,39 @@ func TestRetainRoute_EmptyCombinedID(t *testing.T) {
 
 	assert.Empty(t, refAcc.routes)
 }
+
+// TestArrivalsAndDeparturesForLocation_ArrivalDepartureEnabledFlags checks that
+// arrivals_core.go sets arrivalEnabled=false on the first stop of each trip and
+// departureEnabled=false on the last. The loop fixture is used because it has
+// all five positions (0–4) reachable from one location request; RABA stop 4062
+// (arrivalsTestStopID) only produces middle-stop rows in its window, so it
+// cannot exercise the first/last branches.
+func TestArrivalsAndDeparturesForLocation_ArrivalDepartureEnabledFlags(t *testing.T) {
+	api := createTestApiWithLoopTripData(t)
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
+		arrivalsForLocationURL(loopFixtureCenter))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	arrivals := model.Data.Entry.ArrivalsAndDepartures
+	require.Len(t, arrivals, loopTripStopCount(),
+		"every stop time of loop-trip must appear in the window")
+
+	sawFirst, sawLast := false, false
+	for i, a := range arrivals {
+		if a.StopSequence == 0 {
+			sawFirst = true
+			assert.False(t, a.ArrivalEnabled, "arrival[%d]: first stop must have ArrivalEnabled=false", i)
+			assert.True(t, a.DepartureEnabled, "arrival[%d]: first stop must have DepartureEnabled=true", i)
+		} else if a.StopSequence == a.TotalStopsInTrip-1 {
+			sawLast = true
+			assert.True(t, a.ArrivalEnabled, "arrival[%d]: last stop must have ArrivalEnabled=true", i)
+			assert.False(t, a.DepartureEnabled, "arrival[%d]: last stop must have DepartureEnabled=false", i)
+		} else {
+			assert.True(t, a.ArrivalEnabled, "arrival[%d]: middle stop must have ArrivalEnabled=true", i)
+			assert.True(t, a.DepartureEnabled, "arrival[%d]: middle stop must have DepartureEnabled=true", i)
+		}
+	}
+	require.True(t, sawFirst, "no first-stop row seen; test cannot cover ArrivalEnabled=false branch")
+	require.True(t, sawLast, "no last-stop row seen; test cannot cover DepartureEnabled=false branch")
+}

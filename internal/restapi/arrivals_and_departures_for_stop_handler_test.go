@@ -1992,6 +1992,9 @@ func TestArrivalsAndDeparturesForStopHandler_NoArrivalsStillListsNearbyStops(t *
 // TestArrivalsAndDeparturesForStop_ArrivalDepartureEnabledFlags checks that in
 // the plural endpoint, every arrival at the first stop of its trip has
 // arrivalEnabled=false and every arrival at the last stop has departureEnabled=false.
+// RABA stop 4062 only produces middle-stop rows in its window, so this test only
+// covers the middle branch; the first/last branches are covered by
+// TestArrivalsAndDeparturesForLocation_ArrivalDepartureEnabledFlags.
 func TestArrivalsAndDeparturesForStop_ArrivalDepartureEnabledFlags(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
