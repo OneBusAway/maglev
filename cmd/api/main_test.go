@@ -57,6 +57,10 @@ func TestMain_CommandLineFlagsPassValidation(t *testing.T) {
 		{"production accepts protected keys flag", "-env production -protected-api-keys prod-key,prod-key-2", "", 0, `"env": "production"`, `"protected-api-keys": "***REDACTED*** (2 keys)"`},
 		{"production accepts protected keys env var", "-env production", "prod-key, prod-key-2", 0, `"env": "production"`, `"protected-api-keys": "***REDACTED*** (2 keys)"`},
 		{"production requires a protected key", "-env production", "", 1, "protected-api-keys cannot be empty", ""},
+		{"default role is all", "-env development", "", 0, `"role": "all"`, ""},
+		{"server role is accepted", "-env development -role server", "", 0, `"role": "server"`, ""},
+		{"ingester role is accepted", "-env development -role ingester", "", 0, `"role": "ingester"`, ""},
+		{"invalid role is rejected", "-env development -role invalid", "", 1, "role must be one of [all, ingester, server]", ""},
 	}
 
 	for _, tc := range tests {

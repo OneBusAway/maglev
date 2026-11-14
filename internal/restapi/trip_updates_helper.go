@@ -85,8 +85,7 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 // deviationPickTime is the moment a block's deviation is chosen for. Java keeps
 // a record until its timestamp advances, and chooses at the feed's time when it
 // processes the new one (GtfsRealtimeSource.java:645, :742), so the choice stays
-// put between updates. An update with no timestamp falls back to the newest
-// feed's time, then to the request's.
+// put between updates. An update with no timestamp falls back to the request's time.
 func (api *RestAPI) deviationPickTime(tripUpdates []tripUpdateForTrip, currentTime time.Time) time.Time {
 	for i := len(tripUpdates) - 1; i >= 0; i-- {
 		if tripUpdates[i].tu.Timestamp == nil {
@@ -96,9 +95,6 @@ func (api *RestAPI) deviationPickTime(tripUpdates []tripUpdateForTrip, currentTi
 			return seenAt
 		}
 		return *tripUpdates[i].tu.Timestamp
-	}
-	if feedTime, ok := api.GtfsManager.LatestFeedUpdateTime(); ok {
-		return feedTime
 	}
 	return currentTime
 }

@@ -337,6 +337,7 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 
 	// Build JSON config structure
 	jsonConfig := map[string]any{
+		"role":               cfg.Role,
 		"port":               cfg.Port,
 		"env":                envStr,
 		"api-keys":           fmt.Sprintf("%s (%d keys)", appconf.RedactedValue, len(cfg.ApiKeys)),

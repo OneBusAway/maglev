@@ -159,7 +159,7 @@ func (dp *DirectionPrecomputer) PrecomputeAllDirections(ctx context.Context) err
 			}
 		}()
 
-		// Write batch using sqlc-generated query to avoid raw SQL and engine-specific placeholders
+		// Write batch using sqlc-generated query so the update statement lives in query.sql with other queries
 		batchQueries := dp.queries.WithTx(tx)
 		batchSuccess := 0
 		for _, result := range batch {
