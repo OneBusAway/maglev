@@ -20,10 +20,10 @@ func TestNewProblemReportTrip(t *testing.T) {
 		UserComment:   nulls.String("late"),
 		UserOnVehicle: sql.NullInt64{Int64: 1, Valid: true},
 	}
-	apiReport := NewProblemReportTrip(dbReport)
+	apiReport := NewProblemReportTrip(dbReport, "agency-1_trip-1")
 
 	assert.Equal(t, int64(1), apiReport.ID)
-	assert.Equal(t, "trip-1", apiReport.TripID)
+	assert.Equal(t, "agency-1_trip-1", apiReport.TripID)
 	assert.Equal(t, "20230101", apiReport.ServiceDate)
 	assert.Equal(t, "late", apiReport.UserComment)
 	assert.True(t, apiReport.UserOnVehicle)
@@ -35,9 +35,9 @@ func TestNewProblemReportStop(t *testing.T) {
 		StopID:      "stop-2",
 		UserComment: nulls.String("dirty"),
 	}
-	apiReport := NewProblemReportStop(dbReport)
+	apiReport := NewProblemReportStop(dbReport, "agency-1_stop-2")
 
 	assert.Equal(t, int64(2), apiReport.ID)
-	assert.Equal(t, "stop-2", apiReport.StopID)
+	assert.Equal(t, "agency-1_stop-2", apiReport.StopID)
 	assert.Equal(t, "dirty", apiReport.UserComment)
 }

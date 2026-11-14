@@ -4,11 +4,12 @@ import (
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // problemReportsForStopHandler returns all user-submitted problem reports for a given stop.
 func (api *RestAPI) problemReportsForStopHandler(w http.ResponseWriter, r *http.Request) {
-	_, stopID, ok := api.extractAndValidateAgencyCodeID(w, r)
+	agencyID, stopID, ok := api.extractAndValidateAgencyCodeID(w, r)
 	if !ok {
 		return
 	}
@@ -28,7 +29,7 @@ func (api *RestAPI) problemReportsForStopHandler(w http.ResponseWriter, r *http.
 
 	reportList := make([]models.ProblemReportStop, 0, len(reports))
 	for _, report := range reports {
-		reportList = append(reportList, models.NewProblemReportStop(report))
+		reportList = append(reportList, models.NewProblemReportStop(report, utils.FormCombinedID(agencyID, report.StopID)))
 	}
 
 	references := models.NewEmptyReferences()
