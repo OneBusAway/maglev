@@ -3,7 +3,6 @@ package restapi
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"time"
 
 	gtfs "github.com/OneBusAway/go-gtfs"
@@ -20,17 +19,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 	includeReferences, fieldErrors := ShouldIncludeReferences(r, nil)
 
 	var ageInSeconds *int32
-	if val := r.URL.Query().Get("ageInSeconds"); val != "" {
-		if parsed, err := strconv.ParseInt(val, 10, 32); err == nil {
-			v := int32(parsed)
-			ageInSeconds = &v
-		} else {
-			if fieldErrors == nil {
-				fieldErrors = make(map[string][]string)
-			}
-			fieldErrors["ageInSeconds"] = []string{`Invalid field value for field "ageInSeconds".`}
-		}
-	}
+	ageInSeconds, fieldErrors = utils.ParseInt32Param(r.URL.Query(), "ageInSeconds", fieldErrors)
 
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
