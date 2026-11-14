@@ -35,15 +35,13 @@ func securityHeaders(next http.Handler) http.Handler {
 		}
 		w.Header().Set("Content-Security-Policy", csp)
 
-		// CORS headers for API access
-		origin := r.Header.Get("Origin")
-		if origin != "" {
-			// Allow all origins for public transit API, but be explicit about it
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-			w.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
-		}
+		// CORS headers for API access. They're sent whether or not the request
+		// has an Origin header, as Java does: responses are publicly cacheable,
+		// so a shared cache can serve a copy fetched without Origin to a browser.
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
 
 		// Handle preflight OPTIONS requests
 		if r.Method == "OPTIONS" {
