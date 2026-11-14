@@ -532,6 +532,7 @@ ORDER BY
 -- name: GetScheduleForStopOnDate :many
 SELECT
     st.trip_id,
+    st.stop_sequence,
     st.arrival_time,
     st.departure_time,
     st.stop_headsign,
@@ -542,7 +543,9 @@ SELECT
     t.max_departure_time,
     t.direction_id,
     r.id as route_id,
-    r.agency_id
+    r.agency_id,
+    CAST((SELECT MIN(first_st.stop_sequence) FROM stop_times first_st WHERE first_st.trip_id = st.trip_id) AS INTEGER) AS min_stop_sequence,
+    CAST((SELECT MAX(last_st.stop_sequence) FROM stop_times last_st WHERE last_st.trip_id = st.trip_id) AS INTEGER) AS max_stop_sequence
 FROM
     stop_times st
     JOIN trips t ON st.trip_id = t.id

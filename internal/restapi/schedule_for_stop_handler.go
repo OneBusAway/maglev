@@ -523,9 +523,11 @@ func blockBoundaries(
 	row gtfsdb.GetScheduleForStopOnDateRow,
 	activeServiceBlockTripsMap map[string][]gtfsdb.GetTripsByBlockIDsRow,
 ) (isFirstInBlock, isLastInBlock bool) {
-	// First, verify if the stop is at the temporal boundaries of its individual trip.
-	isFirstInTrip := row.MinArrivalTime.Valid && row.ArrivalTime == row.MinArrivalTime.Int64
-	isLastInTrip := row.MaxDepartureTime.Valid && row.DepartureTime == row.MaxDepartureTime.Int64
+	// First, verify if the stop is at the ends of its individual trip. Stop sequence is
+	// used rather than time, because stops that share the first or last time are not
+	// the trip's boundary stops (Java decides this by block position).
+	isFirstInTrip := row.StopSequence == row.MinStopSequence
+	isLastInTrip := row.StopSequence == row.MaxStopSequence
 
 	blockID := nulls.StringOrEmpty(row.BlockID)
 	if blockID == "" {

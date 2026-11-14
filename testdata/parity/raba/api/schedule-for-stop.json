@@ -13,7 +13,7 @@
               "scheduleFrequencies": [],
               "scheduleStopTimes": [
                 {
-                  "arrivalEnabled": false,
+                  "arrivalEnabled": true,
                   "arrivalTime": 1749732660000,
                   "departureEnabled": true,
                   "departureTime": 1749732660000,
