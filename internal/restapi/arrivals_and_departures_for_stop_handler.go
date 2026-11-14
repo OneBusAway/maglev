@@ -143,11 +143,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		acc.stopIDs[stopCode] = true
 	}
 
-	for _, sid := range nearbyStopIDs {
-		if _, bareID, err := utils.ExtractAgencyIDAndCodeID(sid); err == nil {
-			acc.stopIDs[bareID] = true
-		}
-	}
+	addNearbyStopRefs(acc, nearbyStopIDs)
 
 	references, err = api.buildArrivalsReferences(ctx, arrivalsReferencesInput{
 		fallbackAgencyID: stopAgencyID,
@@ -166,6 +162,16 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	topLevelSituationIDs := api.addStopSituations(ctx, references, acc, stopCode, stopAgencyID)
 	response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nearbyStopIDs, topLevelSituationIDs, stopID, api.Clock)
 	api.sendResponse(w, r, response)
+}
+
+// addNearbyStopRefs extracts bare stop IDs from nearby combined stop IDs and
+// marks them for inclusion in the response references.
+func addNearbyStopRefs(acc *arrivalsAccumulator, nearbyStopIDs []string) {
+	for _, sid := range nearbyStopIDs {
+		if _, bareID, err := utils.ExtractAgencyIDAndCodeID(sid); err == nil {
+			acc.stopIDs[bareID] = true
+		}
+	}
 }
 
 // addStopSituations records the stop's own and agency-wide alerts, adds every
@@ -230,8 +236,6 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 		agency := fallbackAgencyID
 		if resolved, ok := stopAgencyMap[sid]; ok {
 			agency = resolved
-		} else {
-			stopAgencyMap[sid] = fallbackAgencyID
 		}
 		nearbyStopIDs = append(nearbyStopIDs, utils.FormCombinedID(agency, sid))
 	}
