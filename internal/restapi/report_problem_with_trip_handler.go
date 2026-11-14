@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
@@ -23,22 +24,10 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	// The raw GTFS trip ID (e.g., "t_123")
 	compositeID := utils.FormCombinedID(agencyID, tripID) // The API ID (e.g., "1_t_123")
 
-	// Safety check: Ensure DB is initialized
-	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil || api.GtfsManager.GtfsDB.Queries == nil {
-		reqLogger.Error("report problem with trip failed: GTFS DB not initialized")
-		api.serverErrorResponse(w, r, errors.New("GTFS DB not initialized"))
-		return
-	}
-
 	query := r.URL.Query()
 
-	serviceDate := query.Get("serviceDate")
-	vehicleID := query.Get("vehicleId")
-	stopID := query.Get("stopId")
-	code := query.Get("code")
-	userComment := utils.TruncateComment(query.Get("userComment"))
-	userVehicleNumber := query.Get("userVehicleNumber")
 	var fieldErrors map[string][]string
+	parsedServiceDate, fieldErrors := utils.ParseInt64Param(query, "serviceDate", fieldErrors)
 	userLat, fieldErrors := utils.ParseFloatParam(query, "userLat", fieldErrors)
 	userLon, fieldErrors := utils.ParseFloatParam(query, "userLon", fieldErrors)
 	userLocationAccuracy, fieldErrors := utils.ParseFloatParam(query, "userLocationAccuracy", fieldErrors)
@@ -49,12 +38,30 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Safety check: Ensure DB is initialized
+	if api.GtfsManager == nil || api.GtfsManager.GtfsDB == nil || api.GtfsManager.GtfsDB.Queries == nil {
+		reqLogger.Error("report problem with trip failed: GTFS DB not initialized")
+		api.serverErrorResponse(w, r, errors.New("GTFS DB not initialized"))
+		return
+	}
+
+	var serviceDateStr string
+	if parsedServiceDate != nil {
+		serviceDateStr = strconv.FormatInt(*parsedServiceDate, 10)
+	}
+
+	vehicleID := query.Get("vehicleId")
+	stopID := query.Get("stopId")
+	code := query.Get("code")
+	userComment := utils.TruncateComment(query.Get("userComment"))
+	userVehicleNumber := query.Get("userVehicleNumber")
+
 	// Log the problem report for observability
 	reqLogger.Info("problem_report_received_for_trip",
 		"trip_id", tripID,
 		"composite_id", compositeID,
 		"code", code,
-		"service_date", serviceDate,
+		"service_date", serviceDateStr,
 		"vehicle_id", vehicleID,
 		"stop_id", stopID)
 
@@ -67,7 +74,7 @@ func (api *RestAPI) reportProblemWithTripHandler(w http.ResponseWriter, r *http.
 	now := api.Clock.Now().UnixMilli()
 	params := gtfsdb.CreateProblemReportTripParams{
 		TripID:               tripID,
-		ServiceDate:          nulls.NonEmptyString(serviceDate),
+		ServiceDate:          nulls.NonEmptyString(serviceDateStr),
 		VehicleID:            nulls.NonEmptyString(vehicleID),
 		StopID:               nulls.NonEmptyString(stopID),
 		Code:                 nulls.NonEmptyString(code),

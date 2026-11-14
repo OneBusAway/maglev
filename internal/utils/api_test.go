@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -491,6 +492,263 @@ func TestParseFloatParam(t *testing.T) {
 						assert.Equal(t, vals, errors[key])
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestParseInt64Param(t *testing.T) {
+	int64Ptr := func(v int64) *int64 { return &v }
+
+	tests := []struct {
+		name            string
+		params          url.Values
+		key             string
+		initialErrors   map[string][]string
+		expectedValue   *int64
+		expectError     bool
+		expectedMessage string
+	}{
+		{
+			name: "Valid positive int64",
+			params: url.Values{
+				"serviceDate": []string{"1291536000000"},
+			},
+			key:           "serviceDate",
+			expectedValue: int64Ptr(1291536000000),
+			expectError:   false,
+		},
+		{
+			name: "Valid zero",
+			params: url.Values{
+				"serviceDate": []string{"0"},
+			},
+			key:           "serviceDate",
+			expectedValue: int64Ptr(0),
+			expectError:   false,
+		},
+		{
+			name: "Valid negative int64",
+			params: url.Values{
+				"serviceDate": []string{"-1"},
+			},
+			key:           "serviceDate",
+			expectedValue: int64Ptr(-1),
+			expectError:   false,
+		},
+		{
+			name: "Valid max int64 boundary",
+			params: url.Values{
+				"serviceDate": []string{fmt.Sprintf("%d", math.MaxInt64)},
+			},
+			key:           "serviceDate",
+			expectedValue: int64Ptr(math.MaxInt64),
+			expectError:   false,
+		},
+		{
+			name: "Valid min int64 boundary",
+			params: url.Values{
+				"serviceDate": []string{fmt.Sprintf("%d", math.MinInt64)},
+			},
+			key:           "serviceDate",
+			expectedValue: int64Ptr(math.MinInt64),
+			expectError:   false,
+		},
+		{
+			name: "Overflow max int64 by 1",
+			params: url.Values{
+				"serviceDate": []string{"9223372036854775808"},
+			},
+			key:             "serviceDate",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+		{
+			name: "Underflow min int64 by 1",
+			params: url.Values{
+				"serviceDate": []string{"-9223372036854775809"},
+			},
+			key:             "serviceDate",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+		{
+			name: "Huge overflow",
+			params: url.Values{
+				"serviceDate": []string{"999999999999999999999999999999999999"},
+			},
+			key:             "serviceDate",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+		{
+			name: "Non-numeric string",
+			params: url.Values{
+				"serviceDate": []string{"not_a_number"},
+			},
+			key:             "serviceDate",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+		{
+			name: "Float string rejected",
+			params: url.Values{
+				"serviceDate": []string{"12.34"},
+			},
+			key:             "serviceDate",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+		{
+			name: "Whitespace padded string parsed after trim",
+			params: url.Values{
+				"serviceDate": []string{" 60 "},
+			},
+			key:           "serviceDate",
+			expectedValue: int64Ptr(60),
+			expectError:   false,
+		},
+		{
+			name: "Whitespace only string rejected",
+			params: url.Values{
+				"serviceDate": []string{"   "},
+			},
+			key:             "serviceDate",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+		{
+			name:          "Missing parameter returns nil without error",
+			params:        url.Values{},
+			key:           "serviceDate",
+			expectedValue: nil,
+			expectError:   false,
+		},
+		{
+			name: "Empty string returns nil without error",
+			params: url.Values{
+				"serviceDate": []string{""},
+			},
+			key:           "serviceDate",
+			expectedValue: nil,
+			expectError:   false,
+		},
+		{
+			name: "Preserves pre-existing errors",
+			params: url.Values{
+				"serviceDate": []string{"invalid"},
+			},
+			key: "serviceDate",
+			initialErrors: map[string][]string{
+				"other": {"pre-existing error"},
+			},
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, errors := ParseInt64Param(tt.params, tt.key, tt.initialErrors)
+			if tt.expectedValue == nil {
+				assert.Nil(t, value)
+			} else {
+				require.NotNil(t, value)
+				assert.Equal(t, *tt.expectedValue, *value)
+			}
+
+			if tt.expectError {
+				require.Contains(t, errors, tt.key)
+				assert.Contains(t, errors[tt.key], tt.expectedMessage)
+			} else {
+				if _, exists := errors[tt.key]; exists {
+					assert.Empty(t, errors[tt.key])
+				}
+			}
+
+			if tt.initialErrors != nil {
+				for key, vals := range tt.initialErrors {
+					if key != tt.key {
+						assert.Equal(t, vals, errors[key])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestParseRequiredInt64Param(t *testing.T) {
+	int64Ptr := func(v int64) *int64 { return &v }
+
+	tests := []struct {
+		name            string
+		params          url.Values
+		key             string
+		expectedValue   *int64
+		expectError     bool
+		expectedMessage string
+	}{
+		{
+			name: "Valid required int64",
+			params: url.Values{
+				"timestamp": []string{"1794470400000"},
+			},
+			key:           "timestamp",
+			expectedValue: int64Ptr(1794470400000),
+			expectError:   false,
+		},
+		{
+			name:            "Missing parameter reports missing field",
+			params:          url.Values{},
+			key:             "timestamp",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Missing required field "timestamp".`,
+		},
+		{
+			name: "Empty string reports missing field",
+			params: url.Values{
+				"timestamp": []string{""},
+			},
+			key:             "timestamp",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Missing required field "timestamp".`,
+		},
+		{
+			name: "Invalid value reports invalid field value",
+			params: url.Values{
+				"timestamp": []string{"9223372036854775808"},
+			},
+			key:             "timestamp",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "timestamp".`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, errors := ParseRequiredInt64Param(tt.params, tt.key, nil)
+			if tt.expectedValue == nil {
+				assert.Nil(t, value)
+			} else {
+				require.NotNil(t, value)
+				assert.Equal(t, *tt.expectedValue, *value)
+			}
+
+			if tt.expectError {
+				require.Contains(t, errors, tt.key)
+				assert.Contains(t, errors[tt.key], tt.expectedMessage)
+			} else {
+				assert.Empty(t, errors)
 			}
 		})
 	}
