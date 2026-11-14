@@ -254,8 +254,7 @@ func (m *Metrics) StartDBStatsCollector(provider func() DBStatsProvider, interva
 // and updates the corresponding Prometheus gauges and wait duration counters.
 func (m *Metrics) updateDBStats(provider func() DBStatsProvider, currentProvider *DBStatsProvider, lastWaitDuration *time.Duration) {
 	p := provider()
-	db, isDB := p.(*sql.DB)
-	if p == nil || (isDB && db == nil) {
+	if p == nil {
 		m.DBConnectionsOpen.Set(0)
 		m.DBConnectionsInUse.Set(0)
 		m.DBConnectionsIdle.Set(0)

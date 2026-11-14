@@ -1,5 +1,6 @@
 {
   "$schema": "./config.schema.json",
+  "role": "all",
   "port": 4000,
   "env": "production",
   "api-keys": [

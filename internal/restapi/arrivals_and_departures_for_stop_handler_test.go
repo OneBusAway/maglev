@@ -526,7 +526,8 @@ func TestArrivalsAndDeparturesForStopHandlerNoActiveServices(t *testing.T) {
 	assert.NotNil(t, model.Data.Entry.NearbyStopIDs)
 	assert.NotNil(t, model.Data.Entry.SituationIDs)
 	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
-	assert.Empty(t, model.Data.References.Routes)
+	// Routes serving the stop are referenced whether or not any service runs (Java does the same).
+	assert.NotEmpty(t, model.Data.References.Routes)
 	assert.Empty(t, model.Data.References.Trips)
 }
 
@@ -1987,4 +1988,29 @@ func TestArrivalsAndDeparturesForStopHandler_NoArrivalsStillListsNearbyStops(t *
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures, "precondition: no service at 03:00")
 	assert.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
+}
+
+// TestArrivalsAndDeparturesForStopHandler_EmptyWindowKeepsStopAndRouteReferences
+// checks that a window with no arrivals still references the requested stop and
+// the routes serving it, as Java does.
+func TestArrivalsAndDeparturesForStopHandler_EmptyWindowKeepsStopAndRouteReferences(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	requestURL := arrivalsAndDeparturesURL(arrivalsTestStopID,
+		url.Values{"minutesBefore": {"0"}, "minutesAfter": {"0"}})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the empty window must leave no arrival")
+
+	var stopIDs []string
+	for _, stop := range model.Data.References.Stops {
+		stopIDs = append(stopIDs, stop.ID)
+	}
+	assert.Contains(t, stopIDs, arrivalsTestStopID,
+		"the requested stop must be a reference even with no arrivals")
+	assert.NotEmpty(t, model.Data.References.Routes,
+		"the routes serving the requested stop must be references even with no arrivals")
 }

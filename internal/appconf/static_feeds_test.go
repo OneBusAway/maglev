@@ -24,6 +24,7 @@ func writeConfigFile(t *testing.T, content string) string {
 // from the given static feed list.
 func validConfigWithStaticFeeds(feeds ...GtfsStaticFeed) *JSONConfig {
 	return &JSONConfig{
+		Role:             "all",
 		Port:             4000,
 		Env:              "development",
 		ApiKeys:          []string{"test"},
