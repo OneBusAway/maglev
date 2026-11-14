@@ -415,9 +415,31 @@ func TestStopsForLocationReturnsParentStation(t *testing.T) {
 
 func TestStopsForLocationHandlerValidatesMaxCount(t *testing.T) {
 	api := createTestApi(t)
-	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&maxCount=invalid")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
+
+	tests := []struct {
+		name        string
+		maxCount    string
+		wantStatus  int
+		wantMessage string
+	}{
+		{"non-numeric string", "invalid", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"64-bit integer overflow", "99999999999", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"int32 overflow 2147483648", "2147483648", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"int32 underflow -2147483649", "-2147483649", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"max int32 2147483647 accepted", "2147483647", http.StatusOK, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=1000&maxCount=" + tt.maxCount
+			resp, model := callAPIHandler[models.ResponseModel](t, api, url)
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+			assert.Equal(t, tt.wantStatus, model.Code)
+			if tt.wantMessage != "" {
+				assert.Contains(t, maxCountFieldErrors(t, model.Data), tt.wantMessage)
+			}
+		})
+	}
 }
 
 func TestStopsForLocationHandlerRouteTypeErrorLimit(t *testing.T) {

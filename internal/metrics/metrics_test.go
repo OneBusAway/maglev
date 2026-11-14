@@ -184,21 +184,23 @@ func TestStartDBStatsCollector_FollowsDBSwap(t *testing.T) {
 	}, time.Second, 20*time.Millisecond)
 }
 
-// TestStartDBStatsCollector_TypedNilDBProvider verifies that a provider returning a typed nil *sql.DB
-// does not panic and resumes metric collection when a valid database becomes available.
+// TestStartDBStatsCollector_TypedNilDBProvider verifies that a provider returning a typed nil *gtfsdb.Client
+// does not panic, returns zero stats, and resumes metric collection when a valid client becomes available.
 func TestStartDBStatsCollector_TypedNilDBProvider(t *testing.T) {
 	db, err := sql.Open(gtfsdb.DriverName, ":memory:")
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
+	client := &gtfsdb.Client{DB: db}
+
 	var active atomic.Bool
 	m := New()
 	m.StartDBStatsCollector(func() DBStatsProvider {
 		if !active.Load() {
-			var nilDB *sql.DB
-			return nilDB
+			var nilClient *gtfsdb.Client
+			return nilClient
 		}
-		return db
+		return client
 	}, 20*time.Millisecond)
 	defer m.Shutdown()
 

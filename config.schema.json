@@ -5,6 +5,12 @@
   "description": "Configuration schema for the Maglev OneBusAway server",
   "type": "object",
   "properties": {
+    "role": {
+      "type": "string",
+      "description": "Server role for horizontal scalability (all|ingester|server). Phase 1 establishes configuration parsing; runtime isolation is enabled in Phase 2.",
+      "enum": ["all", "ingester", "server"],
+      "default": "all"
+    },
     "port": {
       "type": "integer",
       "description": "API server port",

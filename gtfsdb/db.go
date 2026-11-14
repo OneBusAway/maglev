@@ -132,6 +132,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getActiveLayoverBlockIDsForRouteStmt, err = db.PrepareContext(ctx, getActiveLayoverBlockIDsForRoute); err != nil {
 		return nil, fmt.Errorf("error preparing query GetActiveLayoverBlockIDsForRoute: %w", err)
 	}
+	if q.getActiveRouteIDsForStopsInIntervalStmt, err = db.PrepareContext(ctx, getActiveRouteIDsForStopsInInterval); err != nil {
+		return nil, fmt.Errorf("error preparing query GetActiveRouteIDsForStopsInInterval: %w", err)
+	}
 	if q.getActiveRouteIDsForStopsOnDateStmt, err = db.PrepareContext(ctx, getActiveRouteIDsForStopsOnDate); err != nil {
 		return nil, fmt.Errorf("error preparing query GetActiveRouteIDsForStopsOnDate: %w", err)
 	}
@@ -588,6 +591,11 @@ func (q *Queries) Close() error {
 	if q.getActiveLayoverBlockIDsForRouteStmt != nil {
 		if cerr := q.getActiveLayoverBlockIDsForRouteStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getActiveLayoverBlockIDsForRouteStmt: %w", cerr)
+		}
+	}
+	if q.getActiveRouteIDsForStopsInIntervalStmt != nil {
+		if cerr := q.getActiveRouteIDsForStopsInIntervalStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getActiveRouteIDsForStopsInIntervalStmt: %w", cerr)
 		}
 	}
 	if q.getActiveRouteIDsForStopsOnDateStmt != nil {
@@ -1120,6 +1128,7 @@ type Queries struct {
 	createTripStmt                            *sql.Stmt
 	getActiveBlockIDsForAgencyStmt            *sql.Stmt
 	getActiveLayoverBlockIDsForRouteStmt      *sql.Stmt
+	getActiveRouteIDsForStopsInIntervalStmt   *sql.Stmt
 	getActiveRouteIDsForStopsOnDateStmt       *sql.Stmt
 	getActiveServiceIDsForDateStmt            *sql.Stmt
 	getActiveStopsStmt                        *sql.Stmt
@@ -1253,6 +1262,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createTripStmt:                            q.createTripStmt,
 		getActiveBlockIDsForAgencyStmt:            q.getActiveBlockIDsForAgencyStmt,
 		getActiveLayoverBlockIDsForRouteStmt:      q.getActiveLayoverBlockIDsForRouteStmt,
+		getActiveRouteIDsForStopsInIntervalStmt:   q.getActiveRouteIDsForStopsInIntervalStmt,
 		getActiveRouteIDsForStopsOnDateStmt:       q.getActiveRouteIDsForStopsOnDateStmt,
 		getActiveServiceIDsForDateStmt:            q.getActiveServiceIDsForDateStmt,
 		getActiveStopsStmt:                        q.getActiveStopsStmt,

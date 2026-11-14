@@ -30,9 +30,10 @@ func frequencyWindowArrivals(t *testing.T, api *RestAPI, endpoint string, params
 		if len(model.Data.Entry.ArrivalsAndDepartures) == 0 {
 			assert.Empty(t, model.Data.Entry.NearbyStopIDs)
 			assert.Empty(t, model.Data.Entry.SituationIDs)
-			assert.Empty(t, model.Data.References.Stops)
-			assert.Empty(t, model.Data.References.Routes)
 			assert.Empty(t, model.Data.References.Trips)
+			// With no arrivals, the requested stop and its routes are still referenced (as Java does).
+			assert.Contains(t, referencedStopCombinedIDs(model.Data.References.Stops), utils.FormCombinedID(freqAgencyID, freqStopAID))
+			assert.NotEmpty(t, model.Data.References.Routes)
 		}
 		return model.Data.Entry.ArrivalsAndDepartures
 	}
@@ -371,6 +372,7 @@ func TestArrivalWindow_RunningLateAndEarlyCandidates(t *testing.T) {
 		{"early_bus_predicted_in_window", "early-trip", "10:25:00", ptrDuration(-7 * time.Minute), true},
 		{"late_bus_without_prediction", "unpredicted-trip", "10:00:00", nil, false},
 		{"beyond_running_late_buffer", "very-late-trip", "09:35:00", ptrDuration(40 * time.Minute), false},
+		{"beyond_running_early_buffer", "very-early-trip", "10:31:00", ptrDuration(-12 * time.Minute), false},
 	}
 
 	files := frequencyFixtureFiles()
@@ -425,4 +427,13 @@ func arrivalsIncludeTrip(t *testing.T, arrivals []models.ArrivalAndDeparture, tr
 		}
 	}
 	return false
+}
+
+// referencedStopCombinedIDs returns the combined IDs of the stops in a references block.
+func referencedStopCombinedIDs(stops []models.Stop) []string {
+	ids := make([]string, 0, len(stops))
+	for _, stop := range stops {
+		ids = append(ids, stop.ID)
+	}
+	return ids
 }

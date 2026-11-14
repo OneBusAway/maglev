@@ -639,6 +639,55 @@ func TestVehiclesForAgencyHandler_AgeInSecondsAbsentNoFilter(t *testing.T) {
 		"absent ageInSeconds must return all vehicles regardless of age")
 }
 
+// TestVehiclesForAgencyHandler_AgeInSecondsValidation verifies that invalid or
+// out-of-range ageInSeconds values return HTTP 400 with a field error, while
+// values within 32-bit signed integer bounds are accepted.
+func TestVehiclesForAgencyHandler_AgeInSecondsValidation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+
+	tests := []struct {
+		name       string
+		val        string
+		shouldFail bool
+	}{
+		{"malformed string", "notanumber", true},
+		{"floating point", "12.34", true},
+		{"whitespace padded", " 60 ", true},
+		{"int32 overflow", "2147483648", true},
+		{"64-bit int overflow", "99999999999", true},
+		{"int32 underflow", "-2147483649", true},
+		{"max int32 accepted", "2147483647", false},
+		{"min int32 accepted", "-2147483648", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := url.Values{"ageInSeconds": {tt.val}}
+			resp, model := callAPIHandler[strictValidationResponse](t, api, vehiclesForAgencyURL(testdata.Raba.ID, params))
+			if tt.shouldFail {
+				assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				assert.Equal(t, http.StatusBadRequest, model.Code)
+				require.Contains(t, model.Data.FieldErrors, "ageInSeconds")
+				assert.Equal(t, `Invalid field value for field "ageInSeconds".`, model.Data.FieldErrors["ageInSeconds"][0])
+			} else {
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				assert.Equal(t, http.StatusOK, model.Code)
+			}
+		})
+	}
+
+	t.Run("unknown agency with invalid ageInSeconds returns 400", func(t *testing.T) {
+		params := url.Values{"ageInSeconds": {"invalid"}}
+		resp, model := callAPIHandler[strictValidationResponse](t, api, vehiclesForAgencyURL("unknown_agency", params))
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, model.Code)
+		require.Contains(t, model.Data.FieldErrors, "ageInSeconds")
+		assert.Equal(t, `Invalid field value for field "ageInSeconds".`, model.Data.FieldErrors["ageInSeconds"][0])
+	})
+}
+
 // TestVehiclesForAgencyHandler_UpdateTimesZeroWhenNoUpdate verifies that
 // lastUpdateTime / lastLocationUpdateTime are emitted as 0 when the vehicle has
 // no update time, on both the outer entry and tripStatus.
