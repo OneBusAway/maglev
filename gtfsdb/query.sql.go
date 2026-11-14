@@ -2086,7 +2086,7 @@ const getBlockTripSequence = `-- name: GetBlockTripSequence :one
 WITH BlockTrips AS (
     SELECT id, ROW_NUMBER() OVER (ORDER BY min_arrival_time) - 1 AS seq
     FROM trips
-    WHERE block_id = ?2
+    WHERE (block_id = ?2 OR ((block_id IS NULL OR length(block_id) = 0) AND id = ?2))
       AND service_id IN (/*SLICE:service_ids*/?)
 )
 SELECT seq FROM BlockTrips WHERE id = ?1
@@ -2285,7 +2285,7 @@ WHERE st.trip_id = (
     SELECT next_trip_id FROM (
         SELECT id, LEAD(id) OVER (ORDER BY min_arrival_time) AS next_trip_id
         FROM trips
-        WHERE block_id = ?1
+        WHERE (block_id = ?1 OR ((block_id IS NULL OR length(block_id) = 0) AND id = ?1))
           AND service_id IN (/*SLICE:service_ids*/?)
     ) WHERE id = ?3
 )
@@ -2541,7 +2541,7 @@ WITH NavTrips AS (
         LAG(id)  OVER (ORDER BY min_arrival_time) AS prev_trip_id,
         LEAD(id) OVER (ORDER BY min_arrival_time) AS next_trip_id
     FROM trips
-    WHERE block_id = ?2
+    WHERE (block_id = ?2 OR ((block_id IS NULL OR length(block_id) = 0) AND id = ?2))
       AND service_id IN (/*SLICE:service_ids*/?)
 )
 SELECT prev_trip_id, next_trip_id
@@ -4858,7 +4858,8 @@ SELECT
 FROM
     trips
 WHERE
-    block_id = ?
+    block_id = ?1
+    OR ((block_id IS NULL OR length(block_id) = 0) AND id = ?1)
 `
 
 type GetTripsByBlockIDRow struct {
@@ -4912,7 +4913,7 @@ SELECT
     t.min_arrival_time AS earliest_time,
     t.max_departure_time AS latest_time
 FROM trips t
-WHERE t.block_id = ?
+WHERE (t.block_id = ?1 OR ((t.block_id IS NULL OR length(t.block_id) = 0) AND t.id = ?1))
   AND t.service_id IN (/*SLICE:service_ids*/?)
 ORDER BY t.min_arrival_time
 `

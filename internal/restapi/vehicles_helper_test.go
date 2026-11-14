@@ -362,6 +362,67 @@ func TestResolveActiveTripID(t *testing.T) {
 		assert.Equal(t, "nonexistent-trip", got)
 	})
 
+	t.Run("resolves active trip when blockless nominal trip shares ID with block", func(t *testing.T) {
+		serviceID := serviceIDs[0]
+		nominalRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, blockTrips[0].ID)
+		require.NoError(t, err)
+		routeID := nominalRow.RouteID
+
+		sharedBlockID := "blockless-shared-block-id"
+
+		// Nominal trip is blockless with ID matching the block ID.
+		_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               sharedBlockID,
+			RouteID:          routeID,
+			ServiceID:        serviceID,
+			BlockID:          nulls.String(""),
+			MinArrivalTime:   nulls.Int64(10 * int64(time.Hour)),
+			MaxDepartureTime: nulls.Int64(10*int64(time.Hour) + int64(30*time.Minute)),
+		})
+		require.NoError(t, err)
+
+		// Active trip has explicit block_id pointing to the shared block ID.
+		_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               "trip-in-shared-block",
+			RouteID:          routeID,
+			ServiceID:        serviceID,
+			BlockID:          nulls.String(sharedBlockID),
+			MinArrivalTime:   nulls.Int64(11 * int64(time.Hour)),
+			MaxDepartureTime: nulls.Int64(11*int64(time.Hour) + int64(30*time.Minute)),
+		})
+		require.NoError(t, err)
+
+		// Reference time inside the active trip's window (11:15).
+		refTime := serviceDate.Add(11*time.Hour + 15*time.Minute)
+		got := api.resolveActiveTripID(ctx, sharedBlockID, refTime)
+		assert.Equal(t, "trip-in-shared-block", got,
+			"a vehicle reporting a blockless trip must resolve to the active trip in its shared block")
+	})
+
+	t.Run("lone blockless trip resolves to itself", func(t *testing.T) {
+		serviceID := serviceIDs[0]
+		nominalRow, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, blockTrips[0].ID)
+		require.NoError(t, err)
+		routeID := nominalRow.RouteID
+
+		loneTripID := "lone-blockless-trip"
+		_, err = api.GtfsManager.GtfsDB.Queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+			ID:               loneTripID,
+			RouteID:          routeID,
+			ServiceID:        serviceID,
+			BlockID:          nulls.String(""),
+			MinArrivalTime:   nulls.Int64(14 * int64(time.Hour)),
+			MaxDepartureTime: nulls.Int64(14*int64(time.Hour) + int64(30*time.Minute)),
+		})
+		require.NoError(t, err)
+
+		// Reference time outside its window when no other trip exists in the block.
+		refTime := serviceDate.Add(15 * time.Hour)
+		got := api.resolveActiveTripID(ctx, loneTripID, refTime)
+		assert.Equal(t, loneTripID, got,
+			"a lone blockless trip must resolve to itself")
+	})
+
 	t.Run("resolves a past-midnight trip on the following calendar day", func(t *testing.T) {
 		// Build a synthetic block on an existing active service. The second trip's
 		// window runs past 24:00 (25:00-25:30), i.e. 01:00-01:30 the next calendar day.

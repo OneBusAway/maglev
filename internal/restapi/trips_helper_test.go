@@ -2030,6 +2030,121 @@ func TestGetNextAndPreviousTripIDs_TripNotInBlockOnDate(t *testing.T) {
 	assert.Empty(t, prev)
 }
 
+func TestGetNextAndPreviousTripIDs_BlocklessTripSharesID(t *testing.T) {
+	tests := []struct {
+		name    string
+		blockID sql.NullString
+	}{
+		{
+			name:    "empty_string_block_id",
+			blockID: nulls.String(""),
+		},
+		{
+			name:    "null_block_id",
+			blockID: sql.NullString{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+			ctx := context.Background()
+			queries := api.GtfsManager.GtfsDB.Queries
+
+			agencyID := "RABA"
+			serviceDate := time.Date(2024, 6, 16, 0, 0, 0, 0, time.UTC)
+
+			_, _ = queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{ID: "RABA", Name: "RABA", Url: "a", Timezone: "utc"})
+			_, _ = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{ID: "1", AgencyID: "RABA", Type: 3})
+			_, _ = queries.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+				ID:        "1",
+				StartDate: "20240101",
+				EndDate:   "20241231",
+				Sunday:    1,
+			})
+			_, _ = queries.CreateStop(ctx, gtfsdb.CreateStopParams{ID: "stop1", Name: nulls.String("Stop 1")})
+			_, _ = queries.CreateStop(ctx, gtfsdb.CreateStopParams{ID: "stop2", Name: nulls.String("Stop 2")})
+
+			// Trip 1: blockless trip with ID "shared_block"
+			_, err := queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+				ID:               "shared_block",
+				RouteID:          "1",
+				ServiceID:        "1",
+				BlockID:          tt.blockID,
+				MinArrivalTime:   nulls.Int64(1000),
+				MaxDepartureTime: nulls.Int64(2000),
+			})
+			require.NoError(t, err)
+
+			// Trip 2: blocked trip with BlockID "shared_block"
+			_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+				ID:               "trip_blocked",
+				RouteID:          "1",
+				ServiceID:        "1",
+				BlockID:          nulls.String("shared_block"),
+				MinArrivalTime:   nulls.Int64(3000),
+				MaxDepartureTime: nulls.Int64(4000),
+			})
+			require.NoError(t, err)
+
+			_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+				TripID:        "shared_block",
+				ArrivalTime:   1000,
+				DepartureTime: 1000,
+				StopID:        "stop1",
+				StopSequence:  1,
+			})
+			require.NoError(t, err)
+
+			_, err = queries.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+				TripID:        "trip_blocked",
+				ArrivalTime:   3000,
+				DepartureTime: 3000,
+				StopID:        "stop2",
+				StopSequence:  1,
+			})
+			require.NoError(t, err)
+
+			trip1, err := queries.GetTrip(ctx, "shared_block")
+			require.NoError(t, err)
+
+			trip2, err := queries.GetTrip(ctx, "trip_blocked")
+			require.NoError(t, err)
+
+			// Test GetNextAndPreviousTripIDs for blockless trip
+			next1, prev1, _, err := api.GetNextAndPreviousTripIDs(ctx, &trip1, agencyID, serviceDate)
+			require.NoError(t, err)
+			assert.Equal(t, utils.FormCombinedID(agencyID, "trip_blocked"), next1)
+			assert.Empty(t, prev1)
+
+			// Test GetNextAndPreviousTripIDs for blocked trip
+			next2, prev2, _, err := api.GetNextAndPreviousTripIDs(ctx, &trip2, agencyID, serviceDate)
+			require.NoError(t, err)
+			assert.Empty(t, next2)
+			assert.Equal(t, utils.FormCombinedID(agencyID, "shared_block"), prev2)
+
+			// Test blockTripSequence
+			seq1, ok1 := api.blockTripSequence(ctx, "shared_block", serviceDate)
+			assert.True(t, ok1)
+			assert.Equal(t, 0, seq1)
+
+			seq2, ok2 := api.blockTripSequence(ctx, "trip_blocked", serviceDate)
+			assert.True(t, ok2)
+			assert.Equal(t, 1, seq2)
+
+			// Test getFirstStopOfNextTripInBlock
+			nextStop1 := api.getFirstStopOfNextTripInBlock(ctx, "shared_block")
+			require.NotNil(t, nextStop1)
+			assert.Equal(t, "stop2", nextStop1.StopID)
+			assert.Equal(t, "trip_blocked", nextStop1.TripID)
+
+			nextStop2 := api.getFirstStopOfNextTripInBlock(ctx, "trip_blocked")
+			assert.Nil(t, nextStop2)
+		})
+	}
+}
+
 func makeTestTrip(id string, directionID sql.NullInt64) gtfsdb.Trip {
 	return gtfsdb.Trip{ID: id, DirectionID: directionID}
 }
