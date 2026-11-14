@@ -1471,7 +1471,7 @@ func findRABAStopWithNeighbour(t *testing.T, api *RestAPI, ctx context.Context) 
 	require.NoError(t, err)
 	require.NotEmpty(t, candidates, "precondition: RABA should have stops near Redding")
 	for _, c := range candidates {
-		nearby, err := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
+		nearby, _, err := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
 		require.NoError(t, err)
 		if len(nearby) > 0 {
 			return c
@@ -1489,14 +1489,15 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
+	result, stopAgencies, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
 	require.NoError(t, err)
 
 	require.NotEmpty(t, result, "expected ≥1 nearby stop within 100m")
 	for _, combinedID := range result {
-		agencyID, _, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+		agencyID, codeID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
 		require.NoError(t, err, "combined ID should be parseable: %s", combinedID)
 		assert.NotEqual(t, "WrongFallbackAgency", agencyID)
+		assert.Equal(t, agencyID, stopAgencies[codeID])
 	}
 }
 
@@ -1507,7 +1508,7 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
+	result, _, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
 	require.NoError(t, err)
 
 	for _, combinedID := range result {
@@ -1524,10 +1525,11 @@ func TestGetNearbyStopIDs_ReturnsQueryError(t *testing.T) {
 	cancel()
 
 	stop := testdata.Stop4062
-	result, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, "4062", "25")
+	result, agencies, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, "4062", "25")
 
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, result)
+	assert.Nil(t, agencies)
 }
 
 func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
@@ -1987,7 +1989,15 @@ func TestArrivalsAndDeparturesForStopHandler_NoArrivalsStillListsNearbyStops(t *
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures, "precondition: no service at 03:00")
-	assert.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
+	require.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
+
+	referencedStops := make(map[string]bool)
+	for _, stop := range model.Data.References.Stops {
+		referencedStops[stop.ID] = true
+	}
+	for _, nearbyID := range model.Data.Entry.NearbyStopIDs {
+		assert.True(t, referencedStops[nearbyID], "nearby stop %s must resolve in references.stops at 03:00", nearbyID)
+	}
 }
 
 // TestArrivalsAndDeparturesForStopHandler_EmptyWindowKeepsStopAndRouteReferences
@@ -2013,4 +2023,55 @@ func TestArrivalsAndDeparturesForStopHandler_EmptyWindowKeepsStopAndRouteReferen
 		"the requested stop must be a reference even with no arrivals")
 	assert.NotEmpty(t, model.Data.References.Routes,
 		"the routes serving the requested stop must be references even with no arrivals")
+	require.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
+	for _, nearbyID := range model.Data.Entry.NearbyStopIDs {
+		assert.Contains(t, stopIDs, nearbyID,
+			"nearby stop %s must be a reference even with no arrivals", nearbyID)
+	}
+}
+
+// TestArrivalsAndDeparturesForStopHandler_NearbyStopsAreReferenced verifies that
+// every stop in nearbyStopIds is present in references.stops, with its routes
+// in references.routes and agencies in references.agencies, matching Java BeanFactoryV2.
+func TestArrivalsAndDeparturesForStopHandler_NearbyStopsAreReferenced(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{"minutesBefore": {"60"}, "minutesAfter": {"240"}}))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.Entry.NearbyStopIDs, "expected nearby stops for test stop")
+
+	referencedStops := make(map[string]models.Stop)
+	for _, stop := range model.Data.References.Stops {
+		referencedStops[stop.ID] = stop
+	}
+
+	referencedRoutes := make(map[string]bool)
+	for _, route := range model.Data.References.Routes {
+		referencedRoutes[route.ID] = true
+	}
+
+	referencedAgencies := make(map[string]bool)
+	for _, agency := range model.Data.References.Agencies {
+		referencedAgencies[agency.ID] = true
+	}
+
+	var nearbyRoutesFound int
+	for _, nearbyID := range model.Data.Entry.NearbyStopIDs {
+		stop, ok := referencedStops[nearbyID]
+		assert.True(t, ok, "nearby stop %s must resolve in references.stops", nearbyID)
+		if !ok {
+			continue
+		}
+		assert.NotEmpty(t, stop.RouteIDs, "nearby stop %s must have route IDs", nearbyID)
+		for _, routeID := range stop.RouteIDs {
+			nearbyRoutesFound++
+			assert.True(t, referencedRoutes[routeID], "route %s for nearby stop %s must resolve in references.routes", routeID, nearbyID)
+		}
+		agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(nearbyID)
+		assert.True(t, referencedAgencies[agencyID], "agency %s for nearby stop %s must resolve in references.agencies", agencyID, nearbyID)
+	}
+	assert.Greater(t, nearbyRoutesFound, 0, "expected at least one route referenced via nearby stops")
 }
