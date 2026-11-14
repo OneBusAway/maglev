@@ -991,6 +991,8 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	// before the next test reads stop 4062 or the agency list.
 	t.Cleanup(func() {
 		api.GtfsManager.MockResetRealTimeData()
+		// createTestApi shares one manager across tests, so clear the agency-ids this test set.
+		api.GtfsManager.MockSetFeedAgencyIDs("feed-0")
 		_, _ = db.Exec(`DELETE FROM stop_times WHERE trip_id = ?`, tripID)
 		_, _ = db.Exec(`DELETE FROM trips WHERE id = ?`, tripID)
 		_, _ = db.Exec(`DELETE FROM routes WHERE id = ?`, routeID)
@@ -1010,6 +1012,8 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	require.NoError(t, err)
 
 	bareRoute := routeID
+	// The feed names the underscore agency, so the alert's prefix must keep it whole.
+	api.GtfsManager.MockSetFeedAgencyIDs("feed-0", agencyID)
 	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
 		ID: alertID,
 		InformedEntities: []gtfs.AlertInformedEntity{{
@@ -1027,8 +1031,8 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 }
 
 func TestRetainRoute_AgencyWithUnderscore(t *testing.T) {
-	acc := newArrivalsAccumulator("AGENCY_ONE")
-	refAcc := newArrivalsAccumulator("AGENCY_ONE")
+	acc := newArrivalsAccumulator()
+	refAcc := newArrivalsAccumulator()
 
 	route := gtfsdb.Route{
 		ID:       "ROUTE_100",
@@ -1044,12 +1048,12 @@ func TestRetainRoute_AgencyWithUnderscore(t *testing.T) {
 }
 
 func TestRetainRoute_RejectsOtherAgency(t *testing.T) {
-	acc := newArrivalsAccumulator("AGENCY_ONE")
+	acc := newArrivalsAccumulator()
 	acc.routes["ROUTE_100"] = &gtfsdb.Route{ID: "ROUTE_100", AgencyID: "OTHER"}
 
 	for _, combinedID := range []string{"AGENCY_ONE_ROUTE_100", "AGENCY_ROUTE_100"} {
 		t.Run(combinedID, func(t *testing.T) {
-			refAcc := newArrivalsAccumulator("AGENCY_ONE")
+			refAcc := newArrivalsAccumulator()
 			retainRoute(refAcc, acc, combinedID)
 			assert.Empty(t, refAcc.routes)
 		})
@@ -1057,8 +1061,8 @@ func TestRetainRoute_RejectsOtherAgency(t *testing.T) {
 }
 
 func TestRetainRoute_EmptyCombinedID(t *testing.T) {
-	acc := newArrivalsAccumulator("AGENCY_ONE")
-	refAcc := newArrivalsAccumulator("AGENCY_ONE")
+	acc := newArrivalsAccumulator()
+	refAcc := newArrivalsAccumulator()
 	acc.routes["ROUTE_100"] = &gtfsdb.Route{ID: "ROUTE_100"}
 
 	retainRoute(refAcc, acc, "")

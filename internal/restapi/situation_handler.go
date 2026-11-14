@@ -17,13 +17,13 @@ func (api *RestAPI) situationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	alert, found := findSituationAlert(api.GtfsManager.Alerts(), agencyID, utils.FormCombinedID(agencyID, codeID))
+	alert, found := findSituationAlert(api.GtfsManager.Alerts(), api.GtfsManager.FirstStaticAgencyID(), utils.FormCombinedID(agencyID, codeID))
 	if !found {
 		api.sendNotFound(w, r)
 		return
 	}
 
-	refs := situationRefsFromAlerts([]internalgtfs.FeedAlert{alert}, agencyID)
+	refs := situationRefsFromAlerts([]internalgtfs.FeedAlert{alert}, api.GtfsManager.FirstStaticAgencyID())
 	situations := api.situationReferences(r.Context(), refs)
 	api.sendResponse(w, r, models.NewEntryResponse(situations[0], *models.NewEmptyReferences(), api.Clock))
 }
@@ -31,9 +31,9 @@ func (api *RestAPI) situationHandler(w http.ResponseWriter, r *http.Request) {
 // findSituationAlert returns the alert whose published situation id is
 // requested, otherwise the first alert whose raw id is. Published ids are
 // checked first so an earlier alert whose raw id equals another alert's
-// published id does not hide it. agencyID is the fallback other endpoints
-// use when the alert names no agency.
-func findSituationAlert(alerts []internalgtfs.FeedAlert, agencyID, requested string) (internalgtfs.FeedAlert, bool) {
+// published id does not hide it. firstStaticAgencyID is the prefix an alert
+// gets when neither it nor its feed names an agency, as in the list endpoints.
+func findSituationAlert(alerts []internalgtfs.FeedAlert, firstStaticAgencyID, requested string) (internalgtfs.FeedAlert, bool) {
 	if requested == "" {
 		return internalgtfs.FeedAlert{}, false
 	}
@@ -43,7 +43,7 @@ func findSituationAlert(alerts []internalgtfs.FeedAlert, agencyID, requested str
 		if alert.ID == "" {
 			continue
 		}
-		if internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert.Alert, agencyID)) == requested {
+		if internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert, firstStaticAgencyID)) == requested {
 			return alert, true
 		}
 		if !foundRaw && alert.ID == requested {

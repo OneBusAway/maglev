@@ -56,6 +56,8 @@ type Manager struct {
 
 	staticMutex  sync.RWMutex
 	regionBounds map[string]*RegionBounds
+	// firstAgencyID is the lowest agency ID in the static feed; see FirstStaticAgencyID.
+	firstAgencyID string
 
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
