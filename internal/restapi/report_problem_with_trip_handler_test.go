@@ -1,8 +1,10 @@
 package restapi
 
 import (
+	"encoding/json"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -10,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 )
 
@@ -180,4 +184,133 @@ func TestReportProblemWithTripNullStorage(t *testing.T) {
 	assert.False(t, latest.Code.Valid, "omitted code should be stored as SQL NULL")
 	assert.False(t, latest.UserComment.Valid, "omitted userComment should be stored as SQL NULL")
 	assert.False(t, latest.UserVehicleNumber.Valid, "omitted userVehicleNumber should be stored as SQL NULL")
+}
+
+func TestReportProblemWithTripValidatesServiceDateBeforeDatabaseAccess(t *testing.T) {
+	// No GTFS DB is initialized: invalid input must return HTTP 400 before accessing the database.
+	api := &RestAPI{Application: &app.Application{Clock: clock.RealClock{}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/where/report-problem-with-trip.json?tripId=1_12345&serviceDate=invalid", nil)
+	recorder := httptest.NewRecorder()
+
+	api.reportProblemWithTripHandler(recorder, req)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	var model strictValidationResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &model))
+	assert.Equal(t, http.StatusBadRequest, model.Code)
+	assert.Contains(t, model.Data.FieldErrors["serviceDate"], `Invalid field value for field "serviceDate".`)
+}
+
+func TestReportProblemWithTripServiceDateValidation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+
+	tests := []struct {
+		name            string
+		serviceDate     string
+		expectedStatus  int
+		expectError     bool
+		expectedMessage string
+	}{
+		{
+			name:            "malformed non-numeric string",
+			serviceDate:     "abc",
+			expectedStatus:  http.StatusBadRequest,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+		{
+			name:            "floating point string",
+			serviceDate:     "12.34",
+			expectedStatus:  http.StatusBadRequest,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+		{
+			name:            "overflow max int64 by 1",
+			serviceDate:     "9223372036854775808",
+			expectedStatus:  http.StatusBadRequest,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+		{
+			name:            "underflow min int64 by 1",
+			serviceDate:     "-9223372036854775809",
+			expectedStatus:  http.StatusBadRequest,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+		{
+			name:            "whitespace only string rejected",
+			serviceDate:     "   ",
+			expectedStatus:  http.StatusBadRequest,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+		{
+			name:           "valid epoch timestamp",
+			serviceDate:    "1291536000000",
+			expectedStatus: http.StatusOK,
+			expectError:    false,
+		},
+		{
+			name:           "valid max int64 boundary",
+			serviceDate:    "9223372036854775807",
+			expectedStatus: http.StatusOK,
+			expectError:    false,
+		},
+		{
+			name:           "valid min int64 boundary",
+			serviceDate:    "-9223372036854775808",
+			expectedStatus: http.StatusOK,
+			expectError:    false,
+		},
+		{
+			name:           "valid zero",
+			serviceDate:    "0",
+			expectedStatus: http.StatusOK,
+			expectError:    false,
+		},
+		{
+			name:           "valid negative number",
+			serviceDate:    "-1",
+			expectedStatus: http.StatusOK,
+			expectError:    false,
+		},
+		{
+			name:           "whitespace padded number parsed successfully",
+			serviceDate:    " 60 ",
+			expectedStatus: http.StatusOK,
+			expectError:    false,
+		},
+		{
+			name:           "empty string accepted as omitted",
+			serviceDate:    "",
+			expectedStatus: http.StatusOK,
+			expectError:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := url.Values{}
+			if tt.serviceDate != "" || tt.name == "empty string accepted as omitted" {
+				params.Set("serviceDate", tt.serviceDate)
+			}
+			endpoint := reportProblemWithTripURL("1_12345", params)
+
+			if tt.expectError {
+				resp, model := callAPIHandler[strictValidationResponse](t, api, endpoint)
+				require.Equal(t, tt.expectedStatus, resp.StatusCode)
+				require.Equal(t, tt.expectedStatus, model.Code)
+				require.Contains(t, model.Data.FieldErrors, "serviceDate")
+				assert.Contains(t, model.Data.FieldErrors["serviceDate"], tt.expectedMessage)
+			} else {
+				resp, model := callAPIHandler[EmptyResponse](t, api, endpoint)
+				require.Equal(t, tt.expectedStatus, resp.StatusCode)
+				require.Equal(t, tt.expectedStatus, model.Code)
+			}
+		})
+	}
 }

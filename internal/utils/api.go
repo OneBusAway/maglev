@@ -173,6 +173,58 @@ func isFinite(f float64) bool {
 	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }
 
+// ParseInt64Param retrieves an optional signed 64-bit integer from the provided URL query parameters.
+// If the key is not present or empty, it returns nil and the unmodified fieldErrors map.
+// If the key is present but cannot be parsed as a signed 64-bit integer, it returns nil and updates
+// the fieldErrors map with a validation error matching Java Struts type conversion.
+// - params: URL query parameters.
+// - key: The key to look for in the query parameters.
+// - fieldErrors: A map to collect validation errors for fields.
+// Returns:
+// - A pointer to the parsed int64 value (or nil if omitted/invalid).
+// - The updated fieldErrors map containing any validation errors.
+func ParseInt64Param(params url.Values, key string, fieldErrors map[string][]string) (*int64, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	val := params.Get(key)
+	if val == "" {
+		return nil, fieldErrors
+	}
+
+	parsed, err := strconv.ParseInt(strings.TrimSpace(val), 10, 64)
+	if err != nil {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
+		return nil, fieldErrors
+	}
+
+	return &parsed, fieldErrors
+}
+
+// ParseRequiredInt64Param retrieves a required signed 64-bit integer from the provided URL query parameters.
+// If the key is not present or empty, it updates fieldErrors with a missing required field error.
+// If the key is present but invalid, it updates fieldErrors with an invalid field value error.
+func ParseRequiredInt64Param(params url.Values, key string, fieldErrors map[string][]string) (*int64, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	val := params.Get(key)
+	if val == "" {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Missing required field %q.", key))
+		return nil, fieldErrors
+	}
+
+	parsed, err := strconv.ParseInt(strings.TrimSpace(val), 10, 64)
+	if err != nil {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
+		return nil, fieldErrors
+	}
+
+	return &parsed, fieldErrors
+}
+
 // ParseTimeParameter parses an epoch millisecond timestamp or legacy date-time
 // string (yyyy-MM-dd_HH-mm-ss) in the provided location. If timeParam is empty,
 // it uses the current time from the provided clock.
