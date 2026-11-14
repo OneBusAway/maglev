@@ -338,6 +338,46 @@ func TestArrivalsAndDeparturesForStopHandler_AgencyAlertWithoutArrivals(t *testi
 	assert.Contains(t, referencedIDs, wantSituationID)
 }
 
+func TestArrivalsAndDeparturesForStopHandler_RouteAlertWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// Route 154 is the only route serving stop 4062; route 15 doesn't serve it.
+	const servingRouteID = "154"
+	const otherRouteID = "15"
+	routeIDs := map[string]string{
+		"serving-route-alert": servingRouteID,
+		"other-route-alert":   otherRouteID,
+	}
+	for alertID, routeID := range routeIDs {
+		api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+			ID:               alertID,
+			InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}},
+			Header:           []gtfs.AlertText{{Text: "Route alert", Language: "en"}},
+		})
+	}
+
+	requestURL := arrivalsAndDeparturesURL(arrivalsTestStopID,
+		url.Values{"minutesBefore": {"0"}, "minutesAfter": {"0"}})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the empty window must leave no arrival to carry the alert")
+
+	agencyID := testdata.Raba.ID
+	servingSituationID := utils.FormCombinedID(agencyID, "serving-route-alert")
+	assert.Contains(t, model.Data.Entry.SituationIDs, servingSituationID,
+		"a stop must show alerts for the routes that serve it")
+	assert.NotContains(t, model.Data.Entry.SituationIDs, utils.FormCombinedID(agencyID, "other-route-alert"),
+		"a stop must not show alerts for routes that don't serve it")
+	var referencedIDs []string
+	for _, situation := range model.Data.References.Situations {
+		referencedIDs = append(referencedIDs, situation.ID)
+	}
+	assert.Contains(t, referencedIDs, servingSituationID)
+}
+
 func TestArrivalsAndDeparturesForStopHandlerTimeParams(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()

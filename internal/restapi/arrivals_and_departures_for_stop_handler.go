@@ -119,16 +119,19 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		FrequencyAfter:  params.FrequencyAfter,
 	}, acc)
 	if err != nil {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 
 	// Sort after buildArrival so predicted times are already filled in.
 	sortArrivalsByBestTime(result.Arrivals)
+
+	// A route can serve this stop and still have every arrival fall outside
+	// the window. Those route alerts belong on the entry anyway.
+	if err := api.addRouteAlertsForRetainedStops(ctx, []string{stopID}, acc.situations); err != nil {
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
+		return
+	}
 
 	// Java looks up nearby stops whether or not the window has arrivals.
 	nearbyStopIDs, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
@@ -148,11 +151,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		primaryAgency:    &agency,
 	}, acc)
 	if err != nil {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 
@@ -164,7 +163,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 // addStopSituations records the stop's own and agency-wide alerts, adds every
 // collected situation to references, and returns their IDs for the entry.
 // The list covers every alert reachable from this stop, whether it was matched
-// through an arrival's trip or through the stop itself.
+// through an arrival's trip, a route serving the stop, or the stop itself.
 func (api *RestAPI) addStopSituations(ctx context.Context, references *models.ReferencesModel, acc *arrivalsAccumulator, stopCode, stopAgencyID string) []string {
 	acc.situations.add(api.GtfsManager.GetAlertsForStop(stopCode, stopAgencyID), acc.alertAgencyID)
 	references.Situations = append(references.Situations, api.situationReferences(ctx, acc.situations.refs)...)
