@@ -2005,12 +2005,12 @@ func TestArrivalsAndDeparturesForStopHandler_EmptyWindowKeepsStopAndRouteReferen
 	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
 		"the empty window must leave no arrival")
 
-	var stopIDs []string
-	for _, stop := range model.Data.References.Stops {
-		stopIDs = append(stopIDs, stop.ID)
-	}
-	assert.Contains(t, stopIDs, arrivalsTestStopID,
+	assert.Contains(t, referencedStopCombinedIDs(model.Data.References.Stops), arrivalsTestStopID,
 		"the requested stop must be a reference even with no arrivals")
-	assert.NotEmpty(t, model.Data.References.Routes,
-		"the routes serving the requested stop must be references even with no arrivals")
+	var routeIDs []string
+	for _, route := range model.Data.References.Routes {
+		routeIDs = append(routeIDs, route.ID)
+	}
+	assert.Contains(t, routeIDs, "25_154",
+		"the route serving the requested stop must be a reference even with no arrivals")
 }
