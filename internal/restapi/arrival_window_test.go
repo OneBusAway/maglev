@@ -455,6 +455,7 @@ func referencedStopCombinedIDs(stops []models.Stop) []string {
 	}
 	return ids
 }
+
 // TestArrivalFrequencyMidInterval verifies that frequency-based trips remain
 // surfaced throughout their active frequencies.txt interval after template
 // stop_times pass, projecting scheduled times as clamp(queryTime+headway/2,
