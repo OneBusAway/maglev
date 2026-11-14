@@ -90,18 +90,18 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 	}
 }
 
-// readFirstAgencyID returns the lowest agency ID in the loaded static feed, or ""
-// when the feed has no agencies or the query fails.
-func (manager *Manager) readFirstAgencyID(ctx context.Context, logger *slog.Logger) string {
+// readFirstAgencyID returns the lowest agency ID in the loaded static feed. An
+// empty agency table gives "" with no error; a failed query gives an error, so the
+// caller can tell the two apart.
+func (manager *Manager) readFirstAgencyID(ctx context.Context) (string, error) {
 	agencyIDs, err := manager.GtfsDB.Queries.ListAgencyIds(ctx)
 	if err != nil {
-		logging.LogError(logger, "failed to read first static agency ID", err)
-		return ""
+		return "", err
 	}
 	if len(agencyIDs) == 0 {
-		return ""
+		return "", nil
 	}
-	return agencyIDs[0]
+	return agencyIDs[0], nil
 }
 
 // FirstStaticAgencyID returns the first agency ID of the loaded static feed. It is
@@ -140,13 +140,18 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	}
 
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
-	newFirstAgencyID := manager.readFirstAgencyID(ctx, logger)
+	newFirstAgencyID, agencyErr := manager.readFirstAgencyID(ctx)
+	if agencyErr != nil {
+		logging.LogError(logger, "failed to read first static agency ID; keeping the previous value", agencyErr)
+	}
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
 
 	manager.regionBounds = newRegionBounds
-	manager.firstAgencyID = newFirstAgencyID
+	if agencyErr == nil {
+		manager.firstAgencyID = newFirstAgencyID
+	}
 
 	// Replace direction and trip-distance caches together for the new feed.
 	// In-flight calculations retain the retired cache generation.
