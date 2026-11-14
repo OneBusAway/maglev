@@ -173,6 +173,60 @@ func isFinite(f float64) bool {
 	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }
 
+// ParseInt32Param retrieves an optional signed 32-bit integer from the provided URL query parameters.
+// If the key is not present, it returns nil and the unmodified fieldErrors map.
+// If the key is present but cannot be parsed as a signed 32-bit integer, it returns nil and updates
+// the fieldErrors map with a validation error matching Java Struts type conversion.
+// - params: URL query parameters.
+// - key: The key to look for in the query parameters.
+// - fieldErrors: A map to collect validation errors for fields.
+// Returns:
+// - A pointer to the parsed int32 value (or nil if omitted/invalid).
+// - The updated fieldErrors map containing any validation errors.
+func ParseInt32Param(params url.Values, key string, fieldErrors map[string][]string) (*int32, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	val := params.Get(key)
+	if val == "" {
+		return nil, fieldErrors
+	}
+
+	parsed, err := strconv.ParseInt(val, 10, 32)
+	if err != nil {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
+		return nil, fieldErrors
+	}
+
+	v := int32(parsed)
+	return &v, fieldErrors
+}
+
+// ParseRequiredInt32Param retrieves a required signed 32-bit integer from the provided URL query parameters.
+// If the key is not present, it updates fieldErrors with a missing required field error.
+// If the key is present but invalid, it updates fieldErrors with an invalid field value error.
+func ParseRequiredInt32Param(params url.Values, key string, fieldErrors map[string][]string) (*int32, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	val := params.Get(key)
+	if val == "" {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Missing required field %q.", key))
+		return nil, fieldErrors
+	}
+
+	parsed, err := strconv.ParseInt(val, 10, 32)
+	if err != nil {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
+		return nil, fieldErrors
+	}
+
+	v := int32(parsed)
+	return &v, fieldErrors
+}
+
 // ParseTimeParameter parses an epoch millisecond timestamp or legacy date-time
 // string (yyyy-MM-dd_HH-mm-ss) in the provided location. If timeParam is empty,
 // it uses the current time from the provided clock.
@@ -326,27 +380,31 @@ func parseMaxCount(queryParams url.Values, defaultCount, ceiling int, overflow m
 // maxCount is the primary parameter for limit, falling back to limit.
 // If neither is present, limit is -1 (return all).
 // Default offset is 0.
-func ParsePaginationParams(r *http.Request) (offset int, limit int) {
-	queryParams := r.URL.Query()
-
-	offset = 0
-	if val := queryParams.Get("offset"); val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil && parsed >= 0 {
-			offset = parsed
-		}
+func ParsePaginationParams(r *http.Request, fieldErrors map[string][]string) (int, int, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
 	}
 
-	limit = -1 // Default to no limit
+	queryParams := r.URL.Query()
+
+	offset := 0
+	parsedOffset, fieldErrors := ParseInt32Param(queryParams, "offset", fieldErrors)
+	if parsedOffset != nil && *parsedOffset >= 0 {
+		offset = int(*parsedOffset)
+	}
+
+	limit := -1 // Default to no limit
 
 	// Check maxCount first (OBA convention)
-	if val := queryParams.Get("maxCount"); val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	} else if val := queryParams.Get("limit"); val != "" {
-		// Fallback to limit
-		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
-			limit = parsed
+	parsedMaxCount, fieldErrors := ParseInt32Param(queryParams, "maxCount", fieldErrors)
+	if parsedMaxCount != nil && *parsedMaxCount > 0 {
+		limit = int(*parsedMaxCount)
+	} else if queryParams.Get("maxCount") == "" {
+		// Fallback to limit if maxCount was not provided
+		var parsedLimit *int32
+		parsedLimit, fieldErrors = ParseInt32Param(queryParams, "limit", fieldErrors)
+		if parsedLimit != nil && *parsedLimit > 0 {
+			limit = int(*parsedLimit)
 		}
 	}
 
@@ -355,7 +413,7 @@ func ParsePaginationParams(r *http.Request) (offset int, limit int) {
 		limit = 1000
 	}
 
-	return offset, limit
+	return offset, limit, fieldErrors
 }
 
 // PaginateSlice slices a slice based on offset and limit.
