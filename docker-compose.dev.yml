@@ -19,6 +19,7 @@ services:
     environment:
       - TZ=UTC
       - CGO_ENABLED=1
+      - TMPDIR=/app/data
     working_dir: /app
     # Use Air for live reload during development (Docker-specific config)
     command: [ "air", "-c", ".air.docker.toml" ]

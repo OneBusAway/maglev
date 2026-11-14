@@ -14,6 +14,7 @@ services:
       - maglev-data:/app/data
     environment:
       - TZ=UTC
+      - TMPDIR=/app/data
     healthcheck:
       test: [ "CMD-SHELL", "wget -q -O /dev/null http://localhost:4000/healthz || exit 1" ]
       interval: 30s
