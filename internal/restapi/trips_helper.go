@@ -32,7 +32,8 @@ type tripStatusExtras struct {
 	// deviationResolved reports that status.ScheduleDeviation came from a
 	// TripUpdate inside Java's blockNotActive window, rather than defaulting
 	// to 0.
-	deviationResolved bool
+	deviationResolved  bool
+	deviationDiscarded bool
 	// blockTripIDs are the block's trips in start order, from which Java
 	// builds its per-stop deviation samples.
 	blockTripIDs []string
@@ -163,16 +164,17 @@ func (api *RestAPI) BuildTripStatus(
 	// shift's scheduleDeviation, and status.ScheduleDeviation flows onward
 	// into effectiveTime / stop-offset math for every arrival on this trip.
 	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, dbTripID, serviceDate)
-	scheduleDeviation, hasRealtimeTripUpdate := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceDate, currentTime)
+	scheduleDeviation, hasRealtimeTripUpdate, discarded := api.resolveBlockDeviation(ctx, blockTripIDs, serviceDate, currentTime)
 
 	if hasRealtimeTripUpdate {
 		status.ScheduleDeviation = scheduleDeviation
 	}
 	extras.deviationResolved = hasRealtimeTripUpdate
+	extras.deviationDiscarded = discarded
 	extras.blockTripIDs = blockTripIDs
 
 	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
-	status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
+	status.SetPredicted(!discarded && (hasVehicleRealtimeData || hasRealtimeTripUpdate))
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, dbTripID)
 	if err != nil {

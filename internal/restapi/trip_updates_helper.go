@@ -25,6 +25,77 @@ type StopDelayInfo struct {
 	DepartureDelay int64
 }
 
+// arrivalIsCanceled only applies cancellation to the requested trip. A vehicle
+// associated through the block may be reporting a different trip's cancellation.
+func arrivalIsCanceled(tripID string, vehicle *gtfs.Vehicle, tripUpdate *gtfs.Trip) bool {
+	if tripUpdate != nil && tripUpdate.ID.ID == tripID &&
+		tripUpdate.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
+		return true
+	}
+	return vehicle != nil && vehicle.Trip != nil &&
+		vehicle.Trip.ID.ID == tripID &&
+		vehicle.Trip.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED
+}
+
+// canUseBlockPredictionFallback preserves direct timing boundaries while
+// allowing an earlier block trip to supply times past empty or later-only updates.
+func (api *RestAPI) canUseBlockPredictionFallback(tripID, stopID string, sequence int64, schedule tripSchedule, extras *tripStatusExtras) bool {
+	update, _ := api.GtfsManager.GetTripUpdateByID(tripID)
+	if update == nil || api.tripUpdateExpired(*update) {
+		return true
+	}
+	if update.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
+		return false
+	}
+	target, prior, _ := predictionUpdatesForStop(update.StopTimeUpdates, stopID, sequence, schedule)
+	if target != nil || prior != nil {
+		return false
+	}
+	for _, stu := range update.StopTimeUpdates {
+		if stu.StopID != nil && *stu.StopID == stopID && stu.StopSequence == nil {
+			if _, resolved := stopTimeUpdateSequence(stu, schedule.stopIDs); !resolved {
+				return false
+			}
+		}
+	}
+	for _, stu := range update.StopTimeUpdates {
+		later, resolved := stopTimeUpdateSequence(stu, schedule.stopIDs)
+		_, scheduled := schedule.stopIDs[later]
+		if resolved && scheduled && later > sequence && stopUpdateHasTiming(stu) {
+			return true
+		}
+	}
+	if extras == nil {
+		return false
+	}
+	for _, source := range api.collectBlockTripUpdates(extras.blockTripIDs) {
+		if source.tripID != tripID && tripUpdateHasTiming(source.tu) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func tripUpdateHasTiming(update gtfs.Trip) bool {
+	if update.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
+		return false
+	}
+	if update.Delay != nil {
+		return true
+	}
+	return slices.ContainsFunc(update.StopTimeUpdates, stopUpdateHasTiming)
+}
+
+func stopUpdateHasTiming(stu gtfs.StopTimeUpdate) bool {
+	if stu.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED ||
+		stu.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA {
+		return false
+	}
+	event, _ := propagationEvent(&stu)
+	return event != nil && (event.Time != nil || event.Delay != nil)
+}
+
 // GetScheduleDeviationForBlock returns the schedule deviation in seconds
 // (positive = late) across every TripUpdate matching any tripID. Mirrors
 // Java's GtfsRealtimeTripLibrary.applyTripUpdatesToRecord (lines 932-1014):
@@ -41,45 +112,52 @@ type StopDelayInfo struct {
 // tripIDs MUST be in block-trip-start order; caller sorts via
 // blockTripIDsSortedByStartTime.
 func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []string, serviceDate time.Time, currentTime time.Time) (int, bool) {
+	deviation, resolved, _ := api.resolveBlockDeviation(ctx, tripIDs, serviceDate, currentTime)
+	return deviation, resolved
+}
+
+// resolveBlockDeviation distinguishes missing timing from an outlier record
+// discarded by Java's blockNotActive rule, which must also disable tracking.
+func (api *RestAPI) resolveBlockDeviation(ctx context.Context, tripIDs []string, serviceDate, currentTime time.Time) (deviation int, resolved, discarded bool) {
 	if len(tripIDs) == 0 {
-		return 0, false
+		return 0, false, false
 	}
 	tripUpdates := api.collectBlockTripUpdates(tripIDs)
 	if len(tripUpdates) == 0 {
-		return 0, false
+		return 0, false, false
 	}
 	// Java sets no deviation when the block's last update is canceled
 	// (GtfsRealtimeTripLibrary.java:953, :1104).
 	lastUpdate := tripUpdates[len(tripUpdates)-1].tu
 	if lastUpdate.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
-		return 0, false
+		return 0, false, false
 	}
 	dev, ok, discard := pickTripLevelDeviation(tripUpdates)
 	if discard {
 		// Java's blockNotActive guard fired: the entire VehicleLocationRecord
 		// would be discarded. We must NOT fall through to STU/per-stop paths —
 		// that would silently recover RT data Java treats as poisoned.
-		return 0, false
+		return 0, false, true
 	}
 	if ok {
-		return dev, true
+		return dev, true, false
 	}
 	if dev, ok := api.pickClosestSTUDeviation(ctx, tripUpdates, serviceDate, api.deviationPickTime(tripUpdates, currentTime)); ok {
 		if exceedsBlockNotActiveThreshold(dev) {
-			return 0, false
+			return 0, false, true
 		}
-		return dev, true
+		return dev, true, false
 	}
 	if dev, ok := pickFirstAvailableSTUDelay(tripUpdates); ok {
 		if exceedsBlockNotActiveThreshold(dev) {
-			return 0, false
+			return 0, false, true
 		}
-		return dev, true
+		return dev, true, false
 	}
 	// Java builds a record from any trip update, with a zero deviation when it
 	// has no times (GtfsRealtimeTripLibrary.java:1104-1105). Live Tampa reports
 	// these, whose stops are all SKIPPED, as predicted and on schedule.
-	return 0, true
+	return 0, true, false
 }
 
 // deviationPickTime is the moment a block's deviation is chosen for. Java keeps
@@ -782,16 +860,163 @@ func sequenceIdentifiesVisit(stu gtfs.StopTimeUpdate, staticStops map[int64]stri
 	return ok && staticStop == *stu.StopID
 }
 
-// staticStopsForTrip loads a trip's static schedule as a stop_sequence to
-// stop_id map. It returns an empty map when the lookup fails.
-func (api *RestAPI) staticStopsForTrip(ctx context.Context, tripID string) map[int64]string {
-	stops := map[int64]string{}
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
-	if err != nil {
-		return stops
+// tripSchedule retains the caller's stop times and indexes stop IDs once per trip.
+// Its zero value represents an unavailable static schedule.
+type tripSchedule struct {
+	stopTimes []gtfsdb.StopTime
+	stopIDs   map[int64]string
+}
+
+func newTripSchedule(stopTimes []gtfsdb.StopTime) tripSchedule {
+	stopIDs := make(map[int64]string, len(stopTimes))
+	for _, stopTime := range stopTimes {
+		stopIDs[stopTime.StopSequence] = stopTime.StopID
 	}
-	for _, st := range stopTimes {
-		stops[st.StopSequence] = st.StopID
+	return tripSchedule{stopTimes: stopTimes, stopIDs: stopIDs}
+}
+
+// stopTimeUpdateSequence resolves an update to a visit in the static trip.
+// An ID fallback is usable only when it names exactly one visit.
+func stopTimeUpdateSequence(update gtfs.StopTimeUpdate, staticStops map[int64]string) (int64, bool) {
+	if sequenceIdentifiesVisit(update, staticStops) {
+		return int64(*update.StopSequence), true
 	}
-	return stops
+	if update.StopID == nil {
+		return 0, false
+	}
+	sequence, found := int64(0), false
+	for seq, stopID := range staticStops {
+		if stopID != *update.StopID {
+			continue
+		}
+		if found {
+			return 0, false
+		}
+		sequence, found = seq, true
+	}
+	return sequence, found
+}
+
+// predictionUpdatesForStop selects the target update and closest prior update.
+// SKIPPED updates cannot replace an earlier propagation source. SCHEDULED
+// time-only updates without a source row are ignored; empty SCHEDULED updates
+// and NO_DATA remain propagation boundaries.
+func predictionUpdatesForStop(updates []gtfs.StopTimeUpdate, stopCode string, targetSequence int64, schedule tripSchedule) (target, prior *gtfs.StopTimeUpdate, priorSequence int64) {
+	if target = exactStopTimeUpdate(updates, stopCode, targetSequence); target != nil {
+		return target, nil, -1
+	}
+	priorSequence = -1
+	staticStops := schedule.stopIDs
+	for i := range updates {
+		update := &updates[i]
+		matchesStop := update.StopID != nil && *update.StopID == stopCode
+		sequence, resolved := stopTimeUpdateSequence(*update, staticStops)
+		matchesTargetVisit := matchesStop && resolved && sequence == targetSequence
+		matchesIDWithoutSchedule := matchesStop && !resolved && len(staticStops) == 0
+		if target == nil && (matchesTargetVisit || matchesIDWithoutSchedule) {
+			// Preserve direct ID-only predictions when no static schedule is
+			// available. They need no source schedule to derive their offset.
+			target = update
+		}
+		if !resolved || sequence >= targetSequence || sequence <= priorSequence ||
+			update.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED {
+			continue
+		}
+		event, _ := propagationEvent(update)
+		_, hasScheduledStop := staticStops[sequence]
+		timeNeedsSchedule := event != nil && event.Time != nil && event.Delay == nil
+		// A timestamp without its source schedule cannot replace a usable delay.
+		// Keep NO_DATA and empty SCHEDULED updates as propagation boundaries.
+		if update.ScheduleRelationship != gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA &&
+			timeNeedsSchedule && !hasScheduledStop {
+			continue
+		}
+		priorSequence, prior = sequence, update
+	}
+	return target, prior, priorSequence
+}
+
+// exactStopTimeUpdate prefers a sequenced target over ID-only fallbacks and
+// avoids fallback matching when the feed already identifies the requested visit.
+func exactStopTimeUpdate(updates []gtfs.StopTimeUpdate, stopID string, sequence int64) *gtfs.StopTimeUpdate {
+	for i := range updates {
+		update := &updates[i]
+		if update.StopSequence == nil || int64(*update.StopSequence) != sequence {
+			continue
+		}
+		if update.StopID == nil || *update.StopID == stopID {
+			return update
+		}
+	}
+	return nil
+}
+
+// stopTimeEventOffset prefers an absolute time over an explicit delay.
+// An event with neither field does not provide a prediction.
+func stopTimeEventOffset(event *gtfs.StopTimeEvent, scheduled time.Time) *time.Duration {
+	if event == nil {
+		return nil
+	}
+	if event.Time != nil {
+		offset := event.Time.Sub(scheduled)
+		return &offset
+	}
+	return event.Delay
+}
+
+// propagationEvent selects departure timing when usable, otherwise arrival.
+func propagationEvent(update *gtfs.StopTimeUpdate) (event *gtfs.StopTimeEvent, useDeparture bool) {
+	event = update.Departure
+	if event != nil && (event.Time != nil || event.Delay != nil) {
+		return event, true
+	}
+	return update.Arrival, false
+}
+
+// propagatedDelayFromUpdate resolves the onward delay from a prior stop update.
+// Departure takes precedence over arrival; time takes precedence over delay.
+func propagatedDelayFromUpdate(
+	schedule tripSchedule,
+	update *gtfs.StopTimeUpdate,
+	priorStopSequence int64,
+	targetStopSequence int64,
+	scheduledArrivalTime time.Time,
+) (time.Duration, bool) {
+	event, useDeparture := propagationEvent(update)
+	if event == nil {
+		return 0, false
+	}
+	explicitDelay := func() (time.Duration, bool) {
+		if event.Delay != nil {
+			return *event.Delay, true
+		}
+		return 0, false
+	}
+	if event.Time == nil {
+		return explicitDelay()
+	}
+	stopTimes := schedule.stopTimes
+	var priorStop, targetStop *gtfsdb.StopTime
+	for i := range stopTimes {
+		stopTime := &stopTimes[i]
+		switch stopTime.StopSequence {
+		case priorStopSequence:
+			priorStop = stopTime
+		case targetStopSequence:
+			targetStop = stopTime
+		}
+	}
+	if priorStop == nil || targetStop == nil {
+		return explicitDelay()
+	}
+
+	// Recover the caller's service-day start rather than assuming midnight,
+	// preserving DST anchoring and stop-time offsets beyond 24 hours.
+	serviceStart := scheduledArrivalTime.Add(-time.Duration(targetStop.ArrivalTime))
+	scheduledOffset := priorStop.ArrivalTime
+	if useDeparture {
+		scheduledOffset = priorStop.DepartureTime
+	}
+	priorScheduledTime := serviceStart.Add(time.Duration(scheduledOffset))
+	return event.Time.Sub(priorScheduledTime), true
 }
