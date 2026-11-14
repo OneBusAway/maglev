@@ -581,7 +581,7 @@ func TestBuildApplicationWithConfigFile(t *testing.T) {
   "env": "test",
   "api-keys": ["test-key"],
   "rate-limit": 50,
-  "gtfs-url": "` + absTestDataPath + `",
+  "gtfs-static-feeds": [{"id": "raba", "url": "` + absTestDataPath + `", "enable-gtfs-tidy": false}],
   "data-path": ":memory:"
 }`
 		err = os.WriteFile(testConfigPath, []byte(testConfigContent), 0644)
@@ -598,6 +598,8 @@ func TestBuildApplicationWithConfigFile(t *testing.T) {
 		cfg := jsonConfig.ToAppConfig()
 		gtfsCfgData, err := jsonConfig.ToGtfsConfigData()
 		require.NoError(t, err)
+		require.Len(t, gtfsCfgData.StaticFeeds, 1)
+		require.Equal(t, absTestDataPath, gtfsCfgData.StaticFeeds[0].URL)
 		gtfsCfg := gtfsConfigFromData(gtfsCfgData)
 
 		// Build application
