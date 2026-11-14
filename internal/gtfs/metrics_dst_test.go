@@ -21,6 +21,10 @@ func TestGetMetrics_ScheduledBlocksOnDSTDays(t *testing.T) {
 		want                                 int
 	}{
 		{"ordinary day", "America/Los_Angeles", "20250308", "2025-03-08T02:30:00-08:00", 2 * time.Hour, 3 * time.Hour, 1},
+		{"spring eve before start", "America/Los_Angeles", "20250309", "2025-03-08T22:59:59-08:00", 0, time.Hour, 0},
+		{"spring eve inclusive start", "America/Los_Angeles", "20250309", "2025-03-08T23:00:00-08:00", 0, time.Hour, 1},
+		{"spring eve active", "America/Los_Angeles", "20250309", "2025-03-08T23:30:00-08:00", 0, time.Hour, 1},
+		{"ordinary eve", "America/Los_Angeles", "20250308", "2025-03-07T23:30:00-08:00", 0, time.Hour, 0},
 		{"spring active", "America/Los_Angeles", "20250309", "2025-03-09T01:30:00-08:00", 2 * time.Hour, 3 * time.Hour, 1},
 		{"spring inactive", "America/Los_Angeles", "20250309", "2025-03-09T01:30:00-08:00", time.Hour, 2 * time.Hour, 0},
 		{"fall first hour active", "America/Los_Angeles", "20251102", "2025-11-02T01:30:00-07:00", 0, time.Hour, 1},
@@ -47,7 +51,7 @@ func TestGetMetrics_ScheduledBlocksOnDSTDays(t *testing.T) {
 			_, err := manager.GtfsDB.DB.ExecContext(ctx, "UPDATE agencies SET timezone = ? WHERE id = 'A'", tt.timezone)
 			require.NoError(t, err)
 			ensureDefaultCalendar(t, manager)
-			// Run this service on exactly one date so today's and yesterday's
+			// Run this service on exactly one date so adjacent service dates'
 			// lookups cannot hide a wrong date or double-count the same instance.
 			_, err = manager.GtfsDB.DB.ExecContext(ctx, "UPDATE calendar SET start_date = ?, end_date = ? WHERE id = ?", tt.serviceDate, tt.serviceDate, defaultTestServiceID)
 			require.NoError(t, err)

@@ -916,10 +916,9 @@ type GetActiveBlockIDsForAgencyParams struct {
 // block_id is optional in GTFS, so trips.id is substituted for trips with no
 // block_id, matching them 1:1 to their own "block" rather than dropping them.
 // The importer stores a missing block_id as ” rather than NULL, hence NULLIF.
-// Callers run this once for today's service (at the current time-of-day) and
-// once for yesterday's service (the same instant shifted +24h) to catch
-// after-midnight trips, mirroring the today/yesterday pattern in
-// trips_for_route_handler.go.
+// Callers measure the query instant from each service date's own GTFS start
+// (local noon minus twelve elapsed hours), including yesterday's overnight
+// service and tomorrow's service if its start already falls on today's date.
 // The slice param must come last so the other params keep stable ?N
 // numbers once sqlc expands it (see GetActiveLayoverBlockIDsForRoute). `at`
 // is only needed in HAVING, after the slice, so it is bound up front in FROM.

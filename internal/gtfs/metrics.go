@@ -155,7 +155,18 @@ func (manager *Manager) activeTripsForAgency(ctx context.Context, now time.Time,
 		return 0, err
 	}
 
-	return today + yesterday, nil
+	// On spring-forward eve, tomorrow's GTFS start can fall before local
+	// midnight. Include that service only once its start has been reached.
+	tomorrowDate := todayDate.AddDays(1)
+	tomorrowStart := tomorrowDate.Start(loc)
+	if now.Before(tomorrowStart) {
+		return today + yesterday, nil
+	}
+	tomorrow, err := manager.countActiveBlocksAt(ctx, agency.ID, serviceIDCache, tomorrowDate.Midnight(loc), now.Sub(tomorrowStart))
+	if err != nil {
+		return 0, err
+	}
+	return today + yesterday + tomorrow, nil
 }
 
 // serviceIDsByDate caches active service IDs by YYYYMMDD date for one
