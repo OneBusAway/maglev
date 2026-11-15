@@ -62,6 +62,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS routes_fts USING fts5 (
 
 -- migrate
 -- Trigger naming: ai=After Insert, ad=After Delete, au=After Update
+DROP TRIGGER IF EXISTS routes_fts_ai;
+
 CREATE TRIGGER IF NOT EXISTS routes_fts_ai AFTER INSERT ON routes BEGIN
 INSERT INTO
     routes_fts (rowid, id, agency_id, short_name, long_name, desc)
@@ -78,6 +80,8 @@ VALUES
 END;
 
 -- migrate
+DROP TRIGGER IF EXISTS routes_fts_ad;
+
 CREATE TRIGGER IF NOT EXISTS routes_fts_ad AFTER DELETE ON routes BEGIN
 INSERT INTO
     routes_fts (
@@ -103,6 +107,8 @@ VALUES
 END;
 
 -- migrate
+DROP TRIGGER IF EXISTS routes_fts_au;
+
 CREATE TRIGGER IF NOT EXISTS routes_fts_au AFTER
 UPDATE ON routes BEGIN
 INSERT INTO
@@ -213,6 +219,8 @@ CREATE TABLE
     IF NOT EXISTS "stops_rtree_parent" (nodeno INTEGER PRIMARY KEY, parentnode);
 
 -- migrate
+DROP TRIGGER IF EXISTS stops_rtree_insert_trigger;
+
 CREATE TRIGGER IF NOT EXISTS stops_rtree_insert_trigger AFTER INSERT ON stops BEGIN
 INSERT INTO
     stops_rtree (id, min_lat, max_lat, min_lon, max_lon)
@@ -222,6 +230,8 @@ VALUES
 END;
 
 -- migrate
+DROP TRIGGER IF EXISTS stops_rtree_update_trigger;
+
 CREATE TRIGGER IF NOT EXISTS stops_rtree_update_trigger AFTER
 UPDATE ON stops BEGIN
 UPDATE stops_rtree
@@ -236,6 +246,8 @@ WHERE
 END;
 
 -- migrate
+DROP TRIGGER IF EXISTS stops_rtree_delete_trigger;
+
 CREATE TRIGGER IF NOT EXISTS stops_rtree_delete_trigger AFTER DELETE ON stops BEGIN
 DELETE FROM stops_rtree
 WHERE

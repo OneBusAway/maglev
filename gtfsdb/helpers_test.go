@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -55,6 +56,65 @@ func TestPerformDatabaseMigration_ErrorHandling(t *testing.T) {
 
 	assert.Error(t, err, "Migration should fail on invalid SQL")
 	assert.Contains(t, err.Error(), "error executing DDL statement", "Error should wrap the failing context")
+}
+
+func TestPerformDatabaseMigration_RecreatesTriggers(t *testing.T) {
+	// File-backed so the second migration runs against an existing database.
+	db, err := sql.Open(DriverName, DSN(filepath.Join(t.TempDir(), "test.db")))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("failed to close database: %v", err)
+		}
+	})
+
+	ctx := t.Context()
+	require.NoError(t, performDatabaseMigration(ctx, db))
+
+	exec := func(query string) {
+		_, err := db.ExecContext(ctx, query)
+		require.NoError(t, err, query)
+	}
+	count := func(query string) int {
+		var n int
+		require.NoError(t, db.QueryRowContext(ctx, query).Scan(&n), query)
+		return n
+	}
+
+	// Rows for the update and delete checks, inserted while the real triggers
+	// exist so those checks do not depend on the insert triggers.
+	exec(`INSERT INTO stops (id, lat, lon) VALUES ('s-upd', 20.0, -122.0), ('s-del', 10.0, -122.0)`)
+	exec(`INSERT INTO agencies (id, name, url, timezone) VALUES ('a', 'A', 'http://a', 'UTC')`)
+	exec(`INSERT INTO routes (id, agency_id, long_name, type) VALUES ('r-upd', 'a', 'updold', 3), ('r-del', 'a', 'delword', 3)`)
+
+	// Replace each trigger with a no-op, as an older schema.sql would have left it.
+	stubs := []string{
+		`DROP TRIGGER IF EXISTS routes_fts_ai; CREATE TRIGGER routes_fts_ai AFTER INSERT ON routes BEGIN SELECT 1; END;`,
+		`DROP TRIGGER IF EXISTS routes_fts_ad; CREATE TRIGGER routes_fts_ad AFTER DELETE ON routes BEGIN SELECT 1; END;`,
+		`DROP TRIGGER IF EXISTS routes_fts_au; CREATE TRIGGER routes_fts_au AFTER UPDATE ON routes BEGIN SELECT 1; END;`,
+		`DROP TRIGGER IF EXISTS stops_rtree_insert_trigger; CREATE TRIGGER stops_rtree_insert_trigger AFTER INSERT ON stops BEGIN SELECT 1; END;`,
+		`DROP TRIGGER IF EXISTS stops_rtree_update_trigger; CREATE TRIGGER stops_rtree_update_trigger AFTER UPDATE ON stops BEGIN SELECT 1; END;`,
+		`DROP TRIGGER IF EXISTS stops_rtree_delete_trigger; CREATE TRIGGER stops_rtree_delete_trigger AFTER DELETE ON stops BEGIN SELECT 1; END;`,
+	}
+	for _, stub := range stubs {
+		exec(stub)
+	}
+
+	require.NoError(t, performDatabaseMigration(ctx, db))
+
+	exec(`INSERT INTO stops (id, lat, lon) VALUES ('s-ins', 30.0, -122.0)`)
+	assert.Equal(t, 1, count(`SELECT COUNT(*) FROM stops_rtree WHERE min_lat = 30.0`), "stops_rtree_insert_trigger")
+	exec(`UPDATE stops SET lat = 21.0 WHERE id = 's-upd'`)
+	assert.Equal(t, 1, count(`SELECT COUNT(*) FROM stops_rtree WHERE min_lat = 21.0`), "stops_rtree_update_trigger")
+	exec(`DELETE FROM stops WHERE id = 's-del'`)
+	assert.Equal(t, 0, count(`SELECT COUNT(*) FROM stops_rtree WHERE min_lat = 10.0`), "stops_rtree_delete_trigger")
+
+	exec(`INSERT INTO routes (id, agency_id, long_name, type) VALUES ('r-ins', 'a', 'insword', 3)`)
+	assert.Equal(t, 1, count(`SELECT COUNT(*) FROM routes_fts WHERE routes_fts MATCH 'insword'`), "routes_fts_ai")
+	exec(`UPDATE routes SET long_name = 'updnew' WHERE id = 'r-upd'`)
+	assert.Equal(t, 1, count(`SELECT COUNT(*) FROM routes_fts WHERE routes_fts MATCH 'updnew'`), "routes_fts_au")
+	exec(`DELETE FROM routes WHERE id = 'r-del'`)
+	assert.Equal(t, 0, count(`SELECT COUNT(*) FROM routes_fts WHERE routes_fts MATCH 'delword'`), "routes_fts_ad")
 }
 
 func TestProcessAndStoreGTFSData_ValidationFailurePreservesData(t *testing.T) {
