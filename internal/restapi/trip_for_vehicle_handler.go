@@ -38,7 +38,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -264,6 +264,17 @@ func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request
 	}
 
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
+	// Like Java, the agency prefix is part of the vehicle's identity. A vehicle
+	// with no attributed agency can't be checked, so it is still found.
+	attributedAgencyID, attributed := api.GtfsManager.VehicleAgencyID(vehicleID)
+	belongsToAnotherAgency := attributed && attributedAgencyID != agencyID
+	if belongsToAnotherAgency {
+		reqLogger.Debug("vehicle belongs to another agency",
+			"vehicleID", vehicleID, "agencyID", agencyID, "vehicleAgencyID", attributedAgencyID)
+		api.sendNotFound(w, r)
+		return "", false
+	}
+
 	// Return 404 when vehicle has no associated trip (idle vehicle)
 	// or when the trip ID is empty (avoiding a futile DB lookup)
 	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {

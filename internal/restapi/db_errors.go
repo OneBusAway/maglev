@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log/slog"
@@ -19,4 +20,15 @@ func warnIfRealDBError(err error, op string, attrs ...any) {
 		return
 	}
 	slog.Warn(op, append(attrs, slog.String("error", err.Error()))...)
+}
+
+// logQueryError logs database query errors, skipping client side cancellations
+// on purpose to avoid noisy logs.
+func logQueryError(logger *slog.Logger, msg string, err error) {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		logger.Warn(msg, "error", err)
+	case !errors.Is(err, context.Canceled):
+		logger.Error(msg, "error", err)
+	}
 }

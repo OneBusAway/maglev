@@ -132,6 +132,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getActiveLayoverBlockIDsForRouteStmt, err = db.PrepareContext(ctx, getActiveLayoverBlockIDsForRoute); err != nil {
 		return nil, fmt.Errorf("error preparing query GetActiveLayoverBlockIDsForRoute: %w", err)
 	}
+	if q.getActiveRouteIDsForStopsInIntervalStmt, err = db.PrepareContext(ctx, getActiveRouteIDsForStopsInInterval); err != nil {
+		return nil, fmt.Errorf("error preparing query GetActiveRouteIDsForStopsInInterval: %w", err)
+	}
 	if q.getActiveRouteIDsForStopsOnDateStmt, err = db.PrepareContext(ctx, getActiveRouteIDsForStopsOnDate); err != nil {
 		return nil, fmt.Errorf("error preparing query GetActiveRouteIDsForStopsOnDate: %w", err)
 	}
@@ -236,9 +239,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getRouteIDsForAgencyStmt, err = db.PrepareContext(ctx, getRouteIDsForAgency); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRouteIDsForAgency: %w", err)
-	}
-	if q.getRouteIDsForStopStmt, err = db.PrepareContext(ctx, getRouteIDsForStop); err != nil {
-		return nil, fmt.Errorf("error preparing query GetRouteIDsForStop: %w", err)
 	}
 	if q.getRouteIDsForStopsStmt, err = db.PrepareContext(ctx, getRouteIDsForStops); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRouteIDsForStops: %w", err)
@@ -593,6 +593,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getActiveLayoverBlockIDsForRouteStmt: %w", cerr)
 		}
 	}
+	if q.getActiveRouteIDsForStopsInIntervalStmt != nil {
+		if cerr := q.getActiveRouteIDsForStopsInIntervalStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getActiveRouteIDsForStopsInIntervalStmt: %w", cerr)
+		}
+	}
 	if q.getActiveRouteIDsForStopsOnDateStmt != nil {
 		if cerr := q.getActiveRouteIDsForStopsOnDateStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getActiveRouteIDsForStopsOnDateStmt: %w", cerr)
@@ -766,11 +771,6 @@ func (q *Queries) Close() error {
 	if q.getRouteIDsForAgencyStmt != nil {
 		if cerr := q.getRouteIDsForAgencyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getRouteIDsForAgencyStmt: %w", cerr)
-		}
-	}
-	if q.getRouteIDsForStopStmt != nil {
-		if cerr := q.getRouteIDsForStopStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getRouteIDsForStopStmt: %w", cerr)
 		}
 	}
 	if q.getRouteIDsForStopsStmt != nil {
@@ -1128,6 +1128,7 @@ type Queries struct {
 	createTripStmt                            *sql.Stmt
 	getActiveBlockIDsForAgencyStmt            *sql.Stmt
 	getActiveLayoverBlockIDsForRouteStmt      *sql.Stmt
+	getActiveRouteIDsForStopsInIntervalStmt   *sql.Stmt
 	getActiveRouteIDsForStopsOnDateStmt       *sql.Stmt
 	getActiveServiceIDsForDateStmt            *sql.Stmt
 	getActiveStopsStmt                        *sql.Stmt
@@ -1163,7 +1164,6 @@ type Queries struct {
 	getProblemReportsByTripStmt               *sql.Stmt
 	getRouteStmt                              *sql.Stmt
 	getRouteIDsForAgencyStmt                  *sql.Stmt
-	getRouteIDsForStopStmt                    *sql.Stmt
 	getRouteIDsForStopsStmt                   *sql.Stmt
 	getRoutesByIDsStmt                        *sql.Stmt
 	getRoutesForAgencyStmt                    *sql.Stmt
@@ -1262,6 +1262,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createTripStmt:                            q.createTripStmt,
 		getActiveBlockIDsForAgencyStmt:            q.getActiveBlockIDsForAgencyStmt,
 		getActiveLayoverBlockIDsForRouteStmt:      q.getActiveLayoverBlockIDsForRouteStmt,
+		getActiveRouteIDsForStopsInIntervalStmt:   q.getActiveRouteIDsForStopsInIntervalStmt,
 		getActiveRouteIDsForStopsOnDateStmt:       q.getActiveRouteIDsForStopsOnDateStmt,
 		getActiveServiceIDsForDateStmt:            q.getActiveServiceIDsForDateStmt,
 		getActiveStopsStmt:                        q.getActiveStopsStmt,
@@ -1297,7 +1298,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getProblemReportsByTripStmt:               q.getProblemReportsByTripStmt,
 		getRouteStmt:                              q.getRouteStmt,
 		getRouteIDsForAgencyStmt:                  q.getRouteIDsForAgencyStmt,
-		getRouteIDsForStopStmt:                    q.getRouteIDsForStopStmt,
 		getRouteIDsForStopsStmt:                   q.getRouteIDsForStopsStmt,
 		getRoutesByIDsStmt:                        q.getRoutesByIDsStmt,
 		getRoutesForAgencyStmt:                    q.getRoutesForAgencyStmt,

@@ -18,6 +18,8 @@ type batchInsert[T any] struct {
 	appendArgs func(args []any, row T) []any // appends one row's values in column order
 	// progressInterval is how many rows go in between progress log lines.
 	progressInterval int
+	// insertPrefix overrides "INSERT INTO" when a table uses OR IGNORE or OR REPLACE (e.g. "INSERT OR IGNORE INTO").
+	insertPrefix string
 }
 
 // bulkInsertLogger returns the logger that the batch inserts log through. It
@@ -126,8 +128,12 @@ func insertInBatches[T any](ctx context.Context, tx *sql.Tx, batchSize int, inse
 // written into the statement.
 func (insert batchInsert[T]) query(rows int) string {
 	row := "(" + strings.TrimSuffix(strings.Repeat("?, ", len(insert.columns)), ", ") + ")"
+	prefix := insert.insertPrefix
+	if prefix == "" {
+		prefix = "INSERT INTO"
+	}
 	var query strings.Builder
-	query.WriteString("INSERT INTO " + insert.table + " (" + strings.Join(insert.columns, ", ") + ") VALUES ")
+	query.WriteString(prefix + " " + insert.table + " (" + strings.Join(insert.columns, ", ") + ") VALUES ")
 	for i := range rows {
 		if i > 0 {
 			query.WriteString(", ")

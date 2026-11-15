@@ -580,6 +580,9 @@ func TestRoutesForLocationHandlerInvalidMaxCount(t *testing.T) {
 		{"zero", "0", "must be greater than zero"},
 		{"negative", "-5", "must be greater than zero"},
 		{"unparseable", "invalid", `Invalid field value for field "maxCount".`},
+		{"64-bit overflow", "99999999999", `Invalid field value for field "maxCount".`},
+		{"int32 overflow 2147483648", "2147483648", `Invalid field value for field "maxCount".`},
+		{"int32 underflow -2147483649", "-2147483649", `Invalid field value for field "maxCount".`},
 	}
 
 	for _, tt := range tests {

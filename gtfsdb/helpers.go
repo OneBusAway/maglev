@@ -401,7 +401,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 		allStopParams = append(allStopParams, params)
 	}
-	if err := c.bulkInsertStops(ctx, allStopParams, tx); err != nil {
+	if err := c.bulkInsertStops(ctx, slices.Values(allStopParams), tx); err != nil {
 		return false, fmt.Errorf("unable to create stops: %w", err)
 	}
 
@@ -456,7 +456,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 		allTripParams = append(allTripParams, params)
 	}
-	if err := c.bulkInsertTrips(ctx, allTripParams, tx); err != nil {
+	if err := c.bulkInsertTrips(ctx, slices.Values(allTripParams), tx); err != nil {
 		return false, fmt.Errorf("unable to create trips: %w", err)
 	}
 
@@ -483,7 +483,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 	}
 	if len(allFrequencyParams) > 0 {
-		if err := c.bulkInsertFrequencies(ctx, allFrequencyParams, tx); err != nil {
+		if err := c.bulkInsertFrequencies(ctx, slices.Values(allFrequencyParams), tx); err != nil {
 			return false, fmt.Errorf("unable to create frequencies: %w", err)
 		}
 	}
@@ -536,7 +536,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 
 	if len(allCalendarDateParams) > 0 {
-		if err := c.bulkInsertCalendarDates(ctx, allCalendarDateParams, tx); err != nil {
+		if err := c.bulkInsertCalendarDates(ctx, slices.Values(allCalendarDateParams), tx); err != nil {
 			logging.LogError(logger, "Unable to create calendar dates", err)
 			return false, fmt.Errorf("unable to create calendar dates: %w", err)
 		}
@@ -577,6 +577,13 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("error committing import transaction: %w", err)
+	}
+
+	logging.LogOperation(logger, "optimizing_database")
+	if err := c.OptimizeDatabase(ctx); err != nil {
+		logging.LogError(logger, "Unable to optimize database", err)
+	} else {
+		logging.LogOperation(logger, "database_optimized")
 	}
 
 	counts, err := c.TableCounts()
@@ -803,64 +810,46 @@ func pickFirstAvailable(a, b string) string {
 	return b
 }
 
-// bulkInsertStops inserts stops. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertStops(ctx context.Context, stops []CreateStopParams, tx *sql.Tx) error {
-	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
-
-	logging.LogOperation(logger, "inserting_stops",
-		slog.Int("count", len(stops)))
-
-	if err := c.withTransaction(ctx, tx, "bulk_insert_stops", func(tx *sql.Tx) error {
-		qtx := queries.WithTx(tx)
-		for _, params := range stops {
-			_, err := qtx.CreateStop(ctx, params)
-			if err != nil {
-				if isConstraintErr(err) {
-					return fmt.Errorf("constraint violation inserting stop %+v: %w", params, err)
-				}
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "stops_inserted",
-		slog.Int("count", len(stops)))
-
-	return nil
+// stopInsert inserts stops rows for insertInBatches.
+var stopInsert = batchInsert[CreateStopParams]{
+	table: "stops",
+	columns: []string{"id", "code", "name", "\"desc\"", "lat", "lon", "zone_id", "url",
+		"location_type", "timezone", "wheelchair_boarding", "platform_code", "direction", "parent_station"},
+	appendArgs: func(args []any, s CreateStopParams) []any {
+		return append(args, s.ID, s.Code, s.Name, s.Desc, s.Lat, s.Lon, s.ZoneID, s.Url,
+			s.LocationType, s.Timezone, s.WheelchairBoarding, s.PlatformCode, s.Direction, s.ParentStation)
+	},
+	progressInterval: 10_000,
+	insertPrefix:     "INSERT OR REPLACE INTO",
 }
 
-// bulkInsertTrips inserts trips. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams, tx *sql.Tx) error {
-	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+// bulkInsertStops inserts stops in the order they arrive, holding one batch at
+// a time. If tx is non-nil it uses that transaction and does not commit; if
+// nil it starts its own and commits.
+func (c *Client) bulkInsertStops(ctx context.Context, stops iter.Seq[CreateStopParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, stopInsert, stops)
+}
 
-	logging.LogOperation(logger, "inserting_trips",
-		slog.Int("count", len(trips)))
+// tripInsert inserts trips rows for insertInBatches.
+var tripInsert = batchInsert[CreateTripParams]{
+	table: "trips",
+	columns: []string{"id", "route_id", "service_id", "trip_headsign", "trip_short_name",
+		"direction_id", "block_id", "shape_id", "wheelchair_accessible", "bikes_allowed",
+		"min_arrival_time", "max_departure_time"},
+	appendArgs: func(args []any, t CreateTripParams) []any {
+		return append(args, t.ID, t.RouteID, t.ServiceID, t.TripHeadsign, t.TripShortName,
+			t.DirectionID, t.BlockID, t.ShapeID, t.WheelchairAccessible, t.BikesAllowed,
+			t.MinArrivalTime, t.MaxDepartureTime)
+	},
+	progressInterval: 25_000,
+	insertPrefix:     "INSERT OR REPLACE INTO",
+}
 
-	if err := c.withTransaction(ctx, tx, "bulk_insert_trips", func(tx *sql.Tx) error {
-		qtx := queries.WithTx(tx)
-		for _, params := range trips {
-			_, err := qtx.CreateTrip(ctx, params)
-			if err != nil {
-				if isConstraintErr(err) {
-					return fmt.Errorf("constraint violation inserting trip %+v: %w", params, err)
-				}
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "trips_inserted",
-		slog.Int("count", len(trips)))
-
-	return nil
+// bulkInsertTrips inserts trips in the order they arrive, holding one batch at
+// a time. If tx is non-nil it uses that transaction and does not commit; if
+// nil it starts its own and commits.
+func (c *Client) bulkInsertTrips(ctx context.Context, trips iter.Seq[CreateTripParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, tripInsert, trips)
 }
 
 // stopTimeInsert inserts stop_times rows for insertInBatches.
@@ -899,63 +888,57 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes iter.Seq[CreateSha
 	return bulkInsertRows(ctx, c, tx, shapeInsert, shapes)
 }
 
-// bulkInsertFrequencies inserts frequencies. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertFrequencies(ctx context.Context, frequencies []CreateFrequencyParams, tx *sql.Tx) error {
-	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
-
-	logging.LogOperation(logger, "inserting_frequencies",
-		slog.Int("count", len(frequencies)))
-
-	if err := c.withTransaction(ctx, tx, "bulk_insert_frequencies", func(tx *sql.Tx) error {
-		qtx := queries.WithTx(tx)
-		for _, params := range frequencies {
-			err := qtx.CreateFrequency(ctx, params)
-			if err != nil {
-				if isConstraintErr(err) {
-					return fmt.Errorf("constraint violation inserting frequency %+v: %w", params, err)
-				}
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "frequencies_inserted",
-		slog.Int("count", len(frequencies)))
-
-	return nil
+// frequencyInsert inserts frequencies rows for insertInBatches.
+var frequencyInsert = batchInsert[CreateFrequencyParams]{
+	table:   "frequencies",
+	columns: []string{"trip_id", "start_time", "end_time", "headway_secs", "exact_times"},
+	appendArgs: func(args []any, f CreateFrequencyParams) []any {
+		return append(args, f.TripID, f.StartTime, f.EndTime, f.HeadwaySecs, f.ExactTimes)
+	},
+	progressInterval: 5_000,
+	insertPrefix:     "INSERT OR IGNORE INTO",
 }
 
-// bulkInsertCalendarDates inserts calendar dates. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []CreateCalendarDateParams, tx *sql.Tx) error {
-	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+// bulkInsertFrequencies inserts frequencies in the order they arrive, holding
+// one batch at a time. If tx is non-nil it uses that transaction and does not
+// commit; if nil it starts its own and commits.
+func (c *Client) bulkInsertFrequencies(ctx context.Context, frequencies iter.Seq[CreateFrequencyParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, frequencyInsert, frequencies)
+}
 
-	logging.LogOperation(logger, "inserting_calendar_dates",
-		slog.Int("count", len(calendarDates)))
+// calendarDateInsert inserts calendar_dates rows for insertInBatches.
+var calendarDateInsert = batchInsert[CreateCalendarDateParams]{
+	table:   "calendar_dates",
+	columns: []string{"service_id", "date", "exception_type"},
+	appendArgs: func(args []any, cd CreateCalendarDateParams) []any {
+		return append(args, cd.ServiceID, cd.Date, cd.ExceptionType)
+	},
+	progressInterval: 10_000,
+	insertPrefix:     "INSERT OR REPLACE INTO",
+}
 
-	if err := c.withTransaction(ctx, tx, "bulk_insert_calendar_dates", func(tx *sql.Tx) error {
-		qtx := queries.WithTx(tx)
-		for _, params := range calendarDates {
-			_, err := qtx.CreateCalendarDate(ctx, params)
-			if err != nil {
-				if isConstraintErr(err) {
-					return fmt.Errorf("constraint violation inserting calendar date %+v: %w", params, err)
-				}
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
+// bulkInsertCalendarDates inserts calendar dates in the order they arrive,
+// holding one batch at a time. If tx is non-nil it uses that transaction and
+// does not commit; if nil it starts its own and commits.
+func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates iter.Seq[CreateCalendarDateParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, calendarDateInsert, calendarDates)
+}
+
+// OptimizeDatabase runs PRAGMA analysis_limit and ANALYZE after an import
+// so SQLite computes query planner statistics (stored in sqlite_stat1).
+func (c *Client) OptimizeDatabase(ctx context.Context) error {
+	conn, err := c.DB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection for optimization: %w", err)
 	}
+	defer func() { _ = conn.Close() }()
 
-	logging.LogOperation(logger, "calendar_dates_inserted",
-		slog.Int("count", len(calendarDates)))
-
+	if _, err := conn.ExecContext(ctx, "PRAGMA analysis_limit = 1000"); err != nil {
+		return fmt.Errorf("failed to set analysis_limit: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "ANALYZE"); err != nil {
+		return fmt.Errorf("failed to run analyze: %w", err)
+	}
 	return nil
 }
 

@@ -111,6 +111,24 @@ func TestFeedHashIncludesGTFSTidy(t *testing.T) {
 	assert.Equal(t, "abc+gtfstidy", feedHash("abc", Config{EnableGTFSTidy: true}))
 }
 
+// TestContentHashStripsGTFSTidyMarker checks that ContentHash removes the
+// gtfstidy marker and leaves a hash without it unchanged.
+func TestContentHashStripsGTFSTidyMarker(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored string
+		want   string
+	}{
+		{name: "tidy marker is removed", stored: "abc+gtfstidy", want: "abc"},
+		{name: "no marker is unchanged", stored: "abc", want: "abc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ContentHash(tt.stored))
+		})
+	}
+}
+
 func TestFetchFeedFileTruncatedDownloadLeavesNoFile(t *testing.T) {
 	const promisedBytes, sentBytes = 1024, 10
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

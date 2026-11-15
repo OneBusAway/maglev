@@ -74,6 +74,33 @@ func TestParseMinutesValue(t *testing.T) {
 			expected: maxWindow,
 		},
 		{
+			name:     "bounds max int32 at maxWindow",
+			params:   url.Values{"minutesAfter": {"2147483647"}},
+			key:      "minutesAfter",
+			expected: maxWindow,
+		},
+		{
+			name:         "reports error on int32 overflow 2147483648 and returns fallback",
+			params:       url.Values{"minutesAfter": {"2147483648"}},
+			key:          "minutesAfter",
+			expected:     fallback,
+			expectErrMsg: "must be a valid integer",
+		},
+		{
+			name:         "reports error on 64-bit integer overflow and returns fallback",
+			params:       url.Values{"minutesAfter": {"99999999999"}},
+			key:          "minutesAfter",
+			expected:     fallback,
+			expectErrMsg: "must be a valid integer",
+		},
+		{
+			name:         "reports error on int32 underflow and returns fallback",
+			params:       url.Values{"minutesAfter": {"-2147483649"}},
+			key:          "minutesAfter",
+			expected:     fallback,
+			expectErrMsg: "must be a valid integer",
+		},
+		{
 			name:         "reports error on negative integer and returns fallback",
 			params:       url.Values{"minutesBefore": {"-5"}},
 			key:          "minutesBefore",

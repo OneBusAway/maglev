@@ -301,9 +301,9 @@ func parseMaxCount(queryParams url.Values, defaultCount, ceiling int, overflow m
 
 	maxCount := defaultCount
 	if maxCountStr := queryParams.Get("maxCount"); maxCountStr != "" {
-		parsedMaxCount, err := strconv.Atoi(maxCountStr)
+		parsedMaxCount, err := strconv.ParseInt(maxCountStr, 10, 32)
 		if err == nil {
-			maxCount = parsedMaxCount
+			maxCount = int(parsedMaxCount)
 			if maxCount <= 0 {
 				fieldErrors["maxCount"] = []string{"must be greater than zero"}
 				maxCount = defaultCount

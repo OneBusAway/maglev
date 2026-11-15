@@ -137,6 +137,18 @@ func TestTripAttributionIngestion(t *testing.T) {
 		assert.False(t, manager.feedTripDataTime["feed"].Before(before))
 	})
 
+	t.Run("epoch-zero header time is dated at the fetch", func(t *testing.T) {
+		manager := newAttributionTestManager(t)
+		feed := serveTripFeed(t, RTFeedConfig{ID: "feed"}, time.Unix(0, 0), gtfs.TripID{ID: "T1"})
+		before := time.Now()
+
+		require.True(t, manager.updateFeedRealtime(ctx, feed))
+
+		updates := manager.TripUpdatesForAgency("agency-A")
+		require.NotEmpty(t, updates.TripUpdates)
+		assert.False(t, updates.Timestamp.Before(before), "export timestamp must fall back to the fetch time, not the epoch")
+	})
+
 	t.Run("a refresh replaces the attribution", func(t *testing.T) {
 		manager := newAttributionTestManager(t)
 		require.True(t, manager.updateFeedRealtime(ctx, serveTripFeed(t, RTFeedConfig{ID: "feed"}, createdAt, gtfs.TripID{ID: "T1"})))

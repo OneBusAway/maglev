@@ -1,10 +1,13 @@
 package restapi
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
 )
 
@@ -46,6 +49,8 @@ func TestEntityHandlers_AgencyPrefixMustOwnEntity(t *testing.T) {
 		{"route", "own-route"},
 		{"shape", "own-shape"},
 		{"block", "own-block"},
+		{"schedule-for-route", "own-route"},
+		{"stops-for-route", "own-route"},
 	}
 	prefixes := []struct {
 		agencyID   string
@@ -66,4 +71,67 @@ func TestEntityHandlers_AgencyPrefixMustOwnEntity(t *testing.T) {
 			})
 		}
 	}
+}
+
+// agencyPrefixActiveTrip is inside own-trip's 09:00–09:30 UTC span, within the
+// 30-minute-late / 10-minute-early window trips-for-route uses.
+var agencyPrefixActiveTrip = time.Date(2025, 6, 13, 9, 15, 0, 0, time.UTC)
+
+func TestTripsForRoute_AgencyPrefixMustOwnRoute(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "agency-prefix.zip", agencyPrefixFiles())
+	activeAt := agencyPrefixActiveTrip.UnixMilli()
+
+	cases := []struct {
+		name       string
+		routeID    string
+		wantTrips  bool
+		wantStatus int
+		timeParam  string
+	}{
+		{name: "owning prefix", routeID: "own_own-route", wantTrips: true, wantStatus: http.StatusOK, timeParam: fmt.Sprintf("%d", activeAt)},
+		{name: "other agency", routeID: "other_own-route", wantTrips: false, wantStatus: http.StatusOK, timeParam: fmt.Sprintf("%d", activeAt)},
+		{name: "unknown agency", routeID: "unknown_own-route", wantTrips: false, wantStatus: http.StatusOK, timeParam: fmt.Sprintf("%d", activeAt)},
+		{name: "unknown route", routeID: "own_missing", wantTrips: false, wantStatus: http.StatusOK, timeParam: fmt.Sprintf("%d", activeAt)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%s", tc.routeID, tc.timeParam)
+			resp, model := callAPIHandler[TripsForRouteResponse](t, api, path)
+			assert.Equal(t, tc.wantStatus, resp.StatusCode)
+			assert.Equal(t, tc.wantStatus, model.Code)
+			assert.Equal(t, "OK", model.Text)
+			assert.False(t, model.Data.LimitExceeded)
+			if tc.wantTrips {
+				require.NotEmpty(t, model.Data.List)
+				return
+			}
+			assert.Empty(t, model.Data.List)
+		})
+	}
+
+	t.Run("invalid time stays a field error", func(t *testing.T) {
+		resp, model := serveApiAndRetrieveEndpoint(t, api,
+			"/api/where/trips-for-route/other_own-route.json?key=TEST&time=garbage")
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, model.Code)
+	})
+}
+
+func TestRouteScheduleAndStops_InvalidParamsPrecedeOwnership(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "agency-prefix.zip", agencyPrefixFiles())
+
+	t.Run("schedule-for-route invalid date", func(t *testing.T) {
+		resp, model := serveApiAndRetrieveEndpoint(t, api,
+			"/api/where/schedule-for-route/other_own-route.json?key=TEST&date=garbage")
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, model.Code)
+	})
+
+	t.Run("stops-for-route invalid time", func(t *testing.T) {
+		resp, model := serveApiAndRetrieveEndpoint(t, api,
+			"/api/where/stops-for-route/other_own-route.json?key=TEST&time=garbage")
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, model.Code)
+	})
 }
