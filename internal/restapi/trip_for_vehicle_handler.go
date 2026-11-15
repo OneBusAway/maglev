@@ -281,7 +281,7 @@ func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request
 		reqLogger.Debug("vehicle belongs to another agency",
 			"vehicleID", vehicleID, "agencyID", agencyID, "vehicleAgencyID", attributedAgencyID)
 		api.sendNotFound(w, r)
-		return "", false
+		return "", "", false
 	}
 
 	// Return 404 when vehicle has no associated trip (idle vehicle)
