@@ -593,7 +593,7 @@ func (api *RestAPI) tripSpansForBlocksServingStops(
 
 	blockIDStrings := make([]string, len(blockIDs))
 	for i, blockID := range blockIDs {
-		blockIDStrings[i] = blockID.String
+		blockIDStrings[i] = nulls.StringOrEmpty(blockID)
 	}
 
 	return utils.QueryInBatchesReserving(ctx, blockIDStrings, len(day.serviceIDs),
@@ -658,11 +658,12 @@ func (api *RestAPI) shapePointsForTrips(ctx context.Context, trips []gtfsdb.Trip
 		if !trip.ShapeID.Valid {
 			continue
 		}
-		if _, ok := seen[nulls.StringOrEmpty(trip.ShapeID)]; ok {
+		shapeID := nulls.StringOrEmpty(trip.ShapeID)
+		if _, ok := seen[shapeID]; ok {
 			continue
 		}
-		seen[nulls.StringOrEmpty(trip.ShapeID)] = struct{}{}
-		shapeIDs = append(shapeIDs, nulls.StringOrEmpty(trip.ShapeID))
+		seen[shapeID] = struct{}{}
+		shapeIDs = append(shapeIDs, shapeID)
 	}
 
 	byID := make(map[string][]gtfs.ShapePoint, len(shapeIDs))

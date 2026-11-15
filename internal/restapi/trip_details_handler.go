@@ -3,7 +3,6 @@ package restapi
 import (
 	"context"
 	"fmt"
-	"maglev.onebusaway.org/internal/nulls"
 	"net/http"
 	"net/url"
 	"slices"
@@ -14,6 +13,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -175,6 +175,10 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
+		return
+	}
+	if route.AgencyID != agencyID {
+		api.sendNotFound(w, r)
 		return
 	}
 

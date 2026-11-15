@@ -137,13 +137,10 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	// Nothing scheduled in the window: skip the reference lookups, but keep
-	// the stop's alerts and neighbours, which don't depend on arrivals.
+	// With nothing scheduled in the window, the requested stop is still a
+	// reference, along with its routes (Java builds these regardless of arrivals).
 	if !result.Matched {
-		situationIDs := api.addStopSituations(ctx, references, acc, stopCode, stopAgencyID)
-		response := models.NewArrivalsAndDepartureResponse(result.Arrivals, *references, nearbyStopIDs, situationIDs, stopID, api.Clock)
-		api.sendResponse(w, r, response)
-		return
+		acc.stopIDs[stopCode] = true
 	}
 
 	references, err = api.buildArrivalsReferences(ctx, arrivalsReferencesInput{

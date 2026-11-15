@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "feeds": [
+    {
+      "id": "metro",
+      "key": "kcm",
+      "name": "King County Metro",
+      "defaultAgencyId": "1",
+      "url": "https://example.com/bundles/metro.zip",
+      "byteSize": 1234567,
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+    },
+    {
+      "id": "sound-transit",
+      "name": "Sound Transit",
+      "defaultAgencyId": "40",
+      "url": "https://example.com/bundles/sound-transit.zip"
+    }
+  ],
+  "stopConsolidationUrl": "https://example.com/bundles/stop-consolidation.txt"
+}

@@ -36,6 +36,9 @@ type tripStatusExtras struct {
 	// blockTripIDs are the block's trips in start order, from which Java
 	// builds its per-stop deviation samples.
 	blockTripIDs []string
+	// tripBlockSequence is the queried trip's position in its block. It can
+	// differ from status.BlockTripSequence, which follows the active trip.
+	tripBlockSequence int
 }
 
 // BuildTripStatus builds a TripStatus for the given trip.
@@ -83,6 +86,7 @@ func (api *RestAPI) BuildTripStatus(
 	if blockTripSequence > 0 {
 		status.BlockTripSequence = blockTripSequence
 	}
+	extras.tripBlockSequence = blockTripSequence
 
 	if vehicle != nil {
 		if vehicle.ID != nil {
@@ -262,6 +266,10 @@ func (api *RestAPI) BuildTripStatus(
 	// their defaults.
 	if snap != nil && snap.ActiveTripID != "" && snap.InRange {
 		status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
+		// Java's TripStatusBeanServiceImpl reports the active trip's sequence.
+		if snap.ActiveTripID != tripID {
+			status.BlockTripSequence = api.activeTripBlockSequence(ctx, snap.ActiveTripID, serviceDate)
+		}
 		status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
 		if snap.ActiveTripTotalDistance > 0 {
 			status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
@@ -669,7 +677,8 @@ type scheduleDeviationFallback struct {
 //     getBestScheduleDeviation takes the last sample at or before the stop
 //     and refuses to propagate upstream, so a stop before every sample is
 //     predicted but gets no predicted times.
-//   - Without samples, the block-level deviation is used.
+//   - Without samples, which is every feed numbering stops from 1 (see
+//     sampleEntryForSTU), the block-level deviation is used.
 //   - The deviation is applied less any scheduled slack the vehicle can
 //     absorb before reaching the stop.
 func (api *RestAPI) predictedTimesFromScheduleDeviation(ctx context.Context, in scheduleDeviationFallback) (predictedArrival, predictedDeparture time.Time, predicted bool) {
@@ -852,6 +861,22 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 		return 0
 	}
 	return seq
+}
+
+// activeTripBlockSequence is calculateBlockTripSequence, memoized in the
+// request's snapshot cache when it has one.
+func (api *RestAPI) activeTripBlockSequence(ctx context.Context, tripID string, serviceDate time.Time) int {
+	cache := snapshotCacheFrom(ctx)
+	if cache == nil {
+		return api.calculateBlockTripSequence(ctx, tripID, serviceDate)
+	}
+	key := activeTripSequenceKey{tripID: tripID, serviceDateUnix: serviceDate.UnixNano()}
+	if sequence, ok := cache.activeTripSequences[key]; ok {
+		return sequence
+	}
+	sequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
+	cache.activeTripSequences[key] = sequence
+	return sequence
 }
 
 // blockTripSequence returns the zero-based index of a trip within its block's

@@ -10,8 +10,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
+	"maglev.onebusaway.org/internal/utils"
 )
 
 // blockURL builds the /block endpoint URL with key=TEST baked in. Tests that
@@ -253,4 +255,68 @@ func BenchmarkBlockHandler(b *testing.B) {
 	for b.Loop() {
 		_, _ = callAPIHandler[BlockEntryResponse](b, api, endpoint)
 	}
+}
+
+func TestBlockHandlerBlocklessTrip(t *testing.T) {
+	files := basicTripsForRouteFiles()
+	// Trip with no block_id (blockless trip) alongside a blocked trip.
+	files["trips.txt"] = "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+		tripsForRouteRouteID + ",tfr-svc," + tripsForRouteTripID + "," + tripsForRouteHeadsign + ",0,\n" +
+		tripsForRouteRouteID + ",tfr-svc,blocked-trip," + tripsForRouteHeadsign + ",0,real-block\n"
+	files["stop_times.txt"] = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+		tripsForRouteTripID + ",11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
+		tripsForRouteTripID + ",12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n" +
+		"blocked-trip,12:15:00,12:15:00," + tripsForRouteStop1ID + ",1\n" +
+		"blocked-trip,12:25:00,12:25:00," + tripsForRouteStop2ID + ",2\n"
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "blockless-block.zip", files)
+	defer api.Shutdown()
+
+	combinedBlocklessBlockID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteTripID)
+
+	// 1. Querying block endpoint with blockless trip ID returns 200 with single-trip configuration.
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL(combinedBlocklessBlockID))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, combinedBlocklessBlockID, model.Data.Entry.ID)
+	require.Len(t, model.Data.Entry.Configurations, 1)
+
+	config := model.Data.Entry.Configurations[0]
+	assert.Equal(t, []string{utils.FormCombinedID(tripsForRouteAgencyID, "tfr-svc")}, config.ActiveServiceIds)
+	require.Len(t, config.Trips, 1)
+
+	trip := config.Trips[0]
+	assert.Equal(t, combinedBlocklessBlockID, trip.TripId)
+	require.Len(t, trip.BlockStopTimes, 2)
+	assert.Equal(t, 0, trip.BlockStopTimes[0].BlockSequence)
+	assert.Equal(t, 1, trip.BlockStopTimes[1].BlockSequence)
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop1ID), trip.BlockStopTimes[0].StopTime.StopID)
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop2ID), trip.BlockStopTimes[1].StopTime.StopID)
+
+	// Verify references contain the trip with its synthetic blockId matching combinedBlocklessBlockID.
+	require.Len(t, model.Data.References.Trips, 1)
+	assert.Equal(t, combinedBlocklessBlockID, model.Data.References.Trips[0].ID)
+	assert.Equal(t, combinedBlocklessBlockID, model.Data.References.Trips[0].BlockID)
+
+	// 2. Querying block endpoint with a blocked trip ID returns 404.
+	blockedTripAsBlockID := utils.FormCombinedID(tripsForRouteAgencyID, "blocked-trip")
+	respBlocked, modelBlocked := callAPIHandler[BlockEntryResponse](t, api, blockURL(blockedTripAsBlockID))
+	assert.Equal(t, http.StatusNotFound, respBlocked.StatusCode)
+	assert.Equal(t, http.StatusNotFound, modelBlocked.Code)
+
+	// 3. Querying block endpoint with the real block ID works as expected.
+	realBlockID := utils.FormCombinedID(tripsForRouteAgencyID, "real-block")
+	respReal, modelReal := callAPIHandler[BlockEntryResponse](t, api, blockURL(realBlockID))
+	assert.Equal(t, http.StatusOK, respReal.StatusCode)
+	assert.Equal(t, http.StatusOK, modelReal.Code)
+	assert.Equal(t, realBlockID, modelReal.Data.Entry.ID)
+	require.Len(t, modelReal.Data.Entry.Configurations, 1)
+	require.Len(t, modelReal.Data.Entry.Configurations[0].Trips, 1)
+	assert.Equal(t, blockedTripAsBlockID, modelReal.Data.Entry.Configurations[0].Trips[0].TripId)
+
+	// 4. Querying block endpoint for blockless trip with different agency returns 404.
+	otherAgencyBlockID := utils.FormCombinedID("other-agency", tripsForRouteTripID)
+	respOther, modelOther := callAPIHandler[BlockEntryResponse](t, api, blockURL(otherAgencyBlockID))
+	assert.Equal(t, http.StatusNotFound, respOther.StatusCode)
+	assert.Equal(t, http.StatusNotFound, modelOther.Code)
 }

@@ -75,6 +75,20 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// GetRoute is keyed by the route code alone, so a prefix for some other agency
+	// still finds the row and the handler would return that agency's trips. An
+	// unknown route falls through to the empty 200 below: this endpoint does not
+	// 404 a missing route.
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	if err == nil && (route.ID == "" || route.AgencyID != agencyID) {
+		api.sendEmptyTripsForRouteList(w, r, ctx, includeReferences, includeTrip)
+		return
+	}
+
 	agencies, err := api.GtfsManager.GetAgencies(ctx)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -116,14 +130,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	hasBlocks := slices.ContainsFunc(dayBlockIDs, func(blockIDs []string) bool { return len(blockIDs) > 0 })
 	if !hasBlocks && len(nullBlockTrips) == 0 {
-		var references models.ReferencesModel
-		if includeReferences {
-			references = api.buildTripReferences(ctx, tripReferenceParams{IncludeTrip: includeTrip})
-		} else {
-			references = *models.NewEmptyReferences()
-		}
-		response := models.NewListResponse([]models.TripsForRouteListEntry{}, references, false, api.Clock)
-		api.sendResponse(w, r, response)
+		api.sendEmptyTripsForRouteList(w, r, ctx, includeReferences, includeTrip)
 		return
 	}
 
@@ -461,6 +468,20 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		references = *models.NewEmptyReferences()
 	}
 	response := models.NewListResponse(result, references, false, api.Clock)
+	api.sendResponse(w, r, response)
+}
+
+// sendEmptyTripsForRouteList answers a route with nothing in service, including
+// a prefix that does not own the route. The list is empty and includeReferences
+// is honored, matching an unknown route rather than a 404.
+func (api *RestAPI) sendEmptyTripsForRouteList(w http.ResponseWriter, r *http.Request, ctx context.Context, includeReferences, includeTrip bool) {
+	var references models.ReferencesModel
+	if includeReferences {
+		references = api.buildTripReferences(ctx, tripReferenceParams{IncludeTrip: includeTrip})
+	} else {
+		references = *models.NewEmptyReferences()
+	}
+	response := models.NewListResponse([]models.TripsForRouteListEntry{}, references, false, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
@@ -1093,7 +1114,8 @@ func (api *RestAPI) routeZones(
 func tripsByBlock(trips []gtfsdb.GetTripsByBlockIDsRow) map[string][]gtfsdb.GetTripsByBlockIDsRow {
 	byBlock := make(map[string][]gtfsdb.GetTripsByBlockIDsRow)
 	for _, trip := range trips {
-		byBlock[nulls.StringOrEmpty(trip.BlockID)] = append(byBlock[nulls.StringOrEmpty(trip.BlockID)], trip)
+		blockID := nulls.StringOrEmpty(trip.BlockID)
+		byBlock[blockID] = append(byBlock[blockID], trip)
 	}
 	return byBlock
 }
@@ -1172,9 +1194,7 @@ func (api *RestAPI) routeBlocksAndTripsInService(ctx context.Context, routeID st
 			return nil, nil, err
 		}
 		for _, blockID := range indexedBlocks {
-			if blockID.Valid {
-				blockIDs = append(blockIDs, blockID.String)
-			}
+			blockIDs = append(blockIDs, nulls.StringOrEmpty(blockID))
 		}
 	}
 

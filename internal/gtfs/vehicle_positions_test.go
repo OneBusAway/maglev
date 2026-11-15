@@ -236,3 +236,12 @@ func TestRecordVehicleDataTime_NoHeaderTimeUsesFetchTime(t *testing.T) {
 
 	assert.False(t, manager.feedVehicleDataTime["feed-a"].Before(before))
 }
+
+func TestRecordVehicleDataTime_KeepsRealHeaderTime(t *testing.T) {
+	manager := newTestManager()
+	headerTime := time.Date(2025, 6, 8, 21, 10, 0, 0, time.UTC)
+
+	manager.recordVehicleDataTime("feed-a", headerTime)
+
+	assert.True(t, manager.feedVehicleDataTime["feed-a"].Equal(headerTime))
+}

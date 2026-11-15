@@ -105,6 +105,14 @@ type blockTripData struct {
 // shift filtering) inherits the same cache entry so sibling lookups hit.
 type snapshotCache struct {
 	m map[snapshotCacheEntryKey]*scheduledBlockSnapshot
+	// activeTripSequences memoizes a block-trip sequence lookup, which rows on
+	// one block all make for the same active trip.
+	activeTripSequences map[activeTripSequenceKey]int
+}
+
+type activeTripSequenceKey struct {
+	tripID          string
+	serviceDateUnix int64
 }
 
 type snapshotCacheEntryKey struct {
@@ -114,7 +122,10 @@ type snapshotCacheEntryKey struct {
 }
 
 func newSnapshotCache() *snapshotCache {
-	return &snapshotCache{m: make(map[snapshotCacheEntryKey]*scheduledBlockSnapshot)}
+	return &snapshotCache{
+		m:                   make(map[snapshotCacheEntryKey]*scheduledBlockSnapshot),
+		activeTripSequences: make(map[activeTripSequenceKey]int),
+	}
 }
 
 func makeSnapshotCacheKey(tripID string, currentTime, serviceDate time.Time) snapshotCacheEntryKey {

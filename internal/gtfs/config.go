@@ -1,7 +1,6 @@
 package gtfs
 
 import (
-	"strings"
 	"time"
 
 	"maglev.onebusaway.org/internal/appconf"
@@ -22,6 +21,12 @@ type RTFeedConfig struct {
 
 // Config holds GTFS configuration for the manager.
 type Config struct {
+	// StaticFeeds lists every static feed in load order. StaticFeeds[0] is
+	// authoritative: GtfsURL, StaticAuthHeader* and EnableGTFSTidy are
+	// derived from it, and the importer still reads only those fields.
+	StaticFeeds []appconf.GtfsStaticFeed
+	// BundleInputsURL is the manifest StaticFeeds was read from, if any.
+	BundleInputsURL       string
 	GtfsURL               string
 	StaticAuthHeaderKey   string
 	StaticAuthHeaderValue string
@@ -44,6 +49,21 @@ func (config Config) enabledFeeds() []RTFeedConfig {
 	return feeds
 }
 
+// firstAgencyForFeed returns the first agency-ids entry configured for feedID.
+// Java's GtfsRealtimeEntitySource qualifies entity IDs that are absent from
+// the static feed with _agencyIds.get(0), so that agency has to travel with
+// the feed's alerts. Maglev's agency-ids are optional; a feed without one has
+// no configured first agency.
+func (config Config) firstAgencyForFeed(feedID string) string {
+	for _, feed := range config.RTFeeds {
+		if feed.ID != feedID || len(feed.AgencyIDs) == 0 {
+			continue
+		}
+		return feed.AgencyIDs[0]
+	}
+	return ""
+}
+
 // feedAgencyFilters maps each enabled feed's ID to its configured agency-ids.
 // Disabled feeds are left out: they never poll, so an entry for one would
 // make the metrics endpoint report its agencies as permanently unknown.
@@ -64,5 +84,5 @@ func (config Config) feedAgencyFilters() map[string]map[string]bool {
 }
 
 func (config Config) isLocalFile() bool {
-	return !strings.HasPrefix(config.GtfsURL, "http://") && !strings.HasPrefix(config.GtfsURL, "https://")
+	return !appconf.IsHTTPURL(config.GtfsURL)
 }

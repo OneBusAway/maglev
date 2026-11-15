@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -111,7 +113,7 @@ func TestGetScheduleDeviation_StopUpdateWithNoDelay(t *testing.T) {
 
 	deviation, hasData := api.GetScheduleDeviationForBlock(context.Background(), []string{"trip-nodelay-test"}, devDate, devNow)
 	assert.Equal(t, 0, deviation)
-	assert.False(t, hasData, "trip update with no delay data should report hasData=false")
+	assert.True(t, hasData, "Java still builds a record, with a zero deviation, from an update with no times")
 }
 
 func TestGetScheduleDeviation_ZeroDeviationIsDistinguishedFromNoData(t *testing.T) {
@@ -644,8 +646,7 @@ func TestBlockDeviationSamples(t *testing.T) {
 	require.GreaterOrEqual(t, len(stopTimes), 3, "need a trip with at least 3 distinct stop arrival times")
 
 	stuFor := func(st gtfsdb.StopTime, arrivalDelay, departureDelay *time.Duration) gtfs.StopTimeUpdate {
-		seq := uint32(st.StopSequence)
-		stu := gtfs.StopTimeUpdate{StopID: &st.StopID, StopSequence: &seq}
+		stu := gtfs.StopTimeUpdate{StopID: &st.StopID}
 		if arrivalDelay != nil {
 			stu.Arrival = &gtfs.StopTimeEvent{Delay: arrivalDelay}
 		}
@@ -669,6 +670,54 @@ func TestBlockDeviationSamples(t *testing.T) {
 		{scheduledArrival: utils.NanosToSeconds(stopTimes[0].ArrivalTime), deviation: 60},
 		{scheduledArrival: utils.NanosToSeconds(stopTimes[1].ArrivalTime), deviation: 90},
 	}, samples, "a departure prediction wins over an arrival one, and skipped stops contribute no sample")
+}
+
+// Java keeps a timepoint prediction as a sample only when its stop_sequence
+// equals the stop's zero-based index in the trip, even though the feed value is
+// the GTFS stop_sequence. Feeds numbering stops from 1 therefore build no
+// samples, and Java falls back to the block's schedule deviation.
+func TestBlockDeviationSamples_StopSequenceMustEqualZeroBasedIndex(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	trip := mustGetTrip(t, api)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(stopTimes), 2)
+	const stopIndex = 1
+	target := stopTimes[stopIndex]
+	delay := 60 * time.Second
+
+	tests := []struct {
+		name         string
+		stopSequence uint32
+		wantSamples  []deviationSample
+	}{
+		{
+			name:         "sequence equal to the zero-based index builds a sample",
+			stopSequence: stopIndex,
+			wantSamples:  []deviationSample{{scheduledArrival: utils.NanosToSeconds(target.ArrivalTime), deviation: 60}},
+		},
+		{
+			name:         "one-based sequence builds no sample",
+			stopSequence: stopIndex + 1,
+			wantSamples:  []deviationSample{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			api.GtfsManager.MockAddTripUpdate(trip.ID, nil, []gtfs.StopTimeUpdate{{
+				StopID:       &target.StopID,
+				StopSequence: &tt.stopSequence,
+				Arrival:      &gtfs.StopTimeEvent{Delay: &delay},
+			}})
+
+			assert.Equal(t, tt.wantSamples, api.blockDeviationSamples(ctx, []string{trip.ID}, devDate, devNow))
+		})
+	}
 }
 
 func TestDeviationSampleCache(t *testing.T) {
@@ -1051,6 +1100,221 @@ func TestStuPredictedFromEvent(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := stuPredictedFromEvent(tt.event, tt.sched, serviceDate)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// Mirrors Java's updateBestScheduleDeviation: the first upcoming stop displaces
+// a past incumbent however far away it is, and after that only a strictly
+// closer stop wins.
+func TestSTUDeviationPicker(t *testing.T) {
+	const now = int64(1000)
+	type candidate struct{ scheduled, predicted int64 }
+
+	tests := []struct {
+		name       string
+		candidates []candidate
+		want       int
+	}{
+		{
+			name:       "upcoming stop beats a closer past stop",
+			candidates: []candidate{{scheduled: 919, predicted: 919}, {scheduled: 986, predicted: 1122}},
+			want:       136,
+		},
+		{
+			name:       "closest upcoming stop wins",
+			candidates: []candidate{{scheduled: 1050, predicted: 1100}, {scheduled: 1170, predicted: 1200}},
+			want:       50,
+		},
+		{
+			name:       "closest past stop wins when none is upcoming",
+			candidates: []candidate{{scheduled: 700, predicted: 800}, {scheduled: 880, predicted: 900}},
+			want:       20,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			picker := newSTUDeviationPicker(now)
+			for _, c := range tt.candidates {
+				picker.consider(c.scheduled, c.predicted)
+			}
+			assert.True(t, picker.found)
+			assert.Equal(t, tt.want, picker.bestDeviation)
+		})
+	}
+}
+
+func TestTripUpdateExpired(t *testing.T) {
+	now := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	const reportingVehicleID, tripUpdateOnlyVehicleID = "reporting-vehicle", "trip-update-only-vehicle"
+	api.GtfsManager.MockAddVehicle(reportingVehicleID, "some-trip", "some-route")
+	timestampAt := func(offset time.Duration) *time.Time {
+		timestamp := now.Add(offset)
+		return &timestamp
+	}
+
+	tests := []struct {
+		name      string
+		timestamp *time.Time
+		vehicleID string
+		want      bool
+	}{
+		{name: "no timestamp is never expired", timestamp: nil, vehicleID: tripUpdateOnlyVehicleID, want: false},
+		{name: "exactly five minutes old is kept", timestamp: timestampAt(-5 * time.Minute), vehicleID: tripUpdateOnlyVehicleID, want: false},
+		{name: "older than five minutes is expired", timestamp: timestampAt(-5*time.Minute - time.Second), vehicleID: tripUpdateOnlyVehicleID, want: true},
+		{name: "more than five minutes ahead is expired", timestamp: timestampAt(5*time.Minute + time.Second), vehicleID: tripUpdateOnlyVehicleID, want: true},
+		{name: "old update without a vehicle is expired", timestamp: timestampAt(-time.Hour), vehicleID: "", want: true},
+		{name: "a vehicle position does not keep an old update alive", timestamp: timestampAt(-time.Hour), vehicleID: reportingVehicleID, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tripUpdate := gtfs.Trip{Timestamp: tt.timestamp}
+			if tt.vehicleID != "" {
+				tripUpdate.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: tt.vehicleID}}
+			}
+			assert.Equal(t, tt.want, api.tripUpdateExpired(tripUpdate))
+		})
+	}
+}
+
+func TestGetStopDelaysFromTripUpdates_IgnoresExpiredTripUpdate(t *testing.T) {
+	now := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	stopID, tripID := "stop-1", "trip-expired-update"
+	expiredAt := now.Add(-time.Hour)
+	delay := 60 * time.Second
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:              gtfs.TripID{ID: tripID},
+		Timestamp:       &expiredAt,
+		StopTimeUpdates: []gtfs.StopTimeUpdate{{StopID: &stopID, Arrival: &gtfs.StopTimeEvent{Delay: &delay}}},
+	})
+
+	assert.Equal(t, 0, api.GetStopDelaysFromTripUpdates(tripID, nil).Len())
+}
+
+func ptrInt64(v int64) *int64 { return &v }
+
+// Java reprocesses a vehicle's record only when its timestamp advances
+// (GtfsRealtimeSource.java:742), so the deviation stays the one chosen at the
+// feed's time when that timestamp first arrived, even after later feeds repeat
+// the same update.
+func TestGetScheduleDeviationForBlock_PicksAtRecordTime(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	const firstStopDelay, secondStopDelay = 17, 99
+
+	tests := []struct {
+		name                  string
+		seenSecondsAfterStamp *int64
+		want                  int
+	}{
+		{name: "timestamp stands in when no feed recorded its arrival", want: firstStopDelay},
+		{name: "first seen before the stop's prediction picks that stop", seenSecondsAfterStamp: ptrInt64(0), want: firstStopDelay},
+		{name: "first seen after the stop's prediction picks the next stop", seenSecondsAfterStamp: ptrInt64(firstStopDelay + 1), want: secondStopDelay},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(serviceDate))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			ctx := context.Background()
+
+			trip := mustGetTrip(t, api)
+			stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+			require.NoError(t, err)
+			stopTimes = slices.CompactFunc(stopTimes, func(a, b gtfsdb.StopTime) bool { return a.ArrivalTime == b.ArrivalTime })
+			require.GreaterOrEqual(t, len(stopTimes), 2)
+			first, second := stopTimes[0], stopTimes[1]
+			require.Greater(t, second.ArrivalTime-first.ArrivalTime, int64(firstStopDelay+60)*int64(time.Second))
+
+			firstDelay, secondDelay := firstStopDelay*time.Second, secondStopDelay*time.Second
+			recordTime := serviceDate.Add(time.Duration(first.ArrivalTime))
+			requestTime := recordTime.Add(time.Minute)
+			api.Clock.(*clock.MockClock).Set(requestTime)
+			api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+				ID:        gtfs.TripID{ID: trip.ID},
+				Timestamp: &recordTime,
+				StopTimeUpdates: []gtfs.StopTimeUpdate{
+					{StopID: &first.StopID, Arrival: &gtfs.StopTimeEvent{Delay: &firstDelay}},
+					{StopID: &second.StopID, Arrival: &gtfs.StopTimeEvent{Delay: &secondDelay}},
+				},
+			})
+			if tt.seenSecondsAfterStamp != nil {
+				api.GtfsManager.MockSetTripUpdateFirstSeen(trip.ID, recordTime.Add(time.Duration(*tt.seenSecondsAfterStamp)*time.Second))
+			}
+
+			deviation, hasData := api.GetScheduleDeviationForBlock(ctx, []string{trip.ID}, serviceDate, requestTime)
+
+			assert.True(t, hasData)
+			assert.Equal(t, tt.want, deviation)
+		})
+	}
+}
+
+func TestPluralArrivals_CanceledTripUpdateIsNotPredicted(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	stopID := addDownstreamStop(t, api, tripID)
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:        gtfs.TripID{ID: tripID, ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED},
+		Timestamp: &now,
+	})
+	endpoint := fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120",
+		utils.FormCombinedID("dp-agency", stopID))
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+
+	arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	assert.False(t, arrival.Predicted)
+	assert.Zero(t, arrival.PredictedArrivalTime)
+}
+
+func TestSampleEntryForSTU_SequenceWithoutStopID(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	sequence := uint32(2)
+	stu := gtfs.StopTimeUpdate{StopSequence: &sequence}
+
+	tests := []struct {
+		name    string
+		entries map[string][]schedEntry
+		wantArr int64
+	}{
+		{
+			name: "a one-based feed's stop is not at that index",
+			entries: map[string][]schedEntry{
+				"first":  {{seq: 1, position: 0, arr: 10, dep: 11}},
+				"second": {{seq: 2, position: 1, arr: 20, dep: 21}},
+				"third":  {{seq: 3, position: 2, arr: 30, dep: 31}},
+			},
+		},
+		{
+			name: "a zero-based feed's stop is at that index",
+			entries: map[string][]schedEntry{
+				"first":  {{seq: 0, position: 0, arr: 10, dep: 11}},
+				"second": {{seq: 1, position: 1, arr: 20, dep: 21}},
+				"third":  {{seq: 2, position: 2, arr: 30, dep: 31}},
+			},
+			wantArr: 30,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			arrival, _ := sampleEntryForSTU(tt.entries, stu, serviceDate, serviceDate)
+			assert.Equal(t, tt.wantArr, arrival)
 		})
 	}
 }
