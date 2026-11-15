@@ -270,6 +270,20 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 			},
 		},
 		{
+			name: "GetActiveRouteIDsForStopsInInterval (nearby stops batch)",
+			fn: func() error {
+				if len(svcIDs) == 0 {
+					return nil
+				}
+				_, err := client.Queries.GetActiveRouteIDsForStopsInInterval(ctx, GetActiveRouteIDsForStopsInIntervalParams{
+					StopIds:     []string{stopID},
+					ServiceIds:  svcIDs,
+					IntervalEnd: int64(24 * time.Hour),
+				})
+				return err
+			},
+		},
+		{
 			name: "SearchStopsByName FTS5 (search endpoint)",
 			fn: func() error {
 				_, err := client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{
