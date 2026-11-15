@@ -249,3 +249,18 @@ func TestReloadStatic_PublishesETagWithIndex(t *testing.T) {
 	assert.Equal(t, readSystemETag(ctx, manager.GtfsDB), manager.GetSystemETag())
 	assert.Equal(t, served, manager.GetSystemETag(), "the same feed reimported keeps its hash")
 }
+
+func TestReloadStatic_FailedIndexBuildPublishesNoETag(t *testing.T) {
+	manager := newFlexTestManager(t, "charlevoix-flex.zip")
+	ctx := context.Background()
+	require.NotEmpty(t, manager.GetSystemETag())
+	manager.flexIndex = nil // forces a rebuild on the unchanged reload
+	_, err := manager.GtfsDB.DB.ExecContext(ctx, "DROP TABLE ondemand_stop_services")
+	require.NoError(t, err)
+
+	changed, err := manager.ReloadStatic(ctx)
+	require.NoError(t, err)
+	require.False(t, changed)
+
+	assert.Empty(t, manager.GetSystemETag(), "an empty on-demand index must not carry the feed's ETag")
+}

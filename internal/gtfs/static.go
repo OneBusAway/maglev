@@ -143,6 +143,12 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
 	newFlexIndex := manager.nextFlexIndex(ctx, changed, logger)
 	newSystemETag := readSystemETag(ctx, manager.GtfsDB)
+	if newFlexIndex == nil {
+		// A failed build serves empty /ondemand payloads. Leave them untagged,
+		// so a client that revalidates after the next good build gets the full
+		// body instead of a 304 for the same feed hash.
+		newSystemETag = ""
+	}
 
 	manager.staticMutex.Lock()
 	defer manager.staticMutex.Unlock()
