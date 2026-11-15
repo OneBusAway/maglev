@@ -41,6 +41,19 @@ type tripStatusExtras struct {
 	tripBlockSequence int
 }
 
+// flexOnlyTripStatus finishes the status of a trip with no timed stop_times.
+// With no timed stops there is no schedule to measure against, so the status
+// carries only what the vehicle reports (identity, position, orientation,
+// occupancy) and no stop or deviation fields. Without a vehicle there is
+// nothing to report, and the result is nil.
+func flexOnlyTripStatus(status *models.TripStatus, vehicle *gtfs.Vehicle, currentTime time.Time) *models.TripStatus {
+	if vehicle == nil {
+		return nil
+	}
+	status.SetPredicted(!defaultStaleDetector.Check(vehicle, currentTime))
+	return status
+}
+
 // BuildTripStatus builds a TripStatus for the given trip.
 //
 // Pass a non-nil vehicle when it is already known (e.g. DUPLICATED trips, or when
@@ -58,19 +71,6 @@ type tripStatusExtras struct {
 // which is called per-arrival-row across wide time windows.
 //
 // freqMap supplies batch-fetched frequency rows, avoiding a per-call query.
-// flexOnlyTripStatus finishes the status of a trip with no timed stop_times.
-// With no timed stops there is no schedule to measure against, so the status
-// carries only what the vehicle reports (identity, position, orientation,
-// occupancy) and no stop or deviation fields. Without a vehicle there is
-// nothing to report, and the result is nil.
-func flexOnlyTripStatus(status *models.TripStatus, vehicle *gtfs.Vehicle, currentTime time.Time) *models.TripStatus {
-	if vehicle == nil {
-		return nil
-	}
-	status.SetPredicted(!defaultStaleDetector.Check(vehicle, currentTime))
-	return status
-}
-
 func (api *RestAPI) BuildTripStatus(
 	ctx context.Context,
 	agencyID, tripID string,
