@@ -287,7 +287,9 @@ func multiTimezoneTripsForLocationFiles() map[string]string {
 			"chicago-route,shared-service,chicago-trip,Chicago,shared-block\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"la-trip,05:00:00,05:00:00,la-stop,1\n" +
-			"chicago-trip,07:00:00,07:00:00,chicago-stop,1\n",
+			"la-trip,05:05:00,05:05:00,la-stop,2\n" +
+			"chicago-trip,07:00:00,07:00:00,chicago-stop,1\n" +
+			"chicago-trip,07:05:00,07:05:00,chicago-stop,2\n",
 	}
 }
 
