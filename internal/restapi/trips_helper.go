@@ -54,6 +54,15 @@ func flexOnlyTripStatus(status *models.TripStatus, vehicle *gtfs.Vehicle, curren
 	return status
 }
 
+// isFlexOnlyTrip reports whether the static data holds this trip with no
+// timed stop_times. A NULL cached min_arrival_time is the same test the timed
+// queries use. A trip missing from the static data, such as a GTFS-RT ADDED
+// trip, is not flex-only.
+func (api *RestAPI) isFlexOnlyTrip(ctx context.Context, tripID string) bool {
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	return err == nil && !trip.MinArrivalTime.Valid
+}
+
 // BuildTripStatus builds a TripStatus for the given trip.
 //
 // Pass a non-nil vehicle when it is already known (e.g. DUPLICATED trips, or when
@@ -170,7 +179,7 @@ func (api *RestAPI) BuildTripStatus(
 			slog.String("trip_id", dbTripID),
 			slog.String("error", err.Error()))
 	}
-	if err == nil && len(stopTimes) == 0 {
+	if err == nil && len(stopTimes) == 0 && api.isFlexOnlyTrip(ctx, dbTripID) {
 		return flexOnlyTripStatus(status, vehicle, currentTime), extras, nil
 	}
 
