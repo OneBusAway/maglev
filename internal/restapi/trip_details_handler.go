@@ -521,23 +521,3 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 
 	return referencedTrips, nil
 }
-
-// requestedVehicleForTrip resolves a vehicleId parameter to the vehicle serving
-// tripID, or nil when it names no such vehicle. The endpoint must not accept a
-// vehicle currently on a different trip: Java's TripDetailsBeanService restricts
-// the vehicle argument to the trip being described, so the response never
-// conflates two unrelated trips.
-func (api *RestAPI) requestedVehicleForTrip(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time) *gtfs.Vehicle {
-	if vehicle := api.reportedTripUpdateVehicle(ctx, requestedID, agencyID, tripID, serviceDate); vehicle != nil {
-		return vehicle
-	}
-	vehicleAgencyID, rawVehicleID, err := utils.ExtractAgencyIDAndCodeID(requestedID)
-	if err != nil || vehicleAgencyID != agencyID {
-		return nil
-	}
-	vehicle, err := api.GtfsManager.GetVehicleByID(rawVehicleID)
-	if err != nil || vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID != tripID {
-		return nil
-	}
-	return vehicle
-}

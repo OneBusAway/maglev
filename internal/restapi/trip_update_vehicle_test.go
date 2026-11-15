@@ -690,6 +690,71 @@ func TestReportedTripUpdateVehicleIDRoundTrips(t *testing.T) {
 	}
 }
 
+func TestExplicitVehicleIDUsesRecordChecks(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + time.Minute)
+	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer setupAPI.Shutdown()
+	_, stopID, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
+	tests := []struct {
+		name        string
+		requestedID string
+		recordAge   time.Duration
+		canceled    bool
+		wantCode    int
+	}{
+		{name: "fresh", requestedID: "dp-agency_bus", wantCode: http.StatusOK},
+		{name: "expired", requestedID: "dp-agency_bus", recordAge: 20 * time.Minute, wantCode: http.StatusNotFound},
+		{name: "canceled", requestedID: "dp-agency_bus", canceled: true, wantCode: http.StatusOK},
+		{name: "wrong vehicle", requestedID: "dp-agency_other", wantCode: http.StatusNotFound},
+		{name: "wrong agency", requestedID: "other_bus", wantCode: http.StatusNotFound},
+		{name: "canceled wrong vehicle", requestedID: "dp-agency_other", canceled: true, wantCode: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+			update := plannedVehicleTripUpdate(tripID, now.Add(-tt.recordAge))
+			update.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}
+			delay := time.Minute
+			update.Delay = &delay
+			if tt.canceled {
+				update.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+			}
+			api.GtfsManager.MockAddFullTripUpdate(update)
+			combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+			query := fmt.Sprintf("key=TEST&serviceDate=%d&vehicleId=%s", serviceDate.UnixMilli(), tt.requestedID)
+
+			detailsResp, details := callAPIHandler[TripDetailsResponse](t, api,
+				fmt.Sprintf("/api/where/trip-details/%s.json?%s", combinedTripID, query))
+			arrivalResp, arrival := callAPIHandler[ArrivalAndDepartureResponse](t, api,
+				fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?%s&tripId=%s&stopSequence=1", stopID, query, combinedTripID))
+
+			require.Equal(t, tt.wantCode, detailsResp.StatusCode)
+			require.Equal(t, tt.wantCode, arrivalResp.StatusCode)
+			if tt.wantCode != http.StatusOK {
+				return
+			}
+			require.NotNil(t, details.Data.Entry.Status)
+			require.NotNil(t, arrival.Data.Entry.TripStatus)
+			assert.Equal(t, details.Data.Entry.Status.Status, arrival.Data.Entry.TripStatus.Status)
+			if tt.canceled {
+				assert.Equal(t, "CANCELED", details.Data.Entry.Status.Status)
+				assert.Empty(t, details.Data.Entry.Status.Phase)
+				assert.Empty(t, arrival.Data.Entry.VehicleID)
+				assert.False(t, arrival.Data.Entry.Predicted)
+				assert.True(t, arrival.Data.Entry.PredictedArrivalTime.IsZero())
+				assert.True(t, arrival.Data.Entry.PredictedDepartureTime.IsZero())
+			} else {
+				assert.Equal(t, tt.requestedID, details.Data.Entry.Status.VehicleID)
+				assert.Equal(t, tt.requestedID, arrival.Data.Entry.VehicleID)
+			}
+		})
+	}
+}
+
 func TestTripForVehicleHandler_NamedVehicleReportsActiveTrip(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(10*time.Hour + 30*time.Minute)

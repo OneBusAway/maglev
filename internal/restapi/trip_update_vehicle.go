@@ -159,12 +159,15 @@ func (api *RestAPI) tripUpdateVehicleServiceDate(ctx context.Context, tripID str
 	return today
 }
 
-// reportedTripUpdateVehicle returns the trip's trip-update vehicle when requestedID
-// is the ID responses report for it (see responseVehicleID), so that a client can
-// send that ID back. It returns nil otherwise.
-func (api *RestAPI) reportedTripUpdateVehicle(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+// requestedVehicleForTrip applies the automatic lookup's record checks before
+// matching an explicit vehicle ID. A position vehicle must report this trip;
+// trip-update-only vehicles can describe another trip on the same block.
+func (api *RestAPI) requestedVehicleForTrip(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time) *gtfs.Vehicle {
 	vehicle := api.vehicleForTrip(ctx, tripID, serviceDate)
-	if !isTripUpdateVehicle(vehicle) || vehicle.ID == nil || responseVehicleID(agencyID, vehicle) != requestedID {
+	if vehicle == nil || vehicle.ID == nil || vehicle.Trip == nil || responseVehicleID(agencyID, vehicle) != requestedID {
+		return nil
+	}
+	if !isTripUpdateVehicle(vehicle) && vehicle.Trip.ID.ID != tripID {
 		return nil
 	}
 	return vehicle

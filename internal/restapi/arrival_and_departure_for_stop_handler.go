@@ -305,20 +305,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// If vehicleId is provided, validate it matches the trip
 	var vehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
-		vehicle = api.reportedTripUpdateVehicle(ctx, params.VehicleID, route.AgencyID, tripID, serviceMidnight)
+		vehicle = api.requestedVehicleForTrip(ctx, params.VehicleID, route.AgencyID, tripID, serviceMidnight)
 		if vehicle == nil {
-			_, providedVehicleID, err := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
-			if err == nil {
-				v, err := api.GtfsManager.GetVehicleByID(providedVehicleID)
-				// If vehicle is found, validate it matches the trip
-				if err == nil && v != nil && v.Trip != nil && v.Trip.ID.ID == tripID {
-					vehicle = v
-				}
-			} else {
-				reqLogger.Warn("malformed vehicleId provided",
-					"vehicleId", params.VehicleID,
-					"error", err)
-			}
+			api.sendNotFound(w, r)
+			return
 		}
 	} else {
 		// If vehicleId is not provided, get the vehicle for the trip
@@ -344,7 +334,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// carry a wall-clock time portion) for all schedule math — matches Java's
 	// BlockInstance contract ("midnight time relative to stop times"; see
 	// BlockInstance.java:69-72) and the plural handler's convention.
-	status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime, freqMap)
+	status, statusExtras, statusErr := api.buildTripStatusForVehicle(ctx, route.AgencyID, tripID, vehicle, serviceMidnight, currentTime, freqMap)
 	if statusErr != nil {
 		reqLogger.Warn("BuildTripStatus failed",
 			"tripID", tripID, "error", statusErr)
