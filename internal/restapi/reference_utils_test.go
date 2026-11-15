@@ -651,7 +651,9 @@ func TestBuildRouteReferences_OverlappingAgencies(t *testing.T) {
 			"SUB_ROUTE_B,svc1,t2,Headsign 2,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"t1,08:00:00,08:00:00,s1,1\n" +
-			"t2,08:30:00,08:30:00,s1,2\n",
+			"t1,08:05:00,08:05:00,s1,2\n" +
+			"t2,08:30:00,08:30:00,s1,1\n" +
+			"t2,08:35:00,08:35:00,s1,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "overlapping-agencies.zip", files)
