@@ -15,6 +15,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -219,6 +220,57 @@ func TestPluralArrivals_BeforeBlockStartMeasuresFromFirstStop(t *testing.T) {
 				assert.Equal(t, utils.FormCombinedID("dp-agency", firstStopID), arrival.TripStatus.NextStop)
 				assert.Equal(t, 60*60, arrival.TripStatus.NextStopTimeOffset)
 			}
+		})
+	}
+}
+
+func TestStatusBlockSnapshot_BeforeStartUsesWallClock(t *testing.T) {
+	location, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		month     time.Month
+		day       int
+		firstStop time.Duration
+	}{
+		{name: "spring forward", month: time.March, day: 8, firstStop: 90 * time.Minute},
+		{name: "fall back", month: time.November, day: 1, firstStop: 90 * time.Minute},
+		{name: "ordinary day", month: time.March, day: 7, firstStop: 90 * time.Minute},
+		{name: "overnight on spring forward date", month: time.March, day: 8, firstStop: 25*time.Hour + 30*time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			serviceDate := time.Date(2026, tt.month, tt.day, 0, 0, 0, 0, location)
+			now := time.Date(2026, tt.month, tt.day, 0, 0, int((tt.firstStop-30*time.Minute)/time.Second), 0, location)
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			firstStopID, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+			addDownstreamStop(t, api, tripID)
+			shift := int64(tt.firstStop - 8*time.Hour)
+			_, err := api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(),
+				"UPDATE stop_times SET arrival_time = arrival_time + ?, departure_time = departure_time + ? WHERE trip_id = ?",
+				shift, shift, tripID)
+			require.NoError(t, err)
+
+			status := &models.TripStatus{}
+			snap := api.statusBlockSnapshot(t.Context(), status, tripStatusInput{
+				agencyID: "dp-agency", tripID: tripID, dbTripID: tripID,
+				serviceDate: serviceDate, currentTime: now,
+			}, []string{tripID}, 0)
+
+			require.NotNil(t, snap)
+			assert.True(t, snap.InRange, "held snapshot must be at the first stop, not before it")
+			assert.Equal(t, tripID, snap.ActiveTripID)
+			assert.Zero(t, snap.DistanceAlongBlock)
+			assert.Zero(t, snap.NextStopIndex, "held snapshot must not advance past the first stop")
+			assert.Equal(t, utils.FormCombinedID("dp-agency", firstStopID), status.NextStop)
+			assert.Equal(t, status.NextStop, status.ClosestStop)
+			assert.Equal(t, 30*60, status.NextStopTimeOffset)
+			assert.Equal(t, status.NextStopTimeOffset, status.ClosestStopTimeOffset)
+			_, stopsAway, ok := snap.metricsForStop(tripID, 5)
+			assert.True(t, ok, "pre-start hold must support downstream arrival metrics")
+			assert.Equal(t, 1, stopsAway)
 		})
 	}
 }

@@ -360,7 +360,8 @@ func (api *RestAPI) statusBlockSnapshot(
 	if snap == nil {
 		return nil
 	}
-	blockStart := servicedate.OffsetBase(input.serviceDate).Add(time.Duration(snap.Stops[0].EffectiveStopSeconds) * time.Second)
+	year, month, day := input.serviceDate.Date()
+	blockStart := time.Date(year, month, day, 0, 0, int(snap.Stops[0].EffectiveStopSeconds), 0, input.serviceDate.Location())
 	beforeBlockStart := effectiveTime.Before(blockStart) && !runsOwnSchedule(input.vehicle)
 
 	hasNoPosition := input.vehicle == nil || input.vehicle.Position == nil
