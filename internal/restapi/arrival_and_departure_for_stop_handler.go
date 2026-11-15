@@ -54,7 +54,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 				params.MinutesAfter = int(minutesAfter)
 			}
 		} else {
-			fieldErrors["minutesAfter"] = []string{"must be a valid integer"}
+			fieldErrors["minutesAfter"] = []string{`Invalid field value for field "minutesAfter".`}
 		}
 	}
 
@@ -69,7 +69,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 				params.MinutesBefore = int(minutesBefore)
 			}
 		} else {
-			fieldErrors["minutesBefore"] = []string{"must be a valid integer"}
+			fieldErrors["minutesBefore"] = []string{`Invalid field value for field "minutesBefore".`}
 		}
 	}
 
@@ -108,7 +108,7 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 			seq := int(stopSequence)
 			params.StopSequence = &seq
 		} else {
-			fieldErrors["stopSequence"] = []string{"must be a valid integer"}
+			fieldErrors["stopSequence"] = []string{`Invalid field value for field "stopSequence".`}
 		}
 	}
 

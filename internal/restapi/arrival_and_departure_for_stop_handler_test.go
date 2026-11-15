@@ -416,7 +416,7 @@ func TestArrivalAndDepartureForStopHandlerValidatesIntegerParamsRange(t *testing
 
 			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 			assert.Contains(t, model.Data.FieldErrors, tt.field)
-			assert.Equal(t, "must be a valid integer", model.Data.FieldErrors[tt.field][0])
+			assert.Equal(t, fmt.Sprintf("Invalid field value for field %q.", tt.field), model.Data.FieldErrors[tt.field][0])
 		})
 	}
 }
@@ -757,7 +757,8 @@ func TestParseArrivalAndDepartureParams_InvalidValues(t *testing.T) {
 	assert.Contains(t, errs, "serviceDate")
 	assert.Contains(t, errs, "stopSequence")
 
-	assert.Equal(t, "must be a valid integer", errs["minutesAfter"][0])
+	assert.Equal(t, `Invalid field value for field "minutesAfter".`, errs["minutesAfter"][0])
+	assert.Equal(t, `Invalid field value for field "stopSequence".`, errs["stopSequence"][0])
 	assert.Equal(t, `Invalid field value for field "time".`, errs["time"][0])
 	assert.Equal(t, "must be a valid Unix timestamp in milliseconds", errs["serviceDate"][0])
 }

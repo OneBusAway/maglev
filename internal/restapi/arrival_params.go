@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"fmt"
 	"net/url"
 	"strconv"
 	"time"
@@ -26,7 +27,7 @@ func parseMinutesValue(queryParams url.Values, key string, fallback, maxWindow t
 
 	minutes, err := strconv.ParseInt(values[0], 10, 32)
 	if err != nil {
-		addError(key, "must be a valid integer")
+		addError(key, fmt.Sprintf("Invalid field value for field %q.", key))
 		return fallback
 	}
 	if minutes < 0 {

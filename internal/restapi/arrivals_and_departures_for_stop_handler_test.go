@@ -560,13 +560,15 @@ func TestParseArrivalsAndDeparturesParams_DefaultValues(t *testing.T) {
 func TestParseArrivalsAndDeparturesParams_InvalidValues(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	req := httptest.NewRequest("GET", "/test?minutesAfter=invalid&minutesBefore=invalid&time=invalid", nil)
+	req := httptest.NewRequest("GET", "/test?minutesAfter=invalid&minutesBefore=invalid&frequencyMinutesBefore=invalid&frequencyMinutesAfter=invalid&time=invalid", nil)
 
 	_, errs := api.parseArrivalsAndDeparturesParams(req)
 
 	require.NotNil(t, errs)
-	assert.Equal(t, "must be a valid integer", errs["minutesAfter"][0])
-	assert.Equal(t, "must be a valid integer", errs["minutesBefore"][0])
+	assert.Equal(t, `Invalid field value for field "minutesAfter".`, errs["minutesAfter"][0])
+	assert.Equal(t, `Invalid field value for field "minutesBefore".`, errs["minutesBefore"][0])
+	assert.Equal(t, `Invalid field value for field "frequencyMinutesBefore".`, errs["frequencyMinutesBefore"][0])
+	assert.Equal(t, `Invalid field value for field "frequencyMinutesAfter".`, errs["frequencyMinutesAfter"][0])
 	assert.Equal(t, `Invalid field value for field "time".`, errs["time"][0])
 }
 
