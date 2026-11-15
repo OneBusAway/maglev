@@ -271,9 +271,9 @@ func (api *RestAPI) blockVehicleTrip(ctx context.Context, agencyID, blockID stri
 	return "", "", false
 }
 
-// activeTripOfTripUpdateVehicle returns the trip the vehicle's block is running
-// now. It falls back to tripID when the block has no scheduled position at this
-// time.
+// activeTripOfTripUpdateVehicle selects the trip at the same effective record
+// time as its status, so a delayed vehicle cannot name a later trip at a boundary.
+// It falls back to tripID when the record or scheduled position is unavailable.
 func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID, tripID string) string {
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
@@ -285,7 +285,16 @@ func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID,
 	}
 	now := api.Clock.Now().In(location)
 	serviceDate := api.tripUpdateVehicleServiceDate(ctx, tripID, now, location).Midnight(location)
-	snap := api.computeScheduledBlockSnapshot(ctx, tripID, now, serviceDate)
+	vehicle := api.tripUpdateVehicleForTrip(ctx, tripID, serviceDate)
+	if vehicle == nil {
+		return tripID
+	}
+	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
+	deviation, _ := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceDate, now)
+	snap := api.statusBlockSnapshot(ctx, models.NewTripStatus(), tripStatusInput{
+		agencyID: agencyID, tripID: tripID, dbTripID: tripID,
+		vehicle: vehicle, serviceDate: serviceDate, currentTime: now,
+	}, blockTripIDs, deviation)
 	if snap == nil || snap.ActiveTripID == "" {
 		return tripID
 	}

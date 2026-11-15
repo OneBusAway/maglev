@@ -709,6 +709,64 @@ func TestTripForVehicleHandler_NamedVehicleReportsActiveTrip(t *testing.T) {
 	assert.Equal(t, utils.FormCombinedID("dp-agency", laterTripID), model.Data.Entry.TripID)
 }
 
+func TestTripForVehicleHandler_ActiveTripUsesRecordScheduleTime(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(10*time.Hour + time.Minute)
+	tests := []struct {
+		name      string
+		recordAge time.Duration
+		delay     time.Duration
+	}{
+		{name: "record time", recordAge: 2 * time.Minute},
+		{name: "schedule deviation", delay: 15 * time.Minute},
+		{name: "record time and deviation", recordAge: 2 * time.Minute, delay: 15 * time.Minute},
+	}
+	for _, anonymous := range []bool{false, true} {
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("%s/anonymous=%t", tt.name, anonymous), func(t *testing.T) {
+				api := createTestApiWithClock(t, clock.NewMockClock(now))
+				defer api.Shutdown()
+				t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+				_, _, firstTripID, _ := setupDelayPropTestData(t, api, 1)
+				lastStopID := addDownstreamStop(t, api, firstTripID)
+				_, err := api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(),
+					"UPDATE stops SET lat = ? WHERE id = ?", 47.01, lastStopID)
+				require.NoError(t, err)
+				_, err = api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(),
+					"UPDATE stop_times SET arrival_time = ?, departure_time = ? WHERE trip_id = ? AND stop_id = ?",
+					int64(10*time.Hour), int64(10*time.Hour), firstTripID, lastStopID)
+				require.NoError(t, err)
+				blockID := fmt.Sprintf("boundary-%t-%d-%d", anonymous, tt.recordAge, tt.delay)
+				_, err = api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(),
+					"UPDATE trips SET block_id = ? WHERE id = ?", blockID, firstTripID)
+				require.NoError(t, err)
+				laterTripID := addLaterBlockTrip(t, api, lastStopID, firstTripID)
+				vehicleID := plannedVehicleID
+				if anonymous {
+					vehicleID = utils.FormCombinedID("dp-agency", blockID)
+				}
+				for _, tripID := range []string{firstTripID, laterTripID} {
+					update := plannedVehicleTripUpdate(tripID, now.Add(-tt.recordAge))
+					update.Delay = &tt.delay
+					if anonymous {
+						update.Vehicle = nil
+					}
+					api.GtfsManager.MockAddFullTripUpdate(update)
+				}
+
+				resp, model := callAPIHandler[TripDetailsResponse](t, api,
+					fmt.Sprintf("/api/where/trip-for-vehicle/%s.json?key=TEST", vehicleID))
+
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				wantTripID := utils.FormCombinedID("dp-agency", firstTripID)
+				assert.Equal(t, wantTripID, model.Data.Entry.TripID)
+				require.NotNil(t, model.Data.Entry.Status)
+				assert.Equal(t, wantTripID, model.Data.Entry.Status.ActiveTripID)
+			})
+		}
+	}
+}
+
 // A trip past midnight belongs to the previous service date, and a vehicle known
 // only from its trip update is still that trip's vehicle then.
 func TestTripForVehicleHandler_TripUpdateVehicleAfterMidnight(t *testing.T) {
