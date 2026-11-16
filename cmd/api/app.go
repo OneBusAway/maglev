@@ -36,6 +36,8 @@ func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 		BundleInputsURL: gtfsCfgData.BundleInputsURL,
 		GTFSDataPath:    gtfsCfgData.GTFSDataPath,
 		Env:             gtfsCfgData.Env,
+
+		StopConsolidationURL: gtfsCfgData.StopConsolidationURL,
 	}
 	// The importer still loads only the first static feed.
 	if len(gtfsCfgData.StaticFeeds) > 0 {
@@ -354,6 +356,9 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 		jsonConfig["gtfs-bundle-inputs-url"] = appconf.RedactURL(gtfsCfg.BundleInputsURL)
 	} else {
 		jsonConfig["gtfs-static-feeds"] = dumpStaticFeeds(gtfsCfg.StaticFeeds)
+	}
+	if gtfsCfg.StopConsolidationURL != "" {
+		jsonConfig["stop-consolidation-url"] = appconf.RedactURL(gtfsCfg.StopConsolidationURL)
 	}
 
 	var feeds []map[string]any

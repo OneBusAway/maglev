@@ -95,6 +95,10 @@
       "type": "string",
       "description": "URL or local path of an obacloud bundle-inputs.json manifest (version 1) that lists the static feeds. Read once at startup. Cannot be combined with gtfs-static-feed or gtfs-static-feeds. Only the first manifest feed is imported for now."
     },
+    "stop-consolidation-url": {
+      "type": "string",
+      "description": "Optional Java OneBusAway stop consolidation file for the whole bundle (http/https URL or local file path). Each line lists a canonical stop ID, then the stop IDs merged into it, in <agency>_<id> form, where the agency is the feed's first agency in agency.txt"
+    },
     "gtfs-rt-feeds": {
       "type": "array",
       "description": "Array of GTFS-RT feed configurations",
