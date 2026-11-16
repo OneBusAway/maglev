@@ -134,7 +134,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// A route can serve a retained stop and still have every arrival fall
 	// outside the window. Those route alerts belong on the entry anyway.
-	if err := api.addRouteAlertsForRetainedStops(ctx, lists.stopIDs, entrySituations); err != nil {
+	if err := api.addRouteAlertsForStops(ctx, retainedStopCodes(lists.stopIDs), entrySituations); err != nil {
 		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}

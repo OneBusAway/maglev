@@ -556,17 +556,17 @@ func (api *RestAPI) addStopLevelArrivalAlerts(ctx context.Context, stops []gtfsd
 	return nil
 }
 
-// addRouteAlertsForRetainedStops records alerts for every route that serves a
-// retained stop. Agency and route ids stay in separate columns: an agency id
-// can contain an underscore, so the combined agency_code form is not split
-// back apart. Alerts are indexed by the bare route id.
-func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combinedStopIDs []string, situations *situationCollector) error {
-	stopIDs := retainedStopCodes(combinedStopIDs)
-	if len(stopIDs) == 0 {
+// addRouteAlertsForStops records alerts for every route that serves one of
+// stopCodes, which are bare GTFS stop ids. Agency and route ids stay in
+// separate columns: an agency id can contain an underscore, so the combined
+// agency_code form is not split back apart. Alerts are indexed by the bare
+// route id.
+func (api *RestAPI) addRouteAlertsForStops(ctx context.Context, stopCodes []string, situations *situationCollector) error {
+	if len(stopCodes) == 0 {
 		return nil
 	}
 
-	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesForStops)
+	rows, err := utils.QueryInBatches(ctx, stopCodes, api.GtfsManager.GtfsDB.Queries.GetRoutesForStops)
 	if err != nil {
 		return err
 	}
@@ -583,7 +583,7 @@ func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combined
 	return nil
 }
 
-// routeAlertKey is one route serving a retained stop. The same route is
+// routeAlertKey is one route serving a requested stop. The same route is
 // returned once per stop it serves, and only the first copy is recorded.
 type routeAlertKey struct {
 	agencyID string

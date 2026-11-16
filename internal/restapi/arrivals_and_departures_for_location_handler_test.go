@@ -899,17 +899,22 @@ func TestRetainedStopCodes(t *testing.T) {
 	assert.Empty(t, retainedStopCodes(nil))
 }
 
-func TestAddRouteAlertsForRetainedStopsSkipsBadIDs(t *testing.T) {
-	api := createTestApi(t)
-	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{"not-combined"}, newSituationCollector()))
-}
-
-func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
+// With no stops there is nothing to look up, so the helper returns before
+// querying. A cancelled context would make any query fail.
+func TestAddRouteAlertsForStopsSkipsEmptyInput(t *testing.T) {
 	api := createTestApi(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := api.addRouteAlertsForRetainedStops(ctx, []string{arrivalsTestStopID}, newSituationCollector())
+	require.NoError(t, api.addRouteAlertsForStops(ctx, nil, newSituationCollector()))
+}
+
+func TestAddRouteAlertsForStopsQueryError(t *testing.T) {
+	api := createTestApi(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := api.addRouteAlertsForStops(ctx, []string{testdata.Stop4062.Code}, newSituationCollector())
 	require.Error(t, err)
 }
 
@@ -932,7 +937,7 @@ func TestBuildNearbyResultsDropsStopsInactiveOnDate(t *testing.T) {
 // An agency id that contains an underscore must stay intact. Splitting the
 // combined agency_code route id would treat the first segment as the agency
 // and look up alerts under the wrong route.
-func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
+func TestAddRouteAlertsForStopsKeepsAgencyUnderscore(t *testing.T) {
 	api := createTestApi(t)
 	db := api.GtfsManager.GtfsDB.DB
 
@@ -975,7 +980,7 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	})
 
 	situations := newSituationCollector()
-	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []string{arrivalsTestStopID}, situations))
+	require.NoError(t, api.addRouteAlertsForStops(context.Background(), []string{testdata.Stop4062.Code}, situations))
 
 	ids := situationIDsFromRefs(situations.refs)
 	assert.Contains(t, ids, utils.FormCombinedID(agencyID, alertID))
