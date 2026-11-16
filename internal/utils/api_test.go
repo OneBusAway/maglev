@@ -1218,6 +1218,7 @@ func TestParsePaginationParams(t *testing.T) {
 		urlParams      string
 		expectedOffset int
 		expectedLimit  int
+		expectedErrors map[string]string
 	}{
 		{
 			name:           "Default values (no limit)",
@@ -1244,40 +1245,44 @@ func TestParsePaginationParams(t *testing.T) {
 			expectedLimit:  50,
 		},
 		{
-			name:           "Invalid offset (negative)",
+			name:           "Valid negative offset ignored by bounds check",
 			urlParams:      "?offset=-5",
 			expectedOffset: 0,
 			expectedLimit:  -1,
 		},
 		{
-			name:           "Invalid limit (zero)",
+			name:           "Zero limit ignored by bounds check",
 			urlParams:      "?limit=0",
 			expectedOffset: 0,
 			expectedLimit:  -1,
 		},
 		{
-			name:           "Invalid limit (negative)",
+			name:           "Negative limit ignored by bounds check",
 			urlParams:      "?limit=-10",
 			expectedOffset: 0,
 			expectedLimit:  -1,
 		},
 		{
-			name:           "Limit exceeds max",
+			name:           "Limit exceeds max clamped to 1000",
 			urlParams:      "?limit=5000",
 			expectedOffset: 0,
 			expectedLimit:  1000,
 		},
 		{
-			name:           "maxCount exceeds max",
+			name:           "maxCount exceeds max clamped to 1000",
 			urlParams:      "?maxCount=5000",
 			expectedOffset: 0,
 			expectedLimit:  1000,
 		},
 		{
-			name:           "Non-numeric values",
+			name:           "Non-numeric values report field errors",
 			urlParams:      "?offset=abc&limit=xyz",
 			expectedOffset: 0,
 			expectedLimit:  -1,
+			expectedErrors: map[string]string{
+				"offset": `Invalid field value for field "offset".`,
+				"limit":  `Invalid field value for field "limit".`,
+			},
 		},
 		{
 			name:           "Explicit offset zero and small limit",
@@ -1285,15 +1290,75 @@ func TestParsePaginationParams(t *testing.T) {
 			expectedOffset: 0,
 			expectedLimit:  1,
 		},
+		{
+			name:           "maxCount exceeds signed 32-bit integer range",
+			urlParams:      "?maxCount=2147483648",
+			expectedOffset: 0,
+			expectedLimit:  -1,
+			expectedErrors: map[string]string{
+				"maxCount": `Invalid field value for field "maxCount".`,
+			},
+		},
+		{
+			name:           "maxCount underflows signed 32-bit integer range",
+			urlParams:      "?maxCount=-2147483649",
+			expectedOffset: 0,
+			expectedLimit:  -1,
+			expectedErrors: map[string]string{
+				"maxCount": `Invalid field value for field "maxCount".`,
+			},
+		},
+		{
+			name:           "offset exceeds signed 32-bit integer range",
+			urlParams:      "?offset=2147483648",
+			expectedOffset: 0,
+			expectedLimit:  -1,
+			expectedErrors: map[string]string{
+				"offset": `Invalid field value for field "offset".`,
+			},
+		},
+		{
+			name:           "limit exceeds signed 32-bit integer range",
+			urlParams:      "?limit=2147483648",
+			expectedOffset: 0,
+			expectedLimit:  -1,
+			expectedErrors: map[string]string{
+				"limit": `Invalid field value for field "limit".`,
+			},
+		},
+		{
+			name:           "maxCount whitespace padded rejected",
+			urlParams:      "?maxCount=%2050%20",
+			expectedOffset: 0,
+			expectedLimit:  -1,
+			expectedErrors: map[string]string{
+				"maxCount": `Invalid field value for field "maxCount".`,
+			},
+		},
+		{
+			name:           "maxCount max signed 32-bit integer boundary accepted",
+			urlParams:      "?maxCount=2147483647",
+			expectedOffset: 0,
+			expectedLimit:  1000,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req, _ := http.NewRequest("GET", "/test"+tt.urlParams, nil)
-			offset, limit := ParsePaginationParams(req)
+			offset, limit, fieldErrors := ParsePaginationParams(req, nil)
 
 			assert.Equal(t, tt.expectedOffset, offset)
 			assert.Equal(t, tt.expectedLimit, limit)
+
+			if len(tt.expectedErrors) > 0 {
+				for param, msg := range tt.expectedErrors {
+					require.Contains(t, fieldErrors, param)
+					assert.Contains(t, fieldErrors[param], msg)
+				}
+			} else {
+				assert.Empty(t, fieldErrors)
+			}
 		})
 	}
 }

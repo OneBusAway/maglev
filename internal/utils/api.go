@@ -365,27 +365,31 @@ func parseMaxCount(queryParams url.Values, defaultCount, ceiling int, overflow m
 // maxCount is the primary parameter for limit, falling back to limit.
 // If neither is present, limit is -1 (return all).
 // Default offset is 0.
-func ParsePaginationParams(r *http.Request) (offset int, limit int) {
-	queryParams := r.URL.Query()
-
-	offset = 0
-	if val := queryParams.Get("offset"); val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil && parsed >= 0 {
-			offset = parsed
-		}
+func ParsePaginationParams(r *http.Request, fieldErrors map[string][]string) (int, int, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
 	}
 
-	limit = -1 // Default to no limit
+	queryParams := r.URL.Query()
+
+	offset := 0
+	parsedOffset, fieldErrors := ParseInt32Param(queryParams, "offset", fieldErrors)
+	if parsedOffset != nil && *parsedOffset >= 0 {
+		offset = int(*parsedOffset)
+	}
+
+	limit := -1 // Default to no limit
 
 	// Check maxCount first (OBA convention)
-	if val := queryParams.Get("maxCount"); val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	} else if val := queryParams.Get("limit"); val != "" {
-		// Fallback to limit
-		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
-			limit = parsed
+	parsedMaxCount, fieldErrors := ParseInt32Param(queryParams, "maxCount", fieldErrors)
+	if parsedMaxCount != nil && *parsedMaxCount > 0 {
+		limit = int(*parsedMaxCount)
+	} else if queryParams.Get("maxCount") == "" {
+		// Fallback to limit if maxCount was not provided
+		var parsedLimit *int32
+		parsedLimit, fieldErrors = ParseInt32Param(queryParams, "limit", fieldErrors)
+		if parsedLimit != nil && *parsedLimit > 0 {
+			limit = int(*parsedLimit)
 		}
 	}
 
@@ -394,7 +398,7 @@ func ParsePaginationParams(r *http.Request) (offset int, limit int) {
 		limit = 1000
 	}
 
-	return offset, limit
+	return offset, limit, fieldErrors
 }
 
 // PaginateSlice slices a slice based on offset and limit.
