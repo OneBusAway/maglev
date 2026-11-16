@@ -41,7 +41,12 @@ func (api *RestAPI) vehicleBlockTripUpdates(ctx context.Context, vehicle *gtfs.V
 	if vehicle.Trip == nil {
 		return nil
 	}
-	tripID := vehicle.Trip.ID.ID
+	return api.tripBlockUpdates(ctx, vehicle.Trip.ID.ID, serviceDate)
+}
+
+// tripBlockUpdates returns the trip updates of a trip's block, or none when the
+// trip itself has no update.
+func (api *RestAPI) tripBlockUpdates(ctx context.Context, tripID string, serviceDate time.Time) []tripUpdateForTrip {
 	if len(api.GtfsManager.GetTripUpdatesForTrip(tripID)) == 0 {
 		return nil
 	}
@@ -60,21 +65,23 @@ func (api *RestAPI) vehicleRecordExpired(blockUpdates []tripUpdateForTrip) bool 
 	return hasTime && api.recordTimeExpired(recordTime)
 }
 
-// vehicleWithRecordStatus gives a vehicle the status of its record. Java takes it
-// from the block's first trip update, and a position only adds a location
-// (GtfsRealtimeTripLibrary.java:325, :1101-1102), so an update canceling the trip
-// outranks the position's own descriptor. It returns a copy because vehicles are
-// shared across requests.
+// vehicleWithRecordStatus cancels a vehicle whose own trip a trip update cancels.
+// A position only adds a location to Java's record (GtfsRealtimeTripLibrary.java
+// :1101-1102), so the update outranks the position's own descriptor. Java gives
+// the record the status of the block's first update (:325), but Maglev scopes
+// cancellation to one trip (wiki trip-details, SD-02): an earlier canceled trip
+// does not cancel the one the bus is now running. It returns a copy because
+// vehicles are shared across requests.
 func vehicleWithRecordStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForTrip) *gtfs.Vehicle {
-	if len(blockUpdates) == 0 {
+	if vehicle.Trip == nil {
 		return vehicle
 	}
-	firstUpdate := blockUpdates[0].tu
-	if firstUpdate.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED {
+	canceledUpdate, found := cancelingUpdate(blockUpdates, vehicle.Trip.ID.ID)
+	if !found {
 		return vehicle
 	}
-	namesAnotherVehicle := namesVehicle(firstUpdate) &&
-		(vehicle.ID == nil || vehicle.ID.ID != firstUpdate.Vehicle.ID.ID)
+	namesAnotherVehicle := namesVehicle(canceledUpdate) &&
+		(vehicle.ID == nil || vehicle.ID.ID != canceledUpdate.Vehicle.ID.ID)
 	if namesAnotherVehicle {
 		return vehicle
 	}
@@ -91,8 +98,8 @@ func vehicleWithRecordStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateFor
 // .java:355-378), so feeds that plan a block before a bus is assigned, such as
 // Swiftly's block_*_schedBasedVehicle, still produce a vehicle in its responses.
 //
-// The vehicle carries the block's first update, whose schedule relationship is the
-// status of Java's whole record (GtfsRealtimeTripLibrary.java:325, :1101-1102).
+// The vehicle is built from the block's first update, and carries the status of
+// the trip its record is running: see recordVehicleInService.
 func (api *RestAPI) tripUpdateVehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
 	if len(api.GtfsManager.GetAllTripUpdates()) == 0 {
 		return nil
@@ -108,41 +115,104 @@ func (api *RestAPI) tripUpdateVehicleForTrip(ctx context.Context, tripID string,
 		if vehicle == nil {
 			continue
 		}
-		if !api.recordInService(ctx, vehicle, blockUpdate.tripID, blockTripIDs, recordTime, serviceDate) {
-			return nil
-		}
-		return vehicle
+		return api.recordVehicleInService(ctx, vehicle, tripRecord{
+			tripID:       blockUpdate.tripID,
+			blockTripIDs: blockTripIDs,
+			blockUpdates: blockUpdates,
+			recordTime:   recordTime,
+			serviceDate:  serviceDate,
+		})
 	}
 	return nil
 }
 
-// recordInService reports whether Java keeps a trip-update vehicle's record. It
-// discards one over an hour off schedule (GtfsRealtimeSource.java:728) and has no
-// location once the record's schedule time is past the block's last stop, unless
-// the trip is canceled (AbstractBlockLocationServiceImpl.java:274). ADDED and
-// DUPLICATED trips skip both, since they leave the static block schedule.
-func (api *RestAPI) recordInService(ctx context.Context, vehicle *gtfs.Vehicle, tripID string, blockTripIDs []string, recordTime, serviceDate time.Time) bool {
-	if runsOwnSchedule(vehicle) {
-		return true
-	}
-	deviation, _, discarded := api.blockRecordDeviation(ctx, blockTripIDs, serviceDate, recordTime)
-	if discarded {
-		return false
-	}
-	if isCanceledVehicle(vehicle) {
-		return true
-	}
-	scheduleTime := recordTime.Add(-time.Duration(deviation) * time.Second)
-	return !api.pastBlockEnd(ctx, tripID, scheduleTime, serviceDate)
+// tripRecord is the block record a trip-update vehicle is built from.
+type tripRecord struct {
+	tripID       string
+	blockTripIDs []string
+	blockUpdates []tripUpdateForTrip
+	recordTime   time.Time
+	serviceDate  time.Time
 }
 
-func (api *RestAPI) pastBlockEnd(ctx context.Context, tripID string, scheduleTime, serviceDate time.Time) bool {
-	snap := api.computeScheduledBlockSnapshot(ctx, tripID, scheduleTime, serviceDate)
-	if snap == nil {
-		return false
+// recordVehicleInService returns a trip-update vehicle with the status of the trip
+// its record is running, or nil when Java discards the record. Java discards one
+// over an hour off schedule (GtfsRealtimeSource.java:728) and has no location once
+// the record's schedule time is past the block's last stop, unless the trip is
+// canceled (AbstractBlockLocationServiceImpl.java:274). ADDED and DUPLICATED
+// trips skip both, since they leave the static block schedule.
+func (api *RestAPI) recordVehicleInService(ctx context.Context, vehicle *gtfs.Vehicle, record tripRecord) *gtfs.Vehicle {
+	if runsOwnSchedule(vehicle) {
+		return vehicle
+	}
+	deviation, _, discarded := api.blockRecordDeviation(ctx, record.blockTripIDs, record.serviceDate, record.recordTime)
+	if discarded {
+		return nil
+	}
+	scheduleTime := record.recordTime.Add(-time.Duration(deviation) * time.Second)
+	snap := api.computeScheduledBlockSnapshot(ctx, record.tripID, scheduleTime, record.serviceDate)
+	runningTripID := record.tripID
+	if snap != nil && snap.ActiveTripID != "" {
+		runningTripID = snap.ActiveTripID
+	}
+	applyRunningTripStatus(vehicle, record.blockUpdates, runningTripID)
+	if isCanceledVehicle(vehicle) || snap == nil {
+		return vehicle
 	}
 	blockEnd := snap.Stops[len(snap.Stops)-1].DepartureSeconds
-	return utils.CalculateSecondsSinceServiceDate(scheduleTime, serviceDate) > blockEnd
+	if utils.CalculateSecondsSinceServiceDate(scheduleTime, record.serviceDate) > blockEnd {
+		return nil
+	}
+	return vehicle
+}
+
+// applyRunningTripStatus gives a trip-update vehicle the cancellation of the trip
+// its record is running. Java gives the record the status of the block's first
+// update (GtfsRealtimeTripLibrary.java:325), which can cancel an earlier trip;
+// Maglev scopes cancellation to one trip (wiki trip-details, SD-02). A canceled
+// running trip becomes the vehicle's trip, so the status's activeTripId names it.
+// The vehicle must be one built for this request.
+func applyRunningTripStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForTrip, runningTripID string) {
+	if canceledUpdate, found := cancelingUpdate(blockUpdates, runningTripID); found {
+		vehicle.Trip = &canceledUpdate
+		return
+	}
+	if isCanceledVehicle(vehicle) {
+		runningTrip := *vehicle.Trip
+		runningTrip.ID.ScheduleRelationship = gtfsrt.TripDescriptor_SCHEDULED
+		vehicle.Trip = &runningTrip
+	}
+}
+
+// cancelingUpdate returns the update in a block record that cancels tripID.
+func cancelingUpdate(blockUpdates []tripUpdateForTrip, tripID string) (gtfs.Trip, bool) {
+	for _, blockUpdate := range blockUpdates {
+		if blockUpdate.tripID == tripID && blockUpdate.tu.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
+			return blockUpdate.tu, true
+		}
+	}
+	return gtfs.Trip{}, false
+}
+
+// arrivalCanceled reports whether an arrival's own trip is canceled, either by its
+// vehicle reporting that trip canceled or by the trip's own update. A vehicle
+// canceled for another trip on the block does not cancel this one (SD-02).
+func (api *RestAPI) arrivalCanceled(ctx context.Context, tripID string, vehicle *gtfs.Vehicle, serviceDate time.Time) bool {
+	if isCanceledVehicle(vehicle) && vehicle.Trip.ID.ID == tripID {
+		return true
+	}
+	hasCancelingUpdate := slices.ContainsFunc(api.GtfsManager.GetTripUpdatesForTrip(tripID), func(tripUpdate gtfs.Trip) bool {
+		return tripUpdate.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED && tripUpdateOnServiceDate(tripUpdate, serviceDate)
+	})
+	if !hasCancelingUpdate {
+		return false
+	}
+	blockUpdates := api.tripBlockUpdates(ctx, tripID, serviceDate)
+	if api.vehicleRecordExpired(blockUpdates) {
+		return false
+	}
+	_, found := cancelingUpdate(blockUpdates, tripID)
+	return found
 }
 
 // tripUpdateVehicleServiceDate returns the service date a vehicle known only from

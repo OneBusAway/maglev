@@ -315,11 +315,12 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		vehicle = api.vehicleForTrip(ctx, tripID, serviceMidnight)
 	}
 
-	if vehicle != nil && vehicle.Trip != nil {
+	canceled := api.arrivalCanceled(ctx, tripID, vehicle, serviceMidnight)
+	if vehicle != nil && vehicle.Trip != nil && !canceled {
 		// Matches tripStatus.vehicleId (set by BuildTripStatus below), and clients
 		// round-trip it into /trip-for-vehicle/{id} and /trip-details/{id}?vehicleId=...
 		vehicleID = api.combinedVehicleID(ctx, vehicle, route.AgencyID, tripID)
-		predicted = !isCanceledVehicle(vehicle)
+		predicted = true
 	}
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
@@ -378,7 +379,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 	}
 
-	if isCanceledVehicle(vehicle) {
+	if canceled {
 		predictedArrivalTime, predictedDepartureTime, predicted = time.Time{}, time.Time{}, false
 	}
 

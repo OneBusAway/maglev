@@ -986,7 +986,11 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 	// lookups (GetVehicleForTrip / GetVehicleByID) use the raw RT id
 	// unchanged; the combined form is an output-only concern.
 	vehicle := api.vehicleForTrip(ctx, st.TripID, in.serviceDate.Midnight(in.location))
-	vehicleID := api.combinedVehicleID(ctx, vehicle, route.AgencyID, st.TripID)
+	canceled := api.arrivalCanceled(ctx, st.TripID, vehicle, in.serviceDate.Midnight(in.location))
+	vehicleID := ""
+	if !canceled {
+		vehicleID = api.combinedVehicleID(ctx, vehicle, route.AgencyID, st.TripID)
+	}
 
 	// The raw feed stop_sequence, not in.stopPosition: GTFS-RT
 	// stop_time_update.stop_sequence refers to the feed's own numbering, so
@@ -1001,7 +1005,7 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 		scheduledArrivalTime,
 		scheduledDepartureTime,
 	)
-	if isCanceledVehicle(vehicle) {
+	if canceled {
 		predictedArrivalTime, predictedDepartureTime, predicted = time.Time{}, time.Time{}, false
 	}
 
@@ -1121,9 +1125,9 @@ func startTripStatusAtServiceStart(status *models.TripStatus, freqMap map[string
 }
 
 // combinedVehicleID renders a vehicle's ID for an arrival: see responseVehicleID.
-// It is empty when the trip has no vehicle assigned or is canceled.
+// It is empty when the trip has no vehicle assigned.
 func (api *RestAPI) combinedVehicleID(ctx context.Context, vehicle *gtfs.Vehicle, agencyID, tripID string) string {
-	if vehicle == nil || vehicle.Trip == nil || isCanceledVehicle(vehicle) {
+	if vehicle == nil || vehicle.Trip == nil {
 		return ""
 	}
 	reqLogger := logging.ForComponent(ctx, "http_server")
