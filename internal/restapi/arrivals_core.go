@@ -170,12 +170,10 @@ type timezoneGroup struct {
 	agencies map[string]struct{}
 }
 
-// activeStopTimesForWindow collects the stop_times falling inside the request
-// window across yesterday, today and tomorrow, resolving each serving agency
-// in its own timezone so trips from agencies in other timezones are not dropped.
-//
-// Agencies are grouped by distinct timezone: a stop served by five agencies in
-// one timezone costs the same six service/window queries as a single agency.
+// activeStopTimesForWindow collects stop_times across the service days reached
+// by the candidate window, resolving each agency in its own timezone.
+// Agencies sharing a timezone share one scan, with one active-service lookup
+// and at most one stop-time query per scanned service day.
 func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrivalsInput) ([]activeStopTime, error) {
 	discovery, err := api.discoverStopAgencies(ctx, in)
 	if err != nil {
@@ -307,14 +305,18 @@ func groupAgenciesByTimezone(locations map[string]*time.Location) (map[string]*t
 // Trips can run past midnight (e.g. 25:30), so the earliest day that can
 // contribute is the window start's own service day minus one: a trip like 24:30
 // runs on an earlier service date yet can still fall inside the window. The
-// latest contributing day is the window end's own service day: a trip starting
-// after that day cannot arrive inside the window. Day boundaries are read from
-// the wall clock in loc, so DST shifts and agency timezones that push part of
-// the window across midnight are covered.
+// latest contributing day normally matches the window end's calendar date.
+// GTFS offsets use service-date noon minus twelve hours, not midnight: before
+// a spring-forward day, that next day's offset base can already have started
+// on this calendar date. Include it when its base is within the window.
 func arrivalDayRange(queryTime, windowStart, windowEnd time.Time, loc *time.Location) (int, int) {
 	queryDay := servicedate.Of(queryTime.In(loc))
 	minDay := serviceDayOffset(queryDay, servicedate.Of(windowStart.In(loc))) - 1
-	maxDay := serviceDayOffset(queryDay, servicedate.Of(windowEnd.In(loc)))
+	endDay := servicedate.Of(windowEnd.In(loc))
+	for next := endDay.AddDays(1); !next.Start(loc).After(windowEnd); next = endDay.AddDays(1) {
+		endDay = next
+	}
+	maxDay := serviceDayOffset(queryDay, endDay)
 	return minDay, maxDay
 }
 
