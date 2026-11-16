@@ -146,7 +146,11 @@ func (api *RestAPI) BuildVehicleStatus(
 	status.Status, status.Phase = GetVehicleStatusAndPhase(vehicle)
 
 	if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
-		status.ActiveTripID = utils.FormCombinedID(api.activeTripAgencyID(ctx, vehicle.Trip.ID.ID, agencyID), vehicle.Trip.ID.ID)
+		activeAgency := agencyID
+		if vehicle.Trip.ID.ID != tripID {
+			activeAgency = api.activeTripAgencyID(ctx, vehicle.Trip.ID.ID, agencyID)
+		}
+		status.ActiveTripID = utils.FormCombinedID(activeAgency, vehicle.Trip.ID.ID)
 	} else {
 		status.ActiveTripID = utils.FormCombinedID(agencyID, tripID)
 	}
