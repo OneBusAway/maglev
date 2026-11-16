@@ -2089,4 +2089,16 @@ func TestArrivalsAndDeparturesForStopHandler_NearbyStopsAreReferenced(t *testing
 		assert.True(t, referencedAgencies[agencyID], "agency %s for nearby stop %s must resolve in references.agencies", agencyID, nearbyID)
 	}
 	assert.Greater(t, nearbyRoutesFound, 0, "expected at least one route referenced via nearby stops")
+
+	// Fast Track at Churn Creek Rd (25_1506) is served only by Route 15, which
+	// does not serve the requested stop, so its route reference can only come
+	// from the nearby-stop path.
+	const nearbyStopServedByRoute15 = "25_1506"
+	require.Contains(t, model.Data.Entry.NearbyStopIDs, nearbyStopServedByRoute15)
+	nearbyStop, ok := referencedStops[nearbyStopServedByRoute15]
+	require.True(t, ok, "stop %s must resolve in references.stops", nearbyStopServedByRoute15)
+	assert.Contains(t, nearbyStop.RouteIDs, testdata.Route15.ID,
+		"stop %s must list its serving route", nearbyStopServedByRoute15)
+	assert.True(t, referencedRoutes[testdata.Route15.ID],
+		"route %s must resolve in references.routes", testdata.Route15.ID)
 }
