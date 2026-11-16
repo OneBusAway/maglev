@@ -394,7 +394,7 @@ The SQLite database is persisted using Docker volumes:
 * **Production**: `maglev-data` volume mounted at `/app/data`.
 * **Development**: `maglev-dev-data` volume.
 
-The GTFS database is stored in `/app/data/gtfs.db` within the container.
+The GTFS database is stored in `/app/data/gtfs.db` within the container. The image sets `TMPDIR=/app/data` so temporary files (used by Go, such as `gtfs-tidy` and in-memory feed downloads, as well as SQLite temporary spill files during large static GTFS imports) stay on the writable volume. When deploying containers with a read-only root filesystem (such as `--read-only` in Docker or `readOnlyRootFilesystem: true` in Kubernetes), or if you mount the database volume elsewhere, ensure `TMPDIR` (or `SQLITE_TMPDIR` for SQLite alone) points to an existing writable directory.
 
 #### Copy database to host for inspection
 
@@ -493,12 +493,13 @@ and the first real-time fetch has been attempted, then `ok`.
 | `GTFS_STATIC_AUTH_VALUE`   | Auth header value for the static GTFS feed                           | —       |
 | `GTFS_REALTIME_AUTH_NAME`  | Auth header name for the first GTFS-RT feed only                     | —       |
 | `GTFS_REALTIME_AUTH_VALUE` | Auth header value for the first GTFS-RT feed only                    | —       |
+| `TMPDIR`                   | Temporary directory used by Go and SQLite during static GTFS imports | `/app/data` in the Docker image |
 | `MAGLEV_LOG_LEVEL`         | Log level; overrides the config file                                 | —       |
 | `MAGLEV_LOG_FORMAT`        | Log format; overrides the config file                                | —       |
 | `MAGLEV_ENABLE_PPROF`      | `1` starts the pprof server on `127.0.0.1:6060` (see Profiling)      | off     |
 | `MAGLEV_PROFILE_MUTEX`     | `1` enables mutex and block profiling (slows the server)             | off     |
 
-All except `TZ`, `GTFS_PROTECTED_API_KEYS` and the two profiling variables are read only when Maglev starts with a config file (`-f`).
+All except `TZ`, `TMPDIR`, `GTFS_PROTECTED_API_KEYS` and the two profiling variables are read only when Maglev starts with a config file (`-f`).
 
 ### Troubleshooting
 

@@ -12,7 +12,7 @@ bin = "./tmp/maglev -f config.docker.json"
 # Watch these extensions
 include_ext = ["go", "json"]
 # Exclude directories
-exclude_dir = ["tmp", "bin", "testdata", "vendor", "marketing", "remote", "migrations"]
+exclude_dir = ["tmp", "data", "bin", "testdata", "vendor", "marketing", "remote", "migrations"]
 # Exclude files
 exclude_file = []
 # Exclude regex
