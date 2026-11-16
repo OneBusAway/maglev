@@ -531,6 +531,72 @@ func TestArrivalsAndDeparturesForStopHandlerNoActiveServices(t *testing.T) {
 	assert.Empty(t, model.Data.References.Trips)
 }
 
+// TestArrivalsAndDeparturesForStopHandlerNoServiceAtStop covers a stop whose
+// only route doesn't run on the query day while another route does. Java
+// returns a bare `null` body here; maglev deliberately returns the normal
+// envelope with the stop, its route and an empty arrivals list (#2102).
+func TestArrivalsAndDeparturesForStopHandlerNoServiceAtStop(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"NS,No Service Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"weekday-route,NS,WK,Weekday Route,3\n" +
+			"daily-route,NS,DY,Daily Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"weekdays,1,1,1,1,1,0,0,20240101,20991231\n" +
+			"daily,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"weekday-stop,Weekday Stop,37.7749,-122.4194\n" +
+			"daily-stop,Daily Stop,37.7849,-122.4094\n" +
+			"shared-stop,Shared Stop,37.7949,-122.3994\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			"weekday-route,weekdays,weekday-trip,Weekday,0,weekday-block\n" +
+			"daily-route,daily,daily-trip,Daily,0,daily-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"weekday-trip,12:00:00,12:00:00,weekday-stop,1\n" +
+			"weekday-trip,12:10:00,12:10:00,shared-stop,2\n" +
+			"daily-trip,12:00:00,12:00:00,daily-stop,1\n" +
+			"daily-trip,12:10:00,12:10:00,shared-stop,2\n",
+	}
+	sunday := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	monday := sunday.AddDate(0, 0, 1)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(sunday), "no-service-at-stop.zip", files)
+	defer api.Shutdown()
+
+	tests := []struct {
+		name      string
+		stopCode  string
+		routeCode string
+		queryTime time.Time
+		wantTrips []string
+	}{
+		{"only route doesn't run that day", "weekday-stop", "weekday-route", sunday, []string{}},
+		{"same stop on a service day", "weekday-stop", "weekday-route", monday, []string{"weekday-trip"}},
+		{"another stop's route runs that day", "daily-stop", "daily-route", sunday, []string{"daily-trip"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stopID := utils.FormCombinedID("NS", tt.stopCode)
+			resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+				arrivalsAndDeparturesURL(stopID, url.Values{"time": {fmt.Sprint(tt.queryTime.UnixMilli())}}))
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, http.StatusOK, model.Code)
+			assert.Equal(t, stopID, model.Data.Entry.StopID)
+			assertFrequencyWindowTrips(t, model.Data.Entry.ArrivalsAndDepartures, tt.wantTrips)
+
+			// Clients draw the stop header from these even when nothing runs.
+			routeIDs := make([]string, 0, len(model.Data.References.Routes))
+			for _, route := range model.Data.References.Routes {
+				routeIDs = append(routeIDs, route.ID)
+			}
+			assert.Contains(t, routeIDs, utils.FormCombinedID("NS", tt.routeCode))
+			assert.NotNil(t, model.Data.Entry.NearbyStopIDs)
+			assert.NotNil(t, model.Data.Entry.SituationIDs)
+		})
+	}
+}
+
 func TestParseArrivalsAndDeparturesParams_AllParameters(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
