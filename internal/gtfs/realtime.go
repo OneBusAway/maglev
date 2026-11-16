@@ -173,6 +173,10 @@ func newRealtimeHTTPClient() *http.Client {
 	transport.ExpectContinueTimeout = 1 * time.Second
 
 	return &http.Client{
+		// Timeout acts as an absolute safety net per request. The caller in
+		// pollFeed also sets a 15s context timeout; the stricter of the two
+		// wins. Keep this <= the context timeout so the client enforces the
+		// bound even if a caller forgets a context.
 		Timeout:   10 * time.Second,
 		Transport: transport,
 	}
@@ -182,6 +186,7 @@ func newRealtimeHTTPClient() *http.Client {
 // than the existing vehicle based on GTFS-RT timestamps.
 func isVehicleStale(existing, incoming gtfs.Vehicle) bool {
 	if existing.Timestamp == nil || incoming.Timestamp == nil {
+		// If either timestamp is missing, we cannot safely compare
 		return false
 	}
 	return incoming.Timestamp.Before(*existing.Timestamp)
@@ -627,9 +632,6 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			)
 		default:
 			if decision.apply && !isMissingHeaderTime(vehicleData.CreatedAt) {
-				if manager.feedVehicleTimestamp == nil {
-					manager.feedVehicleTimestamp = make(map[string]uint64)
-				}
 				manager.feedVehicleTimestamp[feedID] = decision.watermark
 			}
 		}
@@ -1104,9 +1106,6 @@ func (manager *Manager) applyTripFeedUpdate(logger *slog.Logger, feedID string, 
 		)
 	default:
 		if decision.apply && !isMissingHeaderTime(tripData.CreatedAt) {
-			if manager.feedTripTimestamp == nil {
-				manager.feedTripTimestamp = make(map[string]uint64)
-			}
 			manager.feedTripTimestamp[feedID] = decision.watermark
 		}
 	}

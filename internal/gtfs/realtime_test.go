@@ -471,6 +471,7 @@ func TestDecideFeedTimestamp(t *testing.T) {
 		})
 	}
 }
+
 func TestUpdateFeedRealtime_FutureHeaderThenClearAcceptsCorrectedHeader(t *testing.T) {
 	manager := newTestManager()
 	ctx := context.Background()
@@ -582,14 +583,7 @@ func TestUpdateFeedRealtime_ReturnsFalseOnFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	manager := &Manager{
-		realTimeMutex:        sync.RWMutex{},
-		feedTrips:            make(map[string][]gtfs.Trip),
-		feedVehicles:         make(map[string][]gtfs.Vehicle),
-		feedAlerts:           make(map[string][]gtfs.Alert),
-		feedVehicleTimestamp: make(map[string]uint64),
-		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
-	}
+	manager := newTestManager()
 
 	cfg := RTFeedConfig{
 		ID:                  "fail-feed",
@@ -2044,15 +2038,7 @@ func TestUpdateFeedRealtime_SubFeedSuccess_OrLogic(t *testing.T) {
 	}))
 	defer badServer.Close()
 
-	// Fully initialize all maps to prevent "assignment to entry in nil map" panics
-	manager := &Manager{
-		realTimeMutex:        sync.RWMutex{},
-		feedTrips:            make(map[string][]gtfs.Trip),
-		feedVehicles:         make(map[string][]gtfs.Vehicle),
-		feedAlerts:           make(map[string][]gtfs.Alert),
-		feedVehicleTimestamp: make(map[string]uint64),
-		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
-	}
+	manager := newTestManager()
 
 	// 1. Test partial success (OR logic): Trip updates succeed, Vehicle positions fail
 	cfg := RTFeedConfig{
