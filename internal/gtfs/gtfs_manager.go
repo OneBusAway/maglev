@@ -57,6 +57,9 @@ type Manager struct {
 	staticMutex  sync.RWMutex
 	regionBounds map[string]*RegionBounds
 	// firstAgencyID is the lowest agency ID in the static feed; see FirstStaticAgencyID.
+	// It is "" until static data loads. Until then, an alert with no agency on a
+	// feed without agency-ids gets an unprefixed situation ID, and the prefix
+	// appears once the first reload completes.
 	firstAgencyID string
 
 	feedTrips    map[string][]gtfs.Trip
