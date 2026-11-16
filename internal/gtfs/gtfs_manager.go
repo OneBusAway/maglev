@@ -773,7 +773,8 @@ func (merged *mergedRealtime) resolveVehicleIndex(agencyID, vehicleID string) (i
 
 // GetVehicleByID returns the vehicle matching the agency and vehicle ID.
 // If not found under the requested agency, it falls back to an unattributed vehicle.
-// It returns a copy so callers cannot mutate the shared snapshot.
+// The returned struct is a shallow copy. Its Trip, ID and Timestamp pointers
+// still reference the shared snapshot, so callers must not mutate them.
 func (manager *Manager) GetVehicleByID(agencyID, vehicleID string) (*gtfs.Vehicle, error) {
 	merged := manager.mergedRealtime()
 	if idx, ok := merged.resolveVehicleIndex(agencyID, vehicleID); ok {
