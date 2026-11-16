@@ -106,7 +106,7 @@ func TestFeedRows_TripEndsUseConsolidatedStops(t *testing.T) {
 	assert.Equal(t, "t1", rows.tripEnds[0].tripID)
 	assert.Equal(t, "canonical", rows.tripEnds[0].firstStopID)
 	assert.Equal(t, "mid", rows.tripEnds[0].lastStopID)
-	assert.ElementsMatch(t, []string{"short", "only_dropped"}, rows.removedTrips)
+	assert.Equal(t, map[string]bool{"short": true, "only_dropped": true}, rows.removedTrips)
 }
 
 func TestStoreGtfsData_ReimportClearsStopConsolidations(t *testing.T) {
