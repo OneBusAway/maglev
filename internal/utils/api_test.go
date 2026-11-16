@@ -605,13 +605,14 @@ func TestParseInt64Param(t *testing.T) {
 			expectedMessage: `Invalid field value for field "serviceDate".`,
 		},
 		{
-			name: "Whitespace padded string parsed after trim",
+			name: "Whitespace padded string rejected",
 			params: url.Values{
 				"serviceDate": []string{" 60 "},
 			},
-			key:           "serviceDate",
-			expectedValue: int64Ptr(60),
-			expectError:   false,
+			key:             "serviceDate",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
 		},
 		{
 			name: "Whitespace only string rejected",
@@ -684,74 +685,29 @@ func TestParseInt64Param(t *testing.T) {
 	}
 }
 
-func TestParseRequiredInt64Param(t *testing.T) {
-	int64Ptr := func(v int64) *int64 { return &v }
-
-	tests := []struct {
-		name            string
-		params          url.Values
-		key             string
-		expectedValue   *int64
-		expectError     bool
-		expectedMessage string
-	}{
-		{
-			name: "Valid required int64",
-			params: url.Values{
-				"timestamp": []string{"1794470400000"},
-			},
-			key:           "timestamp",
-			expectedValue: int64Ptr(1794470400000),
-			expectError:   false,
-		},
-		{
-			name:            "Missing parameter reports missing field",
-			params:          url.Values{},
-			key:             "timestamp",
-			expectedValue:   nil,
-			expectError:     true,
-			expectedMessage: `Missing required field "timestamp".`,
-		},
-		{
-			name: "Empty string reports missing field",
-			params: url.Values{
-				"timestamp": []string{""},
-			},
-			key:             "timestamp",
-			expectedValue:   nil,
-			expectError:     true,
-			expectedMessage: `Missing required field "timestamp".`,
-		},
-		{
-			name: "Invalid value reports invalid field value",
-			params: url.Values{
-				"timestamp": []string{"9223372036854775808"},
-			},
-			key:             "timestamp",
-			expectedValue:   nil,
-			expectError:     true,
-			expectedMessage: `Invalid field value for field "timestamp".`,
-		},
+func TestParseIntParam_BitSizes(t *testing.T) {
+	// Verify parseIntParam behaves identically across bit sizes (e.g., 32 vs 64).
+	params := url.Values{
+		"int32_overflow": []string{"2147483648"},
+		"int32_valid":    []string{"2147483647"},
+		"spaced":         []string{" 123 "},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			value, errors := ParseRequiredInt64Param(tt.params, tt.key, nil)
-			if tt.expectedValue == nil {
-				assert.Nil(t, value)
-			} else {
-				require.NotNil(t, value)
-				assert.Equal(t, *tt.expectedValue, *value)
-			}
+	// 32-bit: 2147483648 overflows
+	val32, errs32 := parseIntParam(params, "int32_overflow", 32, nil)
+	assert.Nil(t, val32)
+	assert.Contains(t, errs32["int32_overflow"], `Invalid field value for field "int32_overflow".`)
 
-			if tt.expectError {
-				require.Contains(t, errors, tt.key)
-				assert.Contains(t, errors[tt.key], tt.expectedMessage)
-			} else {
-				assert.Empty(t, errors)
-			}
-		})
-	}
+	// 64-bit: 2147483648 is valid
+	val64, errs64 := parseIntParam(params, "int32_overflow", 64, nil)
+	require.NotNil(t, val64)
+	assert.Equal(t, int64(2147483648), *val64)
+	assert.Empty(t, errs64)
+
+	// Whitespace: rejected uniformly
+	valSpaced, errsSpaced := parseIntParam(params, "spaced", 64, nil)
+	assert.Nil(t, valSpaced)
+	assert.Contains(t, errsSpaced["spaced"], `Invalid field value for field "spaced".`)
 }
 
 func TestParseTimeParameter(t *testing.T) {

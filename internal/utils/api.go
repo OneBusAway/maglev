@@ -173,6 +173,28 @@ func isFinite(f float64) bool {
 	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }
 
+// parseIntParam parses an optional signed integer of bitSize (e.g. 32 or 64) from URL query parameters.
+// If the key is omitted or empty, it returns nil and preserves fieldErrors.
+// If the key cannot be parsed as a signed integer of the specified bitSize, it records an invalid field error.
+func parseIntParam(params url.Values, key string, bitSize int, fieldErrors map[string][]string) (*int64, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	val := params.Get(key)
+	if val == "" {
+		return nil, fieldErrors
+	}
+
+	parsed, err := strconv.ParseInt(val, 10, bitSize)
+	if err != nil {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
+		return nil, fieldErrors
+	}
+
+	return &parsed, fieldErrors
+}
+
 // ParseInt64Param retrieves an optional signed 64-bit integer from the provided URL query parameters.
 // If the key is not present or empty, it returns nil and the unmodified fieldErrors map.
 // If the key is present but cannot be parsed as a signed 64-bit integer, it returns nil and updates
@@ -184,45 +206,7 @@ func isFinite(f float64) bool {
 // - A pointer to the parsed int64 value (or nil if omitted/invalid).
 // - The updated fieldErrors map containing any validation errors.
 func ParseInt64Param(params url.Values, key string, fieldErrors map[string][]string) (*int64, map[string][]string) {
-	if fieldErrors == nil {
-		fieldErrors = make(map[string][]string)
-	}
-
-	val := params.Get(key)
-	if val == "" {
-		return nil, fieldErrors
-	}
-
-	parsed, err := strconv.ParseInt(strings.TrimSpace(val), 10, 64)
-	if err != nil {
-		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
-		return nil, fieldErrors
-	}
-
-	return &parsed, fieldErrors
-}
-
-// ParseRequiredInt64Param retrieves a required signed 64-bit integer from the provided URL query parameters.
-// If the key is not present or empty, it updates fieldErrors with a missing required field error.
-// If the key is present but invalid, it updates fieldErrors with an invalid field value error.
-func ParseRequiredInt64Param(params url.Values, key string, fieldErrors map[string][]string) (*int64, map[string][]string) {
-	if fieldErrors == nil {
-		fieldErrors = make(map[string][]string)
-	}
-
-	val := params.Get(key)
-	if val == "" {
-		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Missing required field %q.", key))
-		return nil, fieldErrors
-	}
-
-	parsed, err := strconv.ParseInt(strings.TrimSpace(val), 10, 64)
-	if err != nil {
-		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
-		return nil, fieldErrors
-	}
-
-	return &parsed, fieldErrors
+	return parseIntParam(params, key, 64, fieldErrors)
 }
 
 // ParseTimeParameter parses an epoch millisecond timestamp or legacy date-time

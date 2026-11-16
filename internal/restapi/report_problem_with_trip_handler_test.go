@@ -209,6 +209,7 @@ func TestReportProblemWithTripServiceDateValidation(t *testing.T) {
 	tests := []struct {
 		name            string
 		serviceDate     string
+		setParam        bool
 		expectedStatus  int
 		expectError     bool
 		expectedMessage string
@@ -216,6 +217,7 @@ func TestReportProblemWithTripServiceDateValidation(t *testing.T) {
 		{
 			name:            "malformed non-numeric string",
 			serviceDate:     "abc",
+			setParam:        true,
 			expectedStatus:  http.StatusBadRequest,
 			expectError:     true,
 			expectedMessage: `Invalid field value for field "serviceDate".`,
@@ -223,6 +225,7 @@ func TestReportProblemWithTripServiceDateValidation(t *testing.T) {
 		{
 			name:            "floating point string",
 			serviceDate:     "12.34",
+			setParam:        true,
 			expectedStatus:  http.StatusBadRequest,
 			expectError:     true,
 			expectedMessage: `Invalid field value for field "serviceDate".`,
@@ -230,6 +233,7 @@ func TestReportProblemWithTripServiceDateValidation(t *testing.T) {
 		{
 			name:            "overflow max int64 by 1",
 			serviceDate:     "9223372036854775808",
+			setParam:        true,
 			expectedStatus:  http.StatusBadRequest,
 			expectError:     true,
 			expectedMessage: `Invalid field value for field "serviceDate".`,
@@ -237,6 +241,15 @@ func TestReportProblemWithTripServiceDateValidation(t *testing.T) {
 		{
 			name:            "underflow min int64 by 1",
 			serviceDate:     "-9223372036854775809",
+			setParam:        true,
+			expectedStatus:  http.StatusBadRequest,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "serviceDate".`,
+		},
+		{
+			name:            "whitespace padded number rejected",
+			serviceDate:     " 60 ",
+			setParam:        true,
 			expectedStatus:  http.StatusBadRequest,
 			expectError:     true,
 			expectedMessage: `Invalid field value for field "serviceDate".`,
@@ -244,6 +257,7 @@ func TestReportProblemWithTripServiceDateValidation(t *testing.T) {
 		{
 			name:            "whitespace only string rejected",
 			serviceDate:     "   ",
+			setParam:        true,
 			expectedStatus:  http.StatusBadRequest,
 			expectError:     true,
 			expectedMessage: `Invalid field value for field "serviceDate".`,
@@ -251,42 +265,48 @@ func TestReportProblemWithTripServiceDateValidation(t *testing.T) {
 		{
 			name:           "valid epoch timestamp",
 			serviceDate:    "1291536000000",
+			setParam:       true,
 			expectedStatus: http.StatusOK,
 			expectError:    false,
 		},
 		{
 			name:           "valid max int64 boundary",
 			serviceDate:    "9223372036854775807",
+			setParam:       true,
 			expectedStatus: http.StatusOK,
 			expectError:    false,
 		},
 		{
 			name:           "valid min int64 boundary",
 			serviceDate:    "-9223372036854775808",
+			setParam:       true,
 			expectedStatus: http.StatusOK,
 			expectError:    false,
 		},
 		{
 			name:           "valid zero",
 			serviceDate:    "0",
+			setParam:       true,
 			expectedStatus: http.StatusOK,
 			expectError:    false,
 		},
 		{
 			name:           "valid negative number",
 			serviceDate:    "-1",
-			expectedStatus: http.StatusOK,
-			expectError:    false,
-		},
-		{
-			name:           "whitespace padded number parsed successfully",
-			serviceDate:    " 60 ",
+			setParam:       true,
 			expectedStatus: http.StatusOK,
 			expectError:    false,
 		},
 		{
 			name:           "empty string accepted as omitted",
 			serviceDate:    "",
+			setParam:       true,
+			expectedStatus: http.StatusOK,
+			expectError:    false,
+		},
+		{
+			name:           "parameter omitted entirely",
+			setParam:       false,
 			expectedStatus: http.StatusOK,
 			expectError:    false,
 		},
@@ -295,7 +315,7 @@ func TestReportProblemWithTripServiceDateValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			params := url.Values{}
-			if tt.serviceDate != "" || tt.name == "empty string accepted as omitted" {
+			if tt.setParam {
 				params.Set("serviceDate", tt.serviceDate)
 			}
 			endpoint := reportProblemWithTripURL("1_12345", params)
