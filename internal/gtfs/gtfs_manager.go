@@ -100,9 +100,6 @@ type Manager struct {
 	// Tracks the last successful update time per feed
 	feedLastUpdate map[string]time.Time
 
-	// The latest write to feedLastUpdate, readable without realTimeMutex by request paths.
-	latestFeedUpdate atomic.Pointer[time.Time]
-
 	// Tracks the last successful trip-updates fetch per feed, so a failing
 	// trip-updates sub-feed ages out on its own clock even while sibling
 	// sub-feeds keep resetting the feed-wide staleness timer.
@@ -130,7 +127,6 @@ func (manager *Manager) clearFeedData(feedID string) {
 	delete(manager.feedRetainedVehicles, feedID)
 
 	delete(manager.feedLastUpdate, feedID)
-	manager.latestFeedUpdate.Store(manager.newestFeedUpdateLocked())
 
 	manager.rebuildMergedRealtimeLocked()
 }
@@ -943,34 +939,11 @@ func (manager *Manager) TripUpdateFirstSeen(tripID string) (time.Time, bool) {
 	return seenAt, ok
 }
 
-// LatestFeedUpdateTime returns when a realtime feed last delivered new data, and
-// false before any has. It takes no lock, so request paths can call it per row.
-func (manager *Manager) LatestFeedUpdateTime() (time.Time, bool) {
-	latest := manager.latestFeedUpdate.Load()
-	if latest == nil {
-		return time.Time{}, false
-	}
-	return *latest, true
-}
-
 func (manager *Manager) recordFeedUpdateLocked(feedID string, updatedAt time.Time) {
 	if manager.feedLastUpdate == nil {
 		manager.feedLastUpdate = make(map[string]time.Time)
 	}
 	manager.feedLastUpdate[feedID] = updatedAt
-	manager.latestFeedUpdate.Store(&updatedAt)
-}
-
-// newestFeedUpdateLocked returns the newest remaining feed time, or nil with none.
-func (manager *Manager) newestFeedUpdateLocked() *time.Time {
-	var newest *time.Time
-	for _, updatedAt := range manager.feedLastUpdate {
-		if newest == nil || updatedAt.After(*newest) {
-			feedUpdate := updatedAt
-			newest = &feedUpdate
-		}
-	}
-	return newest
 }
 
 // GetFeedUpdateTimes returns a copy of the last update times for all realtime feeds.

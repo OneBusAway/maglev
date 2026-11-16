@@ -407,9 +407,13 @@ func (api *RestAPI) sendEmptyArrivalsForLocation(w http.ResponseWriter, r *http.
 // itself).
 const nearbyBoxHalfSizeMeters = 100.0
 
+// defaultServiceIntervalEnd is the end of Java's default full-day service
+// interval (00:00-24:00). A trip reaching a stop only at 25:00 falls outside it.
+const defaultServiceIntervalEnd = 24 * time.Hour
+
 // nearbyStopsForLocation mirrors the Java nearby-stops rule: the union of the
 // stops within a 100 m square box around each matched stop (each excluding
-// itself), limited to stops served by a route running on the query date,
+// itself), limited to stops served by a route running in the service interval,
 // measured against the centre of the search area and ordered nearest first.
 //
 // It is deliberately not "every stop in the bounding box" — a matched stop with
@@ -454,7 +458,7 @@ func (api *RestAPI) nearbyStopsForLocation(
 	}
 
 	// Java drops nearby stops served only by routes not running on the query
-	// date (e.g. a seasonal shuttle outside its season). The active-date
+	// date or interval (e.g. a seasonal shuttle outside its season). The active-date
 	// result is kept per route so the route-type filter below can require
 	// the same route to satisfy both conditions.
 	activeRoutesByStop, err := api.nearbyStopsActiveOnDate(ctx, bareIDs, agencies, params.QueryTime)
@@ -530,7 +534,7 @@ func (api *RestAPI) combinedIDsForNearbyStops(ctx context.Context, bareIDs []str
 }
 
 // buildNearbyResults keeps the nearby stops passing the route-type and
-// active-on-date filters, measuring each against the centre of the search
+// service-interval filters, measuring each against the centre of the search
 // area and ordering nearest first. A nil servesRouteType means no route-type
 // filter is active, so every stop is kept rather than none.
 func buildNearbyResults(nearbyStops []gtfsdb.Stop, servesRouteType map[string]bool, activeOnDate map[string]bool, combinedByBare map[string]string, loc *internalgtfs.LocationParams) []models.StopWithDistance {
@@ -579,7 +583,7 @@ func expandLocationForNearby(loc *internalgtfs.LocationParams) *internalgtfs.Loc
 }
 
 // nearbyStopsActiveOnDate reports which routes serve each stop on the query
-// date's service day in that stop's own agency timezone. Stops sharing a
+// date's service interval in that stop's own agency timezone. Stops sharing a
 // timezone are queried together so one request still costs one service-date
 // lookup per timezone rather than one per stop.
 func (api *RestAPI) nearbyStopsActiveOnDate(ctx context.Context, stopIDs []string, agencies *stopAgencyIndex, queryTime time.Time) (map[string]map[string]bool, error) {
@@ -626,9 +630,10 @@ func (api *RestAPI) collectActiveRoutesForGroup(ctx context.Context, loc *time.L
 		return nil
 	}
 
-	rows, err := api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsOnDate(ctx, gtfsdb.GetActiveRouteIDsForStopsOnDateParams{
-		StopIds:    ids,
-		ServiceIds: serviceIDs,
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsInInterval(ctx, gtfsdb.GetActiveRouteIDsForStopsInIntervalParams{
+		StopIds:     ids,
+		ServiceIds:  serviceIDs,
+		IntervalEnd: int64(defaultServiceIntervalEnd),
 	})
 	if err != nil {
 		return err
@@ -669,8 +674,8 @@ func activeStopsFromRoutes(activeRoutesByStop map[string]map[string]bool) map[st
 
 // stopsServingRouteTypes reports which of the given stops are served by at
 // least one active route of an allowed type. The active set holds the
-// agency-prefixed route IDs running on the query date, so a stop served by
-// one route of the right type and another route on the right date is not
+// agency-prefixed route IDs running in the service interval, so a stop served by
+// one route of the right type and another route in the interval is not
 // kept unless a single route satisfies both. It returns nil when no filter
 // is active, which callers read as "keep everything" rather than
 // "keep nothing".

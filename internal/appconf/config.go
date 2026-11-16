@@ -6,6 +6,7 @@ package appconf
 // Application (development, staging, production, etc.). We will read in these
 // configuration settings from command-line flags when the Application starts.
 type Config struct {
+	Role             string
 	Port             int
 	Host             string
 	Env              Environment
@@ -18,6 +19,13 @@ type Config struct {
 	TLSCertPath      string
 	TLSKeyPath       string
 }
+
+// Role constants representing the horizontal scaling mode of the application.
+const (
+	RoleAll      = "all"
+	RoleIngester = "ingester"
+	RoleServer   = "server"
+)
 
 // Environment is an enumerated type representing various stages or configurations in the system's lifecycle.
 type Environment int
