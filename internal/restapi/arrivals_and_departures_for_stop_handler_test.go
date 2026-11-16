@@ -1547,6 +1547,66 @@ func TestAddNearbyStopRefs_UnderscoreAgency(t *testing.T) {
 	assert.True(t, acc.stopIDs["stop2"])
 }
 
+// TestGetNearbyStopIDs_UnderscoreAgencyKeepsBareIDs covers the seam the unit
+// test above cannot: getNearbyStopIDs has to hand the real bare stop IDs to
+// addNearbyStopRefs. Rebuilding them by splitting the combined IDs turns
+// AGENCY_ONE_s2 into ONE_s2, which resolves to no stop row, so the nearby stop
+// silently drops out of references.
+//
+// It stops short of a request because the endpoint cannot address an
+// underscore-agency stop at all: extractAndValidateAgencyCodeID splits the
+// path ID at the first underscore, so AGENCY_ONE_s1 is read as agency AGENCY
+// and code ONE_s1 and returns 404 before this code runs. That entry-point
+// limitation is the subject of #1854, #2042 and #2032.
+func TestGetNearbyStopIDs_UnderscoreAgencyKeepsBareIDs(t *testing.T) {
+	const agencyID = "AGENCY_ONE"
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			agencyID + ",Agency One,http://agency1.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"ROUTE_100," + agencyID + ",100,Route 100,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		// s2 sits about 33 m from s1, inside the 100 m nearby radius.
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1,Stop 1,37.7749,-122.4194\n" +
+			"s2,Stop 2,37.7752,-122.4194\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"ROUTE_100,svc1,t1,Headsign,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,08:00:00,08:00:00,s1,1\n" +
+			"t1,08:10:00,08:10:00,s2,2\n",
+	}
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 8, 0, 0, 0, loc))
+	api := createTestApiWithGTFSFixture(t, mockClock, "underscore-agency-nearby-stops.zip", files)
+	ctx := context.Background()
+
+	combined, bareIDs, agencies, err := getNearbyStopIDs(api, ctx, 37.7749, -122.4194, "s1", agencyID)
+	require.NoError(t, err)
+	require.Equal(t, []string{utils.FormCombinedID(agencyID, "s2")}, combined)
+	require.Equal(t, []string{"s2"}, bareIDs, "the bare IDs must be the real stop IDs, not re-split combined IDs")
+	assert.Equal(t, agencyID, agencies["s2"])
+
+	acc := newArrivalsAccumulator(agencyID)
+	addNearbyStopRefs(acc, bareIDs)
+	require.True(t, acc.stopIDs["s2"], "the bare stop ID must reach the accumulator intact")
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, []string{"s2"})
+	require.NoError(t, err)
+	require.Len(t, stops, 1, "the accumulated ID must resolve to a stop row")
+
+	// What splitting the combined ID produced, and why the reference vanished.
+	_, resplit, err := utils.ExtractAgencyIDAndCodeID(combined[0])
+	require.NoError(t, err)
+	require.Equal(t, "ONE_s2", resplit)
+	missing, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, []string{resplit})
+	require.NoError(t, err)
+	assert.Empty(t, missing, "re-splitting the combined ID yields an ID that resolves to no stop")
+}
+
 func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
