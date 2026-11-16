@@ -137,12 +137,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 			continue
 		}
 
-		rCopy := route
-		acc.routes[route.ID] = &rCopy
-		tCopy := trip
-		acc.trips[trip.ID] = &tCopy
-
-		arrival := api.buildArrival(ctx, arrivalInput{
+		row := arrivalInput{
 			stopTime:         st,
 			route:            route,
 			serviceDate:      ast.ServiceDate,
@@ -153,7 +148,17 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 			totalStopsInTrip: lookups.tripStops.stopCounts[st.TripID],
 			stopPosition:     lookups.tripStops.stopPosition(st.TripID, st.StopSequence),
 			freqMap:          lookups.frequencies,
-		}, acc)
+		}
+		arrival, vehicle := api.buildScheduledArrival(ctx, row, acc)
+		if arrival == nil {
+			continue
+		}
+
+		rCopy := route
+		acc.routes[route.ID] = &rCopy
+		tCopy := trip
+		acc.trips[trip.ID] = &tCopy
+		api.attachTripStatus(ctx, arrival, row, vehicle, acc)
 
 		result.Arrivals = append(result.Arrivals, *arrival)
 	}
@@ -719,11 +724,6 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 			continue
 		}
 
-		rCopy := route
-		acc.routes[route.ID] = &rCopy
-		tCopy := trip
-		acc.trips[trip.ID] = &tCopy
-
 		row := arrivalInput{
 			stopTime:         st,
 			route:            route,
@@ -737,6 +737,14 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 			freqMap:          lookups.frequencies,
 		}
 		arrival, vehicle := api.buildScheduledArrival(ctx, row, acc)
+		if arrival == nil {
+			continue
+		}
+
+		rCopy := route
+		acc.routes[route.ID] = &rCopy
+		tCopy := trip
+		acc.trips[trip.ID] = &tCopy
 		arrivals = append(arrivals, statusPendingArrival{
 			arrival: *arrival,
 			input:   row,
@@ -941,7 +949,7 @@ func (api *RestAPI) buildTripStopIndex(ctx context.Context, tripIDs []string) (t
 	return idx, nil
 }
 
-// arrivalInput carries the per-row values buildArrival needs. Grouped into a
+// arrivalInput carries the per-row values an arrival is built from. Grouped into a
 // struct because several are same-typed strings and times that would be
 // indistinguishable as positional arguments.
 type arrivalInput struct {
@@ -957,21 +965,13 @@ type arrivalInput struct {
 	freqMap          map[string][]gtfsdb.Frequency
 }
 
-// buildArrival turns one matched stop_time into an ArrivalAndDeparture,
-// resolving its real-time prediction and trip status along the way.
-//
-// The per-stop handler wants both halves immediately. The location handler
-// uses buildScheduledArrival on its own so it can drop rows before the status
-// half.
-func (api *RestAPI) buildArrival(ctx context.Context, in arrivalInput, acc *arrivalsAccumulator) *models.ArrivalAndDeparture {
-	arrival, vehicle := api.buildScheduledArrival(ctx, in, acc)
-	api.attachTripStatus(ctx, arrival, in, vehicle, acc)
-	return arrival
-}
-
 // buildScheduledArrival fills the schedule, prediction and vehicle fields an
-// arrival needs in order to be sorted and trimmed. Trip status stays empty.
-// The vehicle is returned so a later attachTripStatus does not look it up again.
+// arrival needs in order to be sorted and trimmed. Trip status stays empty, for
+// attachTripStatus to fill. The vehicle is returned so attachTripStatus does not
+// look it up again.
+//
+// A canceled trip's arrival is nil: Java hides it by default (hideCanceledTrips,
+// ArrivalsAndDeparturesBeanServiceImpl.java:267), as the wiki's SD-03 adopts.
 func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, acc *arrivalsAccumulator) (*models.ArrivalAndDeparture, *gtfs.Vehicle) {
 	st := in.stopTime
 	route := in.route
@@ -986,11 +986,10 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 	// lookups (GetVehicleForTrip / GetVehicleByID) use the raw RT id
 	// unchanged; the combined form is an output-only concern.
 	vehicle := api.vehicleForTrip(ctx, st.TripID, in.serviceDate.Midnight(in.location))
-	canceled := api.arrivalCanceled(ctx, st.TripID, vehicle, in.serviceDate.Midnight(in.location))
-	vehicleID := ""
-	if !canceled {
-		vehicleID = api.combinedVehicleID(ctx, vehicle, route.AgencyID, st.TripID)
+	if api.arrivalCanceled(ctx, st.TripID, vehicle, in.serviceDate.Midnight(in.location)) {
+		return nil, nil
 	}
+	vehicleID := api.combinedVehicleID(ctx, vehicle, route.AgencyID, st.TripID)
 
 	// The raw feed stop_sequence, not in.stopPosition: GTFS-RT
 	// stop_time_update.stop_sequence refers to the feed's own numbering, so
@@ -1005,9 +1004,6 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 		scheduledArrivalTime,
 		scheduledDepartureTime,
 	)
-	if canceled {
-		predictedArrivalTime, predictedDepartureTime, predicted = time.Time{}, time.Time{}, false
-	}
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 

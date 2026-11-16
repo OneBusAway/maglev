@@ -569,34 +569,59 @@ func TestBuildTripStatus_TripUpdateVehicleWithoutTimestamp(t *testing.T) {
 	require.NotNil(t, status)
 }
 
-// Java hides the vehicle on a canceled arrival (ArrivalsAndDeparturesBeanServiceImpl
-// .java:476) while the trip status still names it.
-func TestArrivals_CanceledTripHidesVehicle(t *testing.T) {
+// Canceled arrivals are hidden, as with Java's default hideCanceledTrips
+// (ArrivalsAndDeparturesBeanServiceImpl.java:267; wiki SD-03).
+func TestArrivals_CanceledTripIsHidden(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(7*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
-	defer api.Shutdown()
-	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
-	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
-	canceled := plannedVehicleTripUpdate(tripID, now)
-	canceled.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
-	api.GtfsManager.MockAddFullTripUpdate(canceled)
-	combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+	tests := []struct {
+		name   string
+		cancel func(api *RestAPI, tripID string)
+	}{
+		{name: "trip update cancels the trip", cancel: func(api *RestAPI, tripID string) {
+			canceled := plannedVehicleTripUpdate(tripID, now)
+			canceled.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+			api.GtfsManager.MockAddFullTripUpdate(canceled)
+		}},
+		{name: "vehicle position reports the trip canceled", cancel: func(api *RestAPI, tripID string) {
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+				Timestamp:            &now,
+				ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
+			})
+		}},
+	}
 
-	_, plural := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, fmt.Sprintf(
-		"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120", combinedStopID))
-	arrival := findArrivalForTrip(t, plural.Data.Entry.ArrivalsAndDepartures, combinedTripID)
-	assert.Empty(t, arrival.VehicleID)
-	assert.False(t, arrival.Predicted)
-	require.NotNil(t, arrival.TripStatus)
-	assert.Equal(t, "CANCELED", arrival.TripStatus.Status)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+			tt.cancel(api, tripID)
+			combinedTripID := utils.FormCombinedID("dp-agency", tripID)
 
-	_, singular := callAPIHandler[ArrivalAndDepartureResponse](t, api, fmt.Sprintf(
-		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
-		combinedStopID, combinedTripID, serviceDate.UnixMilli()))
-	assert.Empty(t, singular.Data.Entry.VehicleID)
-	assert.False(t, singular.Data.Entry.Predicted)
+			_, plural := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, fmt.Sprintf(
+				"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120", combinedStopID))
+			assertNoArrivalForTrip(t, plural.Data.Entry.ArrivalsAndDepartures, combinedTripID)
+
+			_, nearby := callAPIHandler[ArrivalsAndDeparturesForLocationResponse](t, api,
+				"/api/where/arrivals-and-departures-for-location.json?key=TEST&lat=47.0&lon=-122.0&radius=100&minutesBefore=0&minutesAfter=120")
+			assertNoArrivalForTrip(t, nearby.Data.Entry.ArrivalsAndDepartures, combinedTripID)
+
+			singularResp, _ := callAPIHandler[ArrivalAndDepartureResponse](t, api, fmt.Sprintf(
+				"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+				combinedStopID, combinedTripID, serviceDate.UnixMilli()))
+			assert.Equal(t, http.StatusNotFound, singularResp.StatusCode)
+		})
+	}
+}
+
+func assertNoArrivalForTrip(t *testing.T, arrivals []models.ArrivalAndDeparture, tripID string) {
+	t.Helper()
+	for _, arrival := range arrivals {
+		assert.NotEqual(t, tripID, arrival.TripID, "a canceled trip's arrival is hidden")
+	}
 }
 
 // Java builds one record per vehicle whose time is the block's last timestamp
@@ -703,10 +728,12 @@ func TestExplicitVehicleIDUsesRecordChecks(t *testing.T) {
 		recordAge   time.Duration
 		canceled    bool
 		wantCode    int
+		// wantArrivalCode is the singular arrival's status code when it differs from wantCode.
+		wantArrivalCode int
 	}{
 		{name: "fresh", requestedID: "dp-agency_bus", wantCode: http.StatusOK},
 		{name: "expired", requestedID: "dp-agency_bus", recordAge: 20 * time.Minute, wantCode: http.StatusNotFound},
-		{name: "canceled", requestedID: "dp-agency_bus", canceled: true, wantCode: http.StatusOK},
+		{name: "canceled", requestedID: "dp-agency_bus", canceled: true, wantCode: http.StatusOK, wantArrivalCode: http.StatusNotFound},
 		{name: "wrong vehicle", requestedID: "dp-agency_other", wantCode: http.StatusNotFound},
 		{name: "wrong agency", requestedID: "other_bus", wantCode: http.StatusNotFound},
 		{name: "canceled wrong vehicle", requestedID: "dp-agency_other", canceled: true, wantCode: http.StatusNotFound},
@@ -733,25 +760,25 @@ func TestExplicitVehicleIDUsesRecordChecks(t *testing.T) {
 			arrivalResp, arrival := callAPIHandler[ArrivalAndDepartureResponse](t, api,
 				fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?%s&tripId=%s&stopSequence=1", stopID, query, combinedTripID))
 
+			wantArrivalCode := tt.wantArrivalCode
+			if wantArrivalCode == 0 {
+				wantArrivalCode = tt.wantCode
+			}
 			require.Equal(t, tt.wantCode, detailsResp.StatusCode)
-			require.Equal(t, tt.wantCode, arrivalResp.StatusCode)
+			require.Equal(t, wantArrivalCode, arrivalResp.StatusCode)
 			if tt.wantCode != http.StatusOK {
 				return
 			}
 			require.NotNil(t, details.Data.Entry.Status)
-			require.NotNil(t, arrival.Data.Entry.TripStatus)
-			assert.Equal(t, details.Data.Entry.Status.Status, arrival.Data.Entry.TripStatus.Status)
 			if tt.canceled {
 				assert.Equal(t, "CANCELED", details.Data.Entry.Status.Status)
 				assert.Empty(t, details.Data.Entry.Status.Phase)
-				assert.Empty(t, arrival.Data.Entry.VehicleID)
-				assert.False(t, arrival.Data.Entry.Predicted)
-				assert.True(t, arrival.Data.Entry.PredictedArrivalTime.IsZero())
-				assert.True(t, arrival.Data.Entry.PredictedDepartureTime.IsZero())
-			} else {
-				assert.Equal(t, tt.requestedID, details.Data.Entry.Status.VehicleID)
-				assert.Equal(t, tt.requestedID, arrival.Data.Entry.VehicleID)
+				return
 			}
+			require.NotNil(t, arrival.Data.Entry.TripStatus)
+			assert.Equal(t, details.Data.Entry.Status.Status, arrival.Data.Entry.TripStatus.Status)
+			assert.Equal(t, tt.requestedID, details.Data.Entry.Status.VehicleID)
+			assert.Equal(t, tt.requestedID, arrival.Data.Entry.VehicleID)
 		})
 	}
 }
@@ -1047,21 +1074,25 @@ func TestTripUpdateVehicleForTrip_DropsRecordsJavaDiscards(t *testing.T) {
 }
 
 // Java's record takes its status from the trip update, and a vehicle position only
-// adds a location (GtfsRealtimeTripLibrary.java:325, :1101-1102).
-func TestArrivals_CanceledTripUpdateHidesRealBus(t *testing.T) {
+// adds a location (GtfsRealtimeTripLibrary.java:325, :1101-1102). The canceled
+// trip's arrival is hidden whichever vehicle the update names.
+func TestCanceledTripUpdateOutranksRealBus(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer setupAPI.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
+	stopID := addDownstreamStop(t, setupAPI, tripID)
+	combinedTripID := utils.FormCombinedID("dp-agency", tripID)
 
 	tests := []struct {
 		name          string
 		updateVehicle string
 		wantStatus    string
-		wantHidden    bool
 	}{
-		{name: "update names the bus", updateVehicle: "bus", wantStatus: "CANCELED", wantHidden: true},
-		{name: "update names no vehicle", wantStatus: "CANCELED", wantHidden: true},
-		// The trip is still canceled, but the bus's own record is not.
-		{name: "update names another vehicle", updateVehicle: "other", wantStatus: "SCHEDULED", wantHidden: true},
+		{name: "update names the bus", updateVehicle: "bus", wantStatus: "CANCELED"},
+		{name: "update names no vehicle", wantStatus: "CANCELED"},
+		{name: "update names another vehicle", updateVehicle: "other", wantStatus: "SCHEDULED"},
 	}
 
 	for _, tt := range tests {
@@ -1069,8 +1100,6 @@ func TestArrivals_CanceledTripUpdateHidesRealBus(t *testing.T) {
 			api := createTestApiWithClock(t, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
-			stopID := addDownstreamStop(t, api, tripID)
 			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
 			tripUpdate := gtfs.Trip{
 				ID:        gtfs.TripID{ID: tripID, ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED},
@@ -1080,20 +1109,16 @@ func TestArrivals_CanceledTripUpdateHidesRealBus(t *testing.T) {
 				tripUpdate.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: tt.updateVehicle}}
 			}
 			api.GtfsManager.MockAddFullTripUpdate(tripUpdate)
-			endpoint := fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120",
-				utils.FormCombinedID("dp-agency", stopID))
 
-			_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+			_, details := callAPIHandler[TripDetailsResponse](t, api, fmt.Sprintf(
+				"/api/where/trip-details/%s.json?key=TEST&serviceDate=%d", combinedTripID, serviceDate.UnixMilli()))
+			_, arrivals := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, fmt.Sprintf(
+				"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120",
+				utils.FormCombinedID("dp-agency", stopID)))
 
-			arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
-			require.NotNil(t, arrival.TripStatus)
-			assert.Equal(t, tt.wantStatus, arrival.TripStatus.Status)
-			assert.Equal(t, tt.wantHidden, arrival.VehicleID == "")
-			if tt.wantHidden {
-				assert.False(t, arrival.Predicted)
-				assert.Zero(t, arrival.PredictedArrivalTime)
-			}
-
+			require.NotNil(t, details.Data.Entry.Status)
+			assert.Equal(t, tt.wantStatus, details.Data.Entry.Status.Status)
+			assertNoArrivalForTrip(t, arrivals.Data.Entry.ArrivalsAndDepartures, combinedTripID)
 			original, err := api.GtfsManager.GetVehicleByID("bus")
 			require.NoError(t, err)
 			assert.NotEqual(t, gtfsrt.TripDescriptor_CANCELED, original.Trip.ID.ScheduleRelationship, "the shared vehicle stays unchanged")
@@ -1192,6 +1217,18 @@ func TestArrivals_CancellationScopedToTrip(t *testing.T) {
 			assert.True(t, running.Predicted, "the running trip keeps its prediction")
 			require.NotNil(t, running.TripStatus)
 			assert.Equal(t, tt.wantStatus, running.TripStatus.Status, "status follows the active trip")
+			assertNoArrivalForTrip(t, arrivals, utils.FormCombinedID("dp-agency", trips[tt.canceledTrip]))
+
+			stopSequences := map[string]int{"A": 5, "B": 1}
+			singularCode := func(name string) int {
+				resp, _ := callAPIHandler[ArrivalAndDepartureResponse](t, api, fmt.Sprintf(
+					"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d",
+					utils.FormCombinedID("dp-agency", stopID), utils.FormCombinedID("dp-agency", trips[name]),
+					serviceDate.UnixMilli(), stopSequences[name]))
+				return resp.StatusCode
+			}
+			assert.Equal(t, http.StatusOK, singularCode(tt.wantRunningTrip))
+			assert.Equal(t, http.StatusNotFound, singularCode(tt.canceledTrip))
 		})
 	}
 }

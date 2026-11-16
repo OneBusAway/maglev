@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
-	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -1676,51 +1675,6 @@ func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, 200, model.Code)
 	assert.Equal(t, "", model.Data.Entry.VehicleID, "vehicleId should be empty for vehicle with nil ID")
-}
-
-// TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway pins the
-// OBA-spec behavior for numberOfStopsAway when BuildTripStatus cannot produce
-// a schedule snapshot for the trip -- which is always the case for CANCELED
-// trips. Per arrivals-and-departures-for-stop §11a, 0 is the correct
-// unknown-data value in that situation; -1 is a legitimate real reading
-// meaning "one stop behind" and must not double as a sentinel. This test
-// guards the response emitting 0 for a CANCELED trip.
-func TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-
-	tripID := "36957461-b451-4390-af3a-bc42c51fd473"
-	stopID := "5007"
-	stopSequence := 6
-	combinedStopID := utils.FormCombinedID("25", stopID)
-	combinedTripID := utils.FormCombinedID("25", tripID)
-	serviceDateMs := time.Now().UnixMilli()
-
-	api.GtfsManager.MockAddVehicleWithOptions("canceled-vehicle", tripID, "", internalgtfs.MockVehicleOptions{
-		ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
-	})
-
-	endpoint := fmt.Sprintf(
-		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d",
-		combinedStopID,
-		combinedTripID,
-		serviceDateMs,
-		stopSequence,
-	)
-
-	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, 200, model.Code)
-	// Per the OBA spec (arrivals-and-departures-for-stop §11a), when no
-	// block location is available -- as with a CANCELED trip -- the
-	// unknown-data value for numberOfStopsAway is 0 (absent/zero), not -1.
-	// -1 is a legitimate real value meaning "one stop behind" and must not
-	// double as a sentinel. Both handlers agree on 0 for the no-data case.
-	assert.Equal(t, 0, model.Data.Entry.NumberOfStopsAway,
-		"CANCELED trips report numberOfStopsAway=0 (no block location); "+
-			"-1 is reserved for the real 'one stop behind' signal")
 }
 
 // TestArrivalAndDepartureForStop_ScheduleOnlyBlock_SnapshotMetrics guards the

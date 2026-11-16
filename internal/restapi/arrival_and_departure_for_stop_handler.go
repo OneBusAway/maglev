@@ -315,8 +315,14 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		vehicle = api.vehicleForTrip(ctx, tripID, serviceMidnight)
 	}
 
-	canceled := api.arrivalCanceled(ctx, tripID, vehicle, serviceMidnight)
-	if vehicle != nil && vehicle.Trip != nil && !canceled {
+	// Java returns no arrival for a canceled trip by default (hideCanceledTrips,
+	// ArrivalsAndDeparturesBeanServiceImpl.java:267), as the wiki's SD-03 adopts.
+	if api.arrivalCanceled(ctx, tripID, vehicle, serviceMidnight) {
+		api.sendNotFound(w, r)
+		return
+	}
+
+	if vehicle != nil && vehicle.Trip != nil {
 		// Matches tripStatus.vehicleId (set by BuildTripStatus below), and clients
 		// round-trip it into /trip-for-vehicle/{id} and /trip-details/{id}?vehicleId=...
 		vehicleID = api.combinedVehicleID(ctx, vehicle, route.AgencyID, tripID)
@@ -377,10 +383,6 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 				numberOfStopsAway = n
 			}
 		}
-	}
-
-	if canceled {
-		predictedArrivalTime, predictedDepartureTime, predicted = time.Time{}, time.Time{}, false
 	}
 
 	totalStopsInTrip := len(orderedStopTimes)

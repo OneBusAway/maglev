@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
-	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -1222,16 +1221,6 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 		wantArrivalOffset   time.Duration
 		wantDepartureOffset time.Duration
 	}{
-		{
-			name: "canceled trip with fresh vehicle is not predicted",
-			setup: func(t *testing.T, api *RestAPI, now time.Time, tripID string) {
-				api.GtfsManager.MockAddVehicleWithOptions("v1", tripID, "dp-route", internalgtfs.MockVehicleOptions{
-					Timestamp:            &now,
-					ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
-				})
-			},
-			wantPredicted: false,
-		},
 		{
 			name: "deviation beyond blockNotActive window is not predicted",
 			setup: func(t *testing.T, api *RestAPI, now time.Time, tripID string) {

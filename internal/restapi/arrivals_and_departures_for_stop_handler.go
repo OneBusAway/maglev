@@ -127,7 +127,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	// Sort after buildArrival so predicted times are already filled in.
+	// Sort after the arrivals are built so predicted times are already filled in.
 	sortArrivalsByBestTime(result.Arrivals)
 
 	// Java looks up nearby stops whether or not the window has arrivals.
