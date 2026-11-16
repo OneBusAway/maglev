@@ -207,33 +207,6 @@ func truncateLocationLists(lists locationLists, maxCount int) locationLists {
 	return lists
 }
 
-// addRouteAlertsForRetainedStops records alerts for every route that serves a
-// retained stop. Agency and route ids stay in separate columns: an agency id
-// can contain an underscore, so the combined agency_code form is not split
-// back apart. Alerts are indexed by the bare route id.
-func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combinedStopIDs []string, situations *situationCollector) error {
-	stopIDs := retainedStopCodes(combinedStopIDs)
-	if len(stopIDs) == 0 {
-		return nil
-	}
-
-	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesForStops)
-	if err != nil {
-		return err
-	}
-
-	seen := make(map[routeAlertKey]struct{})
-	for _, row := range rows {
-		key := routeAlertKey{agencyID: row.AgencyID, routeID: row.ID}
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), row.AgencyID)
-	}
-	return nil
-}
-
 // retainedStopCodes returns each bare stop id in combinedIDs once, in order.
 // A value that is not an agency_code id is skipped.
 func retainedStopCodes(combinedIDs []string) []string {
@@ -251,13 +224,6 @@ func retainedStopCodes(combinedIDs []string) []string {
 		codes = append(codes, code)
 	}
 	return codes
-}
-
-// routeAlertKey is one route serving a retained stop. The same route is
-// returned once per stop it serves, and only the first copy is recorded.
-type routeAlertKey struct {
-	agencyID string
-	routeID  string
 }
 
 // combinedStopIDs renders the searched stops as {agency}_{code} IDs.

@@ -556,6 +556,40 @@ func (api *RestAPI) addStopLevelArrivalAlerts(ctx context.Context, stops []gtfsd
 	return nil
 }
 
+// addRouteAlertsForRetainedStops records alerts for every route that serves a
+// retained stop. Agency and route ids stay in separate columns: an agency id
+// can contain an underscore, so the combined agency_code form is not split
+// back apart. Alerts are indexed by the bare route id.
+func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combinedStopIDs []string, situations *situationCollector) error {
+	stopIDs := retainedStopCodes(combinedStopIDs)
+	if len(stopIDs) == 0 {
+		return nil
+	}
+
+	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesForStops)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[routeAlertKey]struct{})
+	for _, row := range rows {
+		key := routeAlertKey{agencyID: row.AgencyID, routeID: row.ID}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), row.AgencyID)
+	}
+	return nil
+}
+
+// routeAlertKey is one route serving a retained stop. The same route is
+// returned once per stop it serves, and only the first copy is recorded.
+type routeAlertKey struct {
+	agencyID string
+	routeID  string
+}
+
 // agencyGroup is one timezone-shared set of stops: a single query instant,
 // window and set of service dates covers the whole group.
 type agencyGroup struct {
