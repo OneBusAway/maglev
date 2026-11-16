@@ -850,6 +850,7 @@ func TestResolveBundleInputs(t *testing.T) {
 			{ID: "st", URL: "https://example.com/st.zip", DefaultAgencyID: "40"},
 		}
 		assert.Equal(t, want, gtfsCfgData.StaticFeeds)
+		assert.Equal(t, "https://example.com/consolidation.txt", gtfsCfgData.StopConsolidationURL)
 		assert.Equal(t, gtfsCfgData.BundleInputsURL, gtfsConfigFromData(gtfsCfgData).BundleInputsURL)
 		assert.Contains(t, logOutput.String(), "only the first static feed is loaded")
 		assert.Contains(t, logOutput.String(), "ignored_feeds=[st]")

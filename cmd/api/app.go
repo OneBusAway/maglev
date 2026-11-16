@@ -64,8 +64,9 @@ func gtfsConfigFromData(gtfsCfgData appconf.GtfsConfigData) gtfs.Config {
 	return gtfsCfg
 }
 
-// resolveBundleInputs fills the static feed list from the bundle-inputs
-// manifest when gtfs-bundle-inputs-url is set. The manifest is read once,
+// resolveBundleInputs fills the static feed list and the stop
+// consolidation URL from the bundle-inputs manifest when
+// gtfs-bundle-inputs-url is set. The manifest is read once,
 // at startup: the periodic static reload keeps the feeds resolved here and
 // does not read the manifest again until multi-feed import lands.
 func resolveBundleInputs(ctx context.Context, gtfsCfgData *appconf.GtfsConfigData) error {
@@ -77,6 +78,7 @@ func resolveBundleInputs(ctx context.Context, gtfsCfgData *appconf.GtfsConfigDat
 		return fmt.Errorf("failed to load gtfs-bundle-inputs-url: %w", err)
 	}
 	gtfsCfgData.UseStaticFeeds(manifest.StaticFeeds())
+	gtfsCfgData.StopConsolidationURL = manifest.StopConsolidationURL
 	slog.Info("loaded static feeds from bundle inputs manifest",
 		"component", "config_loader",
 		"source", appconf.RedactURL(gtfsCfgData.BundleInputsURL),

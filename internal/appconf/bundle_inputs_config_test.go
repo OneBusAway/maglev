@@ -34,6 +34,11 @@ func TestLoadFromFile_BundleInputsURL(t *testing.T) {
 			wantErr:   "gtfs-bundle-inputs-url cannot be set together with gtfs-static-feed or gtfs-static-feeds",
 		},
 		{
+			name:      "manifest URL with a stop consolidation URL",
+			configKey: `"gtfs-bundle-inputs-url": "` + manifestURL + `", "stop-consolidation-url": "https://example.com/c.txt",`,
+			wantErr:   "gtfs-bundle-inputs-url cannot be set together with stop-consolidation-url",
+		},
+		{
 			name:      "file URL",
 			configKey: `"gtfs-bundle-inputs-url": "file:///etc/bundle-inputs.json",`,
 			wantErr:   "file:// URLs are not allowed in gtfs-bundle-inputs-url",

@@ -135,6 +135,9 @@ func (j *JSONConfig) normalizeStaticFeeds() error {
 	if j.isManifestMode() && hasStaticFeedKey {
 		return fmt.Errorf("gtfs-bundle-inputs-url cannot be set together with gtfs-static-feed or gtfs-static-feeds")
 	}
+	if j.isManifestMode() && j.StopConsolidationURL != "" {
+		return fmt.Errorf("gtfs-bundle-inputs-url cannot be set together with stop-consolidation-url: the manifest's stopConsolidationUrl is used")
+	}
 	if j.GtfsStaticFeed != nil {
 		j.GtfsStaticFeeds = []GtfsStaticFeed{*j.GtfsStaticFeed}
 		j.GtfsStaticFeed = nil

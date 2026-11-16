@@ -97,7 +97,7 @@
     },
     "stop-consolidation-url": {
       "type": "string",
-      "description": "Optional Java OneBusAway stop consolidation file for the whole bundle (http/https URL or local file path). Each line lists a canonical stop ID, then the stop IDs merged into it, in <agency>_<id> form, where the agency is the feed's first agency in agency.txt"
+      "description": "Optional Java OneBusAway stop consolidation file for the whole bundle (http/https URL or local file path). Cannot be combined with gtfs-bundle-inputs-url, whose manifest names its own. Each line lists a canonical stop ID, then the stop IDs merged into it, in <agency>_<id> form, where the agency is the feed's first agency in agency.txt"
     },
     "gtfs-rt-feeds": {
       "type": "array",
@@ -193,6 +193,7 @@
       }
     },
     { "not": { "required": ["gtfs-bundle-inputs-url", "gtfs-static-feed"] } },
+    { "not": { "required": ["gtfs-bundle-inputs-url", "stop-consolidation-url"] } },
     {
       "not": {
         "required": ["gtfs-bundle-inputs-url", "gtfs-static-feeds"],
