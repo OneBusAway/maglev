@@ -1471,7 +1471,7 @@ func findRABAStopWithNeighbour(t *testing.T, api *RestAPI, ctx context.Context) 
 	require.NoError(t, err)
 	require.NotEmpty(t, candidates, "precondition: RABA should have stops near Redding")
 	for _, c := range candidates {
-		nearby, _, err := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
+		nearby, _, _, err := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
 		require.NoError(t, err)
 		if len(nearby) > 0 {
 			return c
@@ -1489,15 +1489,17 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result, stopAgencies, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
+	result, bareIDs, stopAgencies, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
 	require.NoError(t, err)
 
 	require.NotEmpty(t, result, "expected ≥1 nearby stop within 100m")
-	for _, combinedID := range result {
+	require.Equal(t, len(result), len(bareIDs))
+	for i, combinedID := range result {
 		agencyID, codeID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
 		require.NoError(t, err, "combined ID should be parseable: %s", combinedID)
 		assert.NotEqual(t, "WrongFallbackAgency", agencyID)
 		assert.Equal(t, agencyID, stopAgencies[codeID])
+		assert.Equal(t, codeID, bareIDs[i])
 	}
 }
 
@@ -1508,9 +1510,12 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result, _, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
+	result, bareIDs, _, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
 	require.NoError(t, err)
 
+	for _, codeID := range bareIDs {
+		assert.NotEqual(t, currentStop.ID, codeID, "current stop should be excluded from nearby results")
+	}
 	for _, combinedID := range result {
 		_, codeID, _ := utils.ExtractAgencyIDAndCodeID(combinedID)
 		assert.NotEqual(t, currentStop.ID, codeID, "current stop should be excluded from nearby results")
@@ -1525,11 +1530,21 @@ func TestGetNearbyStopIDs_ReturnsQueryError(t *testing.T) {
 	cancel()
 
 	stop := testdata.Stop4062
-	result, agencies, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, "4062", "25")
+	result, bareIDs, agencies, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, "4062", "25")
 
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, result)
+	assert.Nil(t, bareIDs)
 	assert.Nil(t, agencies)
+}
+
+func TestAddNearbyStopRefs_UnderscoreAgency(t *testing.T) {
+	acc := newArrivalsAccumulator("AGENCY_ONE")
+	// Stop IDs might contain underscores, or belong to agencies with underscores.
+	// Since bare stop IDs are passed directly without parsing, they are accurately preserved.
+	addNearbyStopRefs(acc, []string{"stop_1", "stop2"})
+	assert.True(t, acc.stopIDs["stop_1"])
+	assert.True(t, acc.stopIDs["stop2"])
 }
 
 func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {

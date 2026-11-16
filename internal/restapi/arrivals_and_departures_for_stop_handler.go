@@ -131,7 +131,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	sortArrivalsByBestTime(result.Arrivals)
 
 	// Java looks up nearby stops whether or not the window has arrivals.
-	nearbyStopIDs, stopAgencies, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
+	nearbyStopIDs, bareNearbyStopIDs, stopAgencies, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -143,7 +143,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		acc.stopIDs[stopCode] = true
 	}
 
-	addNearbyStopRefs(acc, nearbyStopIDs)
+	addNearbyStopRefs(acc, bareNearbyStopIDs)
 
 	references, err = api.buildArrivalsReferences(ctx, arrivalsReferencesInput{
 		fallbackAgencyID: stopAgencyID,
@@ -164,13 +164,11 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	api.sendResponse(w, r, response)
 }
 
-// addNearbyStopRefs extracts bare stop IDs from nearby combined stop IDs and
-// marks them for inclusion in the response references.
-func addNearbyStopRefs(acc *arrivalsAccumulator, nearbyStopIDs []string) {
-	for _, sid := range nearbyStopIDs {
-		if _, bareID, err := utils.ExtractAgencyIDAndCodeID(sid); err == nil {
-			acc.stopIDs[bareID] = true
-		}
+// addNearbyStopRefs records bare stop IDs for nearby stops to ensure they
+// and their serving routes and agencies are included in response references.
+func addNearbyStopRefs(acc *arrivalsAccumulator, bareNearbyStopIDs []string) {
+	for _, sid := range bareNearbyStopIDs {
+		acc.stopIDs[sid] = true
 	}
 }
 
@@ -184,11 +182,11 @@ func (api *RestAPI) addStopSituations(ctx context.Context, references *models.Re
 	return situationIDsFromRefs(acc.situations.refs)
 }
 
-// getNearbyStopIDs returns the combined IDs of the other stops within 100m,
-// along with a map of bare stop ID to agency ID, or an empty slice when there
+// getNearbyStopIDs returns the combined IDs and bare IDs of the other stops within 100m,
+// along with a map of bare stop ID to agency ID, or empty slices when there
 // are none. A failed spatial query returns an error so that the caller doesn't
 // report a broken lookup as an isolated stop.
-func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) ([]string, map[string]string, error) {
+func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopID, fallbackAgencyID string) ([]string, []string, map[string]string, error) {
 	// Mirrors Java: StopWithArrivalsAndDeparturesBeanServiceImpl calls
 	// NearbyStopsBeanService with radius=100 m and no count limit
 	// (StopWithArrivalsAndDeparturesBeanServiceImpl.java:74-75 +
@@ -200,7 +198,7 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 	loc := &internalgtfs.LocationParams{Lat: lat, Lon: lon, Radius: nearbyRadiusMeters}
 	nearbyIDs, err := api.GtfsManager.GetStopIDsWithinBounds(ctx, loc, nearbyLimit)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// Exclude the current stop from nearby results
@@ -211,7 +209,7 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 		}
 	}
 	if len(candidateIDs) == 0 {
-		return []string{}, nil, nil
+		return []string{}, []string{}, nil, nil
 	}
 
 	reqLogger := logging.ForComponent(ctx, "http_server")
@@ -239,5 +237,5 @@ func getNearbyStopIDs(api *RestAPI, ctx context.Context, lat, lon float64, stopI
 		}
 		nearbyStopIDs = append(nearbyStopIDs, utils.FormCombinedID(agency, sid))
 	}
-	return nearbyStopIDs, stopAgencyMap, nil
+	return nearbyStopIDs, candidateIDs, stopAgencyMap, nil
 }
