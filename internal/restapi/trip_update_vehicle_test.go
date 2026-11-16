@@ -1284,3 +1284,38 @@ func TestArrivals_CancellationForAnotherServiceDate(t *testing.T) {
 	require.NotNil(t, arrival.TripStatus)
 	assert.NotEqual(t, "CANCELED", arrival.TripStatus.Status)
 }
+
+// separateBlockStops moves stopID away from the fixture's first stop, so the
+// block's distance tells its trips apart.
+func separateBlockStops(t *testing.T, api *RestAPI, stopID string) {
+	t.Helper()
+	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(), "UPDATE stops SET lat = ? WHERE id = ?", 47.01, stopID)
+	require.NoError(t, err)
+}
+
+// A trip-update vehicle running trip B is not canceled by an update that cancels
+// B for another vehicle.
+func TestTripUpdateVehicleForTrip_IgnoresAnotherVehiclesCancellation(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(9*time.Hour + 30*time.Minute) // between trip A's end and trip B's start
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, _, tripA, _ := setupDelayPropTestData(t, api, 1)
+	stopID := addDownstreamStop(t, api, tripA)
+	separateBlockStops(t, api, stopID)
+	tripB := addLaterBlockTrip(t, api, stopID, tripA)
+	busA := plannedVehicleTripUpdate(tripA, now)
+	busA.Vehicle.ID.ID = "busA"
+	api.GtfsManager.MockAddFullTripUpdate(busA)
+	canceledForBusB := plannedVehicleTripUpdate(tripB, now)
+	canceledForBusB.Vehicle.ID.ID = "busB"
+	canceledForBusB.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+	api.GtfsManager.MockAddFullTripUpdate(canceledForBusB)
+
+	vehicle := api.tripUpdateVehicleForTrip(context.Background(), tripA, serviceDate)
+
+	require.NotNil(t, vehicle)
+	assert.Equal(t, "busA", vehicle.ID.ID)
+	assert.False(t, isCanceledVehicle(vehicle))
+}

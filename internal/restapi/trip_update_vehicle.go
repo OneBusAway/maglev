@@ -77,12 +77,7 @@ func vehicleWithRecordStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateFor
 		return vehicle
 	}
 	canceledUpdate, found := cancelingUpdate(blockUpdates, vehicle.Trip.ID.ID, serviceDate)
-	if !found {
-		return vehicle
-	}
-	namesAnotherVehicle := namesVehicle(canceledUpdate) &&
-		(vehicle.ID == nil || vehicle.ID.ID != canceledUpdate.Vehicle.ID.ID)
-	if namesAnotherVehicle {
+	if !found || namesAnotherVehicle(canceledUpdate, vehicle) {
 		return vehicle
 	}
 	canceledTrip := *vehicle.Trip
@@ -173,7 +168,8 @@ func (api *RestAPI) recordVehicleInService(ctx context.Context, vehicle *gtfs.Ve
 // running trip becomes the vehicle's trip, so the status's activeTripId names it.
 // The vehicle must be one built for this request.
 func applyRunningTripStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForTrip, runningTripID string, serviceDate time.Time) {
-	if canceledUpdate, found := cancelingUpdate(blockUpdates, runningTripID, serviceDate); found {
+	canceledUpdate, found := cancelingUpdate(blockUpdates, runningTripID, serviceDate)
+	if found && !namesAnotherVehicle(canceledUpdate, vehicle) {
 		vehicle.Trip = &canceledUpdate
 		return
 	}
@@ -182,6 +178,12 @@ func applyRunningTripStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForT
 		runningTrip.ID.ScheduleRelationship = gtfsrt.TripDescriptor_SCHEDULED
 		vehicle.Trip = &runningTrip
 	}
+}
+
+// namesAnotherVehicle reports whether a trip update belongs to a vehicle other
+// than this one, whose cancellation therefore does not apply to it.
+func namesAnotherVehicle(tripUpdate gtfs.Trip, vehicle *gtfs.Vehicle) bool {
+	return namesVehicle(tripUpdate) && (vehicle.ID == nil || vehicle.ID.ID != tripUpdate.Vehicle.ID.ID)
 }
 
 // cancelingUpdate returns the update in a block record that cancels tripID's run
