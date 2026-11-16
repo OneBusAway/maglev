@@ -104,6 +104,23 @@ func (manager *Manager) readFirstAgencyID(ctx context.Context) (string, error) {
 	return agencyIDs[0], nil
 }
 
+// publishStaticSnapshot swaps in the region bounds and first agency of a reload.
+// The static lock covers only the swap and the cache replacement, so readers are
+// not held up by the logging that follows the reload.
+func (manager *Manager) publishStaticSnapshot(changed bool, regionBounds map[string]*RegionBounds, firstAgencyID string) {
+	manager.staticMutex.Lock()
+	defer manager.staticMutex.Unlock()
+
+	manager.regionBounds = regionBounds
+	manager.firstAgencyID = firstAgencyID
+
+	// Replace direction and trip-distance caches together for the new feed.
+	// In-flight calculations retain the retired cache generation.
+	if changed && manager.DirectionCalculator != nil {
+		manager.DirectionCalculator.ClearCache()
+	}
+}
+
 // FirstStaticAgencyID returns the first agency ID of the loaded static feed. It is
 // the situation ID prefix for an alert that names no agency on a feed with no
 // agency-ids, matching the fallback Java's createId uses. It is "" until static data
@@ -143,21 +160,9 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	newFirstAgencyID, agencyErr := manager.readFirstAgencyID(ctx)
 	if agencyErr != nil {
 		logging.LogError(logger, "failed to read first static agency ID; keeping the previous value", agencyErr)
+		newFirstAgencyID = manager.FirstStaticAgencyID()
 	}
-
-	manager.staticMutex.Lock()
-	defer manager.staticMutex.Unlock()
-
-	manager.regionBounds = newRegionBounds
-	if agencyErr == nil {
-		manager.firstAgencyID = newFirstAgencyID
-	}
-
-	// Replace direction and trip-distance caches together for the new feed.
-	// In-flight calculations retain the retired cache generation.
-	if changed && manager.DirectionCalculator != nil {
-		manager.DirectionCalculator.ClearCache()
-	}
+	manager.publishStaticSnapshot(changed, newRegionBounds, newFirstAgencyID)
 
 	if eTag := manager.GetSystemETag(ctx); eTag != "" {
 		logging.LogOperation(logger, "system_etag_updated_successfully", slog.String("etag", eTag))

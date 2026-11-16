@@ -482,10 +482,12 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 			for _, id := range agencyIDs {
 				knownAgencies[id] = struct{}{}
 			}
-			firstStaticAgencyID = api.GtfsManager.FirstStaticAgencyID()
 		} else {
 			logQueryError(logger, "failed to fetch agencies for situation reference", err)
 		}
+		// The cached value does not depend on the query above, so a failed query
+		// still leaves the fallback agency available.
+		firstStaticAgencyID = api.GtfsManager.FirstStaticAgencyID()
 
 		if len(routeCandidateIDs) > 0 {
 			slices.Sort(routeCandidateIDs)
