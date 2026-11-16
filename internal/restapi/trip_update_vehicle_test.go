@@ -1489,3 +1489,46 @@ func TestArrivals_StaleUpdateInFreshRecordStillPredicts(t *testing.T) {
 		})
 	}
 }
+
+// Vehicle IDs are only unique within an agency, so a position vehicle at another
+// agency does not stand in for a trip-update vehicle sharing its raw ID.
+func TestTripUpdateVehicleForTrip_PositionVehicleAtAnotherAgency(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer setupAPI.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
+	addDownstreamStop(t, setupAPI, tripID)
+
+	tests := []struct {
+		name          string
+		vehicleAgency string
+		wantVehicle   bool
+	}{
+		{name: "another agency's position vehicle", vehicleAgency: "other-agency", wantVehicle: true},
+		{name: "this agency's position vehicle", vehicleAgency: "dp-agency"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			latitude, longitude := float32(40.0), float32(-120.0)
+			positionVehicle := gtfs.Vehicle{
+				ID:                &gtfs.VehicleID{ID: "101"},
+				Trip:              &gtfs.Trip{ID: gtfs.TripID{ID: "another-trip"}},
+				Position:          &gtfs.Position{Latitude: &latitude, Longitude: &longitude},
+				Timestamp:         &now,
+				IsEntityInMessage: true,
+			}
+			api.GtfsManager.MockSetAgencyVehicles("_test", tt.vehicleAgency, []gtfs.Vehicle{positionVehicle})
+			update := plannedVehicleTripUpdate(tripID, now)
+			update.Vehicle.ID.ID = "101"
+			api.GtfsManager.MockAddFullTripUpdate(update)
+
+			vehicle := api.tripUpdateVehicleForTrip(context.Background(), tripID, serviceDate)
+
+			assert.Equal(t, tt.wantVehicle, vehicle != nil)
+		})
+	}
+}

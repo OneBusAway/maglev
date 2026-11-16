@@ -292,7 +292,7 @@ func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.T
 	if vehicleID == nil {
 		return nil
 	}
-	if api.tripUpdateVehicleHasPosition(tripUpdate) {
+	if api.tripUpdateVehicleHasPosition(ctx, tripUpdate, tripID) {
 		return nil
 	}
 

@@ -154,12 +154,25 @@ func (api *RestAPI) recordTimeExpired(recordTime time.Time) bool {
 	return age < -tripUpdateMaxAge || age > tripUpdateMaxAge
 }
 
-func (api *RestAPI) tripUpdateVehicleHasPosition(tripUpdate gtfs.Trip) bool {
+// tripUpdateVehicleHasPosition reports whether the vehicle a trip update names
+// reports positions, so it is found as a position vehicle instead. Vehicle IDs
+// are only unique within an agency, so a position vehicle attributed to another
+// agency than tripID's is a different vehicle.
+func (api *RestAPI) tripUpdateVehicleHasPosition(ctx context.Context, tripUpdate gtfs.Trip, tripID string) bool {
 	if tripUpdate.Vehicle == nil || tripUpdate.Vehicle.ID == nil {
 		return false
 	}
-	vehicle, err := api.GtfsManager.GetVehicleByID(tripUpdate.Vehicle.ID.ID)
-	return err == nil && !isTripUpdateVehicle(vehicle)
+	rawVehicleID := tripUpdate.Vehicle.ID.ID
+	vehicle, err := api.GtfsManager.GetVehicleByID(rawVehicleID)
+	if err != nil || isTripUpdateVehicle(vehicle) {
+		return false
+	}
+	vehicleAgencyID, attributed := api.GtfsManager.VehicleAgencyID(rawVehicleID)
+	if !attributed {
+		return true
+	}
+	tripAgencyID, known := api.tripAgencyID(ctx, tripID)
+	return !known || vehicleAgencyID == tripAgencyID
 }
 
 type tripUpdateForTrip struct {
