@@ -78,7 +78,10 @@ const connectionBusyTimeoutMs = 5000
 // of INSERT OR REPLACE. Without it a feed that repeats a stop_id leaves the
 // first row's stops_rtree and stops_fts entries behind, pointing at a rowid
 // that no longer exists. A feed that repeats a route_id does the same to
-// routes_fts, so the replaced route's name keeps matching.
+// routes_fts, so the replaced route's name keeps matching. The setting is
+// global, so a trigger that writes to its own table re-fires itself. Every
+// trigger in schema.sql writes to a different table; keep it that way or guard
+// against the recursion in new triggers.
 func DSN(path string) string {
 	return dsn(path, connectionCacheKiB)
 }
