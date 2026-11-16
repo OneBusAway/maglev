@@ -913,8 +913,6 @@ func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// A cancelled request must not be reported as a server failure: client
-// cancellation writes nothing, an expired deadline writes 504.
 // Nearby stops served only by routes with no service on the query date are
 // dropped, matching Java (e.g. a seasonal shuttle outside its season).
 func TestBuildNearbyResultsDropsStopsInactiveOnDate(t *testing.T) {
