@@ -27,12 +27,21 @@ const tripUpdateVehicleBlockWindow = time.Hour
 // here so the trip-update path builds it with Java's record checks.
 func (api *RestAPI) vehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
 	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil && !isTripUpdateVehicle(vehicle) {
-		blockUpdates := api.vehicleBlockTripUpdates(ctx, vehicle, serviceDate)
-		if !api.vehicleRecordExpired(blockUpdates) {
-			return vehicleWithRecordStatus(vehicle, blockUpdates, serviceDate)
+		if checked := api.positionVehicleWithRecord(ctx, vehicle, serviceDate); checked != nil {
+			return checked
 		}
 	}
 	return api.tripUpdateVehicleForTrip(ctx, tripID, serviceDate)
+}
+
+// positionVehicleWithRecord applies a position vehicle's record to it, or returns
+// nil when that record has expired.
+func (api *RestAPI) positionVehicleWithRecord(ctx context.Context, vehicle *gtfs.Vehicle, serviceDate time.Time) *gtfs.Vehicle {
+	blockUpdates := api.vehicleBlockTripUpdates(ctx, vehicle, serviceDate)
+	if api.vehicleRecordExpired(blockUpdates) {
+		return nil
+	}
+	return vehicleWithRecordStatus(vehicle, blockUpdates, serviceDate)
 }
 
 // vehicleBlockTripUpdates returns the trip updates of the block a vehicle reports
@@ -245,16 +254,34 @@ func (api *RestAPI) tripUpdateVehicleServiceDate(ctx context.Context, tripID str
 
 // requestedVehicleForTrip applies the automatic lookup's record checks before
 // matching an explicit vehicle ID. A position vehicle must report this trip;
-// trip-update-only vehicles can describe another trip on the same block.
+// trip-update-only vehicles can describe another trip on the same block. Several
+// position vehicles can report one trip ID, as on a frequency trip, while the
+// automatic lookup picks one, so another of them is looked up by its ID.
 func (api *RestAPI) requestedVehicleForTrip(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time) *gtfs.Vehicle {
 	vehicle := api.vehicleForTrip(ctx, tripID, serviceDate)
 	if vehicle == nil || vehicle.ID == nil || vehicle.Trip == nil || responseVehicleID(agencyID, vehicle) != requestedID {
-		return nil
+		return api.requestedPositionVehicle(ctx, requestedID, agencyID, tripID, serviceDate)
 	}
 	if !isTripUpdateVehicle(vehicle) && vehicle.Trip.ID.ID != tripID {
 		return nil
 	}
 	return vehicle
+}
+
+// requestedPositionVehicle finds a position vehicle reporting tripID by its
+// agency-qualified ID and applies its record, or returns nil.
+func (api *RestAPI) requestedPositionVehicle(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+	requestedAgencyID, rawVehicleID, err := utils.ExtractAgencyIDAndCodeID(requestedID)
+	if err != nil || requestedAgencyID != agencyID {
+		return nil
+	}
+	vehicle, err := api.GtfsManager.GetVehicleByID(rawVehicleID)
+	reportsTrip := err == nil && vehicle != nil && !isTripUpdateVehicle(vehicle) &&
+		vehicle.Trip != nil && vehicle.Trip.ID.ID == tripID
+	if !reportsTrip {
+		return nil
+	}
+	return api.positionVehicleWithRecord(ctx, vehicle, serviceDate)
 }
 
 func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.Trip, tripID string, recordTime, serviceDate time.Time) *gtfs.Vehicle {

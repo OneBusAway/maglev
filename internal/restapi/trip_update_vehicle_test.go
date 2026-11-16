@@ -1365,3 +1365,52 @@ func TestTripDetails_TripUpdateVehicleDescribesRunningTrip(t *testing.T) {
 		})
 	}
 }
+
+// Two vehicles can serve one trip ID, as on a frequency trip, while the trip's
+// automatic lookup picks only one. An explicit vehicleId for the other still
+// resolves, with the same record checks.
+func TestExplicitVehicleIDForSecondVehicleOnTrip(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer setupAPI.Shutdown()
+	_, stopID, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
+	addDownstreamStop(t, setupAPI, tripID)
+	combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+
+	tests := []struct {
+		name      string
+		recordAge time.Duration
+		wantCode  int
+	}{
+		{name: "fresh record", wantCode: http.StatusOK},
+		{name: "expired record", recordAge: 20 * time.Minute, wantCode: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			api.GtfsManager.MockAddVehicleWithOptions("busA", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+			api.GtfsManager.MockAddVehicleWithOptions("busB", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+			update := plannedVehicleTripUpdate(tripID, now.Add(-tt.recordAge))
+			update.Vehicle = nil
+			api.GtfsManager.MockAddFullTripUpdate(update)
+			query := fmt.Sprintf("key=TEST&serviceDate=%d&vehicleId=dp-agency_busA", serviceDate.UnixMilli())
+
+			detailsResp, details := callAPIHandler[TripDetailsResponse](t, api,
+				fmt.Sprintf("/api/where/trip-details/%s.json?%s", combinedTripID, query))
+			arrivalResp, arrival := callAPIHandler[ArrivalAndDepartureResponse](t, api,
+				fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?%s&tripId=%s&stopSequence=1", stopID, query, combinedTripID))
+
+			require.Equal(t, tt.wantCode, detailsResp.StatusCode)
+			require.Equal(t, tt.wantCode, arrivalResp.StatusCode)
+			if tt.wantCode != http.StatusOK {
+				return
+			}
+			require.NotNil(t, details.Data.Entry.Status)
+			assert.Equal(t, "dp-agency_busA", details.Data.Entry.Status.VehicleID)
+			assert.Equal(t, "dp-agency_busA", arrival.Data.Entry.VehicleID)
+		})
+	}
+}
