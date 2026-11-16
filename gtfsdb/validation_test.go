@@ -354,7 +354,7 @@ func TestValidateAndFilterGTFSData_FlexRecords(t *testing.T) {
 				d.Locations = []gtfs.Location{*zone}
 				st := windowedLocationStopTime(zone, 1)
 				st.Stop = &d.Stops[0]
-				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{st}
+				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{st, windowedLocationStopTime(zone, 2)}
 			},
 			wantTripIDs: nil,
 			wantErr:     "every trip was filtered out",
@@ -363,7 +363,10 @@ func TestValidateAndFilterGTFSData_FlexRecords(t *testing.T) {
 			name: "timed record without a stop drops the trip",
 			mutate: func(d *gtfs.Static) {
 				d.Locations = []gtfs.Location{*zone}
-				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{{StopSequence: 1, Flex: &gtfs.FlexStopTime{Location: zone}}}
+				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{
+					{StopSequence: 1, Flex: &gtfs.FlexStopTime{Location: zone}},
+					windowedLocationStopTime(zone, 2),
+				}
 			},
 			wantErr: "every trip was filtered out",
 		},
@@ -373,6 +376,7 @@ func TestValidateAndFilterGTFSData_FlexRecords(t *testing.T) {
 				d.Locations = []gtfs.Location{*zone}
 				d.Trips[0].StopTimes = []gtfs.ScheduledStopTime{
 					{Stop: &gtfs.Stop{Id: ""}, StopSequence: 1, Flex: &gtfs.FlexStopTime{Location: zone}},
+					windowedLocationStopTime(zone, 2),
 				}
 			},
 			wantErr: "every trip was filtered out",
