@@ -2169,3 +2169,51 @@ func TestArrivalAndDepartureForStopHandler_CrossAgencyTimezone(t *testing.T) {
 	assert.True(t, entry.ServiceDate.In(locLA).Equal(expectedMidnightLA),
 		"service date must be midnight in the trip agency timezone, got %v", entry.ServiceDate)
 }
+
+// TestArrivalAndDepartureForStop_VehicleIDAgencyAttribution checks that, like
+// Java, a vehicleId is honored only under the agency the vehicle was attributed
+// to at ingestion. Under another agency's prefix the arrival is still served,
+// without the vehicle.
+func TestArrivalAndDepartureForStop_VehicleIDAgencyAttribution(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	const (
+		rawVehicleID = "ATTRIBUTED_VEHICLE"
+		stopCode     = "5007"
+		tripCode     = "36957461-b451-4390-af3a-bc42c51fd473"
+	)
+
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(t.Context(), tripCode)
+	require.NoError(t, err)
+	api.GtfsManager.MockSetAgencyVehicles("_test", testdata.Raba.ID, []gtfs.Vehicle{{
+		ID:   &gtfs.VehicleID{ID: rawVehicleID},
+		Trip: &gtfs.Trip{ID: gtfs.TripID{ID: trip.ID, RouteID: trip.RouteID}},
+	}})
+
+	tests := []struct {
+		name          string
+		vehicleAgency string
+		wantVehicleID string
+	}{
+		{"the vehicle's own agency", testdata.Raba.ID, utils.FormCombinedID(testdata.Raba.ID, rawVehicleID)},
+		{"another agency", "OTHER", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			endpoint := fmt.Sprintf(
+				"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=6&vehicleId=%s",
+				utils.FormCombinedID(testdata.Raba.ID, stopCode),
+				utils.FormCombinedID(testdata.Raba.ID, tripCode),
+				time.Now().UnixMilli(),
+				utils.FormCombinedID(tt.vehicleAgency, rawVehicleID),
+			)
+
+			resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, tt.wantVehicleID, model.Data.Entry.VehicleID)
+		})
+	}
+}
