@@ -61,12 +61,12 @@ func TestSecurityHeadersWithCORS(t *testing.T) {
 	// Check response
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	// Verify CORS headers are set when Origin is present
+	// Verify Allow-Origin is set, and the preflight-only headers are not
 	headers := rec.Header()
 	assert.Equal(t, "*", headers.Get("Access-Control-Allow-Origin"))
-	assert.Equal(t, "GET, OPTIONS", headers.Get("Access-Control-Allow-Methods"))
-	assert.Equal(t, "Content-Type, Authorization", headers.Get("Access-Control-Allow-Headers"))
-	assert.Equal(t, "86400", headers.Get("Access-Control-Max-Age"))
+	assert.Empty(t, headers.Get("Access-Control-Allow-Methods"))
+	assert.Empty(t, headers.Get("Access-Control-Allow-Headers"))
+	assert.Empty(t, headers.Get("Access-Control-Max-Age"))
 }
 
 func TestSecurityHeadersOPTIONSRequest(t *testing.T) {
@@ -89,10 +89,12 @@ func TestSecurityHeadersOPTIONSRequest(t *testing.T) {
 	// Check that OPTIONS is handled by middleware
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	// Verify CORS headers are set
+	// Verify the preflight response carries every CORS header
 	headers := rec.Header()
 	assert.Equal(t, "*", headers.Get("Access-Control-Allow-Origin"))
 	assert.Equal(t, "GET, OPTIONS", headers.Get("Access-Control-Allow-Methods"))
+	assert.Equal(t, "Content-Type, Authorization", headers.Get("Access-Control-Allow-Headers"))
+	assert.Equal(t, "86400", headers.Get("Access-Control-Max-Age"))
 }
 
 func TestWithSecurityHeaders(t *testing.T) {
@@ -138,13 +140,13 @@ func TestSecurityHeadersCORSWithoutOrigin(t *testing.T) {
 	// Execute request
 	secureHandler.ServeHTTP(rec, req)
 
-	// Verify CORS headers are set without an Origin header too, so a cached
+	// Verify Allow-Origin is set without an Origin header too, so a cached
 	// copy of this response still works for browser clients
 	headers := rec.Header()
 	assert.Equal(t, "*", headers.Get("Access-Control-Allow-Origin"))
-	assert.Equal(t, "GET, OPTIONS", headers.Get("Access-Control-Allow-Methods"))
-	assert.Equal(t, "Content-Type, Authorization", headers.Get("Access-Control-Allow-Headers"))
-	assert.Equal(t, "86400", headers.Get("Access-Control-Max-Age"))
+	assert.Empty(t, headers.Get("Access-Control-Allow-Methods"))
+	assert.Empty(t, headers.Get("Access-Control-Allow-Headers"))
+	assert.Empty(t, headers.Get("Access-Control-Max-Age"))
 
 	// But security headers should still be set
 	assert.Equal(t, "nosniff", headers.Get("X-Content-Type-Options"))
