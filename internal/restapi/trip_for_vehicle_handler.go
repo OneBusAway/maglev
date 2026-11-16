@@ -256,14 +256,6 @@ func referencedStopIDs(status *models.TripStatus, schedule *models.Schedule) ([]
 	return stopIDs, nil
 }
 
-// vehicleBelongsToAnotherAgency reports whether vehicleID was attributed at
-// ingestion to an agency other than agencyID. A vehicle with no attributed
-// agency can't be checked, so it never counts as belonging to another agency.
-func (api *RestAPI) vehicleBelongsToAnotherAgency(agencyID, vehicleID string) (attributedAgencyID string, belongs bool) {
-	attributedAgencyID, attributed := api.GtfsManager.VehicleAgencyID(vehicleID)
-	return attributedAgencyID, attributed && attributedAgencyID != agencyID
-}
-
 func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request, agencyID, vehicleID string) (string, bool) {
 	vehicle, err := api.GtfsManager.GetVehicleByID(vehicleID)
 	if err != nil {

@@ -328,3 +328,11 @@ func (api *RestAPI) vehicleSituationRefs(ctx context.Context, active, nominal tr
 
 	return dedupeSituationRefs(append(refs, refsFor(nominal)...))
 }
+
+// vehicleBelongsToAnotherAgency reports whether vehicleID was attributed at
+// ingestion to an agency other than agencyID. A vehicle with no attributed
+// agency can't be checked, so it never counts as belonging to another agency.
+func (api *RestAPI) vehicleBelongsToAnotherAgency(agencyID, vehicleID string) (attributedAgencyID string, belongs bool) {
+	attributedAgencyID, attributed := api.GtfsManager.VehicleAgencyID(vehicleID)
+	return attributedAgencyID, attributed && attributedAgencyID != agencyID
+}
