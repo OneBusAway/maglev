@@ -482,9 +482,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 			for _, id := range agencyIDs {
 				knownAgencies[id] = struct{}{}
 			}
-			if len(agencyIDs) > 0 {
-				firstStaticAgencyID = agencyIDs[0]
-			}
+			firstStaticAgencyID = api.GtfsManager.FirstStaticAgencyID()
 		} else {
 			logQueryError(logger, "failed to fetch agencies for situation reference", err)
 		}
