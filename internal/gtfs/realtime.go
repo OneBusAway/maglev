@@ -58,8 +58,10 @@ type mergedRealtime struct {
 	alerts                   alertIndex
 	alertFeedsByAgency       map[string]agencyAlertFeed
 	tripUpdatesByAgency      map[string]AgencyTripUpdates
-	alertsSince              time.Time
-	builtAt                  time.Time
+	// alertsSince is the first snapshot's build time, the header time of an
+	// agency that has had no alerts since then.
+	alertsSince time.Time
+	builtAt     time.Time
 }
 
 // emptyMergedRealtime is returned before the first publish so a zero-value
@@ -1428,6 +1430,8 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 				continue
 			}
 			routeID := vehicle.Trip.ID.RouteID
+			// Some feeds omit route_id in VehiclePosition trip descriptors.
+			// Fall back to the corresponding TripUpdate to resolve the route.
 			if routeID == "" && vehicle.Trip.ID.ID != "" {
 				if index, exists := tripLookup[vehicle.Trip.ID.ID]; exists {
 					routeID = allTrips[index].ID.RouteID

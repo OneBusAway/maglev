@@ -754,14 +754,6 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 	return nil
 }
 
-// vehicleAtIndex returns a pointer to the vehicle at index, or nil if index is out of bounds.
-func (merged *mergedRealtime) vehicleAtIndex(index int) *gtfs.Vehicle {
-	if index >= 0 && index < len(merged.vehicles) {
-		return &merged.vehicles[index]
-	}
-	return nil
-}
-
 // resolveVehicleIndex returns the index of the vehicle in merged.vehicles
 // matching the agency and vehicle ID, falling back to an unattributed vehicle
 // if agencyID is non-empty.
@@ -781,13 +773,12 @@ func (merged *mergedRealtime) resolveVehicleIndex(agencyID, vehicleID string) (i
 
 // GetVehicleByID returns the vehicle matching the agency and vehicle ID.
 // If not found under the requested agency, it falls back to an unattributed vehicle.
-// Callers must not modify the returned vehicle pointer.
+// It returns a copy so callers cannot mutate the shared snapshot.
 func (manager *Manager) GetVehicleByID(agencyID, vehicleID string) (*gtfs.Vehicle, error) {
 	merged := manager.mergedRealtime()
 	if idx, ok := merged.resolveVehicleIndex(agencyID, vehicleID); ok {
-		if v := merged.vehicleAtIndex(idx); v != nil {
-			return v, nil
-		}
+		vehicle := merged.vehicles[idx]
+		return &vehicle, nil
 	}
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
 }

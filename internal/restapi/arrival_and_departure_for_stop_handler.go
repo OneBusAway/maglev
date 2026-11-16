@@ -306,17 +306,16 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	var vehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
 		agencyID, providedVehicleID, err := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
-		if err == nil {
-			v, err := api.GtfsManager.GetVehicleByID(agencyID, providedVehicleID)
-			// If vehicle is found, validate it matches the trip
-			if err == nil && v != nil && v.Trip != nil && v.Trip.ID.ID == tripID {
-				vehicle = v
-			}
-		} else {
-			reqLogger.Warn("malformed vehicleId provided",
-				"vehicleId", params.VehicleID,
-				"error", err)
+		if err != nil {
+			api.sendNotFound(w, r)
+			return
 		}
+		v, err := api.GtfsManager.GetVehicleByID(agencyID, providedVehicleID)
+		if err != nil || v == nil || v.Trip == nil || v.Trip.ID.ID != tripID {
+			api.sendNotFound(w, r)
+			return
+		}
+		vehicle = v
 	} else {
 		// If vehicleId is not provided, get the vehicle for the trip
 		vehicle = api.GtfsManager.GetVehicleForTrip(ctx, tripID)
