@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -494,6 +495,213 @@ func TestParseFloatParam(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseInt32Param(t *testing.T) {
+	val42 := int32(42)
+	val0 := int32(0)
+	valNeg10 := int32(-10)
+	valMax := int32(math.MaxInt32)
+	valMin := int32(math.MinInt32)
+
+	tests := []struct {
+		name            string
+		params          url.Values
+		key             string
+		initialErrors   map[string][]string
+		expectedValue   *int32
+		expectError     bool
+		expectedMessage string
+	}{
+		{
+			name: "Valid positive int32",
+			params: url.Values{
+				"age": []string{"42"},
+			},
+			key:           "age",
+			expectedValue: &val42,
+			expectError:   false,
+		},
+		{
+			name: "Valid zero",
+			params: url.Values{
+				"age": []string{"0"},
+			},
+			key:           "age",
+			expectedValue: &val0,
+			expectError:   false,
+		},
+		{
+			name: "Valid negative int32",
+			params: url.Values{
+				"age": []string{"-10"},
+			},
+			key:           "age",
+			expectedValue: &valNeg10,
+			expectError:   false,
+		},
+		{
+			name: "Valid max int32 boundary",
+			params: url.Values{
+				"age": []string{"2147483647"},
+			},
+			key:           "age",
+			expectedValue: &valMax,
+			expectError:   false,
+		},
+		{
+			name: "Valid min int32 boundary",
+			params: url.Values{
+				"age": []string{"-2147483648"},
+			},
+			key:           "age",
+			expectedValue: &valMin,
+			expectError:   false,
+		},
+		{
+			name: "Overflow max int32 by 1",
+			params: url.Values{
+				"age": []string{"2147483648"},
+			},
+			key:             "age",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "age".`,
+		},
+		{
+			name: "Underflow min int32 by 1",
+			params: url.Values{
+				"age": []string{"-2147483649"},
+			},
+			key:             "age",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "age".`,
+		},
+		{
+			name: "Huge overflow",
+			params: url.Values{
+				"age": []string{"999999999999999999"},
+			},
+			key:             "age",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "age".`,
+		},
+		{
+			name: "Non-numeric string",
+			params: url.Values{
+				"age": []string{"not_a_number"},
+			},
+			key:             "age",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "age".`,
+		},
+		{
+			name: "Float string rejected",
+			params: url.Values{
+				"age": []string{"12.34"},
+			},
+			key:             "age",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "age".`,
+		},
+		{
+			name: "Padded string rejected",
+			params: url.Values{
+				"age": []string{" 60 "},
+			},
+			key:             "age",
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "age".`,
+		},
+		{
+			name:          "Missing parameter returns nil without error",
+			params:        url.Values{},
+			key:           "age",
+			expectedValue: nil,
+			expectError:   false,
+		},
+		{
+			name: "Empty string returns nil without error",
+			params: url.Values{
+				"age": []string{""},
+			},
+			key:           "age",
+			expectedValue: nil,
+			expectError:   false,
+		},
+		{
+			name: "Preserves pre-existing errors",
+			params: url.Values{
+				"age": []string{"abc"},
+			},
+			key: "age",
+			initialErrors: map[string][]string{
+				"other": {"some error"},
+			},
+			expectedValue:   nil,
+			expectError:     true,
+			expectedMessage: `Invalid field value for field "age".`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value, errors := ParseInt32Param(tt.params, tt.key, tt.initialErrors)
+			if tt.expectedValue == nil {
+				assert.Nil(t, value)
+			} else {
+				require.NotNil(t, value)
+				assert.Equal(t, *tt.expectedValue, *value)
+			}
+
+			if tt.expectError {
+				require.Contains(t, errors, tt.key)
+				assert.Contains(t, errors[tt.key], tt.expectedMessage)
+			} else {
+				if _, exists := errors[tt.key]; exists {
+					assert.Empty(t, errors[tt.key])
+				}
+			}
+
+			if tt.initialErrors != nil {
+				for key, vals := range tt.initialErrors {
+					if key != tt.key {
+						assert.Equal(t, vals, errors[key])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestParseIntParam_BitSizes(t *testing.T) {
+	// Verify parseIntParam behaves identically across bit sizes (e.g., 32 vs 64).
+	params := url.Values{
+		"int32_overflow": []string{"2147483648"},
+		"int32_valid":    []string{"2147483647"},
+		"spaced":         []string{" 123 "},
+	}
+
+	// 32-bit: 2147483648 overflows
+	val32, errs32 := parseIntParam(params, "int32_overflow", 32, nil)
+	assert.Nil(t, val32)
+	assert.Contains(t, errs32["int32_overflow"], `Invalid field value for field "int32_overflow".`)
+
+	// 64-bit: 2147483648 is valid
+	val64, errs64 := parseIntParam(params, "int32_overflow", 64, nil)
+	require.NotNil(t, val64)
+	assert.Equal(t, int64(2147483648), *val64)
+	assert.Empty(t, errs64)
+
+	// Whitespace: rejected uniformly
+	valSpaced, errsSpaced := parseIntParam(params, "spaced", 32, nil)
+	assert.Nil(t, valSpaced)
+	assert.Contains(t, errsSpaced["spaced"], `Invalid field value for field "spaced".`)
 }
 
 func TestParseTimeParameter(t *testing.T) {
