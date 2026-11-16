@@ -1052,13 +1052,13 @@ func interpolateBlockDistance(stops []blockStopMetric, currentSeconds int64, mon
 		to = stops[idx]
 	}
 	// Java moves the vehicle only from the departure of one stop to the arrival
-	// of the next.
+	// of the next, so during the from-stop's dwell it stays at that stop.
 	fromSeconds := max(from.EffectiveStopSeconds, from.DepartureSeconds)
 	span := to.EffectiveStopSeconds - fromSeconds
 	if span <= 0 {
 		return from.DistanceAlongBlock
 	}
-	ratio := float64(currentSeconds-fromSeconds) / float64(span)
+	ratio := float64(max(currentSeconds-fromSeconds, 0)) / float64(span)
 	return from.DistanceAlongBlock + ratio*(to.DistanceAlongBlock-from.DistanceAlongBlock)
 }
 

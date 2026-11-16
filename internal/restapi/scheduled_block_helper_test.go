@@ -64,6 +64,44 @@ func TestInterpolateBlockDistance_LinearMidpoint(t *testing.T) {
 	assert.Equal(t, 250.0, interpolateBlockDistance(stops, 125, true))
 }
 
+// A vehicle dwelling at a stop stays at that stop until it departs, rather than
+// being placed behind it.
+func TestInterpolateBlockDistance_DwellAtFromStop(t *testing.T) {
+	tests := []struct {
+		name           string
+		stops          []blockStopMetric
+		currentSeconds int64
+		monotonic      bool
+	}{
+		{
+			name: "monotonic",
+			stops: []blockStopMetric{
+				{EffectiveStopSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+				{EffectiveStopSeconds: 100, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+				{EffectiveStopSeconds: 300, DepartureSeconds: 300, DistanceAlongBlock: 2000},
+			},
+			currentSeconds: 150,
+			monotonic:      true,
+		},
+		{
+			name: "non-monotonic at the stop's arrival",
+			stops: []blockStopMetric{
+				{EffectiveStopSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+				{EffectiveStopSeconds: 100, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+				{EffectiveStopSeconds: 300, DepartureSeconds: 300, DistanceAlongBlock: 2000},
+				{EffectiveStopSeconds: 250, DepartureSeconds: 250, DistanceAlongBlock: 3000},
+				{EffectiveStopSeconds: 400, DepartureSeconds: 400, DistanceAlongBlock: 4000},
+			},
+			currentSeconds: 100,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, 1000.0, interpolateBlockDistance(tt.stops, tt.currentSeconds, tt.monotonic))
+		})
+	}
+}
+
 // TestInterpolateBlockDistance_NonMonotonicUsesLinearScan pins the fallback
 // path: with monotonic=false, the function must find the correct bracketing
 // pair via linear scan even when EffectiveStopSeconds are out of order.
