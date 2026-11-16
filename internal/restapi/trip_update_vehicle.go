@@ -93,8 +93,8 @@ func vehicleWithRecordStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateFor
 // .java:355-378), so feeds that plan a block before a bus is assigned, such as
 // Swiftly's block_*_schedBasedVehicle, still produce a vehicle in its responses.
 //
-// The vehicle is built from the block's first update, and carries the status of
-// the trip its record is running: see recordVehicleInService.
+// The vehicle is built from the block's first update, and describes the trip its
+// record is running: see applyRunningTrip.
 func (api *RestAPI) tripUpdateVehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
 	if len(api.GtfsManager.GetAllTripUpdates()) == 0 {
 		return nil
@@ -150,7 +150,7 @@ func (api *RestAPI) recordVehicleInService(ctx context.Context, vehicle *gtfs.Ve
 	if snap != nil && snap.ActiveTripID != "" {
 		runningTripID = snap.ActiveTripID
 	}
-	applyRunningTripStatus(vehicle, record.blockUpdates, runningTripID, record.serviceDate)
+	applyRunningTrip(vehicle, record.blockUpdates, runningTripID, record.serviceDate)
 	if isCanceledVehicle(vehicle) || snap == nil {
 		return vehicle
 	}
@@ -161,23 +161,31 @@ func (api *RestAPI) recordVehicleInService(ctx context.Context, vehicle *gtfs.Ve
 	return vehicle
 }
 
-// applyRunningTripStatus gives a trip-update vehicle the cancellation of the trip
-// its record is running. Java gives the record the status of the block's first
-// update (GtfsRealtimeTripLibrary.java:325), which can cancel an earlier trip;
-// Maglev scopes cancellation to one trip (wiki trip-details, SD-02). A canceled
-// running trip becomes the vehicle's trip, so the status's activeTripId names it.
-// The vehicle must be one built for this request.
-func applyRunningTripStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForTrip, runningTripID string, serviceDate time.Time) {
-	canceledUpdate, found := cancelingUpdate(blockUpdates, runningTripID, serviceDate)
-	if found && !namesAnotherVehicle(canceledUpdate, vehicle) {
-		vehicle.Trip = &canceledUpdate
+// applyRunningTrip makes a trip-update vehicle describe the trip its record is
+// running. The vehicle is built from the block's first update, which may be an
+// earlier trip, and a status reads its stop times, shape and stop delays from the
+// vehicle's trip. The vehicle keeps the first update's vehicle descriptor, so its
+// ID renders the same. Java gives the record the status of that first update
+// (GtfsRealtimeTripLibrary.java:325), which can cancel an earlier trip; Maglev
+// takes the running trip's own status (wiki trip-details, SD-02). The vehicle
+// must be one built for this request.
+func applyRunningTrip(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForTrip, runningTripID string, serviceDate time.Time) {
+	if vehicle.Trip.ID.ID == runningTripID {
 		return
 	}
-	if isCanceledVehicle(vehicle) {
-		runningTrip := *vehicle.Trip
-		runningTrip.ID.ScheduleRelationship = gtfsrt.TripDescriptor_SCHEDULED
-		vehicle.Trip = &runningTrip
+	runningTrip := *vehicle.Trip
+	runningTrip.ID = gtfs.TripID{
+		ID:           runningTripID,
+		HasStartDate: vehicle.Trip.ID.HasStartDate,
+		StartDate:    vehicle.Trip.ID.StartDate,
 	}
+	runningTrip.Delay = nil
+	runningTrip.StopTimeUpdates = nil
+	canceledUpdate, found := cancelingUpdate(blockUpdates, runningTripID, serviceDate)
+	if found && !namesAnotherVehicle(canceledUpdate, vehicle) {
+		runningTrip.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+	}
+	vehicle.Trip = &runningTrip
 }
 
 // namesAnotherVehicle reports whether a trip update belongs to a vehicle other

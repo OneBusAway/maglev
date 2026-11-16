@@ -1319,3 +1319,49 @@ func TestTripUpdateVehicleForTrip_IgnoresAnotherVehiclesCancellation(t *testing.
 	assert.Equal(t, "busA", vehicle.ID.ID)
 	assert.False(t, isCanceledVehicle(vehicle))
 }
+
+// A trip-update vehicle is built from its block's first update, but describes
+// the trip its record is running, even when that first update canceled an
+// earlier trip.
+func TestTripDetails_TripUpdateVehicleDescribesRunningTrip(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(10*time.Hour + 30*time.Minute) // during trip B
+	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer setupAPI.Shutdown()
+	_, _, tripA, _ := setupDelayPropTestData(t, setupAPI, 1)
+	stopID := addDownstreamStop(t, setupAPI, tripA)
+	separateBlockStops(t, setupAPI, stopID)
+	tripB := addLaterBlockTrip(t, setupAPI, stopID, tripA)
+
+	for _, relationship := range []gtfsrt.TripDescriptor_ScheduleRelationship{gtfsrt.TripDescriptor_SCHEDULED, gtfsrt.TripDescriptor_CANCELED} {
+		t.Run(relationship.String(), func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			firstUpdate := plannedVehicleTripUpdate(tripA, now)
+			firstUpdate.ID.ScheduleRelationship = relationship
+			firstUpdate.StopTimeUpdates = []gtfs.StopTimeUpdate{{StopID: &stopID}}
+			api.GtfsManager.MockAddFullTripUpdate(firstUpdate)
+			api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(tripB, now))
+
+			resp, model := callAPIHandler[TripDetailsResponse](t, api, fmt.Sprintf(
+				"/api/where/trip-details/%s.json?key=TEST&serviceDate=%d",
+				utils.FormCombinedID("dp-agency", tripB), serviceDate.UnixMilli()))
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			status := model.Data.Entry.Status
+			require.NotNil(t, status)
+			assert.Equal(t, "SCHEDULED", status.Status)
+			assert.Equal(t, utils.FormCombinedID("dp-agency", tripB), status.ActiveTripID)
+			assert.Equal(t, utils.FormCombinedID("dp-agency", stopID), status.NextStop)
+
+			// The status reads its stop times, shape and stop delays from the
+			// vehicle's trip, so that must be B rather than A's update.
+			vehicle := api.tripUpdateVehicleForTrip(context.Background(), tripB, serviceDate)
+			require.NotNil(t, vehicle)
+			assert.Equal(t, tripB, vehicle.Trip.ID.ID)
+			assert.Empty(t, vehicle.Trip.StopTimeUpdates)
+			assert.Equal(t, plannedVehicleID, responseVehicleID("dp-agency", vehicle))
+		})
+	}
+}
