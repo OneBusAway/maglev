@@ -29,7 +29,7 @@ func (api *RestAPI) vehicleForTrip(ctx context.Context, tripID string, serviceDa
 	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil && !isTripUpdateVehicle(vehicle) {
 		blockUpdates := api.vehicleBlockTripUpdates(ctx, vehicle, serviceDate)
 		if !api.vehicleRecordExpired(blockUpdates) {
-			return vehicleWithRecordStatus(vehicle, blockUpdates)
+			return vehicleWithRecordStatus(vehicle, blockUpdates, serviceDate)
 		}
 	}
 	return api.tripUpdateVehicleForTrip(ctx, tripID, serviceDate)
@@ -72,11 +72,11 @@ func (api *RestAPI) vehicleRecordExpired(blockUpdates []tripUpdateForTrip) bool 
 // cancellation to one trip (wiki trip-details, SD-02): an earlier canceled trip
 // does not cancel the one the bus is now running. It returns a copy because
 // vehicles are shared across requests.
-func vehicleWithRecordStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForTrip) *gtfs.Vehicle {
+func vehicleWithRecordStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForTrip, serviceDate time.Time) *gtfs.Vehicle {
 	if vehicle.Trip == nil {
 		return vehicle
 	}
-	canceledUpdate, found := cancelingUpdate(blockUpdates, vehicle.Trip.ID.ID)
+	canceledUpdate, found := cancelingUpdate(blockUpdates, vehicle.Trip.ID.ID, serviceDate)
 	if !found {
 		return vehicle
 	}
@@ -155,7 +155,7 @@ func (api *RestAPI) recordVehicleInService(ctx context.Context, vehicle *gtfs.Ve
 	if snap != nil && snap.ActiveTripID != "" {
 		runningTripID = snap.ActiveTripID
 	}
-	applyRunningTripStatus(vehicle, record.blockUpdates, runningTripID)
+	applyRunningTripStatus(vehicle, record.blockUpdates, runningTripID, record.serviceDate)
 	if isCanceledVehicle(vehicle) || snap == nil {
 		return vehicle
 	}
@@ -172,8 +172,8 @@ func (api *RestAPI) recordVehicleInService(ctx context.Context, vehicle *gtfs.Ve
 // Maglev scopes cancellation to one trip (wiki trip-details, SD-02). A canceled
 // running trip becomes the vehicle's trip, so the status's activeTripId names it.
 // The vehicle must be one built for this request.
-func applyRunningTripStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForTrip, runningTripID string) {
-	if canceledUpdate, found := cancelingUpdate(blockUpdates, runningTripID); found {
+func applyRunningTripStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForTrip, runningTripID string, serviceDate time.Time) {
+	if canceledUpdate, found := cancelingUpdate(blockUpdates, runningTripID, serviceDate); found {
 		vehicle.Trip = &canceledUpdate
 		return
 	}
@@ -184,10 +184,14 @@ func applyRunningTripStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForT
 	}
 }
 
-// cancelingUpdate returns the update in a block record that cancels tripID.
-func cancelingUpdate(blockUpdates []tripUpdateForTrip, tripID string) (gtfs.Trip, bool) {
+// cancelingUpdate returns the update in a block record that cancels tripID's run
+// on serviceDate. An update for another day's run does not cancel this one.
+func cancelingUpdate(blockUpdates []tripUpdateForTrip, tripID string, serviceDate time.Time) (gtfs.Trip, bool) {
 	for _, blockUpdate := range blockUpdates {
-		if blockUpdate.tripID == tripID && blockUpdate.tu.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
+		cancelsThisRun := blockUpdate.tripID == tripID &&
+			blockUpdate.tu.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED &&
+			tripUpdateOnServiceDate(blockUpdate.tu, serviceDate)
+		if cancelsThisRun {
 			return blockUpdate.tu, true
 		}
 	}
@@ -211,7 +215,7 @@ func (api *RestAPI) arrivalCanceled(ctx context.Context, tripID string, vehicle 
 	if api.vehicleRecordExpired(blockUpdates) {
 		return false
 	}
-	_, found := cancelingUpdate(blockUpdates, tripID)
+	_, found := cancelingUpdate(blockUpdates, tripID, serviceDate)
 	return found
 }
 

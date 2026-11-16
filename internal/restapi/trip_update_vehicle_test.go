@@ -1257,3 +1257,30 @@ func TestTripForVehicleHandler_StaleUpdateInFreshRecord(t *testing.T) {
 	require.NotNil(t, model.Data.Entry.Status)
 	assert.Equal(t, plannedVehicleID, model.Data.Entry.Status.VehicleID)
 }
+
+// An update canceling another day's run of the trip leaves today's run alone.
+func TestArrivals_CancellationForAnotherServiceDate(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	stopID := addDownstreamStop(t, api, tripID)
+	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+	tomorrowCanceled := plannedVehicleTripUpdate(tripID, now)
+	tomorrowCanceled.Vehicle.ID.ID = "bus"
+	tomorrowCanceled.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+	tomorrowCanceled.ID.HasStartDate = true
+	tomorrowCanceled.ID.StartDate = serviceDate.AddDate(0, 0, 1)
+	api.GtfsManager.MockAddFullTripUpdate(tomorrowCanceled)
+
+	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, fmt.Sprintf(
+		"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120",
+		utils.FormCombinedID("dp-agency", stopID)))
+
+	arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+	assert.Equal(t, "dp-agency_bus", arrival.VehicleID)
+	require.NotNil(t, arrival.TripStatus)
+	assert.NotEqual(t, "CANCELED", arrival.TripStatus.Status)
+}
