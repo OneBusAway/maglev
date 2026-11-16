@@ -354,7 +354,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, serviceMidnight, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
 
 		if isPredicted {
 			predictedArrivalTime = predictedArrival
@@ -613,9 +613,14 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 //
 // Returns (predictedArrivalMs, predictedDepartureMs, isPredicted).
 // Returns (time.Time{}, time.Time{}, false) if no prediction can be made.
+//
+// The update expires with its block's record, timed by the block's latest update
+// (GtfsRealtimeTripLibrary.java:948-950), as the trip's vehicle and deviation do,
+// so a stale update still predicts while a later one keeps the record fresh.
 func (api *RestAPI) getPredictedTimes(
 	ctx context.Context,
 	tripID string,
+	serviceDate time.Time,
 	stopCode string,
 	targetStopSequence int64,
 	scheduledArrivalTime, scheduledDepartureTime time.Time,
@@ -624,7 +629,7 @@ func (api *RestAPI) getPredictedTimes(
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
 		return time.Time{}, time.Time{}, false
 	}
-	if api.tripUpdateExpired(*realTimeTrip) {
+	if api.vehicleRecordExpired(api.tripBlockUpdates(ctx, tripID, serviceDate)) {
 		return time.Time{}, time.Time{}, false
 	}
 

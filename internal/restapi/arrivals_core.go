@@ -778,7 +778,7 @@ func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopT
 	if inRange(arrival) || inRange(departure) {
 		return true
 	}
-	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure)
+	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.ServiceDate.Midnight(location), ast.StopID, int64(ast.StopSequence), arrival, departure)
 	return predicted && (inRange(predictedArrival) || inRange(predictedDeparture))
 }
 
@@ -999,6 +999,7 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 	predictedArrivalTime, predictedDepartureTime, predicted := api.getPredictedTimes(
 		ctx,
 		st.TripID,
+		in.serviceDate.Midnight(in.location),
 		in.stopCode,
 		int64(st.StopSequence),
 		scheduledArrivalTime,

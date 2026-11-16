@@ -1435,3 +1435,57 @@ func TestBlockShiftTripIDs_CachedPerRequest(t *testing.T) {
 	assert.Equal(t, []string{tripID, laterTripID}, first)
 	assert.Equal(t, first, again)
 }
+
+// A block's updates expire together as one record, so a trip's own stale update
+// still predicts its stops while a later update keeps the record fresh.
+func TestArrivals_StaleUpdateInFreshRecordStillPredicts(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer setupAPI.Shutdown()
+	_, _, tripA, _ := setupDelayPropTestData(t, setupAPI, 1)
+	stopID := addDownstreamStop(t, setupAPI, tripA)
+	tripB := addLaterBlockTrip(t, setupAPI, stopID, tripA)
+	combinedTripID := utils.FormCombinedID("dp-agency", tripA)
+	combinedStopID := utils.FormCombinedID("dp-agency", stopID)
+	predictedArrival := serviceDate.Add(9*time.Hour + 3*time.Minute)
+	predictedDeparture := serviceDate.Add(9*time.Hour + 12*time.Minute)
+
+	tests := []struct {
+		name     string
+		arrivals func(api *RestAPI) models.ArrivalAndDeparture
+	}{
+		{name: "plural", arrivals: func(api *RestAPI) models.ArrivalAndDeparture {
+			_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, fmt.Sprintf(
+				"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120", combinedStopID))
+			return findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, combinedTripID)
+		}},
+		{name: "singular", arrivals: func(api *RestAPI) models.ArrivalAndDeparture {
+			_, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, fmt.Sprintf(
+				"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=5",
+				combinedStopID, combinedTripID, serviceDate.UnixMilli()))
+			return model.Data.Entry
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			staleUpdate := plannedVehicleTripUpdate(tripA, now.Add(-6*time.Minute))
+			staleUpdate.StopTimeUpdates = []gtfs.StopTimeUpdate{{
+				StopID:    &stopID,
+				Arrival:   &gtfs.StopTimeEvent{Time: &predictedArrival},
+				Departure: &gtfs.StopTimeEvent{Time: &predictedDeparture},
+			}}
+			api.GtfsManager.MockAddFullTripUpdate(staleUpdate)
+			api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(tripB, now))
+
+			arrival := tt.arrivals(api)
+
+			assert.True(t, arrival.Predicted)
+			assert.Equal(t, predictedArrival.UnixMilli(), arrival.PredictedArrivalTime.UnixMilli())
+			assert.Equal(t, predictedDeparture.UnixMilli(), arrival.PredictedDepartureTime.UnixMilli())
+		})
+	}
+}
