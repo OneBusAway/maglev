@@ -379,6 +379,7 @@ func TestTripForVehicleHandler_TripUpdateVehicle(t *testing.T) {
 	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
 	defer setupAPI.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
+	addDownstreamStop(t, setupAPI, tripID) // runs the block to 09:05, past now
 	agencyID := "dp-agency"
 	combinedTripID := utils.FormCombinedID(agencyID, tripID)
 	expired := now.Add(-time.Hour)
@@ -1193,4 +1194,29 @@ func TestArrivals_CancellationScopedToTrip(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, running.TripStatus.Status, "status follows the active trip")
 		})
 	}
+}
+
+// A block's trip updates expire together as one record, so trip-for-vehicle
+// finds a vehicle whose own update is stale while a later update keeps the
+// record fresh, just as arrivals report it.
+func TestTripForVehicleHandler_StaleUpdateInFreshRecord(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	stopID := addDownstreamStop(t, api, tripID)
+	laterTripID := addLaterBlockTrip(t, api, stopID, tripID)
+	api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(tripID, now.Add(-20*time.Minute)))
+	anonymous := plannedVehicleTripUpdate(laterTripID, now)
+	anonymous.Vehicle = nil
+	api.GtfsManager.MockAddFullTripUpdate(anonymous)
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		fmt.Sprintf("/api/where/trip-for-vehicle/%s.json?key=TEST", plannedVehicleID))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotNil(t, model.Data.Entry.Status)
+	assert.Equal(t, plannedVehicleID, model.Data.Entry.Status.VehicleID)
 }

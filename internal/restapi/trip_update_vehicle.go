@@ -309,7 +309,7 @@ func (api *RestAPI) blockRunsNear(ctx context.Context, tripID string, recordTime
 func (api *RestAPI) tripUpdateVehicleTrip(ctx context.Context, agencyID, vehicleID string) (string, string, bool) {
 	rawVehicleID := utils.FormCombinedID(agencyID, vehicleID)
 	for _, tripUpdate := range api.GtfsManager.GetAllTripUpdates() {
-		if !namesVehicle(tripUpdate) || api.tripUpdateExpired(tripUpdate) {
+		if !namesVehicle(tripUpdate) {
 			continue
 		}
 		feedVehicleID := tripUpdate.Vehicle.ID.ID
@@ -317,8 +317,11 @@ func (api *RestAPI) tripUpdateVehicleTrip(ctx context.Context, agencyID, vehicle
 			continue
 		}
 		tripAgencyID, known := api.tripAgencyID(ctx, tripUpdate.ID.ID)
-		if known && (feedVehicleID == rawVehicleID || tripAgencyID == agencyID) {
-			return tripAgencyID, api.activeTripOfTripUpdateVehicle(ctx, tripAgencyID, tripUpdate.ID.ID), true
+		if !known || (feedVehicleID != rawVehicleID && tripAgencyID != agencyID) {
+			continue
+		}
+		if activeTripID, found := api.activeTripOfTripUpdateVehicle(ctx, tripAgencyID, tripUpdate.ID.ID, feedVehicleID); found {
+			return tripAgencyID, activeTripID, true
 		}
 	}
 	return api.blockVehicleTrip(ctx, agencyID, vehicleID)
@@ -333,11 +336,14 @@ func (api *RestAPI) blockVehicleTrip(ctx context.Context, agencyID, blockID stri
 	}
 	for _, blockTrip := range blockTrips {
 		for _, tripUpdate := range api.GtfsManager.GetTripUpdatesForTrip(blockTrip.ID) {
-			if namesVehicle(tripUpdate) || api.tripUpdateExpired(tripUpdate) {
+			if namesVehicle(tripUpdate) {
 				continue
 			}
-			if tripAgencyID, known := api.tripAgencyID(ctx, blockTrip.ID); known && tripAgencyID == agencyID {
-				return agencyID, api.activeTripOfTripUpdateVehicle(ctx, agencyID, blockTrip.ID), true
+			if tripAgencyID, known := api.tripAgencyID(ctx, blockTrip.ID); !known || tripAgencyID != agencyID {
+				continue
+			}
+			if activeTripID, found := api.activeTripOfTripUpdateVehicle(ctx, agencyID, blockTrip.ID, blockID); found {
+				return agencyID, activeTripID, true
 			}
 		}
 	}
@@ -346,21 +352,24 @@ func (api *RestAPI) blockVehicleTrip(ctx context.Context, agencyID, blockID stri
 
 // activeTripOfTripUpdateVehicle selects the trip at the same effective record
 // time as its status, so a delayed vehicle cannot name a later trip at a boundary.
-// It falls back to tripID when the record or scheduled position is unavailable.
-func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID, tripID string) string {
+// It reports false unless tripID's block builds the vehicle feedVehicleID names,
+// so the lookup applies the same record checks as the responses reporting it,
+// including expiry of the block's updates as one record. It falls back to tripID
+// when the agency or scheduled position is unavailable.
+func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID, tripID, feedVehicleID string) (string, bool) {
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		return tripID
+		return tripID, true
 	}
 	location, err := loadAgencyLocation(agency.ID, agency.Timezone)
 	if err != nil {
-		return tripID
+		return tripID, true
 	}
 	now := api.Clock.Now().In(location)
 	serviceDate := api.tripUpdateVehicleServiceDate(ctx, tripID, now, location).Midnight(location)
 	vehicle := api.tripUpdateVehicleForTrip(ctx, tripID, serviceDate)
-	if vehicle == nil {
-		return tripID
+	if vehicle == nil || vehicle.ID.ID != feedVehicleID {
+		return "", false
 	}
 	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
 	deviation, _ := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceDate, now)
@@ -369,9 +378,9 @@ func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID,
 		vehicle: vehicle, serviceDate: serviceDate, currentTime: now,
 	}, blockTripIDs, deviation)
 	if snap == nil || snap.ActiveTripID == "" {
-		return tripID
+		return tripID, true
 	}
-	return snap.ActiveTripID
+	return snap.ActiveTripID, true
 }
 
 func (api *RestAPI) tripAgencyID(ctx context.Context, tripID string) (string, bool) {
