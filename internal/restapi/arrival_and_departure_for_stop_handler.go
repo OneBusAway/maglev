@@ -648,9 +648,6 @@ func (api *RestAPI) getPredictedTimes(
 		realTimeTrip.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
 		return time.Time{}, time.Time{}, false
 	}
-	if api.tripUpdateExpired(*realTimeTrip) {
-		return time.Time{}, time.Time{}, false
-	}
 
 	target, prior, priorSequence := predictionUpdatesForStop(realTimeTrip.StopTimeUpdates, stopCode, targetStopSequence, schedule)
 	var arrivalOffset, departureOffset *time.Duration
