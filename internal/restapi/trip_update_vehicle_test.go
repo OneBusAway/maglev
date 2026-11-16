@@ -1414,3 +1414,24 @@ func TestExplicitVehicleIDForSecondVehicleOnTrip(t *testing.T) {
 		})
 	}
 }
+
+// Every arrival row on a block asks for its block's trips, through the vehicle
+// lookup, the cancellation check and the deviation, so a request builds the list
+// once per trip and service date.
+func TestBlockShiftTripIDs_CachedPerRequest(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(8*time.Hour)))
+	defer api.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	stopID := addDownstreamStop(t, api, tripID)
+	laterTripID := addLaterBlockTrip(t, api, stopID, tripID)
+	ctx := WithSnapshotCache(context.Background(), newSnapshotCache())
+	first := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
+	counter := countQueries(t, api)
+
+	again := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
+
+	assert.Zero(t, counter.queries)
+	assert.Equal(t, []string{tripID, laterTripID}, first)
+	assert.Equal(t, first, again)
+}

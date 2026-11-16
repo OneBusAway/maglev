@@ -108,6 +108,15 @@ type snapshotCache struct {
 	// activeTripSequences memoizes a block-trip sequence lookup, which rows on
 	// one block all make for the same active trip.
 	activeTripSequences map[activeTripSequenceKey]int
+	// blockShiftTripIDs memoizes blockShiftTripIDsSortedByStartTime, which the
+	// vehicle lookup, the cancellation check and the deviation each make for
+	// every arrival row.
+	blockShiftTripIDs map[blockShiftKey][]string
+}
+
+type blockShiftKey struct {
+	tripID          string
+	serviceDateUnix int64
 }
 
 type activeTripSequenceKey struct {
@@ -125,6 +134,7 @@ func newSnapshotCache() *snapshotCache {
 	return &snapshotCache{
 		m:                   make(map[snapshotCacheEntryKey]*scheduledBlockSnapshot),
 		activeTripSequences: make(map[activeTripSequenceKey]int),
+		blockShiftTripIDs:   make(map[blockShiftKey][]string),
 	}
 }
 

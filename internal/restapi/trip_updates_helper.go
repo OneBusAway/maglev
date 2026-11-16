@@ -667,7 +667,24 @@ func (api *RestAPI) blockTripIDsSortedByStartTime(ctx context.Context, tripIDs [
 //
 // Uses the cached trips.min_arrival_time / max_departure_time columns via a
 // single batched query — no per-trip stop_times fetch.
+//
+// A request-scoped snapshotCache (see WithSnapshotCache) memoizes the result per
+// trip and service date.
 func (api *RestAPI) blockShiftTripIDsSortedByStartTime(ctx context.Context, targetTripID string, serviceDate time.Time) []string {
+	cache := snapshotCacheFrom(ctx)
+	if cache == nil {
+		return api.loadBlockShiftTripIDs(ctx, targetTripID, serviceDate)
+	}
+	key := blockShiftKey{tripID: targetTripID, serviceDateUnix: serviceDate.UnixNano()}
+	tripIDs, cached := cache.blockShiftTripIDs[key]
+	if !cached {
+		tripIDs = api.loadBlockShiftTripIDs(ctx, targetTripID, serviceDate)
+		cache.blockShiftTripIDs[key] = tripIDs
+	}
+	return slices.Clone(tripIDs)
+}
+
+func (api *RestAPI) loadBlockShiftTripIDs(ctx context.Context, targetTripID string, serviceDate time.Time) []string {
 	rawTripIDs := api.blockTripIDsForServiceDate(ctx, targetTripID, serviceDate)
 	if len(rawTripIDs) <= 1 {
 		return rawTripIDs
