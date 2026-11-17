@@ -646,7 +646,10 @@ DELETE FROM agencies;
 -- Batch queries to solve N+1 problems
 
 -- name: GetRoutesForStops :many
-SELECT DISTINCT
+-- Reads the (stop, route) pairs stop_routes holds rather than walking every stop_time at
+-- these stops, which grows with how many trips serve them. stop_id breaks ties so rows
+-- for one route at several stops come back in a fixed order.
+SELECT
     routes.id,
     routes.agency_id,
     routes.short_name,
@@ -656,16 +659,16 @@ SELECT DISTINCT
     routes.url,
     routes.color,
     routes.text_color,
-    stop_times.stop_id
+    stop_routes.stop_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'))
+    stop_routes.stop_id IN (sqlc.slice('stop_ids'))
 ORDER BY
     routes.agency_id ASC,
-    routes.id ASC;
+    routes.id ASC,
+    stop_routes.stop_id ASC;
 
 -- name: GetRouteIDsForStops :many
 SELECT DISTINCT
