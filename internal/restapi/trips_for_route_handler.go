@@ -1440,12 +1440,11 @@ func (api *RestAPI) addAgencyReference(ctx context.Context, sets *tripReferenceS
 // tripReferenceList emits the collected trips in combined-ID form. A trip whose
 // route was never resolved is skipped, since its agency is unknown.
 func (s *tripReferenceSets) tripReferenceList(includeTrip bool) []models.Trip {
-	var tripsRefList []models.Trip
 	if !includeTrip {
-		return tripsRefList
+		return []models.Trip{}
 	}
 
-	tripsRefList = make([]models.Trip, 0, len(s.trips))
+	tripsRefList := make([]models.Trip, 0, len(s.trips))
 
 	for _, trip := range s.trips {
 		// A route that was noted but never resolved is still in the map as a

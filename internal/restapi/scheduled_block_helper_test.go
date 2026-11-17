@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -448,6 +449,69 @@ func TestLoadBlockTripData_PopulatesStopTimesAndShape(t *testing.T) {
 	assert.Greater(t, d.totalDist, 0.0, "shape total distance should be > 0")
 	assert.Len(t, d.cumDistances, len(d.shapePoints), "cum distances should align with shape points")
 	assert.LessOrEqual(t, d.firstSeconds, d.lastSeconds, "first stop must not be after last stop")
+}
+
+// Block-mates usually run the same shape, so each distinct shape is loaded
+// and measured once and its points shared, with the same values a one-trip
+// load gives.
+func TestLoadBlockTripData_SharesShapeAcrossBlockMates(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	var firstTripID, secondTripID string
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(ctx,
+		`SELECT a.id, b.id FROM trips a
+		 JOIN trips b ON b.shape_id = a.shape_id AND b.id > a.id
+		 WHERE a.shape_id IS NOT NULL AND a.shape_id != ''
+		 LIMIT 1`,
+	).Scan(&firstTripID, &secondTripID)
+	require.NoError(t, err, "RABA fixture should contain two trips sharing a shape")
+
+	data := api.loadBlockTripData(ctx, []string{firstTripID, secondTripID})
+	require.Len(t, data, 2)
+
+	for _, d := range data {
+		alone := api.loadBlockTripData(ctx, []string{d.id})
+		require.Len(t, alone, 1)
+		assert.Equal(t, alone[0].shapePoints, d.shapePoints, "trip %s shape points", d.id)
+		assert.Equal(t, alone[0].cumDistances, d.cumDistances, "trip %s cumulative distances", d.id)
+		assert.Equal(t, alone[0].totalDist, d.totalDist, "trip %s total distance", d.id)
+	}
+	require.NotEmpty(t, data[0].shapePoints)
+	assert.Same(t, &data[0].shapePoints[0], &data[1].shapePoints[0], "block-mates should share one copy of the shape")
+	assert.Same(t, &data[0].cumDistances[0], &data[1].cumDistances[0], "block-mates should share one copy of the cumulative distances")
+}
+
+// A trip with no shape_id is left out of the shape map, so emitBlockStops
+// falls back to haversine for it, while its shaped block-mate keeps its shape.
+func TestLoadBlockShapes_OmitsShapelessTrip(t *testing.T) {
+	api := &RestAPI{Application: &app.Application{GtfsManager: newTestManagerNoData(t)}}
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{ID: "agency", Name: "Agency", Url: "https://example.com", Timezone: "UTC"})
+	require.NoError(t, err)
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{ID: "route", AgencyID: "agency", Type: 3})
+	require.NoError(t, err)
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{ID: "service", Monday: 1, StartDate: "20250101", EndDate: "20251231"})
+	require.NoError(t, err)
+	for i, point := range []gtfs.ShapePoint{{Latitude: 40.58, Longitude: -122.39}, {Latitude: 40.59, Longitude: -122.38}} {
+		_, err = q.CreateShape(ctx, gtfsdb.CreateShapeParams{ShapeID: "shape", Lat: point.Latitude, Lon: point.Longitude, ShapePtSequence: int64(i)})
+		require.NoError(t, err)
+	}
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: "shaped", RouteID: "route", ServiceID: "service", ShapeID: sql.NullString{String: "shape", Valid: true}})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: "shapeless", RouteID: "route", ServiceID: "service"})
+	require.NoError(t, err)
+
+	shapes := api.loadBlockShapes(ctx, []string{"shaped", "shapeless"})
+
+	require.Contains(t, shapes, "shaped")
+	assert.Len(t, shapes["shaped"].points, 2)
+	assert.Len(t, shapes["shaped"].cumDistances, 2)
+	assert.Greater(t, shapes["shaped"].totalDist, 0.0)
+	assert.NotContains(t, shapes, "shapeless")
 }
 
 func TestLoadBlockTripData_SkipsTripsWithNoData(t *testing.T) {
