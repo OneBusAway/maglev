@@ -1311,22 +1311,28 @@ func (api *RestAPI) tripSituationRefs(
 // to, keyed by bare ID so each is emitted once.
 type tripReferenceSets struct {
 	trips    map[string]models.Trip
-	routes   map[string]models.Route // maps raw route ids to models.Route
+	routes   map[string]models.Route
 	agencies map[string]models.AgencyReference
-	// missing holds the trips the response refers to — entry tripIds,
-	// schedule.nextTripId/previousTripId, status.activeTripId — whose full
-	// records have not been fetched yet. Tracking them explicitly, rather than
-	// inferring them from a zero-valued reference, keeps it unambiguous which
+	// missing records trips that were noted only by ID, so that pre-fetched
+	// trips are not re-queried and callers know whether any secondary
 	// trips still need a lookup.
 	missing map[string]bool
+	// entryTripIDs tracks the list entries' own trips, which are omitted from
+	// references when includeTrip=false.
+	entryTripIDs map[string]bool
+	// auxiliaryTripIDs tracks trips referenced by status (activeTripId) or
+	// schedule (previousTripId/nextTripId), which are preserved even when includeTrip=false.
+	auxiliaryTripIDs map[string]bool
 }
 
 func newTripReferenceSets() *tripReferenceSets {
 	return &tripReferenceSets{
-		trips:    make(map[string]models.Trip),
-		routes:   make(map[string]models.Route),
-		agencies: make(map[string]models.AgencyReference),
-		missing:  make(map[string]bool),
+		trips:            make(map[string]models.Trip),
+		routes:           make(map[string]models.Route),
+		agencies:         make(map[string]models.AgencyReference),
+		missing:          make(map[string]bool),
+		entryTripIDs:     make(map[string]bool),
+		auxiliaryTripIDs: make(map[string]bool),
 	}
 }
 
@@ -1355,13 +1361,26 @@ func (s *tripReferenceSets) collectPreFetchedTrips(trips []gtfsdb.Trip) {
 // adjacent trips in its block, and the trip its vehicle is currently executing.
 func (s *tripReferenceSets) collectTripIDsFromEntries(entries []models.TripsForRouteListEntry) {
 	for _, entry := range entries {
-		s.noteTripID(entry.GetTripId())
+		_, ownTripID, err := utils.ExtractAgencyIDAndCodeID(entry.GetTripId())
+		if err == nil && ownTripID != "" {
+			s.entryTripIDs[ownTripID] = true
+			s.noteTripID(entry.GetTripId())
+		}
 
 		if entry.Schedule != nil {
+			if _, id, err := utils.ExtractAgencyIDAndCodeID(entry.Schedule.NextTripId); err == nil && id != "" {
+				s.auxiliaryTripIDs[id] = true
+			}
+			if _, id, err := utils.ExtractAgencyIDAndCodeID(entry.Schedule.PreviousTripId); err == nil && id != "" {
+				s.auxiliaryTripIDs[id] = true
+			}
 			s.noteTripID(entry.Schedule.NextTripId)
 			s.noteTripID(entry.Schedule.PreviousTripId)
 		}
 		if entry.Status != nil {
+			if _, id, err := utils.ExtractAgencyIDAndCodeID(entry.Status.ActiveTripID); err == nil && id != "" {
+				s.auxiliaryTripIDs[id] = true
+			}
 			s.noteTripID(entry.Status.ActiveTripID)
 		}
 	}
@@ -1439,14 +1458,17 @@ func (api *RestAPI) addAgencyReference(ctx context.Context, sets *tripReferenceS
 
 // tripReferenceList emits the collected trips in combined-ID form. A trip whose
 // route was never resolved is skipped, since its agency is unknown.
+// When includeTrip is false, only trips referenced by schedule or status are included.
 func (s *tripReferenceSets) tripReferenceList(includeTrip bool) []models.Trip {
-	if !includeTrip {
-		return []models.Trip{}
-	}
-
 	tripsRefList := make([]models.Trip, 0, len(s.trips))
 
-	for _, trip := range s.trips {
+	for tripID, trip := range s.trips {
+		// When includeTrip=false, skip list entries' own trips unless they were
+		// also referenced by schedule or status.
+		if !includeTrip && !s.auxiliaryTripIDs[tripID] {
+			continue
+		}
+
 		// A route that was noted but never resolved is still in the map as a
 		// zero value; combining IDs against its empty agency would emit
 		// references whose every ID is the empty string.

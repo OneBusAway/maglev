@@ -1258,6 +1258,7 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 		name            string
 		includeTrip     string
 		includeSchedule string
+		includeStatus   string
 		wantTripsLen    int
 		wantStatus      int
 	}{
@@ -1265,6 +1266,7 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 			name:            "Include Trip (default)",
 			includeTrip:     "",
 			includeSchedule: "true",
+			includeStatus:   "true",
 			wantStatus:      http.StatusOK,
 			wantTripsLen:    1,
 		},
@@ -1272,13 +1274,23 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 			name:            "Include Trip Explicit",
 			includeTrip:     "true",
 			includeSchedule: "true",
+			includeStatus:   "true",
 			wantStatus:      http.StatusOK,
 			wantTripsLen:    1,
 		},
 		{
-			name:            "Exclude Trip",
+			name:            "Exclude Trip But Status Preserves Active Trip",
 			includeTrip:     "false",
 			includeSchedule: "true",
+			includeStatus:   "true",
+			wantStatus:      http.StatusOK,
+			wantTripsLen:    1,
+		},
+		{
+			name:            "Exclude Trip And Exclude Status Yields Zero Trips",
+			includeTrip:     "false",
+			includeSchedule: "true",
+			includeStatus:   "false",
 			wantStatus:      http.StatusOK,
 			wantTripsLen:    0,
 		},
@@ -1286,20 +1298,23 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 			name:            "No Schedule But Still Include Trip",
 			includeTrip:     "",
 			includeSchedule: "false",
+			includeStatus:   "true",
 			wantStatus:      http.StatusOK,
 			wantTripsLen:    1,
 		},
 		{
-			name:            "Exclude Trip (Uppercase FALSE)",
+			name:            "Exclude Trip (Uppercase FALSE) With Status Preserved",
 			includeTrip:     "FALSE",
 			includeSchedule: "true",
+			includeStatus:   "true",
 			wantStatus:      http.StatusOK,
-			wantTripsLen:    0,
+			wantTripsLen:    1,
 		},
 		{
 			name:            "Reject Trip (Numeric 0)",
 			includeTrip:     "0",
 			includeSchedule: "true",
+			includeStatus:   "true",
 			wantStatus:      http.StatusBadRequest,
 			wantTripsLen:    0,
 		},
@@ -1309,8 +1324,8 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=%s&time=%d",
-				combinedRouteID, tt.includeSchedule, timeMs)
+			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=%s&includeStatus=%s&time=%d",
+				combinedRouteID, tt.includeSchedule, tt.includeStatus, timeMs)
 			if tt.includeTrip != "" {
 				url += "&includeTrip=" + tt.includeTrip
 			}
