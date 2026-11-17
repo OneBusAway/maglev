@@ -1342,22 +1342,6 @@ FROM shapes
 WHERE shape_id IN (sqlc.slice('shape_ids'))
 ORDER BY shape_id, shape_pt_sequence;
 
--- name: GetShapePointsByTripIDs :many
--- Batch equivalent of GetShapePointsByTripID for N+1 avoidance when loading
--- an entire block's worth of trips at once (loadBlockTripData). Rows are
--- returned with their originating trip_id so callers can group them.
-SELECT
-    t.id AS trip_id,
-    s.shape_id,
-    s.lat,
-    s.lon,
-    s.shape_pt_sequence,
-    s.shape_dist_traveled
-FROM shapes s
-JOIN trips t ON t.shape_id = s.shape_id
-WHERE t.id IN (sqlc.slice('trip_ids'))
-ORDER BY t.id ASC, s.shape_pt_sequence ASC;
-
 -- name: GetTripTimeBoundsByIDs :many
 -- Returns cached min_arrival_time and max_departure_time (nanoseconds since
 -- midnight) for each trip_id. Callers use these to sort a block's trips by
