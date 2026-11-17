@@ -10,8 +10,9 @@ import (
 
 // FilterAgencies filters a list of agencies based on their presence in the provided map.
 // It returns a slice of AgencyReference objects for the agencies that are present.
+// The slice is never nil, so it serializes as [] when no agency matches.
 func FilterAgencies(all []gtfsdb.Agency, present map[string]bool) []models.AgencyReference {
-	var refs []models.AgencyReference
+	refs := []models.AgencyReference{}
 	for _, a := range all {
 		if present[a.ID] {
 			refs = append(refs, models.AgencyReferenceFromDatabase(&a))

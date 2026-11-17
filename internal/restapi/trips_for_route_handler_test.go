@@ -1323,6 +1323,8 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 			}
 			require.NotEmpty(t, model.Data.List,
 				"fixture guarantees a trip at the pinned clock")
+			assert.NotNil(t, model.Data.References.Trips,
+				"references.trips should serialize as [], not null")
 			assert.Equal(t, tt.wantTripsLen, len(model.Data.References.Trips),
 				"references.trips should have the expected number of entries")
 
