@@ -391,6 +391,7 @@ func TestStopsForLocationReturnsParentStation(t *testing.T) {
 	}
 
 	rebuildStopAgencyIndex(t, api)
+	rebuildStopRouteIndex(t, api)
 
 	endpoint := fmt.Sprintf("/api/where/stops-for-location.json?key=TEST&lat=%f&lon=%f&radius=100", lat, lon)
 	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
