@@ -63,9 +63,9 @@ func TestStoreGtfsData_DuplicateRouteIDLeavesOneIndexRow(t *testing.T) {
 		"agency.txt":     "agency_id,agency_name,agency_url,agency_timezone\na,A,http://a,America/Los_Angeles\n",
 		"routes.txt":     "route_id,agency_id,route_long_name,route_type\nr,a,Oldline,3\nr,a,Newline,3\n",
 		"calendar.txt":   "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\ns,1,1,1,1,1,0,0,20240101,20251231\n",
-		"stops.txt":      "stop_id,stop_name,stop_lat,stop_lon\nx,X,47.6,-122.3\n",
+		"stops.txt":      "stop_id,stop_name,stop_lat,stop_lon\nx,X,47.6,-122.3\ny,Y,47.7,-122.4\n",
 		"trips.txt":      "route_id,service_id,trip_id\nr,s,t\n",
-		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nt,08:00:00,08:00:00,x,1\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\nt,08:00:00,08:00:00,x,1\nt,08:10:00,08:10:00,y,2\n",
 	})
 	parsed, err := ParseGtfsData(feed, "duplicate-route")
 	require.NoError(t, err)
