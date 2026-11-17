@@ -2922,7 +2922,7 @@ func (q *Queries) GetRoutesForAgency(ctx context.Context, agencyID string) ([]Ge
 }
 
 const getRoutesForStop = `-- name: GetRoutesForStop :many
-SELECT DISTINCT
+SELECT
     routes.id,
     routes.agency_id,
     routes.short_name,
@@ -2933,11 +2933,10 @@ SELECT DISTINCT
     routes.color,
     routes.text_color
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id = ?
+    stop_routes.stop_id = ?
 `
 
 type GetRoutesForStopRow struct {
@@ -2952,6 +2951,7 @@ type GetRoutesForStopRow struct {
 	TextColor sql.NullString
 }
 
+// Reads the routes stop_routes lists for the stop rather than walking its stop_times.
 func (q *Queries) GetRoutesForStop(ctx context.Context, stopID string) ([]GetRoutesForStopRow, error) {
 	rows, err := q.query(ctx, q.getRoutesForStopStmt, getRoutesForStop, stopID)
 	if err != nil {
