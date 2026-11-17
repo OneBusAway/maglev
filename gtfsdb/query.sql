@@ -463,41 +463,26 @@ FROM shapes s
 ORDER BY s.shape_pt_sequence;
 
 -- name: GetActiveServiceIDsForDate :many
-WITH formatted_date AS (
-    SELECT STRFTIME('%w', SUBSTR(?1, 1, 4) || '-' || SUBSTR(?1, 5, 2) || '-' || SUBSTR(?1, 7, 2)) AS weekday
-),
-base_services AS (
-    SELECT c.id AS service_id
-    FROM calendar c, formatted_date fd
-    WHERE c.start_date <= ?1
-      AND c.end_date >= ?1
-      AND (
-        (fd.weekday = '0' AND c.sunday = 1) OR
-        (fd.weekday = '1' AND c.monday = 1) OR
-        (fd.weekday = '2' AND c.tuesday = 1) OR
-        (fd.weekday = '3' AND c.wednesday = 1) OR
-        (fd.weekday = '4' AND c.thursday = 1) OR
-        (fd.weekday = '5' AND c.friday = 1) OR
-        (fd.weekday = '6' AND c.saturday = 1)
-      )
-),
-removed_services AS (
-    SELECT service_id
-    FROM calendar_dates
-    WHERE date = ?1
-      AND exception_type = 2
-),
-added_services AS (
-    SELECT service_id
-    FROM calendar_dates
-    WHERE date = ?1
-      AND exception_type = 1
-)
-SELECT DISTINCT service_id
-FROM base_services
-WHERE service_id NOT IN (SELECT service_id FROM removed_services)
+-- Written without CTEs: the CTE form cost twice as much per call and, through
+-- SQLite's allocator, contended badly when many requests ran it at once.
+SELECT c.id AS service_id
+FROM calendar c
+WHERE c.start_date <= ?1
+  AND c.end_date >= ?1
+  AND CASE STRFTIME('%w', SUBSTR(?1, 1, 4) || '-' || SUBSTR(?1, 5, 2) || '-' || SUBSTR(?1, 7, 2))
+      WHEN '0' THEN c.sunday
+      WHEN '1' THEN c.monday
+      WHEN '2' THEN c.tuesday
+      WHEN '3' THEN c.wednesday
+      WHEN '4' THEN c.thursday
+      WHEN '5' THEN c.friday
+      WHEN '6' THEN c.saturday
+  END = 1
+  AND c.id NOT IN (
+    SELECT service_id FROM calendar_dates WHERE date = ?1 AND exception_type = 2
+  )
 UNION
-SELECT DISTINCT service_id FROM added_services;
+SELECT service_id FROM calendar_dates WHERE date = ?1 AND exception_type = 1;
 
 -- name: GetTripsForRouteInActiveServiceIDs :many
 SELECT DISTINCT *
