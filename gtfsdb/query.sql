@@ -671,9 +671,12 @@ ORDER BY
     stop_routes.stop_id ASC;
 
 -- name: GetRouteIDsForStops :many
+-- Returns the route names too, so callers can order each stop's routes by name.
 SELECT DISTINCT
     routes.id AS route_id,
     routes.agency_id,
+    routes.short_name,
+    routes.long_name,
     stop_times.stop_id
 FROM
     stop_times

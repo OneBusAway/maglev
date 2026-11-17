@@ -2756,6 +2756,8 @@ const getRouteIDsForStops = `-- name: GetRouteIDsForStops :many
 SELECT DISTINCT
     routes.id AS route_id,
     routes.agency_id,
+    routes.short_name,
+    routes.long_name,
     stop_times.stop_id
 FROM
     stop_times
@@ -2766,11 +2768,14 @@ WHERE
 `
 
 type GetRouteIDsForStopsRow struct {
-	RouteID  string
-	AgencyID string
-	StopID   string
+	RouteID   string
+	AgencyID  string
+	ShortName sql.NullString
+	LongName  sql.NullString
+	StopID    string
 }
 
+// Returns the route names too, so callers can order each stop's routes by name.
 func (q *Queries) GetRouteIDsForStops(ctx context.Context, stopIds []string) ([]GetRouteIDsForStopsRow, error) {
 	query := getRouteIDsForStops
 	var queryParams []interface{}
@@ -2790,7 +2795,13 @@ func (q *Queries) GetRouteIDsForStops(ctx context.Context, stopIds []string) ([]
 	var items []GetRouteIDsForStopsRow
 	for rows.Next() {
 		var i GetRouteIDsForStopsRow
-		if err := rows.Scan(&i.RouteID, &i.AgencyID, &i.StopID); err != nil {
+		if err := rows.Scan(
+			&i.RouteID,
+			&i.AgencyID,
+			&i.ShortName,
+			&i.LongName,
+			&i.StopID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
