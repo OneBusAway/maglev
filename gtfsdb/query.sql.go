@@ -51,6 +51,24 @@ func (q *Queries) BuildStopAgencies(ctx context.Context) error {
 	return err
 }
 
+const buildStopRoutes = `-- name: BuildStopRoutes :exec
+INSERT INTO
+    stop_routes (stop_id, route_id)
+SELECT DISTINCT
+    stop_times.stop_id,
+    routes.id
+FROM
+    stop_times
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id
+`
+
+// Joins routes so a trip whose route_id resolves to nothing contributes no pair.
+func (q *Queries) BuildStopRoutes(ctx context.Context) error {
+	_, err := q.exec(ctx, q.buildStopRoutesStmt, buildStopRoutes)
+	return err
+}
+
 const bulkUpdateTripTimeBounds = `-- name: BulkUpdateTripTimeBounds :exec
 UPDATE trips
 SET
@@ -153,6 +171,17 @@ DELETE FROM stop_agencies WHERE TRUE
 // accidentally unbounded DELETE. The table is a derived index and is always cleared whole.
 func (q *Queries) ClearStopAgencies(ctx context.Context) error {
 	_, err := q.exec(ctx, q.clearStopAgenciesStmt, clearStopAgencies)
+	return err
+}
+
+const clearStopRoutes = `-- name: ClearStopRoutes :exec
+DELETE FROM stop_routes
+WHERE
+    TRUE
+`
+
+func (q *Queries) ClearStopRoutes(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearStopRoutesStmt, clearStopRoutes)
 	return err
 }
 

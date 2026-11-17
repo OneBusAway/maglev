@@ -190,6 +190,23 @@ FROM
     JOIN trips ON stop_times.trip_id = trips.id
     JOIN routes ON trips.route_id = routes.id;
 
+-- name: ClearStopRoutes :exec
+DELETE FROM stop_routes
+WHERE
+    TRUE;
+
+-- name: BuildStopRoutes :exec
+-- Joins routes so a trip whose route_id resolves to nothing contributes no pair.
+INSERT INTO
+    stop_routes (stop_id, route_id)
+SELECT DISTINCT
+    stop_times.stop_id,
+    routes.id
+FROM
+    stop_times
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id;
+
 -- name: CreateCalendarDate :one
 INSERT
 OR REPLACE INTO calendar_dates (service_id, date, exception_type)
