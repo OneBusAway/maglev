@@ -214,11 +214,11 @@ func lookupCachedSnapshot(
 // mirrors Java's per-shift BlockConfigurationEntry split for feeds that
 // reuse one block_id across every bus in a day.
 func (api *RestAPI) loadShiftTrips(ctx context.Context, targetTripID string, serviceDate time.Time) []blockTripData {
-	tripIDs := api.blockTripIDsForServiceDate(ctx, targetTripID, serviceDate)
-	if len(tripIDs) == 0 {
+	blockTrips := api.blockTripsForServiceDate(ctx, targetTripID, serviceDate)
+	if len(blockTrips) == 0 {
 		return nil
 	}
-	trips := api.loadBlockTripData(ctx, tripIDs)
+	trips := api.loadBlockTripData(ctx, blockTrips)
 	if len(trips) == 0 {
 		return nil
 	}
@@ -573,6 +573,13 @@ func keepShiftContainingTrip(trips []blockTripData, targetTripID string) []block
 	return trips[start:end]
 }
 
+// blockTripRef names one block trip and the shape it runs, which is all the
+// block snapshot needs before loading stop times and shapes.
+type blockTripRef struct {
+	id      string
+	shapeID string
+}
+
 // blockTripIDsForServiceDate returns the IDs of trips that share targetTripID's
 // block and are active on serviceDate. Falls back to [targetTripID] when the
 // trip has no block or block lookup fails.
@@ -581,20 +588,36 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 	targetTripID string,
 	serviceDate time.Time,
 ) []string {
+	blockTrips := api.blockTripsForServiceDate(ctx, targetTripID, serviceDate)
+	ids := make([]string, len(blockTrips))
+	for i, blockTrip := range blockTrips {
+		ids[i] = blockTrip.id
+	}
+	return ids
+}
+
+// blockTripsForServiceDate is blockTripIDsForServiceDate with each trip's
+// shape ID, read from the same rows, so loading the block's shapes needs no
+// further trip lookup.
+func (api *RestAPI) blockTripsForServiceDate(
+	ctx context.Context,
+	targetTripID string,
+	serviceDate time.Time,
+) []blockTripRef {
 	// Distinguish "this trip legitimately has no block" (sql.ErrNoRows + invalid
 	// nullable) from "DB blip" so that infrastructure problems don't silently
 	// degrade the snapshot to single-trip mode. The single-trip fallback IS
 	// the right behaviour for the not-found cases — it just shouldn't be
 	// reached on real DB errors without a warning.
-	fallback := []string{targetTripID}
 	q := api.GtfsManager.GtfsDB.Queries.Memo(ctx)
 
 	trip, err := q.GetTrip(ctx, targetTripID)
 	if err != nil {
 		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetTrip failed, degrading to single-trip mode",
 			slog.String("trip_id", targetTripID))
-		return fallback
+		return []blockTripRef{{id: targetTripID}}
 	}
+	fallback := []blockTripRef{{id: targetTripID, shapeID: nulls.StringOrEmpty(trip.ShapeID)}}
 	blockIDStr := nulls.StringOrEmpty(trip.BlockID)
 	if blockIDStr == "" {
 		return fallback
@@ -618,16 +641,16 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 	for _, id := range activeServiceIDs {
 		activeSet[id] = struct{}{}
 	}
-	ids := make([]string, 0, len(blockTrips))
+	active := make([]blockTripRef, 0, len(blockTrips))
 	for _, bt := range blockTrips {
 		if _, ok := activeSet[bt.ServiceID]; ok {
-			ids = append(ids, bt.ID)
+			active = append(active, blockTripRef{id: bt.ID, shapeID: nulls.StringOrEmpty(bt.ShapeID)})
 		}
 	}
-	if len(ids) == 0 {
+	if len(active) == 0 {
 		return fallback
 	}
-	return ids
+	return active
 }
 
 // loadBlockTripData fetches stop_times and shape for every tripID in batched
@@ -640,11 +663,15 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 // haversine (haversineStopDistances) so shapeless trips still contribute
 // a real length to the block cursor. Trip is still appended so
 // block_sequence stays consistent.
-func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []blockTripData {
-	if len(tripIDs) == 0 {
+func (api *RestAPI) loadBlockTripData(ctx context.Context, blockTrips []blockTripRef) []blockTripData {
+	if len(blockTrips) == 0 {
 		return nil
 	}
 	q := api.GtfsManager.GtfsDB.Queries
+	tripIDs := make([]string, len(blockTrips))
+	for i, blockTrip := range blockTrips {
+		tripIDs[i] = blockTrip.id
+	}
 
 	stopTimeRows, err := q.GetStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
@@ -655,7 +682,7 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 		stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
 	}
 
-	shapesByTrip := api.loadBlockShapes(ctx, tripIDs)
+	shapesByTrip := api.loadBlockShapes(ctx, blockTrips)
 
 	out := make([]blockTripData, 0, len(tripIDs))
 	for _, id := range tripIDs {
@@ -696,15 +723,17 @@ type blockShape struct {
 // Shape errors are non-fatal: emitBlockStops falls back to haversine, still
 // correct just less precise. Real DB errors are logged so an operator sees
 // the degradation instead of silently losing shape-based precision.
-func (api *RestAPI) loadBlockShapes(ctx context.Context, tripIDs []string) map[string]blockShape {
-	trips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDs)
-	var pointsByShapeID map[string][]gtfs.ShapePoint
-	if err == nil {
-		pointsByShapeID, err = api.shapePointsForTrips(ctx, trips)
+func (api *RestAPI) loadBlockShapes(ctx context.Context, blockTrips []blockTripRef) map[string]blockShape {
+	shapeIDs := make([]string, 0, len(blockTrips))
+	for _, blockTrip := range blockTrips {
+		if blockTrip.shapeID != "" && !slices.Contains(shapeIDs, blockTrip.shapeID) {
+			shapeIDs = append(shapeIDs, blockTrip.shapeID)
+		}
 	}
+	pointsByShapeID, err := api.shapePointsByShapeIDs(ctx, shapeIDs)
 	if err != nil {
 		warnIfRealDBError(err, "loadBlockShapes: shape lookup failed, degrading every trip to haversine fallback",
-			slog.Int("trip_count", len(tripIDs)))
+			slog.Int("trip_count", len(blockTrips)))
 		return nil
 	}
 
@@ -718,10 +747,10 @@ func (api *RestAPI) loadBlockShapes(ctx context.Context, tripIDs []string) map[s
 		shapesByID[shapeID] = shape
 	}
 
-	shapesByTrip := make(map[string]blockShape, len(trips))
-	for _, trip := range trips {
-		if shape, ok := shapesByID[nulls.StringOrEmpty(trip.ShapeID)]; ok {
-			shapesByTrip[trip.ID] = shape
+	shapesByTrip := make(map[string]blockShape, len(blockTrips))
+	for _, blockTrip := range blockTrips {
+		if shape, ok := shapesByID[blockTrip.shapeID]; ok {
+			shapesByTrip[blockTrip.id] = shape
 		}
 	}
 	return shapesByTrip
