@@ -1594,6 +1594,11 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 		for _, tt := range values {
 			t.Run(flag+"/"+tt.name, func(t *testing.T) {
 				url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, timeMs)
+				if flag == "includeTrip" {
+					// Isolate includeTrip by disabling schedule and status so auxiliary
+					// references (e.g. activeTripId) do not populate references.trips.
+					url += "&includeSchedule=false&includeStatus=false"
+				}
 				if tt.query != "" {
 					url += "&" + flag + tt.query
 				}
