@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
 )
@@ -676,4 +678,51 @@ func TestGetVehicleForTrip_BlocklessTripTreatedAsOwnBlock(t *testing.T) {
 	v3 := manager.GetVehicleForTrip(context.Background(), "T4")
 	require.NotNil(t, v3)
 	assert.Equal(t, "V3", v3.ID.ID)
+}
+
+// queryCountingDB counts the queries an unprepared gtfsdb.Queries issues.
+type queryCountingDB struct {
+	gtfsdb.DBTX
+	count int
+}
+
+func (db *queryCountingDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	db.count++
+	return db.DBTX.QueryContext(ctx, query, args...)
+}
+
+func (db *queryCountingDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	db.count++
+	return db.DBTX.QueryRowContext(ctx, query, args...)
+}
+
+// TestGetVehicleForTrip_UsesReadMemo verifies the block fallback reuses a trip
+// row the request already read, rather than querying it again.
+func TestGetVehicleForTrip_UsesReadMemo(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"TEST,Test Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"R1,TEST,1,Route 1,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"S1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"STOP1,Stop 1,37.77,-122.41\n" +
+			"STOP2,Stop 2,37.78,-122.40\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			"R1,S1,T1,Headsign 1,0,B1\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"T1,10:00:00,10:00:00,STOP1,1\n" +
+			"T1,10:30:00,10:30:00,STOP2,2\n",
+	}
+	manager := createTestManagerWithGTFSFiles(t, files)
+	counter := &queryCountingDB{DBTX: manager.GtfsDB.DB}
+	manager.GtfsDB.Queries = gtfsdb.New(counter)
+	ctx := gtfsdb.WithReadMemo(context.Background())
+
+	_, err := manager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, "T1")
+	require.NoError(t, err)
+	assert.Nil(t, manager.GetVehicleForTrip(ctx, "T1"))
+
+	assert.Equal(t, 2, counter.count, "the trip once, then its block's trips")
 }

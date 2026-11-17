@@ -587,19 +587,19 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 	// the right behaviour for the not-found cases — it just shouldn't be
 	// reached on real DB errors without a warning.
 	fallback := []string{targetTripID}
-	q := api.GtfsManager.GtfsDB.Queries
+	q := api.GtfsManager.GtfsDB.Queries.Memo(ctx)
 
-	blockID, err := q.GetBlockIDByTripID(ctx, targetTripID)
+	trip, err := q.GetTrip(ctx, targetTripID)
 	if err != nil {
-		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetBlockIDByTripID failed, degrading to single-trip mode",
+		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetTrip failed, degrading to single-trip mode",
 			slog.String("trip_id", targetTripID))
 		return fallback
 	}
-	blockIDStr := nulls.StringOrEmpty(blockID)
+	blockIDStr := nulls.StringOrEmpty(trip.BlockID)
 	if blockIDStr == "" {
 		return fallback
 	}
-	blockTrips, err := q.GetTripsByBlockID(ctx, blockID)
+	blockTrips, err := q.GetTripsByBlockID(ctx, trip.BlockID)
 	if err != nil {
 		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetTripsByBlockID failed, degrading to single-trip mode",
 			slog.String("trip_id", targetTripID), slog.String("block_id", blockIDStr))

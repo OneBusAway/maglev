@@ -1884,22 +1884,6 @@ func (q *Queries) GetBlockDetailsForTrip(ctx context.Context, arg GetBlockDetail
 	return items, nil
 }
 
-const getBlockIDByTripID = `-- name: GetBlockIDByTripID :one
-SELECT
-    block_id
-FROM
-    trips
-WHERE
-    id = ?
-`
-
-func (q *Queries) GetBlockIDByTripID(ctx context.Context, id string) (sql.NullString, error) {
-	row := q.queryRow(ctx, q.getBlockIDByTripIDStmt, getBlockIDByTripID, id)
-	var block_id sql.NullString
-	err := row.Scan(&block_id)
-	return block_id, err
-}
-
 const getBlockIDsForStops = `-- name: GetBlockIDsForStops :many
 SELECT DISTINCT
     t.block_id

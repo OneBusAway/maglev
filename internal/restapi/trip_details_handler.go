@@ -401,7 +401,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 // serviceActiveOn reports whether serviceID runs on serviceDate.
 func (api *RestAPI) serviceActiveOn(ctx context.Context, serviceID string, serviceDate time.Time) (bool, error) {
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
 	if err != nil {
 		return false, err
 	}
