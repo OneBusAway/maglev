@@ -1360,7 +1360,7 @@ ORDER BY trip_id, stop_sequence;
 -- name: GetBlockStopTimesForTripIDs :many
 SELECT trip_id, stop_id, stop_sequence, arrival_time, departure_time FROM stop_times
 WHERE trip_id IN (sqlc.slice('trip_ids'))
-ORDER BY trip_id, stop_sequence;
+ORDER BY trip_id ASC, stop_sequence ASC;
 
 -- name: GetStopIDsForTripIDs :many
 SELECT trip_id, stop_id FROM stop_times

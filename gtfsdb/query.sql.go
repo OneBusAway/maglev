@@ -1978,7 +1978,7 @@ func (q *Queries) GetBlockIDsForStops(ctx context.Context, arg GetBlockIDsForSto
 const getBlockStopTimesForTripIDs = `-- name: GetBlockStopTimesForTripIDs :many
 SELECT trip_id, stop_id, stop_sequence, arrival_time, departure_time FROM stop_times
 WHERE trip_id IN (/*SLICE:trip_ids*/?)
-ORDER BY trip_id, stop_sequence
+ORDER BY trip_id ASC, stop_sequence ASC
 `
 
 type GetBlockStopTimesForTripIDsRow struct {
