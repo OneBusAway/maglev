@@ -988,6 +988,7 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	t.Cleanup(func() {
 		api.GtfsManager.MockResetRealTimeData()
 		_, _ = db.Exec(`DELETE FROM stop_routes WHERE route_id = ?`, routeID)
+		_, _ = db.Exec(`DELETE FROM stop_agencies WHERE agency_id = ?`, agencyID)
 		// createTestApi shares one manager across tests, so clear the agency-ids this test set.
 		api.GtfsManager.MockSetFeedAgencyIDs("feed-0")
 		_, _ = db.Exec(`DELETE FROM stop_times WHERE trip_id = ?`, tripID)
@@ -1007,7 +1008,7 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence) VALUES (?, 0, 0, ?, 1)`, tripID, stopID)
 	require.NoError(t, err)
-	rebuildStopRouteIndex(t, api)
+	rebuildStopIndexes(t, api)
 
 	bareRoute := routeID
 	// The feed names the underscore agency, so the alert's prefix must keep it whole.

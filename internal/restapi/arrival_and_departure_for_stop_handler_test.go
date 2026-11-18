@@ -890,7 +890,7 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 	})
 	require.NoError(t, err)
 
-	rebuildStopRouteIndex(t, api)
+	rebuildStopIndexes(t, api)
 
 	combinedStopID := utils.FormCombinedID(agencyA, stopID)
 	combinedTripID := utils.FormCombinedID(agencyB, tripB_ID)
