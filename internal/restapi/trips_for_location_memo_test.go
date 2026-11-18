@@ -55,9 +55,10 @@ func TestTripsForLocationQueryBudget(t *testing.T) {
 
 // TestTripsForLocationLeavesMemoizedRowsUnchanged runs a request with a memo
 // it can inspect afterwards, then checks the rows memoized for every trip in
-// the response still match a fresh query.
+// the response still match a fresh query. Like the budget test, it loads its
+// own copy of the feed.
 func TestTripsForLocationLeavesMemoizedRowsUnchanged(t *testing.T) {
-	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	api := createTestApiWithFeedAndClock(t, filepath.Join("../../testdata", "raba.zip"), clock.NewMockClock(arrivalsTestClock))
 	direct := api.GtfsManager.GtfsDB.Queries
 	counter := swapInQueryCounter(t, api)
 	mux := http.NewServeMux()
@@ -66,7 +67,7 @@ func TestTripsForLocationLeavesMemoizedRowsUnchanged(t *testing.T) {
 
 	ctx := gtfsdb.WithReadMemo(context.Background())
 	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tripsForLocationMemoURL(arrivalsMemoKey, "&includeStatus=true&includeSchedule=true"), nil).WithContext(ctx))
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tripsForLocationMemoURL("key=TEST", "&includeStatus=true&includeSchedule=true"), nil).WithContext(ctx))
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 
 	var response TripsForLocationResponse
