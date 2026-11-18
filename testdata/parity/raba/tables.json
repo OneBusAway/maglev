@@ -15,6 +15,10 @@
     "rows": 24,
     "sha256": "8a6a70edf034a4e47cfad590db2d010d1d6329df737b18d598cea039ece6ae18"
   },
+  "booking_rules": {
+    "rows": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "calendar": {
     "rows": 6,
     "sha256": "ee9f7e9843b395d05a08d8310b3ce5d152887dd9cb97089e51a8305d2744b107"
@@ -23,6 +27,10 @@
     "rows": 48,
     "sha256": "cf2f3c6e24f27a249aff341a1da9a733a43d9683f301643bfbda0b92c6e5d3f0"
   },
+  "flex_stop_times": {
+    "rows": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "frequencies": {
     "rows": 0,
     "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -30,6 +38,30 @@
   "import_metadata": {
     "rows": 1,
     "sha256": "e22adf97d0fd3ad83569f2ae6cf04c8c8cd2439ef5de266f97c2f88e0cb840f4"
+  },
+  "location_group_stops": {
+    "rows": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "location_groups": {
+    "rows": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "locations": {
+    "rows": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "ondemand_rules": {
+    "rows": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "ondemand_services": {
+    "rows": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "ondemand_stop_services": {
+    "rows": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "problem_reports_stop": {
     "rows": 0,
