@@ -47,7 +47,7 @@ func TestArrivalAndDepartureQueryBudget(t *testing.T) {
 	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, endpoint, nil))
 
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-	assert.LessOrEqual(t, counter.count.Load(), int64(20))
+	assert.LessOrEqual(t, counter.count.Load(), int64(19))
 }
 
 // TestArrivalAndDepartureLeavesMemoizedRowsUnchanged runs a request with a
