@@ -124,7 +124,7 @@ func TestTripDetailsHandlerWithInvalidTripID(t *testing.T) {
 }
 
 func TestTripDetailsHandlerWithInvalidAgencyPrefix(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	ctx := context.Background()

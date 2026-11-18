@@ -497,7 +497,7 @@ func createStopTime(t *testing.T, ctx context.Context, q *gtfsdb.Queries, tripID
 }
 
 func TestScheduleForRouteHandler_HeadsignFallbackToLastStop(t *testing.T) {
-	api := newScheduleForRouteAPI(t)
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(scheduleForRouteFixedClock))
 	defer api.Shutdown()
 
 	combinedRouteID, expectedHeadsign := setupHeadsignlessTrip(t, api)

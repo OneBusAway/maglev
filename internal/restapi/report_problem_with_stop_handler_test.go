@@ -22,7 +22,7 @@ func reportProblemWithStopURL(stopID string, params ...url.Values) string {
 }
 
 func TestReportProblemWithStopRequiresValidApiKey(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	resp, model := callAPIHandler[EmptyResponse](t, api,
@@ -34,7 +34,7 @@ func TestReportProblemWithStopRequiresValidApiKey(t *testing.T) {
 }
 
 func TestReportProblemWithStopEndToEnd(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	resp, model := callAPIHandler[EmptyResponse](t, api, reportProblemWithStopURL("1_75403", url.Values{
@@ -59,7 +59,7 @@ func TestReportProblemWithStopEndToEnd(t *testing.T) {
 }
 
 func TestReportProblemWithStopMinimalParams(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	resp, model := callAPIHandler[EmptyResponse](t, api, reportProblemWithStopURL("1_75403"))
@@ -69,7 +69,7 @@ func TestReportProblemWithStopMinimalParams(t *testing.T) {
 }
 
 func TestReportProblemWithStopSanitization(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	resp, model := callAPIHandler[EmptyResponse](t, api, reportProblemWithStopURL("1_75403", url.Values{
@@ -94,7 +94,7 @@ func TestReportProblemWithStopSanitization(t *testing.T) {
 // TestReportProblemWithStopCoordinateRangeValidation verifies that out-of-range userLat
 // and userLon parameters return HTTP 400 with validation errors instead of database 500s.
 func TestReportProblemWithStopCoordinateRangeValidation(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
 
@@ -153,7 +153,7 @@ func TestReportProblemWithStopDatabaseFailure(t *testing.T) {
 }
 
 func TestReportProblemWithStopNullStorage(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	resp, model := callAPIHandler[EmptyResponse](t, api, reportProblemWithStopURL("1_75403"))

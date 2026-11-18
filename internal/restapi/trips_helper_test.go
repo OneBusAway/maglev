@@ -384,7 +384,7 @@ func TestBuildTripStatus_VehicleWithPosition_FindsStops(t *testing.T) {
 }
 
 func TestBuildTripStatus_ScheduleDeviation_SetsPredicted(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	ctx := context.Background()
@@ -616,7 +616,7 @@ func TestBuildTripStatus_ShapeData_ProjectionFailureFallsBackToScheduled(t *test
 }
 
 func TestBuildTripStatus_VehicleIDFormat(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1953,7 +1953,7 @@ func TestInferOrientationFromShape(t *testing.T) {
 func floatPtr(f float64) *float64 { return &f }
 
 func TestGetNextAndPreviousTripIDs_SingleTripBlock(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries
@@ -2001,7 +2001,7 @@ func TestGetNextAndPreviousTripIDs_SingleTripBlock(t *testing.T) {
 }
 
 func TestGetNextAndPreviousTripIDs_TripNotInBlockOnDate(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	ctx := context.Background()
 	queries := api.GtfsManager.GtfsDB.Queries

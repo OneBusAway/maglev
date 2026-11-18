@@ -33,7 +33,7 @@ func tripForVehicleURL(vehicleID string, params ...url.Values) string {
 // first static trip and returns the API plus the vehicle's combined ID.
 func setupTestApiWithMockVehicle(t *testing.T) (api *RestAPI, vehicleCombinedID string) {
 	t.Helper()
-	api = createTestApi(t)
+	api = createIsolatedTestApi(t)
 	t.Cleanup(api.Shutdown)
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 

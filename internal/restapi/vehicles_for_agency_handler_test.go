@@ -1221,7 +1221,7 @@ func TestVehiclesForAgencyHandler_InterliningKeepsNominalTripSituations(t *testi
 // every route-level assertion in TestVehiclesForAgencyHandler_InterliningActiveTrip
 // satisfied by one entry. The block here is synthetic so the routes really differ.
 func TestVehiclesForAgencyHandler_InterlinedAcrossRoutes(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 

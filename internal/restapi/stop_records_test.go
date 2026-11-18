@@ -17,7 +17,7 @@ import (
 )
 
 func TestStopsForRouteStopRecords(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	seedStopRecordFixture(t, api)
 
@@ -54,7 +54,7 @@ func TestStopsForRouteStopRecords(t *testing.T) {
 }
 
 func TestScheduleForStopStopRecords(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	seedStopRecordFixture(t, api)
 
@@ -117,7 +117,7 @@ func TestScheduleForStopStopRecords(t *testing.T) {
 func TestParentStopsAcrossScheduleTripAndArrivalEndpoints(t *testing.T) {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
-	api := createTestApiWithClock(t, clock.NewMockClock(time.Date(2025, 6, 12, 0, 5, 0, 0, loc)))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(time.Date(2025, 6, 12, 0, 5, 0, 0, loc)))
 	defer api.Shutdown()
 	seedStopRecordFixture(t, api)
 
