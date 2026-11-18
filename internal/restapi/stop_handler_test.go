@@ -345,6 +345,8 @@ func TestStopHandler_ParentStation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	rebuildStopRouteIndex(t, api)
+
 	resp, model := callAPIHandler[StopEntryResponse](t, api,
 		stopURL(utils.FormCombinedID(agencyID, childStopID)))
 
@@ -527,6 +529,8 @@ func TestStopHandler_ParentStationNaturalSorting(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
+
+	rebuildStopRouteIndex(t, api)
 
 	// Call Endpoint for the CHILD stop
 	resp, model := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(agencyID, childStopID)))

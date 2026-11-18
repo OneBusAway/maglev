@@ -562,6 +562,13 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 	logging.LogOperation(logger, "stop_agency_index_built")
 
+	logging.LogOperation(logger, "building_stop_route_index")
+	if err := buildStopRouteIndex(ctx, qtx); err != nil {
+		logging.LogError(logger, "Unable to build stop route index", err)
+		return false, err
+	}
+	logging.LogOperation(logger, "stop_route_index_built")
+
 	logging.LogOperation(logger, "building_block_layover_index")
 	if err := c.buildBlockLayoverIndex(ctx, allTripEnds, tx); err != nil {
 		logging.LogError(logger, "Unable to build block layover index", err)
@@ -633,6 +640,18 @@ func buildStopAgencyIndex(ctx context.Context, qtx *Queries) error {
 	}
 	if err := qtx.BuildStopAgencies(ctx); err != nil {
 		return fmt.Errorf("failed to build stop agencies: %w", err)
+	}
+	return nil
+}
+
+// buildStopRouteIndex repopulates stop_routes from the trips currently serving each stop,
+// rebuilt rather than updated in place for the same reason as buildStopAgencyIndex.
+func buildStopRouteIndex(ctx context.Context, qtx *Queries) error {
+	if err := qtx.ClearStopRoutes(ctx); err != nil {
+		return fmt.Errorf("failed to clear stop routes: %w", err)
+	}
+	if err := qtx.BuildStopRoutes(ctx); err != nil {
+		return fmt.Errorf("failed to build stop routes: %w", err)
 	}
 	return nil
 }
@@ -715,6 +734,9 @@ func latestAgencyExpiry(serviceDate time.Time, agencies []Agency) (time.Time, er
 func (c *Client) clearAllGTFSDataWithQueries(ctx context.Context, q *Queries) error {
 	if err := q.ClearStopAgencies(ctx); err != nil {
 		return fmt.Errorf("error clearing stop_agencies: %w", err)
+	}
+	if err := q.ClearStopRoutes(ctx); err != nil {
+		return fmt.Errorf("error clearing stop_routes: %w", err)
 	}
 	if err := q.ClearBlockLayovers(ctx); err != nil {
 		return fmt.Errorf("error clearing block_layover: %w", err)
