@@ -695,7 +695,9 @@ WHERE
     AND trips.service_id IN (sqlc.slice('service_ids'));
 
 -- name: GetAgenciesForStops :many
-SELECT DISTINCT
+-- Reads the (stop, agency) pairs stop_agencies holds rather than walking every
+-- stop_time at these stops, which grows with how many trips serve them.
+SELECT
     a.id,
     a.name,
     a.url,
@@ -704,16 +706,14 @@ SELECT DISTINCT
     a.phone,
     a.fare_url,
     a.email,
-    stop_times.stop_id
+    stop_agencies.stop_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
-    JOIN agencies a ON routes.agency_id = a.id
+    stop_agencies
+    JOIN agencies a ON stop_agencies.agency_id = a.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'))
+    stop_agencies.stop_id IN (sqlc.slice('stop_ids'))
 ORDER BY
-    stop_times.stop_id ASC,
+    stop_agencies.stop_id ASC,
     a.id ASC;
 
 -- name: GetStopTimesForTrip :many

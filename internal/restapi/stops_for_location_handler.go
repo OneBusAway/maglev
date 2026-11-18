@@ -230,10 +230,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		if routes == nil {
-			routes = []models.Route{}
-		}
-
 		references.Agencies = agencies
 		references.Routes = routes
 	}
