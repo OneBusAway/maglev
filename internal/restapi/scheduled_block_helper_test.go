@@ -517,10 +517,6 @@ func TestLoadBlockTripData_PopulatesStopTimesAndShape(t *testing.T) {
 	d := data[0]
 	assert.Equal(t, tripID, d.id)
 	assert.NotEmpty(t, d.stopTimes, "trip should have stop times")
-	require.Len(t, d.stopIDs, len(d.stopTimes))
-	for i, stopTime := range d.stopTimes {
-		assert.Equal(t, stopTime.StopID, d.stopIDs[i], "stop IDs should follow the stop times")
-	}
 	assert.NotEmpty(t, d.shapePoints, "trip should have shape points")
 	assert.Greater(t, d.totalDist, 0.0, "shape total distance should be > 0")
 	assert.Len(t, d.cumDistances, len(d.shapePoints), "cum distances should align with shape points")
@@ -608,6 +604,35 @@ func TestLoadBlockTripData_KeepsInputOrder(t *testing.T) {
 			require.Equal(t, refs[i].id, d.id)
 		}
 	}
+}
+
+// TestEmitBlockStops_ShapelessTripFromStopTimesAlone checks that a block trip's
+// stop times are all emitBlockStops needs: a trip built with stop times and no
+// shape gets one metric per stop, measured stop to stop.
+func TestEmitBlockStops_ShapelessTripFromStopTimesAlone(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.ListStops(ctx)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(stops), 2)
+	trip := blockTripData{
+		id: "shapeless",
+		stopTimes: []gtfsdb.GetBlockStopTimesForTripIDsRow{
+			{TripID: "shapeless", StopID: stops[0].ID, StopSequence: 1},
+			{TripID: "shapeless", StopID: stops[1].ID, StopSequence: 2},
+		},
+	}
+
+	metrics, tripOffsets := api.emitBlockStops(ctx, []blockTripData{trip})
+
+	require.Len(t, metrics, 2)
+	assert.Equal(t, []float64{0}, tripOffsets)
+	assert.Equal(t, stops[0].ID, metrics[0].StopID)
+	assert.Equal(t, stops[1].ID, metrics[1].StopID)
+	assert.Zero(t, metrics[0].DistanceAlongTrip)
+	assert.Positive(t, metrics[1].DistanceAlongTrip, "the second stop should be measured from the first")
 }
 
 func TestLoadBlockTripData_SkipsTripsWithNoData(t *testing.T) {
@@ -909,11 +934,11 @@ func TestProjectStopsInSequence_MonotonicAlongShape(t *testing.T) {
 	td := data[0]
 	require.GreaterOrEqual(t, len(td.stopTimes), 2)
 
-	stopByID, err := api.fetchStopCoords(ctx, td.stopIDs)
+	stopByID, err := api.fetchStopCoords(ctx, td.stopIDs())
 	require.NoError(t, err)
 	require.NotNil(t, stopByID)
 
-	distances := projectStopsInSequence(td.stopIDs, stopByID, td.shapePoints, td.cumDistances)
+	distances := projectStopsInSequence(td.stopIDs(), stopByID, td.shapePoints, td.cumDistances)
 	require.Len(t, distances, len(td.stopTimes))
 
 	// Monotonicity is the key invariant — without it loop routes break.

@@ -85,12 +85,20 @@ type scheduledStopKey struct {
 type blockTripData struct {
 	id           string
 	stopTimes    []gtfsdb.GetBlockStopTimesForTripIDsRow
-	stopIDs      []string // stopTimes' stop IDs, in the same order
 	shapePoints  []gtfs.ShapePoint
 	cumDistances []float64
 	totalDist    float64
 	firstSeconds int64
 	lastSeconds  int64
+}
+
+// stopIDs returns the trip's stop IDs in stop_sequence order.
+func (t blockTripData) stopIDs() []string {
+	stopIDs := make([]string, len(t.stopTimes))
+	for i, stopTime := range t.stopTimes {
+		stopIDs[i] = stopTime.StopID
+	}
+	return stopIDs
 }
 
 // snapshotCache memoizes computeScheduledBlockSnapshot results for the
@@ -327,9 +335,11 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 	tripOffsets := make([]float64, len(trips))
 
 	// One DB call for the union of every block-trip's stops.
+	stopIDsByTrip := make([][]string, len(trips))
 	unionStopIDs := make([]string, 0, len(trips)*40)
-	for _, t := range trips {
-		unionStopIDs = append(unionStopIDs, t.stopIDs...)
+	for i, t := range trips {
+		stopIDsByTrip[i] = t.stopIDs()
+		unionStopIDs = append(unionStopIDs, stopIDsByTrip[i]...)
 	}
 	// Block metrics degrade to zero distances rather than failing the
 	// snapshot; the helper logs the cause.
@@ -342,7 +352,7 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 		var tripStopDistances []float64
 		var tripLength float64
 		if len(t.shapePoints) >= 2 {
-			tripStopDistances = projectStopsInSequence(t.stopIDs, stopByID, t.shapePoints, t.cumDistances)
+			tripStopDistances = projectStopsInSequence(stopIDsByTrip[i], stopByID, t.shapePoints, t.cumDistances)
 			tripLength = t.totalDist
 		} else {
 			// Shapeless trip (missing shape_id, unresolvable shape, or shape
@@ -353,7 +363,7 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 			// stop gets a distinct DistanceAlongBlock. Without this the
 			// trip collapses to zero and every later trip in the block is
 			// short by this trip's length.
-			tripStopDistances, tripLength = haversineStopDistances(t.stopIDs, stopByID)
+			tripStopDistances, tripLength = haversineStopDistances(stopIDsByTrip[i], stopByID)
 		}
 		for k, st := range t.stopTimes {
 			stops = append(stops, blockStopMetric{
@@ -680,10 +690,8 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, blockTrips []blockTri
 		return nil
 	}
 	stopTimesByTrip := make(map[string][]gtfsdb.GetBlockStopTimesForTripIDsRow, len(tripIDs))
-	stopIDsByTrip := make(map[string][]string, len(tripIDs))
 	for _, st := range stopTimeRows {
 		stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
-		stopIDsByTrip[st.TripID] = append(stopIDsByTrip[st.TripID], st.StopID)
 	}
 
 	shapesByTrip := api.loadBlockShapes(ctx, blockTrips)
@@ -698,7 +706,6 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, blockTrips []blockTri
 		out = append(out, blockTripData{
 			id:           id,
 			stopTimes:    stopTimes,
-			stopIDs:      stopIDsByTrip[id],
 			shapePoints:  shape.points,
 			cumDistances: shape.cumDistances,
 			totalDist:    shape.totalDist,
