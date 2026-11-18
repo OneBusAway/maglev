@@ -433,6 +433,25 @@ func TestBlockTripIDsForServiceDate_FallsBackForUnknownTrip(t *testing.T) {
 		"unknown trip should fall back to a one-trip block containing itself")
 }
 
+func TestBlockTripIDsForServiceDate_FallsBackForBlocklessTrip(t *testing.T) {
+	api := &RestAPI{Application: &app.Application{GtfsManager: newTestManagerNoData(t)}}
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{ID: "agency", Name: "Agency", Url: "https://example.com", Timezone: "UTC"})
+	require.NoError(t, err)
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{ID: "route", AgencyID: "agency", Type: 3})
+	require.NoError(t, err)
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{ID: "service", Monday: 1, StartDate: "20240101", EndDate: "20251231"})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: "blockless", RouteID: "route", ServiceID: "service"})
+	require.NoError(t, err)
+
+	ids := api.blockTripIDsForServiceDate(ctx, "blockless", rabaServiceDate)
+
+	assert.Equal(t, []string{"blockless"}, ids, "a trip with no block is its own one-trip block")
+}
+
 func TestLoadBlockTripData_PopulatesStopTimesAndShape(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

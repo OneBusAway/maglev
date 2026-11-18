@@ -10,7 +10,6 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
-	"maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -53,10 +52,7 @@ func BenchmarkTripDetailsMatrix(b *testing.B) {
 	agencyID := mustGetAgencies(b, api)[0].ID
 	serviceDate := "&serviceDate=" + arrivalsTestClock.Format(serviceDateLayout)
 
-	counter := &queryCountingDB{DBTX: api.GtfsManager.GtfsDB.DB}
-	originalQueries := api.GtfsManager.GtfsDB.Queries
-	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(counter)
-	defer func() { api.GtfsManager.GtfsDB.Queries = originalQueries }()
+	counter := swapInQueryCounter(b, api)
 
 	mux := http.NewServeMux()
 	api.SetRoutes(mux)
@@ -80,7 +76,7 @@ func BenchmarkTripDetailsMatrix(b *testing.B) {
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			if tc.withVehicle {
-				addBenchVehicle(b, api, tc.tripID)
+				addTestVehicle(b, api, tc.tripID)
 			}
 			endpoint := "/api/where/trip-details/" + utils.FormCombinedID(agencyID, tc.tripID) + ".json" + benchTripDetailsKey + tc.query
 			req := httptest.NewRequest(http.MethodGet, endpoint, nil)
@@ -100,16 +96,4 @@ func BenchmarkTripDetailsMatrix(b *testing.B) {
 			b.ReportMetric(float64(counter.count.Load())/float64(b.N), "queries/op")
 		})
 	}
-}
-
-func addBenchVehicle(b *testing.B, api *RestAPI, tripID string) {
-	b.Helper()
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(context.Background(), tripID)
-	if err != nil {
-		b.Fatal(err)
-	}
-	now := arrivalsTestClock
-	api.GtfsManager.MockAddVehicleWithOptions(benchTripVehicleID, trip.ID, trip.RouteID,
-		gtfs.MockVehicleOptions{Timestamp: &now})
-	b.Cleanup(api.GtfsManager.MockResetRealTimeData)
 }

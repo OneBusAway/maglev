@@ -820,14 +820,6 @@ WHERE t.block_id = ?
   AND t.service_id IN (sqlc.slice('service_ids'))
 ORDER BY t.min_arrival_time;
 
--- name: GetBlockIDByTripID :one
-SELECT
-    block_id
-FROM
-    trips
-WHERE
-    id = ?;
-
 -- name: GetStopsByIDs :many
 SELECT
     *

@@ -31,7 +31,7 @@ func TestWarnIfRealDBError(t *testing.T) {
 		{
 			name:      "ignores sql.ErrNoRows",
 			err:       sql.ErrNoRows,
-			op:        "GetBlockIDByTripID",
+			op:        "GetTrip",
 			expectLog: false,
 		},
 		{

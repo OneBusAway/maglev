@@ -177,9 +177,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getBlockDetailsForTripStmt, err = db.PrepareContext(ctx, getBlockDetailsForTrip); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBlockDetailsForTrip: %w", err)
 	}
-	if q.getBlockIDByTripIDStmt, err = db.PrepareContext(ctx, getBlockIDByTripID); err != nil {
-		return nil, fmt.Errorf("error preparing query GetBlockIDByTripID: %w", err)
-	}
 	if q.getBlockIDsForStopsStmt, err = db.PrepareContext(ctx, getBlockIDsForStops); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBlockIDsForStops: %w", err)
 	}
@@ -665,11 +662,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getBlockDetailsForTripStmt: %w", cerr)
 		}
 	}
-	if q.getBlockIDByTripIDStmt != nil {
-		if cerr := q.getBlockIDByTripIDStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getBlockIDByTripIDStmt: %w", cerr)
-		}
-	}
 	if q.getBlockIDsForStopsStmt != nil {
 		if cerr := q.getBlockIDsForStopsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getBlockIDsForStopsStmt: %w", cerr)
@@ -1135,7 +1127,6 @@ type Queries struct {
 	getArrivalsAndDeparturesForStopStmt       *sql.Stmt
 	getBlockDetailsStmt                       *sql.Stmt
 	getBlockDetailsForTripStmt                *sql.Stmt
-	getBlockIDByTripIDStmt                    *sql.Stmt
 	getBlockIDsForStopsStmt                   *sql.Stmt
 	getBlockTripIndexIDsForBlocksStmt         *sql.Stmt
 	getBlockTripIndexIDsForRouteStmt          *sql.Stmt
@@ -1268,7 +1259,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getArrivalsAndDeparturesForStopStmt:       q.getArrivalsAndDeparturesForStopStmt,
 		getBlockDetailsStmt:                       q.getBlockDetailsStmt,
 		getBlockDetailsForTripStmt:                q.getBlockDetailsForTripStmt,
-		getBlockIDByTripIDStmt:                    q.getBlockIDByTripIDStmt,
 		getBlockIDsForStopsStmt:                   q.getBlockIDsForStopsStmt,
 		getBlockTripIndexIDsForBlocksStmt:         q.getBlockTripIndexIDsForBlocksStmt,
 		getBlockTripIndexIDsForRouteStmt:          q.getBlockTripIndexIDsForRouteStmt,
