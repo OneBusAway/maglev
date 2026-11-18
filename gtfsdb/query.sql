@@ -1125,7 +1125,8 @@ SELECT
     t.route_id,
     t.service_id,
     t.trip_headsign,
-    t.block_id
+    t.block_id,
+    t.min_arrival_time
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
 WHERE st.stop_id = @stop_id
@@ -1144,7 +1145,8 @@ SELECT
     t.route_id,
     t.service_id,
     t.trip_headsign,
-    t.block_id
+    t.block_id,
+    t.min_arrival_time
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
 WHERE st.departure_time >= @window_start_nanos
@@ -1163,13 +1165,14 @@ SELECT DISTINCT
     t.route_id,
     t.service_id,
     t.trip_headsign,
-    t.block_id
+    t.block_id,
+    t.min_arrival_time
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
          JOIN frequencies f ON f.trip_id = st.trip_id
 WHERE st.stop_id = @stop_id
-  AND f.end_time >= @window_start_nanos
-  AND f.start_time <= @window_end_nanos
+  AND f.end_time + (st.arrival_time - COALESCE(t.min_arrival_time, st.arrival_time)) >= @window_start_nanos
+  AND f.start_time + (st.arrival_time - COALESCE(t.min_arrival_time, st.arrival_time)) <= @window_end_nanos
 ORDER BY st.arrival_time;
 
 -- name: GetFrequencyStopTimesForStopsInWindow :many
@@ -1183,12 +1186,13 @@ SELECT DISTINCT
     t.route_id,
     t.service_id,
     t.trip_headsign,
-    t.block_id
+    t.block_id,
+    t.min_arrival_time
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
          JOIN frequencies f ON f.trip_id = st.trip_id
-WHERE f.end_time >= @window_start_nanos
-  AND f.start_time <= @window_end_nanos
+WHERE f.end_time + (st.arrival_time - COALESCE(t.min_arrival_time, st.arrival_time)) >= @window_start_nanos
+  AND f.start_time + (st.arrival_time - COALESCE(t.min_arrival_time, st.arrival_time)) <= @window_end_nanos
   AND st.stop_id IN (sqlc.slice('stop_ids'))
 ORDER BY st.stop_id, st.arrival_time;
 

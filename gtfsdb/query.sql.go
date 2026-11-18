@@ -2421,13 +2421,14 @@ SELECT DISTINCT
     t.route_id,
     t.service_id,
     t.trip_headsign,
-    t.block_id
+    t.block_id,
+    t.min_arrival_time
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
          JOIN frequencies f ON f.trip_id = st.trip_id
 WHERE st.stop_id = ?1
-  AND f.end_time >= ?2
-  AND f.start_time <= ?3
+  AND f.end_time + (st.arrival_time - COALESCE(t.min_arrival_time, st.arrival_time)) >= ?2
+  AND f.start_time + (st.arrival_time - COALESCE(t.min_arrival_time, st.arrival_time)) <= ?3
 ORDER BY st.arrival_time
 `
 
@@ -2438,16 +2439,17 @@ type GetFrequencyStopTimesForStopInWindowParams struct {
 }
 
 type GetFrequencyStopTimesForStopInWindowRow struct {
-	TripID        string
-	ArrivalTime   int64
-	DepartureTime int64
-	StopID        string
-	StopSequence  int64
-	StopHeadsign  sql.NullString
-	RouteID       string
-	ServiceID     string
-	TripHeadsign  sql.NullString
-	BlockID       sql.NullString
+	TripID         string
+	ArrivalTime    int64
+	DepartureTime  int64
+	StopID         string
+	StopSequence   int64
+	StopHeadsign   sql.NullString
+	RouteID        string
+	ServiceID      string
+	TripHeadsign   sql.NullString
+	BlockID        sql.NullString
+	MinArrivalTime sql.NullInt64
 }
 
 func (q *Queries) GetFrequencyStopTimesForStopInWindow(ctx context.Context, arg GetFrequencyStopTimesForStopInWindowParams) ([]GetFrequencyStopTimesForStopInWindowRow, error) {
@@ -2470,6 +2472,7 @@ func (q *Queries) GetFrequencyStopTimesForStopInWindow(ctx context.Context, arg 
 			&i.ServiceID,
 			&i.TripHeadsign,
 			&i.BlockID,
+			&i.MinArrivalTime,
 		); err != nil {
 			return nil, err
 		}
@@ -2495,12 +2498,13 @@ SELECT DISTINCT
     t.route_id,
     t.service_id,
     t.trip_headsign,
-    t.block_id
+    t.block_id,
+    t.min_arrival_time
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
          JOIN frequencies f ON f.trip_id = st.trip_id
-WHERE f.end_time >= ?1
-  AND f.start_time <= ?2
+WHERE f.end_time + (st.arrival_time - COALESCE(t.min_arrival_time, st.arrival_time)) >= ?1
+  AND f.start_time + (st.arrival_time - COALESCE(t.min_arrival_time, st.arrival_time)) <= ?2
   AND st.stop_id IN (/*SLICE:stop_ids*/?)
 ORDER BY st.stop_id, st.arrival_time
 `
@@ -2512,16 +2516,17 @@ type GetFrequencyStopTimesForStopsInWindowParams struct {
 }
 
 type GetFrequencyStopTimesForStopsInWindowRow struct {
-	TripID        string
-	ArrivalTime   int64
-	DepartureTime int64
-	StopID        string
-	StopSequence  int64
-	StopHeadsign  sql.NullString
-	RouteID       string
-	ServiceID     string
-	TripHeadsign  sql.NullString
-	BlockID       sql.NullString
+	TripID         string
+	ArrivalTime    int64
+	DepartureTime  int64
+	StopID         string
+	StopSequence   int64
+	StopHeadsign   sql.NullString
+	RouteID        string
+	ServiceID      string
+	TripHeadsign   sql.NullString
+	BlockID        sql.NullString
+	MinArrivalTime sql.NullInt64
 }
 
 func (q *Queries) GetFrequencyStopTimesForStopsInWindow(ctx context.Context, arg GetFrequencyStopTimesForStopsInWindowParams) ([]GetFrequencyStopTimesForStopsInWindowRow, error) {
@@ -2556,6 +2561,7 @@ func (q *Queries) GetFrequencyStopTimesForStopsInWindow(ctx context.Context, arg
 			&i.ServiceID,
 			&i.TripHeadsign,
 			&i.BlockID,
+			&i.MinArrivalTime,
 		); err != nil {
 			return nil, err
 		}
@@ -4189,7 +4195,8 @@ SELECT
     t.route_id,
     t.service_id,
     t.trip_headsign,
-    t.block_id
+    t.block_id,
+    t.min_arrival_time
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
 WHERE st.stop_id = ?1
@@ -4205,16 +4212,17 @@ type GetStopTimesForStopInWindowParams struct {
 }
 
 type GetStopTimesForStopInWindowRow struct {
-	TripID        string
-	ArrivalTime   int64
-	DepartureTime int64
-	StopID        string
-	StopSequence  int64
-	StopHeadsign  sql.NullString
-	RouteID       string
-	ServiceID     string
-	TripHeadsign  sql.NullString
-	BlockID       sql.NullString
+	TripID         string
+	ArrivalTime    int64
+	DepartureTime  int64
+	StopID         string
+	StopSequence   int64
+	StopHeadsign   sql.NullString
+	RouteID        string
+	ServiceID      string
+	TripHeadsign   sql.NullString
+	BlockID        sql.NullString
+	MinArrivalTime sql.NullInt64
 }
 
 func (q *Queries) GetStopTimesForStopInWindow(ctx context.Context, arg GetStopTimesForStopInWindowParams) ([]GetStopTimesForStopInWindowRow, error) {
@@ -4237,6 +4245,7 @@ func (q *Queries) GetStopTimesForStopInWindow(ctx context.Context, arg GetStopTi
 			&i.ServiceID,
 			&i.TripHeadsign,
 			&i.BlockID,
+			&i.MinArrivalTime,
 		); err != nil {
 			return nil, err
 		}
@@ -4262,7 +4271,8 @@ SELECT
     t.route_id,
     t.service_id,
     t.trip_headsign,
-    t.block_id
+    t.block_id,
+    t.min_arrival_time
 FROM stop_times st
          JOIN trips t ON st.trip_id = t.id
 WHERE st.departure_time >= ?1
@@ -4278,16 +4288,17 @@ type GetStopTimesForStopsInWindowParams struct {
 }
 
 type GetStopTimesForStopsInWindowRow struct {
-	TripID        string
-	ArrivalTime   int64
-	DepartureTime int64
-	StopID        string
-	StopSequence  int64
-	StopHeadsign  sql.NullString
-	RouteID       string
-	ServiceID     string
-	TripHeadsign  sql.NullString
-	BlockID       sql.NullString
+	TripID         string
+	ArrivalTime    int64
+	DepartureTime  int64
+	StopID         string
+	StopSequence   int64
+	StopHeadsign   sql.NullString
+	RouteID        string
+	ServiceID      string
+	TripHeadsign   sql.NullString
+	BlockID        sql.NullString
+	MinArrivalTime sql.NullInt64
 }
 
 func (q *Queries) GetStopTimesForStopsInWindow(ctx context.Context, arg GetStopTimesForStopsInWindowParams) ([]GetStopTimesForStopsInWindowRow, error) {
@@ -4322,6 +4333,7 @@ func (q *Queries) GetStopTimesForStopsInWindow(ctx context.Context, arg GetStopT
 			&i.ServiceID,
 			&i.TripHeadsign,
 			&i.BlockID,
+			&i.MinArrivalTime,
 		); err != nil {
 			return nil, err
 		}

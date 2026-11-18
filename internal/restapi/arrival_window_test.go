@@ -480,7 +480,7 @@ func TestArrivalFrequencyMidInterval(t *testing.T) {
 			endpoint:  "stop",
 			wantTimes: map[string]string{
 				freqTripID:      "06:45:00",
-				freqExactTripID: "06:55:00",
+				freqExactTripID: "07:00:00",
 			},
 		},
 		{
@@ -489,7 +489,7 @@ func TestArrivalFrequencyMidInterval(t *testing.T) {
 			endpoint:  "location",
 			wantTimes: map[string]string{
 				freqTripID:      "06:45:00",
-				freqExactTripID: "06:55:00",
+				freqExactTripID: "07:00:00",
 			},
 		},
 		{
@@ -498,7 +498,7 @@ func TestArrivalFrequencyMidInterval(t *testing.T) {
 			endpoint:  "stop",
 			wantTimes: map[string]string{
 				freqTripID:      "07:35:00",
-				freqExactTripID: "07:45:00",
+				freqExactTripID: "07:30:00",
 				freqNormalTripD: "08:00:00",
 			},
 		},
@@ -508,7 +508,7 @@ func TestArrivalFrequencyMidInterval(t *testing.T) {
 			endpoint:  "location",
 			wantTimes: map[string]string{
 				freqTripID:      "07:35:00",
-				freqExactTripID: "07:45:00",
+				freqExactTripID: "07:30:00",
 				freqNormalTripD: "08:00:00",
 			},
 		},
@@ -553,6 +553,21 @@ func TestArrivalFrequencyMidInterval(t *testing.T) {
 				freqTripID:      "07:35:00",
 				freqExactTripID: "07:45:00",
 			},
+		},
+		{
+			name:      "downstream stop B active just after raw end_time",
+			timeOfDay: "09:05:00",
+			endpoint:  "stopB",
+			wantTimes: map[string]string{
+				freqTripID:      "09:10:00",
+				freqExactTripID: "09:15:00",
+			},
+		},
+		{
+			name:      "downstream stop B excluded after shifted end_time",
+			timeOfDay: "09:20:00",
+			endpoint:  "stopB",
+			wantTimes: map[string]string{},
 		},
 	}
 
@@ -656,4 +671,30 @@ func TestArrivalFrequencyMultipleWindowsAndDwell(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestArrivalFrequencySingleArrivalEndpoint verifies that the single-arrival
+// endpoint (/arrival-and-departure-for-stop) projects the same scheduled times
+// as the plural endpoint for frequency trips.
+func TestArrivalFrequencySingleArrivalEndpoint(t *testing.T) {
+	api := createTestApiWithFrequencyData(t)
+	defer api.Shutdown()
+
+	queryTime, err := time.Parse("2006-01-02 15:04:05", "2025-06-12 07:30:00")
+	require.NoError(t, err)
+
+	stopID := utils.FormCombinedID(freqAgencyID, freqStopAID)
+	tripID := utils.FormCombinedID(freqAgencyID, freqTripID)
+	serviceDate := time.Date(2025, 6, 12, 0, 0, 0, 0, time.UTC)
+
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&time=%d",
+		stopID, tripID, serviceDate.UnixMilli(), queryTime.UnixMilli())
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+
+	entry := model.Data.Entry
+	require.NotNil(t, entry.Frequency)
+	assert.Equal(t, "07:35:00", time.UnixMilli(entry.ScheduledArrivalTime.UnixMilli()).UTC().Format("15:04:05"))
+	assert.Equal(t, "07:35:00", time.UnixMilli(entry.ScheduledDepartureTime.UnixMilli()).UTC().Format("15:04:05"))
 }

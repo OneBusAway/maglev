@@ -427,15 +427,33 @@ func selectFrequency(freqs []gtfsdb.Frequency, serviceDate, effectiveTime time.T
 }
 
 // selectFrequencyFromStart is selectFrequency with the windows measured from serviceStart.
-func selectFrequencyFromStart(freqs []gtfsdb.Frequency, serviceStart, effectiveTime time.Time) *gtfsdb.Frequency {
+// When window bounds (before, after) are supplied, it falls back to interval overlap
+// before choosing the closest entry.
+func selectFrequencyFromStart(freqs []gtfsdb.Frequency, serviceStart, effectiveTime time.Time, window ...time.Duration) *gtfsdb.Frequency {
+	if len(freqs) == 0 {
+		return nil
+	}
+	q := effectiveTime.Sub(serviceStart).Nanoseconds()
 	for i := range freqs {
-		start := serviceStart.Add(time.Duration(freqs[i].StartTime))
-		end := serviceStart.Add(time.Duration(freqs[i].EndTime))
-		if !effectiveTime.Before(start) && effectiveTime.Before(end) {
+		if q >= freqs[i].StartTime && q < freqs[i].EndTime {
 			return &freqs[i]
 		}
 	}
-	return &freqs[0]
+	if len(window) >= 2 && (window[0] > 0 || window[1] > 0) {
+		wStart, wEnd := q-window[0].Nanoseconds(), q+window[1].Nanoseconds()
+		for i := range freqs {
+			if freqs[i].EndTime >= wStart && freqs[i].StartTime <= wEnd {
+				return &freqs[i]
+			}
+		}
+	}
+	best, minDist := &freqs[0], min(absInt64(q-freqs[0].StartTime), absInt64(q-freqs[0].EndTime))
+	for i := 1; i < len(freqs); i++ {
+		if d := min(absInt64(q-freqs[i].StartTime), absInt64(q-freqs[i].EndTime)); d < minDist {
+			best, minDist = &freqs[i], d
+		}
+	}
+	return best
 }
 
 // fetchFrequenciesForTrips batch-fetches frequency rows for tripIDs, batching
