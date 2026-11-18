@@ -46,7 +46,8 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// One snapshot cache for the whole request. Trip status runs only for the
 	// arrivals that survive maxCount, and those rows still share block snapshots.
-	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
+	// The read memo shares the rows they look up across every stop in the box.
+	ctx := WithSnapshotCache(gtfsdb.WithReadMemo(r.Context()), newSnapshotCache())
 
 	// Uncapped and clamped: Java computes arrivals for every stop in the box and
 	// only trims the three output lists at the end, so capping the stop query
@@ -648,7 +649,7 @@ func (api *RestAPI) collectActiveRoutesForGroup(ctx context.Context, loc *time.L
 // query date in the given agency timezone.
 func (api *RestAPI) activeServiceIDsForLocation(ctx context.Context, loc *time.Location, queryTime time.Time) ([]string, error) {
 	dateStr := queryTime.In(loc).Format("20060102")
-	return api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
+	return api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, dateStr)
 }
 
 // recordActiveRoute keeps one agency-prefixed route ID for a stop.

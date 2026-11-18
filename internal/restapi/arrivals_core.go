@@ -349,7 +349,7 @@ func (api *RestAPI) stopTimesForGroupServiceDay(
 	serviceStart := serviceDate.Start(agencyLoc)
 	serviceDateStr := serviceDate.String()
 
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, serviceDateStr)
 	if err != nil {
 		return nil, fmt.Errorf("query active service IDs for %s: %w", serviceDateStr, err)
 	}
@@ -673,7 +673,7 @@ func (api *RestAPI) activeServicesForDate(ctx context.Context, serviceDateStr st
 		return set, nil
 	}
 
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, serviceDateStr)
 	if err != nil {
 		if dayOffset == 0 {
 			return nil, fmt.Errorf("query active service IDs for %s: %w", serviceDateStr, err)
