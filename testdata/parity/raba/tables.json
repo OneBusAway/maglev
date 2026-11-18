@@ -51,6 +51,10 @@
     "rows": 354,
     "sha256": "bbccc8dd20814ae5f7ee2df2ef5f1969ac68cb204071ab23300aa6fd84ee414e"
   },
+  "stop_consolidations": {
+    "rows": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
   "stop_times": {
     "rows": 7346,
     "sha256": "45922cd5c808e04f135b5e88a6fb124905d8258351b48a4b122793f74e997dd6"
