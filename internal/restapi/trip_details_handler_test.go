@@ -772,6 +772,7 @@ func TestParseTripIdDetailsParams_Unit(t *testing.T) {
 func TestTripDetailsHandlerWithVehicleId(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
 	agency := mustGetAgencies(t, api)[0]
 	trip := mustGetTrip(t, api)
