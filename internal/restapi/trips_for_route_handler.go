@@ -1311,15 +1311,14 @@ func (api *RestAPI) tripSituationRefs(
 // to, keyed by bare ID so each is emitted once.
 type tripReferenceSets struct {
 	trips    map[string]models.Trip
-	routes   map[string]models.Route
+	routes   map[string]models.Route // maps raw route ids to models.Route
 	agencies map[string]models.AgencyReference
-	// missing records trips that were noted only by ID, so that pre-fetched
-	// trips are not re-queried and callers know whether any secondary
+	// missing holds the trips the response refers to — entry tripIds,
+	// schedule.nextTripId/previousTripId, status.activeTripId — whose full
+	// records have not been fetched yet. Tracking them explicitly, rather than
+	// inferring them from a zero-valued reference, keeps it unambiguous which
 	// trips still need a lookup.
 	missing map[string]bool
-	// entryTripIDs tracks the list entries' own trips, which are omitted from
-	// references when includeTrip=false.
-	entryTripIDs map[string]bool
 	// auxiliaryTripIDs tracks trips referenced by status (activeTripId) or
 	// schedule (previousTripId/nextTripId), which are preserved even when includeTrip=false.
 	auxiliaryTripIDs map[string]bool
@@ -1331,7 +1330,6 @@ func newTripReferenceSets() *tripReferenceSets {
 		routes:           make(map[string]models.Route),
 		agencies:         make(map[string]models.AgencyReference),
 		missing:          make(map[string]bool),
-		entryTripIDs:     make(map[string]bool),
 		auxiliaryTripIDs: make(map[string]bool),
 	}
 }
@@ -1349,6 +1347,14 @@ func (s *tripReferenceSets) noteTripID(combinedID string) {
 	}
 }
 
+func (s *tripReferenceSets) noteAuxiliaryTripID(combinedID string) {
+	_, tripID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+	if err == nil && tripID != "" {
+		s.auxiliaryTripIDs[tripID] = true
+	}
+	s.noteTripID(combinedID)
+}
+
 func (s *tripReferenceSets) collectPreFetchedTrips(trips []gtfsdb.Trip) {
 	for _, trip := range trips {
 		s.trips[trip.ID] = newTripReference(trip)
@@ -1361,27 +1367,14 @@ func (s *tripReferenceSets) collectPreFetchedTrips(trips []gtfsdb.Trip) {
 // adjacent trips in its block, and the trip its vehicle is currently executing.
 func (s *tripReferenceSets) collectTripIDsFromEntries(entries []models.TripsForRouteListEntry) {
 	for _, entry := range entries {
-		_, ownTripID, err := utils.ExtractAgencyIDAndCodeID(entry.GetTripId())
-		if err == nil && ownTripID != "" {
-			s.entryTripIDs[ownTripID] = true
-			s.noteTripID(entry.GetTripId())
-		}
+		s.noteTripID(entry.GetTripId())
 
 		if entry.Schedule != nil {
-			if _, id, err := utils.ExtractAgencyIDAndCodeID(entry.Schedule.NextTripId); err == nil && id != "" {
-				s.auxiliaryTripIDs[id] = true
-			}
-			if _, id, err := utils.ExtractAgencyIDAndCodeID(entry.Schedule.PreviousTripId); err == nil && id != "" {
-				s.auxiliaryTripIDs[id] = true
-			}
-			s.noteTripID(entry.Schedule.NextTripId)
-			s.noteTripID(entry.Schedule.PreviousTripId)
+			s.noteAuxiliaryTripID(entry.Schedule.NextTripId)
+			s.noteAuxiliaryTripID(entry.Schedule.PreviousTripId)
 		}
 		if entry.Status != nil {
-			if _, id, err := utils.ExtractAgencyIDAndCodeID(entry.Status.ActiveTripID); err == nil && id != "" {
-				s.auxiliaryTripIDs[id] = true
-			}
-			s.noteTripID(entry.Status.ActiveTripID)
+			s.noteAuxiliaryTripID(entry.Status.ActiveTripID)
 		}
 	}
 }

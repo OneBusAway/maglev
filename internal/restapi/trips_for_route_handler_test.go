@@ -2267,6 +2267,33 @@ func TestTripsForRouteHandler_BlockSequence_AdjacentTripReferences(t *testing.T)
 	}
 }
 
+func TestTripsForRouteHandler_BlockSequence_IncludeTripFalseKeepsScheduleTrips(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(blockSequenceClock),
+		"trips-for-route-block-seq.zip", blockSequenceFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := blockSequenceClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeTrip=false&includeStatus=false&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+	// With includeTrip=false&includeStatus=false, references.trips should contain
+	// exactly previousTripId and nextTripId (tfr-trip-1 and tfr-trip-3), without tfr-trip-2.
+	expectedTripIDs := []string{
+		utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1"),
+		utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-3"),
+	}
+	refTripIDs := make([]string, 0, len(model.Data.References.Trips))
+	for _, ref := range model.Data.References.Trips {
+		refTripIDs = append(refTripIDs, ref.ID)
+	}
+	assert.ElementsMatch(t, expectedTripIDs, refTripIDs)
+}
+
 // NullBlockServiceDayGuard verifies a trip found in both the current-day and
 // previous-day null-block results keeps the current-day service date.
 func TestTripsForRouteHandler_NullBlockServiceDayGuard(t *testing.T) {
