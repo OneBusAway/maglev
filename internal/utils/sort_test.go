@@ -29,6 +29,44 @@ func TestSortRouteIDsForStopsRowsByName(t *testing.T) {
 	assert.Equal(t, []string{"151", "15", "x"}, routesAtStopA)
 }
 
+func TestSortRoutesForStopsRowsByName(t *testing.T) {
+	rows := []gtfsdb.GetRoutesForStopsRow{
+		{ID: "15", AgencyID: "25", ShortName: sql.NullString{String: "15", Valid: true}, StopID: "a"},
+		{ID: "151", AgencyID: "25", ShortName: sql.NullString{String: "1", Valid: true}, StopID: "b"},
+		{ID: "x", AgencyID: "25", LongName: sql.NullString{String: "Express", Valid: true}, StopID: "a"},
+		{ID: "151", AgencyID: "25", ShortName: sql.NullString{String: "1", Valid: true}, StopID: "a"},
+	}
+
+	utils.SortRoutesForStopsRowsByName(rows)
+
+	routesAtStopA := make([]string, 0, 3)
+	for _, row := range rows {
+		if row.StopID == "a" {
+			routesAtStopA = append(routesAtStopA, row.ID)
+		}
+	}
+	assert.Equal(t, []string{"151", "15", "x"}, routesAtStopA)
+}
+
+func TestSortActiveRouteIDsForStopsRowsByName(t *testing.T) {
+	rows := []gtfsdb.GetActiveRouteIDsForStopsOnDateRow{
+		{RouteID: "15", AgencyID: "25", ShortName: sql.NullString{String: "15", Valid: true}, StopID: "a"},
+		{RouteID: "151", AgencyID: "25", ShortName: sql.NullString{String: "1", Valid: true}, StopID: "b"},
+		{RouteID: "x", AgencyID: "25", LongName: sql.NullString{String: "Express", Valid: true}, StopID: "a"},
+		{RouteID: "151", AgencyID: "25", ShortName: sql.NullString{String: "1", Valid: true}, StopID: "a"},
+	}
+
+	utils.SortActiveRouteIDsForStopsRowsByName(rows)
+
+	routesAtStopA := make([]string, 0, 3)
+	for _, row := range rows {
+		if row.StopID == "a" {
+			routesAtStopA = append(routesAtStopA, row.RouteID)
+		}
+	}
+	assert.Equal(t, []string{"151", "15", "x"}, routesAtStopA)
+}
+
 func TestSortRoutesForStopRowsByName(t *testing.T) {
 	routes := []gtfsdb.GetRoutesForStopRow{
 		{

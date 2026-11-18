@@ -164,6 +164,7 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		api.serverErrorResponse(w, r, fmt.Errorf("failed to fetch routes for stops: %w", err))
 		return
 	}
+	utils.SortRoutesForStopsRowsByName(routesRows)
 
 	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, stopIDs)
 	if err != nil {

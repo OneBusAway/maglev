@@ -536,6 +536,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		reqLogger.Warn("failed to batch fetch routes for stops", "error", err)
 		batchedRoutesForStops = nil
 	}
+	utils.SortRoutesForStopsRowsByName(batchedRoutesForStops)
 
 	routesByStopID := make(map[string][]gtfsdb.GetRoutesForStopsRow)
 	for _, routeRow := range batchedRoutesForStops {

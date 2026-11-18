@@ -1381,6 +1381,7 @@ func (api *RestAPI) loadStopReferenceData(ctx context.Context, stopIDs []string)
 		reqLogger.Warn("failed to batch fetch routes for stop references", slog.Any("error", err))
 		return stopsByID, routesByStop, nil
 	}
+	utils.SortRoutesForStopsRowsByName(routeRows)
 	for _, row := range routeRows {
 		routesByStop[row.StopID] = append(routesByStop[row.StopID], row)
 	}
