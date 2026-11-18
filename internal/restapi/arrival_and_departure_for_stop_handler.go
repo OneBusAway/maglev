@@ -146,7 +146,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 	stopID := utils.FormCombinedID(stopAgencyID, stopCode)
 
-	ctx := r.Context()
+	// The vehicle lookup, cancellation check, predictions and status each build
+	// the same block trip list and snapshot, so they share one request cache.
+	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
 	reqLogger := logging.ForComponent(ctx, "http_server")
 
 	// Capture parsing errors (syntax validation only — localization happens below

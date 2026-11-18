@@ -983,6 +983,7 @@ func TestTripUpdateVehicleHandlers_ShareBlockSnapshots(t *testing.T) {
 	}{
 		{name: "trip-for-vehicle", endpoint: fmt.Sprintf("/api/where/trip-for-vehicle/%s.json?key=TEST", plannedVehicleID), maxQueries: 65},
 		{name: "trip-details with the vehicle", endpoint: fmt.Sprintf("/api/where/trip-details/dp-agency_%s.json?key=TEST&vehicleId=%s", tripID, plannedVehicleID), maxQueries: 60},
+		{name: "arrival-and-departure-for-stop", endpoint: fmt.Sprintf("/api/where/arrival-and-departure-for-stop/dp-agency_dp-stop.json?key=TEST&tripId=dp-agency_%s&serviceDate=%d", tripID, serviceDate.UnixMilli()), maxQueries: 45},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -993,7 +994,7 @@ func TestTripUpdateVehicleHandlers_ShareBlockSnapshots(t *testing.T) {
 			api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(tripID, now))
 			counter := countQueries(t, api)
 
-			resp, _ := callAPIHandler[TripDetailsResponse](t, api, tt.endpoint)
+			resp, _ := callAPIHandler[struct{}](t, api, tt.endpoint)
 
 			require.Equal(t, http.StatusOK, resp.StatusCode)
 			assert.LessOrEqual(t, counter.queries, tt.maxQueries)
