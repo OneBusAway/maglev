@@ -2219,8 +2219,8 @@ func TestSelectFrequency(t *testing.T) {
 
 	assert.Equal(t, &freqs[1], selectFrequency(freqs, serviceDate, serviceDate.Add(10*time.Hour)),
 		"the window containing the effective time wins")
-	assert.Equal(t, &freqs[0], selectFrequency(freqs, serviceDate, serviceDate.Add(12*time.Hour)),
-		"end_time is exclusive; no match falls back to the first row")
+	assert.Equal(t, &freqs[1], selectFrequency(freqs, serviceDate, serviceDate.Add(12*time.Hour)),
+		"end_time is exclusive; no containing window falls back to the closest row")
 	assert.Equal(t, &freqs[0], selectFrequency(freqs, serviceDate, serviceDate.Add(3*time.Hour)),
 		"a time before all windows falls back to the first row")
 }
