@@ -34,7 +34,9 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ctx := r.Context()
+	// BuildTripStatus and BuildTripSchedule look up the same trip, stop-time,
+	// shape and frequency rows; the read memo fetches each once.
+	ctx := gtfsdb.WithReadMemo(r.Context())
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
@@ -66,7 +68,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	serviceStart := date.Start(loc)
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
-	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	freqRows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
