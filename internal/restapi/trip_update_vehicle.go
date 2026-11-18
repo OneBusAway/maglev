@@ -242,14 +242,23 @@ func (api *RestAPI) arrivalCanceled(ctx context.Context, tripID string, vehicle 
 // a trip update is running tripID on. A trip past midnight belongs to the previous
 // date, which is the only case that differs from the date of at.
 func (api *RestAPI) tripUpdateVehicleServiceDate(ctx context.Context, tripID string, at time.Time, location *time.Location) servicedate.Date {
+	date, _ := api.tripUpdateVehicleOnServiceDate(ctx, tripID, at, location)
+	return date
+}
+
+// tripUpdateVehicleOnServiceDate returns tripUpdateVehicleServiceDate's date
+// together with the vehicle built for it, or nil when neither date builds one,
+// so a caller that needs both builds the vehicle once.
+func (api *RestAPI) tripUpdateVehicleOnServiceDate(ctx context.Context, tripID string, at time.Time, location *time.Location) (servicedate.Date, *gtfs.Vehicle) {
 	today := servicedate.Of(at)
-	yesterday := today.AddDays(-1)
-	runsYesterday := api.tripUpdateVehicleForTrip(ctx, tripID, today.Midnight(location)) == nil &&
-		api.tripUpdateVehicleForTrip(ctx, tripID, yesterday.Midnight(location)) != nil
-	if runsYesterday {
-		return yesterday
+	if vehicle := api.tripUpdateVehicleForTrip(ctx, tripID, today.Midnight(location)); vehicle != nil {
+		return today, vehicle
 	}
-	return today
+	yesterday := today.AddDays(-1)
+	if vehicle := api.tripUpdateVehicleForTrip(ctx, tripID, yesterday.Midnight(location)); vehicle != nil {
+		return yesterday, vehicle
+	}
+	return today, nil
 }
 
 // requestedVehicleForTrip applies the automatic lookup's record checks before
@@ -408,11 +417,11 @@ func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID,
 		return tripID, true
 	}
 	now := api.Clock.Now().In(location)
-	serviceDate := api.tripUpdateVehicleServiceDate(ctx, tripID, now, location).Midnight(location)
-	vehicle := api.tripUpdateVehicleForTrip(ctx, tripID, serviceDate)
+	date, vehicle := api.tripUpdateVehicleOnServiceDate(ctx, tripID, now, location)
 	if vehicle == nil || vehicle.ID.ID != feedVehicleID {
 		return "", false
 	}
+	serviceDate := date.Midnight(location)
 	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
 	deviation, _ := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceDate, now)
 	snap := api.statusBlockSnapshot(ctx, models.NewTripStatus(), tripStatusInput{
