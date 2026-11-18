@@ -405,7 +405,8 @@ FROM
     INNER JOIN stop_times st ON s.id = st.stop_id;
 
 -- name: GetRoutesForStop :many
-SELECT DISTINCT
+-- Reads the routes stop_routes lists for the stop rather than walking its stop_times.
+SELECT
     routes.id,
     routes.agency_id,
     routes.short_name,
@@ -416,11 +417,10 @@ SELECT DISTINCT
     routes.color,
     routes.text_color
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id = ?;
+    stop_routes.stop_id = ?;
 
 -- name: GetShapeByID :many
 SELECT
@@ -671,16 +671,19 @@ ORDER BY
     stop_routes.stop_id ASC;
 
 -- name: GetRouteIDsForStops :many
-SELECT DISTINCT
+-- Reads the (stop, route) pairs stop_routes holds rather than walking every stop_time at
+-- these stops. Returns the route names too, so callers can order each stop's routes by name.
+SELECT
     routes.id AS route_id,
     routes.agency_id,
-    stop_times.stop_id
+    routes.short_name,
+    routes.long_name,
+    stop_routes.stop_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'));
+    stop_routes.stop_id IN (sqlc.slice('stop_ids'));
 
 -- name: GetActiveRouteIDsForStopsOnDate :many
 SELECT DISTINCT

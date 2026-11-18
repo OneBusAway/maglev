@@ -200,6 +200,7 @@ func buildStopsList(ctx context.Context, api *RestAPI, agencyID string, stops []
 	if err != nil {
 		return nil, err
 	}
+	utils.SortRouteIDsForStopsRowsByName(routeRows)
 
 	// Organize Routes in Memory
 	routesMap := make(map[string][]string)
