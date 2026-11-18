@@ -1772,14 +1772,22 @@ SELECT
 FROM
     trips t
         JOIN
+    routes r ON r.id = t.route_id
+        JOIN
     stop_times st ON t.id = st.trip_id
         JOIN
     stops s ON st.stop_id = s.id
 WHERE
-    t.block_id = ?
+    t.block_id = ?1
+    AND r.agency_id = ?2
 ORDER BY
     t.id, st.stop_sequence
 `
+
+type GetBlockDetailsParams struct {
+	BlockID  sql.NullString
+	AgencyID string
+}
 
 type GetBlockDetailsRow struct {
 	ServiceID     string
@@ -1795,8 +1803,10 @@ type GetBlockDetailsRow struct {
 	Lon           float64
 }
 
-func (q *Queries) GetBlockDetails(ctx context.Context, blockID sql.NullString) ([]GetBlockDetailsRow, error) {
-	rows, err := q.query(ctx, q.getBlockDetailsStmt, getBlockDetails, blockID)
+// A block is keyed by agency and block_id, as in Java, so trips on another
+// agency's routes that share the block_id belong to that agency's block.
+func (q *Queries) GetBlockDetails(ctx context.Context, arg GetBlockDetailsParams) ([]GetBlockDetailsRow, error) {
+	rows, err := q.query(ctx, q.getBlockDetailsStmt, getBlockDetails, arg.BlockID, arg.AgencyID)
 	if err != nil {
 		return nil, err
 	}

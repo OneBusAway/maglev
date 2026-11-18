@@ -67,7 +67,10 @@ func (api *RestAPI) getBlockRows(ctx context.Context, agencyID, blockID string) 
 		return nil, err
 	}
 	if hasTrip > 0 {
-		return api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, nulls.String(blockID))
+		return api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, gtfsdb.GetBlockDetailsParams{
+			BlockID:  nulls.String(blockID),
+			AgencyID: agencyID,
+		})
 	}
 
 	tripRows, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetailsForTrip(ctx, gtfsdb.GetBlockDetailsForTripParams{

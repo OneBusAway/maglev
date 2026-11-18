@@ -320,3 +320,46 @@ func TestBlockHandlerBlocklessTrip(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, respOther.StatusCode)
 	assert.Equal(t, http.StatusNotFound, modelOther.Code)
 }
+
+// TestBlockHandlerCrossAgencyBlock verifies that a block_id shared by two
+// agencies' trips is two blocks, one per agency, as in Java: each request
+// returns only the trips whose route belongs to the requested agency.
+func TestBlockHandlerCrossAgencyBlock(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "block-cross-agency.zip", crossAgencyInterlineFiles())
+
+	tests := []struct {
+		name      string
+		agencyID  string
+		tripID    string
+		routeID   string
+		serviceID string
+	}{
+		{"first agency", tripsForRouteAgencyID, "tfr-xa", tripsForRouteRouteID, "tfr-svc-today"},
+		{"second agency", tfrAgencyB, "tfr-xb", "tfr-route-otr", "tfr-svc-yest"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blockID := utils.FormCombinedID(tt.agencyID, "tfr-xblock")
+			wantTripID := utils.FormCombinedID(tt.agencyID, tt.tripID)
+			wantServiceID := utils.FormCombinedID(tt.agencyID, tt.serviceID)
+
+			resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL(blockID))
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, blockID, model.Data.Entry.ID)
+
+			require.Len(t, model.Data.Entry.Configurations, 1)
+			config := model.Data.Entry.Configurations[0]
+			assert.Equal(t, []string{wantServiceID}, config.ActiveServiceIds)
+			require.Len(t, config.Trips, 1)
+			assert.Equal(t, wantTripID, config.Trips[0].TripId)
+
+			require.Len(t, model.Data.References.Trips, 1)
+			trip := model.Data.References.Trips[0]
+			assert.Equal(t, wantTripID, trip.ID)
+			assert.Equal(t, utils.FormCombinedID(tt.agencyID, tt.routeID), trip.RouteID)
+			assert.Equal(t, wantServiceID, trip.ServiceID)
+			assert.Equal(t, blockID, trip.BlockID)
+		})
+	}
+}

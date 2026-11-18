@@ -902,6 +902,8 @@ ORDER BY
     t.id ASC, st.stop_sequence ASC;
 
 -- name: GetBlockDetails :many
+-- A block is keyed by agency and block_id, as in Java, so trips on another
+-- agency's routes that share the block_id belong to that agency's block.
 SELECT
     t.service_id,
     t.id as trip_id,
@@ -917,11 +919,14 @@ SELECT
 FROM
     trips t
         JOIN
+    routes r ON r.id = t.route_id
+        JOIN
     stop_times st ON t.id = st.trip_id
         JOIN
     stops s ON st.stop_id = s.id
 WHERE
-    t.block_id = ?
+    t.block_id = sqlc.arg(block_id)
+    AND r.agency_id = sqlc.arg(agency_id)
 ORDER BY
     t.id, st.stop_sequence;
 
