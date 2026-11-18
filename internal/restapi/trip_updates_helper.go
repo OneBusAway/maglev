@@ -51,30 +51,40 @@ func (api *RestAPI) canUseBlockPredictionFallback(tripID, stopID string, sequenc
 	if target != nil || prior != nil {
 		return false
 	}
-	for _, stu := range update.StopTimeUpdates {
-		if stu.StopID != nil && *stu.StopID == stopID && stu.StopSequence == nil {
-			if _, resolved := stopTimeUpdateSequence(stu, schedule.stopIDs); !resolved {
-				return false
-			}
-		}
+	if hasAmbiguousTargetUpdate(update.StopTimeUpdates, stopID, schedule) {
+		return false
 	}
-	for _, stu := range update.StopTimeUpdates {
+	if hasLaterScheduledTiming(update.StopTimeUpdates, sequence, schedule) {
+		return true
+	}
+	return api.hasOtherBlockTripTiming(tripID, extras)
+}
+
+func hasAmbiguousTargetUpdate(updates []gtfs.StopTimeUpdate, stopID string, schedule tripSchedule) bool {
+	return slices.ContainsFunc(updates, func(stu gtfs.StopTimeUpdate) bool {
+		if stu.StopID == nil || *stu.StopID != stopID || stu.StopSequence != nil {
+			return false
+		}
+		_, resolved := stopTimeUpdateSequence(stu, schedule.stopIDs)
+		return !resolved
+	})
+}
+
+func hasLaterScheduledTiming(updates []gtfs.StopTimeUpdate, sequence int64, schedule tripSchedule) bool {
+	return slices.ContainsFunc(updates, func(stu gtfs.StopTimeUpdate) bool {
 		later, resolved := stopTimeUpdateSequence(stu, schedule.stopIDs)
 		_, scheduled := schedule.stopIDs[later]
-		if resolved && scheduled && later > sequence && stopUpdateHasTiming(stu) {
-			return true
-		}
-	}
+		return resolved && scheduled && later > sequence && stopUpdateHasTiming(stu)
+	})
+}
+
+func (api *RestAPI) hasOtherBlockTripTiming(tripID string, extras *tripStatusExtras) bool {
 	if extras == nil {
 		return false
 	}
-	for _, source := range api.collectBlockTripUpdates(extras.blockTripIDs) {
-		if source.tripID != tripID && tripUpdateHasTiming(source.tu) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(api.collectBlockTripUpdates(extras.blockTripIDs), func(source tripUpdateForTrip) bool {
+		return source.tripID != tripID && tripUpdateHasTiming(source.tu)
+	})
 }
 
 func tripUpdateHasTiming(update gtfs.Trip) bool {

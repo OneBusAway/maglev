@@ -23,15 +23,16 @@ func TestBlockFallbackTimingBoundaries(t *testing.T) {
 	seq := uint32(1)
 	delay := 174 * time.Second
 	tests := []struct {
-		name       string
-		update     *gtfs.StopTimeUpdate
-		repeatStop bool
-		canceled   bool
-		emptyTrip  bool
-		wantTimes  bool
-		rejected   bool
-		tripDelay  *time.Duration
-		noVehicle  bool
+		name          string
+		update        *gtfs.StopTimeUpdate
+		repeatStop    bool
+		canceled      bool
+		emptyTrip     bool
+		wantTimes     bool
+		rejected      bool
+		tripDelay     *time.Duration
+		noVehicle     bool
+		earlierUpdate *gtfs.Trip
 	}{
 		{name: "block-fallback", wantTimes: true},
 		{name: "trip-delay-over-hour", tripDelay: durationPointer(time.Hour + time.Second), rejected: true},
@@ -40,6 +41,25 @@ func TestBlockFallbackTimingBoundaries(t *testing.T) {
 		{name: "trip-delay-one-hour", tripDelay: durationPointer(time.Hour), wantTimes: true},
 		{name: "trip-delay-negative-hour", tripDelay: durationPointer(-time.Hour), wantTimes: true},
 		{name: "empty-trip-update", emptyTrip: true, wantTimes: true},
+		{name: "earlier-trip-level-delay", emptyTrip: true, wantTimes: true, earlierUpdate: &gtfs.Trip{Delay: &delay}},
+		{
+			name: "earlier-all-skipped", emptyTrip: true,
+			earlierUpdate: &gtfs.Trip{StopTimeUpdates: []gtfs.StopTimeUpdate{{
+				StopSequence: &seq, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED,
+				Arrival: &gtfs.StopTimeEvent{Delay: &delay},
+			}}},
+		},
+		{
+			name: "earlier-all-no-data", emptyTrip: true,
+			earlierUpdate: &gtfs.Trip{StopTimeUpdates: []gtfs.StopTimeUpdate{{
+				StopSequence: &seq, ScheduleRelationship: gtfsrt.TripUpdate_StopTimeUpdate_NO_DATA,
+				Arrival: &gtfs.StopTimeEvent{Delay: &delay},
+			}}},
+		},
+		{
+			name: "earlier-canceled", emptyTrip: true,
+			earlierUpdate: &gtfs.Trip{ID: gtfs.TripID{ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED}, Delay: &delay},
+		},
 		{name: "later-stop-update", repeatStop: true, wantTimes: true, update: &gtfs.StopTimeUpdate{StopSequence: uint32Pointer(3), Arrival: &gtfs.StopTimeEvent{Delay: &delay}}},
 		{name: "rejected-downstream-update", repeatStop: true, rejected: true, update: &gtfs.StopTimeUpdate{StopSequence: uint32Pointer(3), Arrival: &gtfs.StopTimeEvent{Delay: durationPointer(2 * time.Hour)}}},
 		{name: "empty-scheduled", update: &gtfs.StopTimeUpdate{StopSequence: &seq}},
@@ -56,7 +76,19 @@ func TestBlockFallbackTimingBoundaries(t *testing.T) {
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			stop, combinedStop, trip, _ := setupDelayPropTestData(t, api, 1)
 			// Rejected cases have only the outlier source, matching the reported regression.
-			if !tt.rejected {
+			if tt.earlierUpdate != nil {
+				earlierTrip := addEarlierBlockTrip(t, api)
+				// Match imported trip bounds so block updates are considered in
+				// start-time order, including the earlier canceled source.
+				_, err := api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(), `UPDATE trips SET
+					min_arrival_time = (SELECT MIN(arrival_time) FROM stop_times WHERE trip_id = trips.id),
+					max_departure_time = (SELECT MAX(departure_time) FROM stop_times WHERE trip_id = trips.id)
+					WHERE id IN (?, ?)`, earlierTrip, trip)
+				require.NoError(t, err)
+				update := *tt.earlierUpdate
+				update.ID.ID = earlierTrip
+				api.GtfsManager.MockAddFullTripUpdate(update)
+			} else if !tt.rejected {
 				addEarlierBlockTripSTU(t, api, delay)
 			}
 			if tt.repeatStop {
