@@ -1556,3 +1556,23 @@ func TestRequestedVehicleForTrip_AgencyIDWithUnderscore(t *testing.T) {
 	require.NotNil(t, vehicle)
 	assert.Equal(t, otherVehicleID, vehicle.ID.ID)
 }
+
+// Each named update on a block checks its trip's agency while building an
+// arrival row's vehicle, so a request looks each trip's agency up once.
+func TestTripAgencyID_CachedPerRequest(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(8*time.Hour)))
+	defer api.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	ctx := WithSnapshotCache(context.Background(), newSnapshotCache())
+	first, firstKnown := api.tripAgencyID(ctx, tripID)
+	counter := countQueries(t, api)
+
+	again, againKnown := api.tripAgencyID(ctx, tripID)
+
+	assert.Zero(t, counter.queries)
+	assert.True(t, firstKnown)
+	assert.Equal(t, "dp-agency", first)
+	assert.Equal(t, againKnown, firstKnown)
+	assert.Equal(t, first, again)
+}

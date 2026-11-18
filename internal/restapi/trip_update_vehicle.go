@@ -425,7 +425,22 @@ func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID,
 	return snap.ActiveTripID, true
 }
 
+// tripAgencyID returns the agency of tripID's route. A request-scoped
+// snapshotCache (see WithSnapshotCache) memoizes it per trip.
 func (api *RestAPI) tripAgencyID(ctx context.Context, tripID string) (string, bool) {
+	cache := snapshotCacheFrom(ctx)
+	if cache == nil {
+		return api.loadTripAgencyID(ctx, tripID)
+	}
+	agency, cached := cache.tripAgencies[tripID]
+	if !cached {
+		agency.agencyID, agency.known = api.loadTripAgencyID(ctx, tripID)
+		cache.tripAgencies[tripID] = agency
+	}
+	return agency.agencyID, agency.known
+}
+
+func (api *RestAPI) loadTripAgencyID(ctx context.Context, tripID string) (string, bool) {
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
 	if err != nil {
 		return "", false
