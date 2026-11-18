@@ -538,7 +538,7 @@ func (api *RestAPI) combinedIDsForNearbyStops(ctx context.Context, bareIDs []str
 // service-interval filters, measuring each against the centre of the search
 // area and ordering nearest first. A nil servesRouteType means no route-type
 // filter is active, so every stop is kept rather than none.
-func buildNearbyResults(nearbyStops []gtfsdb.Stop, servesRouteType map[string]bool, activeOnDate map[string]bool, combinedByBare map[string]string, loc *internalgtfs.LocationParams) []models.StopWithDistance {
+func buildNearbyResults(nearbyStops []gtfsdb.Stop, servesRouteType, activeOnDate map[string]bool, combinedByBare map[string]string, loc *internalgtfs.LocationParams) []models.StopWithDistance {
 	results := make([]models.StopWithDistance, 0, len(nearbyStops))
 	for _, stop := range nearbyStops {
 		if servesRouteType != nil && !servesRouteType[stop.ID] {
