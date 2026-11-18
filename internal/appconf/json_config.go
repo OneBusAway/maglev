@@ -34,7 +34,9 @@ const RedactedValue = "***REDACTED***"
 // credentials and passwords, AuthHeaderValue, and every Headers value.
 // Update it when adding a field that can hold a secret.
 func (feed GtfsStaticFeed) Redacted() GtfsStaticFeed {
-	feed.URL = RedactURL(feed.URL)
+	if IsHTTPURL(feed.URL) {
+		feed.URL = RedactURL(feed.URL)
+	}
 	if feed.AuthHeaderValue != "" {
 		feed.AuthHeaderValue = RedactedValue
 	}

@@ -759,6 +759,10 @@ func TestGtfsStaticFeedRedacted(t *testing.T) {
 	localFeed := GtfsStaticFeed{URL: "./feeds/local-static.zip"}
 	assert.Equal(t, "./feeds/local-static.zip", localFeed.Redacted().URL,
 		"normal local file paths should remain readable in the config dump")
+
+	percentPathFeed := GtfsStaticFeed{URL: "./feeds/100%.zip"}
+	assert.Equal(t, "./feeds/100%.zip", percentPathFeed.Redacted().URL,
+		"local paths containing percent signs should remain readable")
 }
 
 func TestRedactURL(t *testing.T) {
