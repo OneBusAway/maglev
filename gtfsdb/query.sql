@@ -930,16 +930,6 @@ WHERE
 ORDER BY
     t.id, st.stop_sequence;
 
--- name: BlockHasTripForAgency :one
--- Returns 1 if a trip on one of the agency's routes is in the block, 0 otherwise.
-SELECT CAST(EXISTS (
-    SELECT 1
-    FROM trips t
-    JOIN routes r ON r.id = t.route_id
-    WHERE t.block_id = sqlc.arg(block_id)
-      AND r.agency_id = sqlc.arg(agency_id)
-) AS INTEGER) AS has_trip;
-
 -- name: GetTripIDsForStops :many
 -- GetTripIDsForStops returns the IDs of the trips serving any of these stops.
 -- DISTINCT on trip_id alone so the existing (stop_id, trip_id) index covers it:

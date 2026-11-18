@@ -59,18 +59,12 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *RestAPI) getBlockRows(ctx context.Context, agencyID, blockID string) ([]gtfsdb.GetBlockDetailsRow, error) {
-	hasTrip, err := api.GtfsManager.GtfsDB.Queries.BlockHasTripForAgency(ctx, gtfsdb.BlockHasTripForAgencyParams{
+	blockRows, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, gtfsdb.GetBlockDetailsParams{
 		BlockID:  nulls.String(blockID),
 		AgencyID: agencyID,
 	})
-	if err != nil {
-		return nil, err
-	}
-	if hasTrip > 0 {
-		return api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, gtfsdb.GetBlockDetailsParams{
-			BlockID:  nulls.String(blockID),
-			AgencyID: agencyID,
-		})
+	if err != nil || len(blockRows) > 0 {
+		return blockRows, err
 	}
 
 	tripRows, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetailsForTrip(ctx, gtfsdb.GetBlockDetailsForTripParams{
