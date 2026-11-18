@@ -555,19 +555,12 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		return false, fmt.Errorf("failed to bulk update trip time bounds: %w", err)
 	}
 
-	logging.LogOperation(logger, "building_stop_agency_index")
-	if err := buildStopAgencyIndex(ctx, qtx); err != nil {
-		logging.LogError(logger, "Unable to build stop agency index", err)
+	logging.LogOperation(logger, "building_stop_indexes")
+	if err := buildStopIndexes(ctx, qtx); err != nil {
+		logging.LogError(logger, "Unable to build stop indexes", err)
 		return false, err
 	}
-	logging.LogOperation(logger, "stop_agency_index_built")
-
-	logging.LogOperation(logger, "building_stop_route_index")
-	if err := buildStopRouteIndex(ctx, qtx); err != nil {
-		logging.LogError(logger, "Unable to build stop route index", err)
-		return false, err
-	}
-	logging.LogOperation(logger, "stop_route_index_built")
+	logging.LogOperation(logger, "stop_indexes_built")
 
 	logging.LogOperation(logger, "building_block_layover_index")
 	if err := c.buildBlockLayoverIndex(ctx, allTripEnds, tx); err != nil {
@@ -631,9 +624,19 @@ func shapePointParams(shapeID string, idx int, pt gtfs.ShapePoint) CreateShapePa
 	}
 }
 
+// buildStopIndexes rebuilds the stop indexes derived from stop_times: stop_routes, then
+// stop_agencies, which is built from it.
+func buildStopIndexes(ctx context.Context, qtx *Queries) error {
+	if err := buildStopRouteIndex(ctx, qtx); err != nil {
+		return err
+	}
+	return buildStopAgencyIndex(ctx, qtx)
+}
+
 // buildStopAgencyIndex repopulates stop_agencies from the routes currently serving each
-// stop. The table is rebuilt rather than updated in place because an import replaces the
-// whole feed, and a stop can change agency or lose its routes between feed versions.
+// stop, read from stop_routes, which must already be built. The table is rebuilt rather
+// than updated in place because an import replaces the whole feed, and a stop can change
+// agency or lose its routes between feed versions.
 func buildStopAgencyIndex(ctx context.Context, qtx *Queries) error {
 	if err := qtx.ClearStopAgencies(ctx); err != nil {
 		return fmt.Errorf("failed to clear stop agencies: %w", err)

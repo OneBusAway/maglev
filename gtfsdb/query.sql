@@ -180,15 +180,16 @@ WHERE min_arrival_time IS NULL OR max_departure_time IS NULL;
 DELETE FROM stop_agencies WHERE TRUE;
 
 -- name: BuildStopAgencies :exec
+-- Reads stop_routes, so build that first; it already holds every (stop, route) pair a
+-- trip produces, which saves a second walk over stop_times.
 INSERT INTO
     stop_agencies (stop_id, agency_id)
 SELECT DISTINCT
-    stop_times.stop_id,
+    stop_routes.stop_id,
     routes.agency_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id;
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id;
 
 -- name: ClearStopRoutes :exec
 DELETE FROM stop_routes
