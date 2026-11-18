@@ -290,7 +290,7 @@ func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request
 
 func (api *RestAPI) getTripOr404(ctx context.Context, w http.ResponseWriter, r *http.Request, agencyID, vehicleID, tripID string) (gtfsdb.Trip, bool) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		// If the trip doesn't exist in our DB (sql.ErrNoRows), return 404 instead of 500
 		if errors.Is(err, sql.ErrNoRows) {
