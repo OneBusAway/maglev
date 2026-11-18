@@ -1577,3 +1577,49 @@ func TestTripAgencyID_CachedPerRequest(t *testing.T) {
 	assert.Equal(t, againKnown, firstKnown)
 	assert.Equal(t, first, again)
 }
+
+// trip-for-vehicle reports a vehicle only while Java holds a record for it, as
+// trip-details and the arrivals do. A vehicle go-gtfs builds from a trip update
+// at the vehicle positions URL takes the trip-update path, with its record checks.
+func TestTripForVehicleHandler_RecordChecks(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + time.Minute)
+	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer setupAPI.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
+
+	addPositionVehicle := func(api *RestAPI, _ gtfs.Trip) {
+		api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+	}
+	addLibraryVehicle := func(api *RestAPI, tripUpdate gtfs.Trip) {
+		tripUpdate.IsEntityInMessage = true
+		api.GtfsManager.MockSetAgencyVehicles("_test", "dp-agency", []gtfs.Vehicle{{ID: tripUpdate.Vehicle.ID, Trip: &tripUpdate}})
+	}
+	tests := []struct {
+		name       string
+		addVehicle func(*RestAPI, gtfs.Trip)
+		requestID  string
+		recordAge  time.Duration
+		wantCode   int
+	}{
+		{name: "position vehicle with a fresh record", addVehicle: addPositionVehicle, requestID: "dp-agency_bus", wantCode: http.StatusOK},
+		{name: "position vehicle with an expired record", addVehicle: addPositionVehicle, requestID: "dp-agency_bus", recordAge: 20 * time.Minute, wantCode: http.StatusNotFound},
+		{name: "library trip-update vehicle with a fresh record", addVehicle: addLibraryVehicle, requestID: "dp-agency_bus", wantCode: http.StatusOK},
+		{name: "library trip-update vehicle with an expired record", addVehicle: addLibraryVehicle, requestID: "dp-agency_bus", recordAge: 20 * time.Minute, wantCode: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			tripUpdate := plannedVehicleTripUpdate(tripID, now.Add(-tt.recordAge))
+			tripUpdate.Vehicle.ID.ID = "bus"
+			tt.addVehicle(api, tripUpdate)
+			api.GtfsManager.MockAddFullTripUpdate(tripUpdate)
+
+			resp, _ := callAPIHandler[struct{}](t, api, fmt.Sprintf("/api/where/trip-for-vehicle/%s.json?key=TEST", tt.requestID))
+
+			assert.Equal(t, tt.wantCode, resp.StatusCode)
+		})
+	}
+}

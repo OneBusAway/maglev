@@ -64,7 +64,9 @@ func referencedSituationIDs(t *testing.T, body map[string]any) map[string]bool {
 // situationIds: each ID must resolve to an entry in references.situations, or
 // clients are left holding a dangling pointer.
 func TestSituationIDsResolveToReferences(t *testing.T) {
-	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	// At the fixture's feed time, so trip-for-vehicle still holds the vehicle's
+	// record: the trip updates are from 2025 and expire under the real clock.
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(vehiclesRealTimeDataClock))
 	defer cleanup()
 
 	// createTestApiWithRealTimeData returns before the first feed poll lands, and

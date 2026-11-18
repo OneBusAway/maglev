@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
@@ -67,6 +68,11 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	}
 	serviceDate := date.Midnight(loc)
 	serviceStart := date.Start(loc)
+
+	if api.positionVehicleRecordExpired(ctx, vehicleID, serviceDate) {
+		api.sendNotFound(w, r)
+		return
+	}
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
 	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
@@ -262,9 +268,13 @@ func referencedStopIDs(status *models.TripStatus, schedule *models.Schedule) ([]
 // getVehicleTripIDOr404 returns the vehicle's trip and the agency that trip
 // belongs to. The agency differs from the requested one only for a raw
 // trip-update vehicle ID, whose first part is not an agency: see responseVehicleID.
+//
+// A vehicle known only from a trip update, including one go-gtfs lists when a
+// feed serves trip updates at its vehicle positions URL, is found through its
+// block record, so it gets the same record checks as the arrivals reporting it.
 func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request, agencyID, vehicleID string) (string, string, bool) {
 	vehicle, err := api.GtfsManager.GetVehicleByID(vehicleID)
-	if err != nil {
+	if err != nil || isTripUpdateVehicle(vehicle) {
 		tripAgencyID, tripID, found := api.tripUpdateVehicleTrip(r.Context(), agencyID, vehicleID)
 		if !found {
 			api.sendNotFound(w, r)
@@ -293,6 +303,17 @@ func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request
 		return "", "", false
 	}
 	return agencyID, vehicle.Trip.ID.ID, true
+}
+
+// positionVehicleRecordExpired reports whether Java has dropped the record of the
+// position vehicle with this raw ID, so it reports no trip. A trip-update vehicle's
+// lookup has already checked its record.
+func (api *RestAPI) positionVehicleRecordExpired(ctx context.Context, rawVehicleID string, serviceDate time.Time) bool {
+	vehicle, err := api.GtfsManager.GetVehicleByID(rawVehicleID)
+	if err != nil || isTripUpdateVehicle(vehicle) {
+		return false
+	}
+	return api.vehicleRecordExpired(api.vehicleBlockTripUpdates(ctx, vehicle, serviceDate))
 }
 
 func (api *RestAPI) getTripOr404(ctx context.Context, w http.ResponseWriter, r *http.Request, agencyID, vehicleID, tripID string) (gtfsdb.Trip, bool) {
