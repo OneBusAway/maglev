@@ -1092,7 +1092,7 @@ func (api *RestAPI) calculateBatchStopDistances(
 	}
 	if len(cumulativeDistances) == len(shapePoints) {
 		stopByID := stopByIDFromCoords(timeStops, stopCoords)
-		distances = projectStopsInSequence(timeStops, stopByID, shapePoints, cumulativeDistances)
+		distances = projectStopsInSequence(stopIDsOf(timeStops), stopByID, shapePoints, cumulativeDistances)
 	} else {
 		distances = make([]float64, len(timeStops))
 	}
