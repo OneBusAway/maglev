@@ -215,17 +215,19 @@ func TestCurrentTimeHandler_EnvelopeMatchesEntryTime(t *testing.T) {
 	clk := &advancingClock{now: fixedTime, step: time.Millisecond}
 	api := createTestApiWithClock(t, clk)
 
-	_, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/current-time.json?key=TEST")
+	resp, model := serveApiAndRetrieveEndpoint(t, api, "/api/where/current-time.json?key=TEST")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	responseData, ok := model.Data.(map[string]any)
 	require.True(t, ok, "could not cast data to expected type")
 	entry, ok := responseData["entry"].(map[string]any)
 	require.True(t, ok, "could not find entry in response data")
 
-	assert.Equal(t, 1, clk.n, "handler must sample the clock once")
+	// The expiry middleware samples the shared clock before the handler.
+	assert.Equal(t, 2, clk.n)
+	assert.Equal(t, fixedTime.Add(clk.step).UnixMilli(), model.CurrentTime)
 	assert.Equal(t, float64(model.CurrentTime), entry["time"],
 		"envelope currentTime and data.entry.time must be the same instant")
-	assert.Equal(t, fixedTime.UnixMilli(), model.CurrentTime)
 }
 
 func TestAgencyTimezone_EmptyAgencies(t *testing.T) {
