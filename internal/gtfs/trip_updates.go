@@ -69,16 +69,34 @@ func (updates AgencyTripUpdates) Encoded(encode func(AgencyTripUpdates) ([]byte,
 	return updates.encoded.body, updates.encoded.err
 }
 
-// TripUpdateEntityID is a trip update's export entity ID: the trip ID, then
-// the start date and the start time when set, so it changes only with the
-// trip's identity.
-func TripUpdateEntityID(trip gtfs.TripID) string {
-	parts := []string{trip.ID}
+var tripIDEntityEscaper = strings.NewReplacer("%", "%25", "_", "%5F")
+
+// tripUpdateIdentity uses the date and time as serialized in the descriptor.
+// An empty date or time means the corresponding field was absent.
+type tripUpdateIdentity struct {
+	tripID, startDate, startTime string
+}
+
+func exportTripUpdateIdentity(trip gtfs.TripID) tripUpdateIdentity {
+	identity := tripUpdateIdentity{tripID: trip.ID}
 	if trip.HasStartDate {
-		parts = append(parts, trip.StartDate.Format(ServiceDateLayout))
+		identity.startDate = trip.StartDate.Format(ServiceDateLayout)
 	}
 	if trip.HasStartTime {
-		parts = append(parts, FormatServiceTime(trip.StartTime))
+		identity.startTime = FormatServiceTime(trip.StartTime)
+	}
+	return identity
+}
+
+// entityID escapes the trip ID before joining the optional date and time.
+// Escaping percent signs preserves literal escape sequences in trip IDs.
+func (identity tripUpdateIdentity) entityID() string {
+	parts := []string{tripIDEntityEscaper.Replace(identity.tripID)}
+	if identity.startDate != "" {
+		parts = append(parts, identity.startDate)
+	}
+	if identity.startTime != "" {
+		parts = append(parts, identity.startTime)
 	}
 	return strings.Join(parts, "_")
 }
@@ -92,13 +110,13 @@ func FormatServiceTime(sinceServiceDayStart time.Duration) string {
 
 // buildTripUpdatesByAgency assembles every agency's trip updates from the
 // per-feed trips and their ingestion-time agencies. Feeds are read in
-// configuration order, so when two feeds publish the same entity ID for an
+// configuration order, so when two feeds publish the same trip identity for an
 // agency the one listed first wins, as does the first copy within one feed.
 // feedIDs must be sorted. Caller must hold realTimeMutex.
 func (manager *Manager) buildTripUpdatesByAgency(feedIDs []string, builtAt time.Time) map[string]AgencyTripUpdates {
 	collector := tripUpdateCollector{
 		updatesByAgency: make(map[string][]TripUpdate),
-		seen:            make(map[agencyEntityKey]bool),
+		seen:            make(map[agencyTripUpdateKey]bool),
 	}
 	for _, feedID := range manager.feedIDsInConfigOrder(feedIDs) {
 		agencies := manager.feedTripAgency[feedID]
@@ -115,11 +133,16 @@ func (manager *Manager) buildTripUpdatesByAgency(feedIDs []string, builtAt time.
 	return updatesByAgency
 }
 
+type agencyTripUpdateKey struct {
+	agencyID string
+	trip     tripUpdateIdentity
+}
+
 // tripUpdateCollector files trip updates by agency, keeping the first one
-// with each entity ID.
+// with each trip identity.
 type tripUpdateCollector struct {
 	updatesByAgency map[string][]TripUpdate
-	seen            map[agencyEntityKey]bool
+	seen            map[agencyTripUpdateKey]bool
 }
 
 // add files a trip under its agency. Trips go-gtfs made up from vehicle
@@ -129,13 +152,13 @@ func (collector *tripUpdateCollector) add(trip gtfs.Trip, agencyID string, dataT
 	if !trip.IsEntityInMessage || trip.ID.ID == "" || agencyID == "" {
 		return
 	}
-	key := agencyEntityKey{agencyID: agencyID, entityID: TripUpdateEntityID(trip.ID)}
+	key := agencyTripUpdateKey{agencyID: agencyID, trip: exportTripUpdateIdentity(trip.ID)}
 	if collector.seen[key] {
 		return
 	}
 	collector.seen[key] = true
 	collector.updatesByAgency[agencyID] = append(collector.updatesByAgency[agencyID], TripUpdate{
-		EntityID:  key.entityID,
+		EntityID:  key.trip.entityID(),
 		Trip:      trip,
 		Timestamp: dataTime,
 	})
