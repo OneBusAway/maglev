@@ -2407,7 +2407,7 @@ func slackTestSnapshot(trips ...slackTestTrip) *scheduledBlockSnapshot {
 	snap := &scheduledBlockSnapshot{StopIndex: map[scheduledStopKey]int{}}
 	blockTrips := make([]blockTripData, len(trips))
 	for i, trip := range trips {
-		blockTrips[i] = blockTripData{id: trip.id, stopTimes: make([]gtfsdb.StopTime, len(trip.stops))}
+		blockTrips[i] = blockTripData{id: trip.id, stopTimes: make([]gtfsdb.GetBlockStopTimesForTripIDsRow, len(trip.stops))}
 		for k, times := range trip.stops {
 			snap.StopIndex[scheduledStopKey{TripID: trip.id, StopSequenceInTrip: k + 1}] = len(snap.Stops)
 			snap.Stops = append(snap.Stops, blockStopMetric{

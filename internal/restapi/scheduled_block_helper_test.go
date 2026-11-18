@@ -517,7 +517,10 @@ func TestLoadBlockTripData_PopulatesStopTimesAndShape(t *testing.T) {
 	d := data[0]
 	assert.Equal(t, tripID, d.id)
 	assert.NotEmpty(t, d.stopTimes, "trip should have stop times")
-	assert.Equal(t, stopIDsOf(d.stopTimes), d.stopIDs, "stop IDs should follow the stop times")
+	require.Len(t, d.stopIDs, len(d.stopTimes))
+	for i, stopTime := range d.stopTimes {
+		assert.Equal(t, stopTime.StopID, d.stopIDs[i], "stop IDs should follow the stop times")
+	}
 	assert.NotEmpty(t, d.shapePoints, "trip should have shape points")
 	assert.Greater(t, d.totalDist, 0.0, "shape total distance should be > 0")
 	assert.Len(t, d.cumDistances, len(d.shapePoints), "cum distances should align with shape points")
@@ -1065,12 +1068,14 @@ func TestApplyScheduledTripPositionToStatus_PopulatesFields(t *testing.T) {
 	data := api.loadBlockTripData(ctx, blockTripRefsFor(t, api, tripID))
 	require.Len(t, data, 1)
 	td := data[0]
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	require.NoError(t, err)
 
 	status := models.NewTripStatus()
 	// currentTime well into the trip so we get a non-zero scheduled distance.
 	currentTime := rabaServiceDate.Add(12 * time.Hour)
 	api.applyScheduledTripPositionToStatus(
-		ctx, status, td.stopTimes, td.shapePoints, td.cumDistances, currentTime, rabaServiceDate,
+		ctx, status, stopTimes, td.shapePoints, td.cumDistances, currentTime, rabaServiceDate,
 	)
 
 	assert.GreaterOrEqual(t, status.ScheduledDistanceAlongTrip, 0.0)
@@ -1262,12 +1267,12 @@ func TestAccumulateBlockSlack(t *testing.T) {
 	sharedPoint := gtfs.ShapePoint{Latitude: 47.6, Longitude: -122.3}
 	tripA := blockTripData{
 		id:          "A",
-		stopTimes:   make([]gtfsdb.StopTime, 2),
+		stopTimes:   make([]gtfsdb.GetBlockStopTimesForTripIDsRow, 2),
 		shapePoints: []gtfs.ShapePoint{{Latitude: 47.5, Longitude: -122.3}, sharedPoint},
 	}
 	tripB := blockTripData{
 		id:          "B",
-		stopTimes:   make([]gtfsdb.StopTime, 2),
+		stopTimes:   make([]gtfsdb.GetBlockStopTimesForTripIDsRow, 2),
 		shapePoints: []gtfs.ShapePoint{sharedPoint, {Latitude: 47.7, Longitude: -122.3}},
 	}
 	tripOffsets := []float64{0, 6500}

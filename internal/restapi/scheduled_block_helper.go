@@ -84,7 +84,7 @@ type scheduledStopKey struct {
 // the DB once per trip during snapshot construction.
 type blockTripData struct {
 	id           string
-	stopTimes    []gtfsdb.StopTime
+	stopTimes    []gtfsdb.GetBlockStopTimesForTripIDsRow
 	stopIDs      []string // stopTimes' stop IDs, in the same order
 	shapePoints  []gtfs.ShapePoint
 	cumDistances []float64
@@ -655,7 +655,8 @@ func (api *RestAPI) blockTripsForServiceDate(
 }
 
 // loadBlockTripData fetches stop_times and shape for every tripID in batched
-// queries (GetStopTimesForTripIDs and loadBlockShapes) instead of per trip.
+// queries (GetBlockStopTimesForTripIDs and loadBlockShapes) instead of per trip.
+// It reads only the stop-time columns the snapshot uses.
 // For a block with N trips the round-trip count no longer grows with N,
 // a real handle on the plural arrivals handler's amplification.
 //
@@ -674,11 +675,11 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, blockTrips []blockTri
 		tripIDs[i] = blockTrip.id
 	}
 
-	stopTimeRows, err := q.GetStopTimesForTripIDs(ctx, tripIDs)
+	stopTimeRows, err := q.GetBlockStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
 		return nil
 	}
-	stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripIDs))
+	stopTimesByTrip := make(map[string][]gtfsdb.GetBlockStopTimesForTripIDsRow, len(tripIDs))
 	stopIDsByTrip := make(map[string][]string, len(tripIDs))
 	for _, st := range stopTimeRows {
 		stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
