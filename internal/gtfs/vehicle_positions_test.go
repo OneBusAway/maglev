@@ -1,12 +1,17 @@
 package gtfs
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 // exportVehicle builds a vehicle with a position and the given report time.
@@ -42,6 +47,8 @@ func seedAgencyFeed(manager *Manager, feedID, agencyID string, dataTime, lastSee
 	}
 	manager.feedVehicleAgency[feedID] = agencies
 	manager.feedVehicleLastSeen[feedID] = seen
+	delete(manager.feedVehicleReportSeen, feedID)
+	manager.recordVehicleReportsSeen(feedID, vehicles, nil, lastSeen)
 	manager.feedVehicleDataTime[feedID] = dataTime
 }
 
@@ -182,6 +189,183 @@ func TestVehiclePositionsForAgency_DuplicateVehicleAfterRebuild(t *testing.T) {
 			require.Len(t, positions.Vehicles, 1)
 			assert.InDelta(t, tt.wantLat, *positions.Vehicles[0].Position.Latitude, 0.001)
 			assert.Equal(t, tt.wantStamp, positions.Timestamp)
+		})
+	}
+}
+
+func TestVehiclePositionsForAgency_DuplicateAfterPoll(t *testing.T) {
+	for _, kind := range []string{"repeated", "older correction"} {
+		t.Run(kind, func(t *testing.T) {
+			now := time.Now().UTC().Truncate(time.Second)
+			observedAt := now.Add(-2 * time.Minute)
+			futureAt := now.Add(14 * time.Minute)
+			manager := newTestManager()
+			current := exportVehicle("V1", now)
+			*current.Position.Latitude = 1
+			future := exportVehicle("V1", futureAt)
+			*future.Position.Latitude = 2
+			seedAgencyFeed(manager, "feed-a", "agency-A", now, now, current)
+			seedAgencyFeed(manager, "feed-b", "agency-A", now, observedAt, future)
+			firstSeen := manager.feedVehicleReportSeen["feed-b"][vehicleKey{id: "V1"}]
+			rebuild(manager)
+			require.InDelta(t, 1, *manager.VehiclePositionsForAgency("agency-A").Vehicles[0].Position.Latitude, 0.001)
+
+			incomingAt := futureAt
+			if kind == "older correction" {
+				incomingAt = now
+			}
+			var payloadMu sync.Mutex
+			payload := encodeVehicleFeed(now, []*gtfsrt.VehiclePosition{{
+				Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("V1")},
+				Position:  &gtfsrt.Position{Latitude: proto.Float32(2), Longitude: proto.Float32(-122.3)},
+				Timestamp: proto.Uint64(uint64(incomingAt.Unix())),
+			}})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				payloadMu.Lock()
+				defer payloadMu.Unlock()
+				_, _ = w.Write(payload)
+			}))
+			t.Cleanup(server.Close)
+			require.True(t, manager.updateFeedRealtime(t.Context(), RTFeedConfig{
+				ID: "feed-b", VehiclePositionsURL: server.URL, AgencyIDs: []string{"agency-A"},
+			}))
+			positions := manager.VehiclePositionsForAgency("agency-A")
+			require.Len(t, positions.Vehicles, 1)
+			assert.InDelta(t, 1, *positions.Vehicles[0].Position.Latitude, 0.001)
+			assert.Equal(t, now, positions.Timestamp)
+			assert.Equal(t, firstSeen, manager.feedVehicleReportSeen["feed-b"][vehicleKey{id: "V1"}])
+			assert.True(t, manager.feedVehicleLastSeen["feed-b"][vehicleKey{id: "V1"}].After(observedAt))
+
+			newerAt := futureAt.Add(time.Second)
+			payloadMu.Lock()
+			payload = encodeVehicleFeed(now.Add(time.Second), []*gtfsrt.VehiclePosition{{
+				Vehicle:   &gtfsrt.VehicleDescriptor{Id: proto.String("V1")},
+				Position:  &gtfsrt.Position{Latitude: proto.Float32(2), Longitude: proto.Float32(-122.3)},
+				Timestamp: proto.Uint64(uint64(newerAt.Unix())),
+			}})
+			payloadMu.Unlock()
+			require.True(t, manager.updateFeedRealtime(t.Context(), RTFeedConfig{
+				ID: "feed-b", VehiclePositionsURL: server.URL, AgencyIDs: []string{"agency-A"},
+			}))
+			assert.True(t, manager.feedVehicleReportSeen["feed-b"][vehicleKey{id: "V1"}].After(firstSeen))
+			positions = manager.VehiclePositionsForAgency("agency-A")
+			require.Len(t, positions.Vehicles, 1)
+			assert.Equal(t, float32(2), *positions.Vehicles[0].Position.Latitude)
+		})
+	}
+}
+
+func TestVehiclePositionsForAgency_UnknownReceiptTime(t *testing.T) {
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	manager := newTestManager()
+	seedAgencyFeed(manager, "feed-a", "agency-A", now, time.Time{}, exportVehicle("V1", now))
+	future := exportVehicle("V1", now.Add(15*time.Minute+time.Second))
+	*future.Position.Latitude = 2
+	seedAgencyFeed(manager, "feed-b", "agency-A", now, time.Time{}, future)
+	for _, builtAt := range []time.Time{now, now.Add(time.Second)} {
+		positions := manager.buildVehiclePositionsByAgency([]string{"feed-a", "feed-b"}, builtAt)["agency-A"]
+		require.Len(t, positions.Vehicles, 1)
+		assert.Equal(t, float32(2), *positions.Vehicles[0].Position.Latitude)
+	}
+}
+
+func TestVehiclePositionsForAgency_TimestampTransitions(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	futureAt := now.Add(14 * time.Minute)
+	for _, tt := range []struct {
+		name     string
+		previous time.Time
+		incoming time.Time
+	}{
+		{"timestamp appeared", time.Time{}, futureAt},
+		{"timestamp disappeared", futureAt, time.Time{}},
+		{"timestamp still absent", time.Time{}, time.Time{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := newTestManager()
+			current := exportVehicle("V1", now.Add(-time.Minute))
+			*current.Position.Latitude = 1
+			seedAgencyFeed(manager, "feed-a", "agency-A", now, now, current)
+			seedAgencyFeed(manager, "feed-b", "agency-A", now, now.Add(-2*time.Minute), exportVehicle("V1", tt.previous))
+			position := &gtfsrt.VehiclePosition{
+				Vehicle:  &gtfsrt.VehicleDescriptor{Id: proto.String("V1")},
+				Position: &gtfsrt.Position{Latitude: proto.Float32(2), Longitude: proto.Float32(-122.3)},
+			}
+			if !tt.incoming.IsZero() {
+				position.Timestamp = proto.Uint64(uint64(tt.incoming.Unix()))
+			}
+			payload := encodeVehicleFeed(now, []*gtfsrt.VehiclePosition{position})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(payload)
+			}))
+			t.Cleanup(server.Close)
+			require.True(t, manager.updateFeedRealtime(t.Context(), RTFeedConfig{
+				ID: "feed-b", VehiclePositionsURL: server.URL, AgencyIDs: []string{"agency-A"},
+			}))
+			positions := manager.VehiclePositionsForAgency("agency-A")
+			require.Len(t, positions.Vehicles, 1)
+			assert.Equal(t, float32(2), *positions.Vehicles[0].Position.Latitude)
+			assert.Equal(t, manager.feedVehicleLastSeen["feed-b"][vehicleKey{id: "V1"}],
+				manager.feedVehicleReportSeen["feed-b"][vehicleKey{id: "V1"}])
+		})
+	}
+}
+
+func TestVehiclePositionsForAgency_PublishedDuplicateSelection(t *testing.T) {
+	now := time.Now()
+	manager := newTestManager()
+	current := exportVehicle("V1", now)
+	*current.Position.Latitude = 1
+	future := exportVehicle("V1", now.Add(24*time.Hour))
+	*future.Position.Latitude = 2
+	futureFeedTime := now.Add(-time.Minute)
+	seedAgencyFeed(manager, "feed-a", "agency-A", now, now, current)
+	seedAgencyFeed(manager, "feed-b", "agency-A", futureFeedTime, now, future)
+	for _, step := range []struct {
+		name      string
+		age       time.Duration
+		wantLat   float32
+		wantStamp time.Time
+	}{
+		{"first publish", 0, 1, now},
+		{"same reports republished", 0, 1, now},
+		{"plausible report expired", 11 * time.Minute, 2, futureFeedTime},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			measuredAt := now.Add(-step.age)
+			current.Timestamp = &measuredAt
+			seedAgencyFeed(manager, "feed-a", "agency-A", now, now, current)
+			rebuild(manager)
+			positions := manager.VehiclePositionsForAgency("agency-A")
+			require.Len(t, positions.Vehicles, 1)
+			assert.Equal(t, step.wantLat, *positions.Vehicles[0].Position.Latitude)
+			assert.Equal(t, step.wantStamp, positions.Timestamp)
+		})
+	}
+}
+
+func TestVehicleReportSeenCleanup(t *testing.T) {
+	for _, action := range []string{"clear feed", "expire vehicle", "expire on successful poll"} {
+		t.Run(action, func(t *testing.T) {
+			now := time.Now()
+			manager := newTestManager()
+			seedAgencyFeed(manager, "feed", "agency", now, now.Add(-20*time.Minute), exportVehicle("V1", now))
+			switch action {
+			case "clear feed":
+				manager.clearFeedData("feed")
+			case "expire vehicle":
+				manager.cleanupExpiredVehicles("feed")
+			case "expire on successful poll":
+				payload := encodeVehicleFeed(now, nil)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = w.Write(payload)
+				}))
+				t.Cleanup(server.Close)
+				require.True(t, manager.updateFeedRealtime(t.Context(), RTFeedConfig{
+					ID: "feed", VehiclePositionsURL: server.URL, AgencyIDs: []string{"agency"},
+				}))
+			}
+			assert.Empty(t, manager.feedVehicleReportSeen["feed"])
 		})
 	}
 }

@@ -79,6 +79,8 @@ type Manager struct {
 	feedAgencyFilter map[string]map[string]bool
 	// Per-feed, per-vehicle last-seen timestamps for stale vehicle expiry
 	feedVehicleLastSeen map[string]map[vehicleKey]time.Time // feedID -> vehicleKey -> lastSeen
+	// First observation of each vehicle's stored measurement, used for clock skew.
+	feedVehicleReportSeen map[string]map[vehicleKey]time.Time
 	// Per-feed agency each vehicle was attributed to at ingestion. Vehicles
 	// without an agency have no entry.
 	feedVehicleAgency map[string]map[vehicleKey]string // feedID -> vehicleKey -> agencyID
@@ -122,6 +124,7 @@ func (manager *Manager) clearFeedData(feedID string) {
 	// Keep the last applied vehicle timestamp. Dropping it lets the next poll
 	// of the same frozen payload look new and reset the circuit breaker.
 	delete(manager.feedVehicleLastSeen, feedID)
+	delete(manager.feedVehicleReportSeen, feedID)
 	delete(manager.feedVehicleAgency, feedID)
 	delete(manager.feedVehicleDataTime, feedID)
 	delete(manager.feedRetainedVehicles, feedID)

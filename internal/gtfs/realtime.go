@@ -331,6 +331,7 @@ func (manager *Manager) cleanupExpiredVehicles(feedID string) {
 	for vid, lastSeen := range lastSeenMap {
 		if now.Sub(lastSeen) > staleVehicleTimeout {
 			delete(lastSeenMap, vid)
+			delete(manager.feedVehicleReportSeen[feedID], vid)
 			delete(manager.feedVehicleAgency[feedID], vid)
 		}
 	}
@@ -681,6 +682,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				manager.feedVehicleLastSeen[feedID] = make(map[vehicleKey]time.Time)
 			}
 			lastSeenMap := manager.feedVehicleLastSeen[feedID]
+			manager.recordVehicleReportsSeen(feedID, validVehicles, prevByID, now)
 
 			currentVehicleIDs := make(map[vehicleKey]struct{}, len(validVehicles))
 			for _, v := range validVehicles {
@@ -694,6 +696,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 				if _, current := currentVehicleIDs[vid]; !current {
 					if now.Sub(lastSeen) > staleVehicleTimeout {
 						delete(lastSeenMap, vid)
+						delete(manager.feedVehicleReportSeen[feedID], vid)
 					}
 				}
 			}
@@ -1659,6 +1662,26 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 					timer.Reset(nextInterval)
 				}
 			}()
+		}
+	}
+}
+
+// recordVehicleReportsSeen keeps a measurement's receipt time through repeated
+// and rejected older reports. Liveness is tracked separately in feedVehicleLastSeen.
+func (manager *Manager) recordVehicleReportsSeen(feedID string, vehicles []gtfs.Vehicle, previous map[vehicleKey]gtfs.Vehicle, now time.Time) {
+	if manager.feedVehicleReportSeen == nil {
+		manager.feedVehicleReportSeen = make(map[string]map[vehicleKey]time.Time)
+	}
+	if manager.feedVehicleReportSeen[feedID] == nil {
+		manager.feedVehicleReportSeen[feedID] = make(map[vehicleKey]time.Time)
+	}
+	seen := manager.feedVehicleReportSeen[feedID]
+	for _, vehicle := range vehicles {
+		key := newVehicleKey(vehicle.ID)
+		old := previous[key]
+		if seen[key].IsZero() || old.Timestamp == nil || vehicle.Timestamp == nil ||
+			vehicle.Timestamp.After(*old.Timestamp) {
+			seen[key] = now
 		}
 	}
 }

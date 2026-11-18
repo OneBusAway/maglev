@@ -67,18 +67,14 @@ func (manager *Manager) buildVehiclePositionsByAgency(feedIDs []string, builtAt 
 			if !attributed || !isFreshVehicleReport(reportedAt, builtAt) {
 				continue
 			}
-			// An unrelated snapshot rebuild should not change the skew
-			// classification of a report already received.
-			skewReference := lastSeen
-			if skewReference.IsZero() {
-				skewReference = builtAt
-			}
+			// Excessive skew can only be established with a recorded receipt time.
+			skewReference := manager.feedVehicleReportSeen[feedID][key]
 			candidate := exportCandidate{
 				vehicle:           vehicle,
 				reportedAt:        reportedAt,
 				feedRank:          feedRanks[feedID],
 				dataTime:          manager.feedVehicleDataTime[feedID],
-				exceedsFutureSkew: reportedAt.Sub(skewReference) > maxVehicleFeedFutureSkew,
+				exceedsFutureSkew: !skewReference.IsZero() && reportedAt.Sub(skewReference) > maxVehicleFeedFutureSkew,
 			}
 			keepPreferredCandidate(preferredByAgency, agencyID, candidate)
 		}

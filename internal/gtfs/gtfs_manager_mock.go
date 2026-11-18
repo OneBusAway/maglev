@@ -286,6 +286,8 @@ func (m *Manager) MockSetAgencyVehicles(feedID, agencyID string, vehicles []gtfs
 	m.feedVehicles[feedID] = vehicles
 	m.feedVehicleAgency[feedID] = agencies
 	m.feedVehicleLastSeen[feedID] = lastSeen
+	delete(m.feedVehicleReportSeen, feedID)
+	m.recordVehicleReportsSeen(feedID, vehicles, nil, now)
 	m.feedVehicleDataTime[feedID] = now
 	m.rebuildMergedRealtimeLocked()
 }
@@ -317,6 +319,7 @@ func (m *Manager) MockResetRealTimeData() {
 	delete(m.feedVehicles, "_test")
 	delete(m.feedVehicleAgency, "_test")
 	delete(m.feedVehicleLastSeen, "_test")
+	delete(m.feedVehicleReportSeen, "_test")
 	delete(m.feedVehicleDataTime, "_test")
 	m.feedAlerts = make(map[string][]gtfs.Alert)
 	m.feedLastUpdate = make(map[string]time.Time)
