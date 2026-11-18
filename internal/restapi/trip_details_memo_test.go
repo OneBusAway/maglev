@@ -114,7 +114,7 @@ type tripDetailsRows struct {
 	activeServiceIDs []string
 	blockTrips       []gtfsdb.GetTripsByBlockIDRow
 	stopTimes        []gtfsdb.StopTime
-	shapePoints      []gtfsdb.Shape
+	shapePoints      []gtfsdb.GetShapePointsByTripIDRow
 	frequencies      []gtfsdb.Frequency
 }
 

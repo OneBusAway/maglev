@@ -1,7 +1,6 @@
 package restapi
 
 import (
-	"database/sql"
 	"testing"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -12,7 +11,7 @@ import (
 func TestShapeRowsToPoints(t *testing.T) {
 	tests := []struct {
 		name     string
-		rows     []gtfsdb.Shape
+		rows     []gtfsdb.GetShapePointsByTripIDRow
 		expected []gtfs.ShapePoint
 	}{
 		{
@@ -22,19 +21,15 @@ func TestShapeRowsToPoints(t *testing.T) {
 		},
 		{
 			name:     "empty slice returns empty slice",
-			rows:     []gtfsdb.Shape{},
+			rows:     []gtfsdb.GetShapePointsByTripIDRow{},
 			expected: []gtfs.ShapePoint{},
 		},
 		{
 			name: "single row maps lat and lon correctly",
-			rows: []gtfsdb.Shape{
+			rows: []gtfsdb.GetShapePointsByTripIDRow{
 				{
-					ID:                1,
-					ShapeID:           "shape_1",
-					Lat:               47.6062,
-					Lon:               -122.3321,
-					ShapePtSequence:   1,
-					ShapeDistTraveled: sql.NullFloat64{Valid: true, Float64: 10.5},
+					Lat: 47.6062,
+					Lon: -122.3321,
 				},
 			},
 			expected: []gtfs.ShapePoint{
@@ -45,31 +40,19 @@ func TestShapeRowsToPoints(t *testing.T) {
 			},
 		},
 		{
-			name: "keeps input order without sorting by sequence and drops dist traveled",
-			rows: []gtfsdb.Shape{
+			name: "keeps input order",
+			rows: []gtfsdb.GetShapePointsByTripIDRow{
 				{
-					ID:                10,
-					ShapeID:           "shape_1",
-					Lat:               47.6000,
-					Lon:               -122.3300,
-					ShapePtSequence:   3,
-					ShapeDistTraveled: sql.NullFloat64{Valid: true, Float64: 0.0},
+					Lat: 47.6000,
+					Lon: -122.3300,
 				},
 				{
-					ID:                11,
-					ShapeID:           "shape_1",
-					Lat:               47.6050,
-					Lon:               -122.3350,
-					ShapePtSequence:   1,
-					ShapeDistTraveled: sql.NullFloat64{Valid: true, Float64: 550.2},
+					Lat: 47.6050,
+					Lon: -122.3350,
 				},
 				{
-					ID:                12,
-					ShapeID:           "shape_1",
-					Lat:               47.6100,
-					Lon:               -122.3400,
-					ShapePtSequence:   2,
-					ShapeDistTraveled: sql.NullFloat64{Valid: false},
+					Lat: 47.6100,
+					Lon: -122.3400,
 				},
 			},
 			expected: []gtfs.ShapePoint{
@@ -80,20 +63,14 @@ func TestShapeRowsToPoints(t *testing.T) {
 		},
 		{
 			name: "handles negative and zero coordinates accurately",
-			rows: []gtfsdb.Shape{
+			rows: []gtfsdb.GetShapePointsByTripIDRow{
 				{
-					ID:              20,
-					ShapeID:         "shape_zero",
-					Lat:             0.0,
-					Lon:             0.0,
-					ShapePtSequence: 1,
+					Lat: 0.0,
+					Lon: 0.0,
 				},
 				{
-					ID:              21,
-					ShapeID:         "shape_neg",
-					Lat:             -33.8688,
-					Lon:             151.2093,
-					ShapePtSequence: 2,
+					Lat: -33.8688,
+					Lon: 151.2093,
 				},
 			},
 			expected: []gtfs.ShapePoint{

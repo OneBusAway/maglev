@@ -805,12 +805,8 @@ WHERE
 
 -- name: GetShapePointsByTripID :many
 SELECT
-    s.id,
-    s.shape_id,
     s.lat,
-    s.lon,
-    s.shape_pt_sequence,
-    s.shape_dist_traveled
+    s.lon
 FROM
     shapes s
     JOIN trips t ON t.shape_id = s.shape_id

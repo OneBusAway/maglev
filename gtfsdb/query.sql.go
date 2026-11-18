@@ -3477,12 +3477,8 @@ func (q *Queries) GetShapePointsByIDs(ctx context.Context, shapeIds []string) ([
 
 const getShapePointsByTripID = `-- name: GetShapePointsByTripID :many
 SELECT
-    s.id,
-    s.shape_id,
     s.lat,
-    s.lon,
-    s.shape_pt_sequence,
-    s.shape_dist_traveled
+    s.lon
 FROM
     shapes s
     JOIN trips t ON t.shape_id = s.shape_id
@@ -3492,23 +3488,21 @@ ORDER BY
     s.shape_pt_sequence ASC
 `
 
-func (q *Queries) GetShapePointsByTripID(ctx context.Context, id string) ([]Shape, error) {
+type GetShapePointsByTripIDRow struct {
+	Lat float64
+	Lon float64
+}
+
+func (q *Queries) GetShapePointsByTripID(ctx context.Context, id string) ([]GetShapePointsByTripIDRow, error) {
 	rows, err := q.query(ctx, q.getShapePointsByTripIDStmt, getShapePointsByTripID, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Shape
+	var items []GetShapePointsByTripIDRow
 	for rows.Next() {
-		var i Shape
-		if err := rows.Scan(
-			&i.ID,
-			&i.ShapeID,
-			&i.Lat,
-			&i.Lon,
-			&i.ShapePtSequence,
-			&i.ShapeDistTraveled,
-		); err != nil {
+		var i GetShapePointsByTripIDRow
+		if err := rows.Scan(&i.Lat, &i.Lon); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
