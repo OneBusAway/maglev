@@ -1570,3 +1570,8 @@ ORDER BY
 
 -- name: ClearStopConsolidations :exec
 DELETE FROM stop_consolidations WHERE TRUE;
+
+-- name: DeleteTrip :exec
+DELETE FROM trips
+WHERE
+    id = ?;

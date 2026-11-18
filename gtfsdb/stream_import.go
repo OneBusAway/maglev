@@ -39,6 +39,9 @@ type feedRows struct {
 	// tripEnds holds the ends of every stored trip once stopTimes has been
 	// read to the end.
 	tripEnds []tripEnds
+	// removedTrips holds the trips stop consolidation left too short to
+	// keep, once stopTimes has been read to the end.
+	removedTrips map[string]bool
 	// err holds the first error reading from the stream.
 	err error
 }
@@ -48,7 +51,12 @@ func (data *GtfsData) rows() *feedRows {
 	for _, trip := range data.Static.Trips {
 		storedTrips[trip.ID] = true
 	}
-	return &feedRows{stream: data.stream, storedTrips: storedTrips, replacements: data.StopReplacements}
+	return &feedRows{
+		stream:       data.stream,
+		storedTrips:  storedTrips,
+		replacements: data.StopReplacements,
+		removedTrips: make(map[string]bool),
+	}
 }
 
 // errStopped ends a stream early when the rows' consumer stops reading.
@@ -64,7 +72,8 @@ func (r *feedRows) stopTimes() iter.Seq[CreateStopTimeParams] {
 				return nil
 			}
 			stopTimes = r.replacements.consolidate(stopTimes)
-			if len(stopTimes) == 0 {
+			if len(stopTimes) < minStopTimesPerTrip {
+				r.removedTrips[trip.ID] = true
 				return nil
 			}
 			r.tripEnds = append(r.tripEnds, newTripEnds(trip, stopTimes[0], stopTimes[len(stopTimes)-1]))
