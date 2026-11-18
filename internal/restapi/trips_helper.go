@@ -41,6 +41,28 @@ type tripStatusExtras struct {
 	tripBlockSequence int
 }
 
+// flexOnlyTripStatus finishes the status of a trip with no timed stop_times.
+// With no timed stops there is no schedule to measure against, so the status
+// carries only what the vehicle reports (identity, position, orientation,
+// occupancy) and no stop or deviation fields. Without a vehicle there is
+// nothing to report, and the result is nil.
+func flexOnlyTripStatus(status *models.TripStatus, vehicle *gtfs.Vehicle, currentTime time.Time) *models.TripStatus {
+	if vehicle == nil {
+		return nil
+	}
+	status.SetPredicted(!defaultStaleDetector.Check(vehicle, currentTime))
+	return status
+}
+
+// isFlexOnlyTrip reports whether the static data holds this trip with no
+// timed stop_times. A NULL cached min_arrival_time is the same test the timed
+// queries use. A trip missing from the static data, such as a GTFS-RT ADDED
+// trip, is not flex-only.
+func (api *RestAPI) isFlexOnlyTrip(ctx context.Context, tripID string) bool {
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	return err == nil && !trip.MinArrivalTime.Valid
+}
+
 // BuildTripStatus builds a TripStatus for the given trip.
 //
 // Pass a non-nil vehicle when it is already known (e.g. DUPLICATED trips, or when
@@ -151,6 +173,16 @@ func (api *RestAPI) BuildTripStatus(
 		return status, extras, nil
 	}
 
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, dbTripID)
+	if err != nil {
+		slog.Warn("buildTripStatusCore: failed to get stop times",
+			slog.String("trip_id", dbTripID),
+			slog.String("error", err.Error()))
+	}
+	if err == nil && len(stopTimes) == 0 && api.isFlexOnlyTrip(ctx, dbTripID) {
+		return flexOnlyTripStatus(status, vehicle, currentTime), extras, nil
+	}
+
 	// Mirror Java's applyTripUpdatesToRecord: iterate all block trips in
 	// start-time order; last trip-level delay wins (Java overwrites
 	// best.scheduleDeviation unconditionally each time a trip-level delay is
@@ -174,12 +206,6 @@ func (api *RestAPI) BuildTripStatus(
 	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
 	status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
 
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, dbTripID)
-	if err != nil {
-		slog.Warn("buildTripStatusCore: failed to get stop times",
-			slog.String("trip_id", dbTripID),
-			slog.String("error", err.Error()))
-	}
 	if err == nil && len(stopTimes) > 0 {
 		stopTimesPtrs := make([]*gtfsdb.StopTime, len(stopTimes))
 		for i := range stopTimes {
@@ -464,6 +490,15 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, trip.ID)
 	if err != nil {
 		return nil, err
+	}
+
+	// A flex-only trip has no timed records: no stops to project, no block
+	// neighbours to resolve. Return the empty schedule the wiki specifies.
+	if len(stopTimes) == 0 {
+		return &models.Schedule{
+			StopTimes: []models.StopTime{},
+			TimeZone:  loc.String(),
+		}, nil
 	}
 
 	shapeRows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetShapePointsByTripID(ctx, trip.ID)

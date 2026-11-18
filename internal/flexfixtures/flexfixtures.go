@@ -70,6 +70,10 @@ func ZipBytes(t testing.TB, files map[string]string) []byte {
 //     pickup_type/drop_off_type cells are BLANK on the timed rows so the
 //     blank-cell → 0 default is what makes those stops pickup-capable
 //   - winstop: a windowed stop-id record next to a MultiPolygon zone (spec §9.1)
+//
+// her-trip carries a shape through h1–h3 because trips-for-location places a
+// scheduled, vehicle-less trip by projecting it onto its shape; without one the
+// trip is never found in any search box.
 func GroupDeviatedFiles() map[string]string {
 	return map[string]string{
 		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
@@ -99,11 +103,15 @@ func GroupDeviatedFiles() map[string]string {
 {"id":"zone_a","type":"Feature","properties":{"stop_name":"Hermann deviation zone"},"geometry":{"type":"Polygon","coordinates":[[[-94.47,44.30],[-94.43,44.30],[-94.43,44.34],[-94.47,44.34],[-94.47,44.30]]]}},
 {"id":"zone_multi","type":"Feature","properties":{},"geometry":{"type":"MultiPolygon","coordinates":[[[[-94.41,44.39],[-94.39,44.39],[-94.39,44.41],[-94.41,44.41],[-94.41,44.39]]],[[[-94.36,44.39],[-94.34,44.39],[-94.34,44.41],[-94.36,44.41],[-94.36,44.39]]]]}}
 ]}`,
-		"trips.txt": "route_id,service_id,trip_id,block_id\n" +
-			"rufbus,svc,ruf-trip,\n" +
-			"hermann,svc,her-trip,her-block\n" +
-			"hermann,svc,her-trip-2,her-block\n" +
-			"winstop,svc,win-trip,\n",
+		"trips.txt": "route_id,service_id,trip_id,block_id,shape_id\n" +
+			"rufbus,svc,ruf-trip,,\n" +
+			"hermann,svc,her-trip,her-block,her-shape\n" +
+			"hermann,svc,her-trip-2,her-block,\n" +
+			"winstop,svc,win-trip,,\n",
+		"shapes.txt": "shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence\n" +
+			"her-shape,44.3100,-94.4600,1\n" +
+			"her-shape,44.3200,-94.4500,2\n" +
+			"her-shape,44.3300,-94.4400,3\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,location_id,location_group_id,stop_sequence,pickup_type,drop_off_type,start_pickup_drop_off_window,end_pickup_drop_off_window,pickup_booking_rule_id,drop_off_booking_rule_id\n" +
 			"ruf-trip,,,,,grp476,1,2,1,07:00:00,19:00:00,br_ruf,br_ruf\n" +
 			"ruf-trip,,,,,grp476,2,1,2,07:00:00,19:00:00,br_ruf,br_ruf\n" +

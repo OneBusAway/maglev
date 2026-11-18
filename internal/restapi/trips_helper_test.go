@@ -417,6 +417,29 @@ func TestBuildTripStatus_ScheduleDeviation_SetsPredicted(t *testing.T) {
 	assert.False(t, status.Scheduled, "Scheduled should be false when predicted is true")
 }
 
+// A GTFS-RT ADDED trip has no stop_times because it is missing from the
+// static data, not because it is flex-only, so it keeps its deviation.
+func TestBuildTripStatus_TripMissingFromStaticDataKeepsDeviation(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+
+	agencyID := mustGetAgencies(t, api)[0].ID
+	tripID := "added-trip-not-in-static-data"
+	delay := 120 * time.Second
+	api.GtfsManager.MockAddTripUpdate(tripID, &delay, nil)
+
+	serviceDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := serviceDate.Add(8 * time.Hour)
+
+	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, currentTime, nil)
+	require.NoError(t, err)
+	require.NotNil(t, status, "a trip missing from the static data is not flex-only")
+	assert.Equal(t, 120, status.ScheduleDeviation)
+	assert.True(t, status.Predicted)
+}
+
 func TestBuildTripStatus_NoRealtimeData_SetsScheduled(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
