@@ -108,6 +108,10 @@ type JSONConfig struct {
 	TLSCertPath     string       `json:"tls-cert-path"`
 	TLSKeyPath      string       `json:"tls-key-path"`
 
+	// StopConsolidationURL is a Java OneBusAway stop consolidation file for
+	// the whole bundle: an http(s) URL or a local path.
+	StopConsolidationURL string `json:"stop-consolidation-url"`
+
 	// staticFeedsKey names the key GtfsStaticFeeds came from, for errors.
 	staticFeedsKey string
 }
@@ -116,6 +120,8 @@ const (
 	legacyStaticFeedKey = "gtfs-static-feed"
 	staticFeedListKey   = "gtfs-static-feeds"
 	bundleInputsURLKey  = "gtfs-bundle-inputs-url"
+
+	stopConsolidationKey = "stop-consolidation-url"
 )
 
 // normalizeStaticFeeds moves the legacy gtfs-static-feed key into
@@ -128,6 +134,9 @@ func (j *JSONConfig) normalizeStaticFeeds() error {
 	hasStaticFeedKey := j.GtfsStaticFeed != nil || j.GtfsStaticFeeds != nil
 	if j.isManifestMode() && hasStaticFeedKey {
 		return fmt.Errorf("gtfs-bundle-inputs-url cannot be set together with gtfs-static-feed or gtfs-static-feeds")
+	}
+	if j.isManifestMode() && j.StopConsolidationURL != "" {
+		return fmt.Errorf("gtfs-bundle-inputs-url cannot be set together with stop-consolidation-url: the manifest's stopConsolidationUrl is used")
 	}
 	if j.GtfsStaticFeed != nil {
 		j.GtfsStaticFeeds = []GtfsStaticFeed{*j.GtfsStaticFeed}
@@ -337,6 +346,10 @@ func (j *JSONConfig) Validate() error {
 		return err
 	}
 
+	if err := validateSource(j.StopConsolidationURL, stopConsolidationKey); err != nil {
+		return err
+	}
+
 	if j.isManifestMode() {
 		return validateSource(j.BundleInputsURL, bundleInputsURLKey)
 	}
@@ -496,6 +509,9 @@ type GtfsConfigData struct {
 	RTFeeds         []RTFeedConfigData
 	GTFSDataPath    string
 	Env             Environment
+
+	// StopConsolidationURL is the bundle's stop consolidation file, if any.
+	StopConsolidationURL string
 }
 
 // UseStaticFeeds replaces the static feed list, as manifest mode does once
@@ -516,6 +532,8 @@ func (j *JSONConfig) ToGtfsConfigData() (GtfsConfigData, error) {
 		BundleInputsURL: j.BundleInputsURL,
 		GTFSDataPath:    j.DataPath,
 		Env:             EnvFlagToEnvironment(j.Env),
+
+		StopConsolidationURL: j.StopConsolidationURL,
 	}
 	// The importer still loads only the first static feed.
 	feeds := j.GtfsStaticFeeds

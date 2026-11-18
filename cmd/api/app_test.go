@@ -850,6 +850,7 @@ func TestResolveBundleInputs(t *testing.T) {
 			{ID: "st", URL: "https://example.com/st.zip", DefaultAgencyID: "40"},
 		}
 		assert.Equal(t, want, gtfsCfgData.StaticFeeds)
+		assert.Equal(t, "https://example.com/consolidation.txt", gtfsCfgData.StopConsolidationURL)
 		assert.Equal(t, gtfsCfgData.BundleInputsURL, gtfsConfigFromData(gtfsCfgData).BundleInputsURL)
 		assert.Contains(t, logOutput.String(), "only the first static feed is loaded")
 		assert.Contains(t, logOutput.String(), "ignored_feeds=[st]")
@@ -945,4 +946,35 @@ func TestDumpConfigJSON_OmitsEmptyBundleInputsURL(t *testing.T) {
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal(output, &parsed))
 	assert.NotContains(t, parsed, "gtfs-bundle-inputs-url")
+}
+
+func TestGtfsConfigFromData_StopConsolidationURL(t *testing.T) {
+	const consolidationURL = "https://example.com/StopConsolidation.txt"
+
+	gtfsCfg := gtfsConfigFromData(appconf.GtfsConfigData{StopConsolidationURL: consolidationURL})
+
+	assert.Equal(t, consolidationURL, gtfsCfg.StopConsolidationURL)
+}
+
+func TestDumpConfigJSON_StopConsolidationURL(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want any
+	}{
+		{name: "omitted when unset", url: "", want: nil},
+		{name: "shown when set", url: "https://example.com/StopConsolidation.txt", want: "https://example.com/StopConsolidation.txt"},
+		{name: "signed URL is redacted", url: "https://example.com/c.txt?sig=s3cr3t", want: "https://example.com/c.txt?" + appconf.RedactedValue},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := captureDumpConfig(t, appconf.Config{}, gtfs.Config{StopConsolidationURL: tt.url})
+
+			var parsed map[string]any
+			require.NoError(t, json.Unmarshal(output, &parsed))
+			assert.Equal(t, tt.want, parsed["stop-consolidation-url"])
+			assert.NotContains(t, string(output), "s3cr3t")
+		})
+	}
 }

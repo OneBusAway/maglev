@@ -78,3 +78,24 @@ func TestMain_CommandLineFlagsPassValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestMain_StopConsolidationURLFlag(t *testing.T) {
+	tests := []struct {
+		name         string
+		url          string
+		wantExitCode int
+		wantOutput   string
+	}{
+		{"URL reaches the config", "https://example.com/StopConsolidation.txt", 0, `"stop-consolidation-url": "https://example.com/StopConsolidation.txt"`},
+		{"file URL is rejected", "file:///etc/StopConsolidation.txt", 1, "file:// URLs are not allowed in stop-consolidation-url"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			exitCode, output := runMainWithArgs(t, "-dump-config -stop-consolidation-url "+tc.url)
+
+			assert.Equal(t, tc.wantExitCode, exitCode, output)
+			assert.Contains(t, output, tc.wantOutput)
+		})
+	}
+}
