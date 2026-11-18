@@ -159,6 +159,8 @@ func TestStopHandlerMultiAgencyScenario(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	rebuildStopRouteIndex(t, api)
+
 	resp, model := callAPIHandler[StopEntryResponse](t, api,
 		stopURL(utils.FormCombinedID(agencyA, stopID)))
 
@@ -231,6 +233,8 @@ func TestStopHandler_StopCodeFallback(t *testing.T) {
 		ArrivalTime: 32400, DepartureTime: 32700,
 	})
 	require.NoError(t, err)
+
+	rebuildStopRouteIndex(t, api)
 
 	resp, model := callAPIHandler[StopEntryResponse](t, api,
 		stopURL(utils.FormCombinedID(agencyID, stopID)))
@@ -345,6 +349,8 @@ func TestStopHandler_ParentStation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	rebuildStopRouteIndex(t, api)
+
 	resp, model := callAPIHandler[StopEntryResponse](t, api,
 		stopURL(utils.FormCombinedID(agencyID, childStopID)))
 
@@ -456,6 +462,8 @@ func TestStopHandler_NaturalSorting(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	rebuildStopRouteIndex(t, api)
+
 	// Call Endpoint
 	resp, model := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(agencyID, stopID)))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -527,6 +535,8 @@ func TestStopHandler_ParentStationNaturalSorting(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
+
+	rebuildStopRouteIndex(t, api)
 
 	// Call Endpoint for the CHILD stop
 	resp, model := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(agencyID, childStopID)))
@@ -634,6 +644,8 @@ func TestStopHandler_WrongAgency(t *testing.T) {
 		TripID: tripID, StopID: stopID, StopSequence: 1, ArrivalTime: 36000, DepartureTime: 36000,
 	})
 	require.NoError(t, err)
+
+	rebuildStopRouteIndex(t, api)
 
 	// Test 1: Request with the valid agency namespace -> 200 OK
 	respValid, modelValid := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(validAgency, stopID)))

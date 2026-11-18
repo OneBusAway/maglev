@@ -230,13 +230,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		if agencies == nil {
-			agencies = []models.AgencyReference{}
-		}
-		if routes == nil {
-			routes = []models.Route{}
-		}
-
 		references.Agencies = agencies
 		references.Routes = routes
 	}
@@ -342,6 +335,7 @@ func (api *RestAPI) routeIDsByStop(
 		if err != nil {
 			return nil, err
 		}
+		utils.SortRouteIDsForStopsRowsByName(rows)
 		for _, row := range rows {
 			collect(row.StopID, row.AgencyID, row.RouteID)
 		}

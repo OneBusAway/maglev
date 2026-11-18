@@ -164,6 +164,11 @@ type StopAgency struct {
 	AgencyID string
 }
 
+type StopRoute struct {
+	StopID  string
+	RouteID string
+}
+
 type StopTime struct {
 	TripID            string
 	ArrivalTime       int64

@@ -991,6 +991,7 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	// before the next test reads stop 4062 or the agency list.
 	t.Cleanup(func() {
 		api.GtfsManager.MockResetRealTimeData()
+		_, _ = db.Exec(`DELETE FROM stop_routes WHERE route_id = ?`, routeID)
 		_, _ = db.Exec(`DELETE FROM stop_times WHERE trip_id = ?`, tripID)
 		_, _ = db.Exec(`DELETE FROM trips WHERE id = ?`, tripID)
 		_, _ = db.Exec(`DELETE FROM routes WHERE id = ?`, routeID)
@@ -1008,6 +1009,7 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence) VALUES (?, 0, 0, ?, 1)`, tripID, testdata.Stop4062.Code)
 	require.NoError(t, err)
+	rebuildStopRouteIndex(t, api)
 
 	bareRoute := routeID
 	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{

@@ -1764,6 +1764,8 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *t
 	expectedArrivalUTC := time.Date(2026, 1, 15, 15, 10, 0, 0, time.UTC)
 	expectedMidnightLA := time.Date(2026, 1, 15, 0, 0, 0, 0, locLA)
 
+	rebuildStopRouteIndex(t, api)
+
 	// Query via UTC Agency prefix
 	{
 		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, queryURLWithPrefix(agencyUTC))
@@ -1835,6 +1837,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *
 		conn, err := api.GtfsManager.GtfsDB.DB.Conn(context.Background())
 		if err == nil {
 			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = OFF")
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_routes WHERE stop_id = ?", sharedStop)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_times WHERE stop_id = ?", sharedStop)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM trips WHERE id = ?", tripInvalid)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM routes WHERE id IN (?, ?)", routePrimary, routeInvalid)
@@ -1897,6 +1900,8 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *
 	})
 	require.NoError(t, err)
 
+	rebuildStopRouteIndex(t, api)
+
 	endpoint := arrivalsAndDeparturesURL(utils.FormCombinedID(agencyPrimary, sharedStop), nil)
 	resp, model := callAPIHandler[models.ResponseModel](t, api, endpoint)
 	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
@@ -1927,6 +1932,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 		conn, err := api.GtfsManager.GtfsDB.DB.Conn(context.Background())
 		if err == nil {
 			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = OFF")
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_routes WHERE stop_id = ?", sharedStop)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_times WHERE stop_id = ?", sharedStop)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM trips WHERE id IN (?, ?)", tripPrimary, tripMissing)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM routes WHERE id IN (?, ?)", routePrimary, routeMissing)
@@ -2012,10 +2018,13 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 	require.NoError(t, err)
 	conn.Close()
 
+	rebuildStopRouteIndex(t, api)
+
 	endpoint := arrivalsAndDeparturesURL(utils.FormCombinedID(agencyPrimary, sharedStop), url.Values{
 		"minutesBefore": {"5"},
 		"minutesAfter":  {"30"},
 	})
+
 	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, http.StatusOK, model.Code)

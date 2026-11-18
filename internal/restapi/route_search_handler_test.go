@@ -123,6 +123,10 @@ func TestRouteSearchHandlerNoResults(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Empty(t, model.Data.List)
+	// The OpenAPI Reference schema requires every list, so no match must
+	// still serialize references.agencies as [] rather than null.
+	assert.NotNil(t, model.Data.References.Agencies)
+	assert.Empty(t, model.Data.References.Agencies)
 }
 
 func TestRouteSearchHandlerWhitespaceInput(t *testing.T) {

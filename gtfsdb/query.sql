@@ -190,6 +190,23 @@ FROM
     JOIN trips ON stop_times.trip_id = trips.id
     JOIN routes ON trips.route_id = routes.id;
 
+-- name: ClearStopRoutes :exec
+DELETE FROM stop_routes
+WHERE
+    TRUE;
+
+-- name: BuildStopRoutes :exec
+-- Joins routes so a trip whose route_id resolves to nothing contributes no pair.
+INSERT INTO
+    stop_routes (stop_id, route_id)
+SELECT DISTINCT
+    stop_times.stop_id,
+    routes.id
+FROM
+    stop_times
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id;
+
 -- name: CreateCalendarDate :one
 INSERT
 OR REPLACE INTO calendar_dates (service_id, date, exception_type)
@@ -388,7 +405,8 @@ FROM
     INNER JOIN stop_times st ON s.id = st.stop_id;
 
 -- name: GetRoutesForStop :many
-SELECT DISTINCT
+-- Reads the routes stop_routes lists for the stop rather than walking its stop_times.
+SELECT
     routes.id,
     routes.agency_id,
     routes.short_name,
@@ -399,11 +417,10 @@ SELECT DISTINCT
     routes.color,
     routes.text_color
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id = ?;
+    stop_routes.stop_id = ?;
 
 -- name: GetShapeByID :many
 SELECT
@@ -463,41 +480,26 @@ FROM shapes s
 ORDER BY s.shape_pt_sequence;
 
 -- name: GetActiveServiceIDsForDate :many
-WITH formatted_date AS (
-    SELECT STRFTIME('%w', SUBSTR(?1, 1, 4) || '-' || SUBSTR(?1, 5, 2) || '-' || SUBSTR(?1, 7, 2)) AS weekday
-),
-base_services AS (
-    SELECT c.id AS service_id
-    FROM calendar c, formatted_date fd
-    WHERE c.start_date <= ?1
-      AND c.end_date >= ?1
-      AND (
-        (fd.weekday = '0' AND c.sunday = 1) OR
-        (fd.weekday = '1' AND c.monday = 1) OR
-        (fd.weekday = '2' AND c.tuesday = 1) OR
-        (fd.weekday = '3' AND c.wednesday = 1) OR
-        (fd.weekday = '4' AND c.thursday = 1) OR
-        (fd.weekday = '5' AND c.friday = 1) OR
-        (fd.weekday = '6' AND c.saturday = 1)
-      )
-),
-removed_services AS (
-    SELECT service_id
-    FROM calendar_dates
-    WHERE date = ?1
-      AND exception_type = 2
-),
-added_services AS (
-    SELECT service_id
-    FROM calendar_dates
-    WHERE date = ?1
-      AND exception_type = 1
-)
-SELECT DISTINCT service_id
-FROM base_services
-WHERE service_id NOT IN (SELECT service_id FROM removed_services)
+-- Written without CTEs: the CTE form cost twice as much per call and, through
+-- SQLite's allocator, contended badly when many requests ran it at once.
+SELECT c.id AS service_id
+FROM calendar c
+WHERE c.start_date <= ?1
+  AND c.end_date >= ?1
+  AND CASE STRFTIME('%w', SUBSTR(?1, 1, 4) || '-' || SUBSTR(?1, 5, 2) || '-' || SUBSTR(?1, 7, 2))
+      WHEN '0' THEN c.sunday
+      WHEN '1' THEN c.monday
+      WHEN '2' THEN c.tuesday
+      WHEN '3' THEN c.wednesday
+      WHEN '4' THEN c.thursday
+      WHEN '5' THEN c.friday
+      WHEN '6' THEN c.saturday
+  END = 1
+  AND c.id NOT IN (
+    SELECT service_id FROM calendar_dates WHERE date = ?1 AND exception_type = 2
+  )
 UNION
-SELECT DISTINCT service_id FROM added_services;
+SELECT service_id FROM calendar_dates WHERE date = ?1 AND exception_type = 1;
 
 -- name: GetTripsForRouteInActiveServiceIDs :many
 SELECT DISTINCT *
@@ -644,7 +646,10 @@ DELETE FROM agencies;
 -- Batch queries to solve N+1 problems
 
 -- name: GetRoutesForStops :many
-SELECT DISTINCT
+-- Reads the (stop, route) pairs stop_routes holds rather than walking every stop_time at
+-- these stops, which grows with how many trips serve them. stop_id breaks ties so rows
+-- for one route at several stops come back in a fixed order.
+SELECT
     routes.id,
     routes.agency_id,
     routes.short_name,
@@ -654,28 +659,31 @@ SELECT DISTINCT
     routes.url,
     routes.color,
     routes.text_color,
-    stop_times.stop_id
+    stop_routes.stop_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'))
+    stop_routes.stop_id IN (sqlc.slice('stop_ids'))
 ORDER BY
     routes.agency_id ASC,
-    routes.id ASC;
+    routes.id ASC,
+    stop_routes.stop_id ASC;
 
 -- name: GetRouteIDsForStops :many
-SELECT DISTINCT
+-- Reads the (stop, route) pairs stop_routes holds rather than walking every stop_time at
+-- these stops. Returns the route names too, so callers can order each stop's routes by name.
+SELECT
     routes.id AS route_id,
     routes.agency_id,
-    stop_times.stop_id
+    routes.short_name,
+    routes.long_name,
+    stop_routes.stop_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'));
+    stop_routes.stop_id IN (sqlc.slice('stop_ids'));
 
 -- name: GetActiveRouteIDsForStopsOnDate :many
 SELECT DISTINCT
@@ -710,7 +718,9 @@ WHERE
     AND trips.service_id IN (sqlc.slice('service_ids'));
 
 -- name: GetAgenciesForStops :many
-SELECT DISTINCT
+-- Reads the (stop, agency) pairs stop_agencies holds rather than walking every
+-- stop_time at these stops, which grows with how many trips serve them.
+SELECT
     a.id,
     a.name,
     a.url,
@@ -719,16 +729,14 @@ SELECT DISTINCT
     a.phone,
     a.fare_url,
     a.email,
-    stop_times.stop_id
+    stop_agencies.stop_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
-    JOIN agencies a ON routes.agency_id = a.id
+    stop_agencies
+    JOIN agencies a ON stop_agencies.agency_id = a.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'))
+    stop_agencies.stop_id IN (sqlc.slice('stop_ids'))
 ORDER BY
-    stop_times.stop_id ASC,
+    stop_agencies.stop_id ASC,
     a.id ASC;
 
 -- name: GetStopTimesForTrip :many
@@ -834,14 +842,6 @@ FROM trips t
 WHERE t.block_id = ?
   AND t.service_id IN (sqlc.slice('service_ids'))
 ORDER BY t.min_arrival_time;
-
--- name: GetBlockIDByTripID :one
-SELECT
-    block_id
-FROM
-    trips
-WHERE
-    id = ?;
 
 -- name: GetStopsByIDs :many
 SELECT
@@ -1341,22 +1341,6 @@ SELECT shape_id, lat, lon, shape_pt_sequence, shape_dist_traveled
 FROM shapes
 WHERE shape_id IN (sqlc.slice('shape_ids'))
 ORDER BY shape_id, shape_pt_sequence;
-
--- name: GetShapePointsByTripIDs :many
--- Batch equivalent of GetShapePointsByTripID for N+1 avoidance when loading
--- an entire block's worth of trips at once (loadBlockTripData). Rows are
--- returned with their originating trip_id so callers can group them.
-SELECT
-    t.id AS trip_id,
-    s.shape_id,
-    s.lat,
-    s.lon,
-    s.shape_pt_sequence,
-    s.shape_dist_traveled
-FROM shapes s
-JOIN trips t ON t.shape_id = s.shape_id
-WHERE t.id IN (sqlc.slice('trip_ids'))
-ORDER BY t.id ASC, s.shape_pt_sequence ASC;
 
 -- name: GetTripTimeBoundsByIDs :many
 -- Returns cached min_arrival_time and max_departure_time (nanoseconds since
