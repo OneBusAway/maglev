@@ -30,10 +30,11 @@ type GtfsStaticFeed struct {
 // RedactedValue replaces secret values in redacted config output.
 const RedactedValue = "***REDACTED***"
 
-// Redacted returns a copy of the feed with its secrets hidden: the
-// AuthHeaderValue and every Headers value. Update it when adding a field
-// that can hold a secret.
+// Redacted returns a copy of the feed with its secrets hidden: URL query
+// credentials and passwords, AuthHeaderValue, and every Headers value.
+// Update it when adding a field that can hold a secret.
 func (feed GtfsStaticFeed) Redacted() GtfsStaticFeed {
+	feed.URL = RedactURL(feed.URL)
 	if feed.AuthHeaderValue != "" {
 		feed.AuthHeaderValue = RedactedValue
 	}

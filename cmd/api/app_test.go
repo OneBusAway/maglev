@@ -723,6 +723,52 @@ func TestDumpConfigJSON_WithNoProtectedAPIKeys(t *testing.T) {
 	assert.Equal(t, appconf.RedactedValue+" (0 keys)", parsed["protected-api-keys"])
 }
 
+func TestDumpConfigJSON_RedactsStaticAndRealtimeFeedURLs(t *testing.T) {
+	gtfsCfg := gtfs.Config{
+		StaticFeeds: []appconf.GtfsStaticFeed{{
+			ID:  "metro",
+			URL: "https://user:static-password@example.com/metro.zip?api_key=STATIC_SECRET",
+		}},
+		RTFeeds: []gtfs.RTFeedConfig{{
+			ID:                  "metro-realtime",
+			TripUpdatesURL:      "https://example.com/trip-updates.pb?token=TRIP_UPDATES_SECRET",
+			VehiclePositionsURL: "https://example.com/vehicle-positions.pb?token=VEHICLE_POSITIONS_SECRET",
+			ServiceAlertsURL:    "https://example.com/service-alerts.pb?token=SERVICE_ALERTS_SECRET",
+		}},
+	}
+
+	output := captureDumpConfig(t, appconf.Config{}, gtfsCfg)
+
+	for _, secret := range []string{
+		"static-password",
+		"STATIC_SECRET",
+		"TRIP_UPDATES_SECRET",
+		"VEHICLE_POSITIONS_SECRET",
+		"SERVICE_ALERTS_SECRET",
+	} {
+		assert.NotContains(t, string(output), secret)
+	}
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(output, &parsed))
+
+	staticFeeds, ok := parsed["gtfs-static-feeds"].([]any)
+	require.True(t, ok)
+	require.Len(t, staticFeeds, 1)
+	staticFeed, ok := staticFeeds[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "https://user:xxxxx@example.com/metro.zip?"+appconf.RedactedValue, staticFeed["url"])
+
+	realtimeFeeds, ok := parsed["gtfs-rt-feeds"].([]any)
+	require.True(t, ok)
+	require.Len(t, realtimeFeeds, 1)
+	realtimeFeed, ok := realtimeFeeds[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "https://example.com/trip-updates.pb?"+appconf.RedactedValue, realtimeFeed["trip-updates-url"])
+	assert.Equal(t, "https://example.com/vehicle-positions.pb?"+appconf.RedactedValue, realtimeFeed["vehicle-positions-url"])
+	assert.Equal(t, "https://example.com/service-alerts.pb?"+appconf.RedactedValue, realtimeFeed["service-alerts-url"])
+}
+
 func TestDumpConfigJSON_StaticFeedsRoundTrip(t *testing.T) {
 	t.Setenv("GTFS_STATIC_AUTH_NAME", "")
 	t.Setenv("GTFS_STATIC_AUTH_VALUE", "")
