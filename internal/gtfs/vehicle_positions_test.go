@@ -93,6 +93,7 @@ func TestVehiclePositionsForAgency_Selection(t *testing.T) {
 	}{
 		{"fresh timestamp", []gtfs.Vehicle{exportVehicle("V1", now.Add(-5*time.Minute))}, now, []string{"V1"}},
 		{"stale timestamp", []gtfs.Vehicle{exportVehicle("V1", now.Add(-11*time.Minute))}, now, nil},
+		{"sole future-dated report", []gtfs.Vehicle{exportVehicle("V1", now.Add(24*time.Hour))}, now, []string{"V1"}},
 		{"no timestamp, seen recently", []gtfs.Vehicle{exportVehicle("V1", time.Time{})}, now.Add(-10 * time.Second), []string{"V1"}},
 		{"no timestamp, seen long ago", []gtfs.Vehicle{exportVehicle("V1", time.Time{})}, now.Add(-12 * time.Minute), nil},
 		{"no position", []gtfs.Vehicle{noLongitude}, now, nil},
@@ -111,8 +112,10 @@ func TestVehiclePositionsForAgency_Selection(t *testing.T) {
 }
 
 func TestVehiclePositionsForAgency_DuplicateVehicle(t *testing.T) {
-	now := time.Now().Truncate(time.Second)
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
 	older, newer := now.Add(-time.Minute), now
+	future := now.Add(24 * time.Hour)
+	skewLimit := now.Add(15 * time.Minute)
 
 	tests := []struct {
 		name        string
@@ -126,6 +129,12 @@ func TestVehiclePositionsForAgency_DuplicateVehicle(t *testing.T) {
 		{"no timestamps, first configured feed", []string{"feed-a", "feed-b"}, time.Time{}, time.Time{}, 1},
 		{"an older report from a later feed loses", []string{"feed-a", "feed-b"}, newer, older, 1},
 		{"configured feeds rank before unconfigured ones", []string{"feed-b"}, newer, newer, 2},
+		{"a future report in the first feed loses", []string{"feed-a", "feed-b"}, future, newer, 2},
+		{"a future report in the second feed loses", []string{"feed-a", "feed-b"}, newer, future, 1},
+		{"a report at the skew limit can win", []string{"feed-a", "feed-b"}, newer, skewLimit, 2},
+		{"a report past the skew limit loses", []string{"feed-a", "feed-b"}, newer, skewLimit.Add(time.Second), 1},
+		{"last seen is used for a report without a timestamp", []string{"feed-a", "feed-b"}, future, time.Time{}, 2},
+		{"newer report wins when both are beyond the skew limit", []string{"feed-a", "feed-b"}, future, future.Add(time.Minute), 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -139,11 +148,40 @@ func TestVehiclePositionsForAgency_DuplicateVehicle(t *testing.T) {
 			*fromB.Position.Latitude = 2
 			seedAgencyFeed(manager, "feed-a", "agency-A", now, now, fromA)
 			seedAgencyFeed(manager, "feed-b", "agency-A", now, now, fromB)
-			rebuild(manager)
 
-			positions := manager.VehiclePositionsForAgency("agency-A")
+			positions := manager.buildVehiclePositionsByAgency([]string{"feed-a", "feed-b"}, now)["agency-A"]
 			require.Len(t, positions.Vehicles, 1)
 			assert.InDelta(t, tt.wantFeedLat, *positions.Vehicles[0].Position.Latitude, 0.001)
+		})
+	}
+}
+
+func TestVehiclePositionsForAgency_DuplicateVehicleAfterRebuild(t *testing.T) {
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	manager := newTestManager()
+	current := exportVehicle("V1", now)
+	*current.Position.Latitude = 1
+	future := exportVehicle("V1", now.Add(15*time.Minute+time.Second))
+	*future.Position.Latitude = 2
+	futureFeedTime := now.Add(2 * time.Minute)
+	seedAgencyFeed(manager, "feed-a", "agency-A", now, now, current)
+	seedAgencyFeed(manager, "feed-b", "agency-A", futureFeedTime, now, future)
+
+	for _, tt := range []struct {
+		name      string
+		builtAt   time.Time
+		wantLat   float32
+		wantStamp time.Time
+	}{
+		{"first export", now, 1, now},
+		{"rebuild from the same reports", now.Add(time.Second), 1, now},
+		{"plausible report ages out", now.Add(10 * time.Minute), 2, futureFeedTime},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			positions := manager.buildVehiclePositionsByAgency([]string{"feed-a", "feed-b"}, tt.builtAt)["agency-A"]
+			require.Len(t, positions.Vehicles, 1)
+			assert.InDelta(t, tt.wantLat, *positions.Vehicles[0].Position.Latitude, 0.001)
+			assert.Equal(t, tt.wantStamp, positions.Timestamp)
 		})
 	}
 }

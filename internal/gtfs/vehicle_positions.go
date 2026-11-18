@@ -42,10 +42,11 @@ func (manager *Manager) VehiclePositionsForAgency(agencyID string) AgencyVehicle
 // exportCandidate is a vehicle with what the export needs to choose between
 // two reports of the same vehicle and to date the feed.
 type exportCandidate struct {
-	vehicle    gtfs.Vehicle
-	reportedAt time.Time
-	feedRank   int
-	dataTime   time.Time
+	vehicle           gtfs.Vehicle
+	reportedAt        time.Time
+	feedRank          int
+	dataTime          time.Time
+	exceedsFutureSkew bool
 }
 
 // buildVehiclePositionsByAgency assembles every agency's export view from
@@ -53,7 +54,7 @@ type exportCandidate struct {
 // sorted. Caller must hold realTimeMutex.
 func (manager *Manager) buildVehiclePositionsByAgency(feedIDs []string, builtAt time.Time) map[string]AgencyVehiclePositions {
 	feedRanks := manager.feedConfigRanks(feedIDs)
-	newestByAgency := make(map[string]map[string]exportCandidate)
+	preferredByAgency := make(map[string]map[string]exportCandidate)
 	for _, feedID := range feedIDs {
 		for _, vehicle := range manager.feedVehicles[feedID] {
 			if !hasExportablePosition(vehicle) {
@@ -61,22 +62,30 @@ func (manager *Manager) buildVehiclePositionsByAgency(feedIDs []string, builtAt 
 			}
 			key := newVehicleKey(vehicle.ID)
 			agencyID, attributed := manager.feedVehicleAgency[feedID][key]
-			reportedAt := vehicleReportTime(vehicle, manager.feedVehicleLastSeen[feedID][key])
+			lastSeen := manager.feedVehicleLastSeen[feedID][key]
+			reportedAt := vehicleReportTime(vehicle, lastSeen)
 			if !attributed || !isFreshVehicleReport(reportedAt, builtAt) {
 				continue
 			}
-			candidate := exportCandidate{
-				vehicle:    vehicle,
-				reportedAt: reportedAt,
-				feedRank:   feedRanks[feedID],
-				dataTime:   manager.feedVehicleDataTime[feedID],
+			// An unrelated snapshot rebuild should not change the skew
+			// classification of a report already received.
+			skewReference := lastSeen
+			if skewReference.IsZero() {
+				skewReference = builtAt
 			}
-			keepNewestCandidate(newestByAgency, agencyID, candidate)
+			candidate := exportCandidate{
+				vehicle:           vehicle,
+				reportedAt:        reportedAt,
+				feedRank:          feedRanks[feedID],
+				dataTime:          manager.feedVehicleDataTime[feedID],
+				exceedsFutureSkew: reportedAt.Sub(skewReference) > maxVehicleFeedFutureSkew,
+			}
+			keepPreferredCandidate(preferredByAgency, agencyID, candidate)
 		}
 	}
 
-	positionsByAgency := make(map[string]AgencyVehiclePositions, len(newestByAgency))
-	for agencyID, candidates := range newestByAgency {
+	positionsByAgency := make(map[string]AgencyVehiclePositions, len(preferredByAgency))
+	for agencyID, candidates := range preferredByAgency {
 		positionsByAgency[agencyID] = assembleAgencyVehiclePositions(candidates, builtAt)
 	}
 	return positionsByAgency
@@ -130,23 +139,28 @@ func isFreshVehicleReport(reportedAt, builtAt time.Time) bool {
 	return !reportedAt.IsZero() && builtAt.Sub(reportedAt) < vehiclePositionsMaxAge
 }
 
-// keepNewestCandidate files the candidate under its agency and vehicle ID
-// unless a newer report of the same vehicle is already there. On equal
-// report times the earlier configured feed wins.
-func keepNewestCandidate(newestByAgency map[string]map[string]exportCandidate, agencyID string, candidate exportCandidate) {
-	candidates, ok := newestByAgency[agencyID]
+func keepPreferredCandidate(preferredByAgency map[string]map[string]exportCandidate, agencyID string, candidate exportCandidate) {
+	candidates, ok := preferredByAgency[agencyID]
 	if !ok {
 		candidates = make(map[string]exportCandidate)
-		newestByAgency[agencyID] = candidates
+		preferredByAgency[agencyID] = candidates
 	}
 	vehicleID := candidate.vehicle.ID.ID
 	current, exists := candidates[vehicleID]
-	isPreferred := !exists ||
-		candidate.reportedAt.After(current.reportedAt) ||
-		(candidate.reportedAt.Equal(current.reportedAt) && candidate.feedRank < current.feedRank)
-	if isPreferred {
+	if !exists || candidate.preferredTo(current) {
 		candidates[vehicleID] = candidate
 	}
+}
+
+// preferredTo applies the skew limit only when choosing between reports.
+// When both reports fall on the same side of the limit, the newest report
+// wins, with ties going to the earlier configured feed.
+func (candidate exportCandidate) preferredTo(current exportCandidate) bool {
+	if candidate.exceedsFutureSkew != current.exceedsFutureSkew {
+		return !candidate.exceedsFutureSkew
+	}
+	return candidate.reportedAt.After(current.reportedAt) ||
+		(candidate.reportedAt.Equal(current.reportedAt) && candidate.feedRank < current.feedRank)
 }
 
 func assembleAgencyVehiclePositions(candidates map[string]exportCandidate, builtAt time.Time) AgencyVehiclePositions {
