@@ -444,6 +444,7 @@ func seedRoutesNearLocation(t *testing.T, api *RestAPI, lat, lon float64, count 
 	).Scan(&stopID))
 
 	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM stop_routes WHERE route_id LIKE 'clamp-test-%'`)
 		_, _ = db.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id LIKE 'clamp-test-%'`)
 		_, _ = db.ExecContext(ctx, `DELETE FROM trips WHERE id LIKE 'clamp-test-%'`)
 		_, _ = db.ExecContext(ctx, `DELETE FROM routes WHERE id LIKE 'clamp-test-%'`)
@@ -466,6 +467,7 @@ func seedRoutesNearLocation(t *testing.T, api *RestAPI, lat, lon float64, count 
 			id, stopID)
 		require.NoError(t, err)
 	}
+	rebuildStopRouteIndex(t, api)
 }
 
 func TestRoutesForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {

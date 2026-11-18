@@ -46,7 +46,7 @@ func TestGetActiveRoutesWithinBounds_CenteredOnStop(t *testing.T) {
 	assert.ElementsMatch(t, []string{"15", "154", "159", "160", "44X"}, stop4000RouteIDs)
 }
 
-func TestGetActiveRoutesWithinBounds_FilteredStopTimesLookup(t *testing.T) {
+func TestGetActiveRoutesWithinBounds_ReadsStopRouteIndex(t *testing.T) {
 	client := newTestClientWithRABA(t)
 	ctx := t.Context()
 	var routeID string
@@ -60,16 +60,9 @@ func TestGetActiveRoutesWithinBounds_FilteredStopTimesLookup(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var stopTimeLookups []string
-	for _, detail := range explainRecordedQuery(t, client, recorder) {
-		if strings.Contains(detail, "stop_times") {
-			stopTimeLookups = append(stopTimeLookups, detail)
-		}
-	}
-	require.NotEmpty(t, stopTimeLookups)
-	for _, lookup := range stopTimeLookups {
-		assert.Contains(t, lookup, "(trip_id=?)", "filtered searches must look up stop times by matching trip, not nearby stop")
-	}
+	plan := strings.Join(explainRecordedQuery(t, client, recorder), "\n")
+	assert.Contains(t, plan, "stop_routes", "routes should come from the precomputed stop_routes table")
+	assert.NotContains(t, plan, "stop_times", "a filtered search should not scan stop_times")
 }
 
 // TestGetActiveRoutesWithinBounds_RouteFiltering pins the invariant that
@@ -333,5 +326,6 @@ func newTestClientWithSpatialStops(t *testing.T, stops []spatialTestStop) *Clien
 		`, tripID, stop.id)
 		require.NoError(t, err)
 	}
+	require.NoError(t, buildStopRouteIndex(ctx, client.Queries))
 	return client
 }
