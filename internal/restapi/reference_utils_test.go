@@ -863,3 +863,67 @@ func TestExtractRawEntityIDs(t *testing.T) {
 	assert.Equal(t, "S1", s)
 	assert.Equal(t, "T1", tr)
 }
+
+func TestEndpoints_ReferencesNeverContainNullArrays(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	// Endpoints identified in #2121 and related issues, tested with
+	// empty, missing, or standard queries to verify reference arrays.
+	endpoints := []struct {
+		name string
+		url  string
+	}{
+		{
+			name: "search/route with no matches",
+			url:  "/api/where/search/route.json?key=TEST&input=nomatchxyz999",
+		},
+		{
+			name: "search/stop with no matches",
+			url:  "/api/where/search/stop.json?key=TEST&input=nomatchxyz999",
+		},
+		{
+			name: "stops-for-location empty area",
+			url:  "/api/where/stops-for-location.json?key=TEST&lat=0.0&lon=0.0&latSpan=0.01&lonSpan=0.01",
+		},
+		{
+			name: "stops-for-agency",
+			url:  "/api/where/stops-for-agency/25.json?key=TEST",
+		},
+		{
+			name: "routes-for-agency",
+			url:  "/api/where/routes-for-agency/25.json?key=TEST",
+		},
+	}
+
+	for _, tt := range endpoints {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := http.Get(server.URL + tt.url)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var body map[string]any
+			err = json.NewDecoder(resp.Body).Decode(&body)
+			require.NoError(t, err)
+
+			data, ok := body["data"].(map[string]any)
+			require.True(t, ok, "response should have a data object")
+
+			refs, ok := data["references"].(map[string]any)
+			require.True(t, ok, "response should have a references object")
+
+			// The 6 required reference lists per OpenAPI schema
+			expectedLists := []string{"agencies", "routes", "situations", "stopTimes", "stops", "trips"}
+			for _, listName := range expectedLists {
+				val, exists := refs[listName]
+				assert.True(t, exists, "references.%s should exist in response", listName)
+				assert.NotNil(t, val, "references.%s must serialize as [] and not null", listName)
+			}
+		})
+	}
+}

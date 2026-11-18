@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net/http"
 	"testing"
@@ -912,22 +911,8 @@ func TestTripForVehicleHandler_TripUpdateVehicleAfterMidnight(t *testing.T) {
 	}
 }
 
-// queryCountingDB counts the queries that reach the database.
-type queryCountingDB struct {
-	gtfsdb.DBTX
-	queries int
-}
-
-func (db *queryCountingDB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
-	db.queries++
-	return db.DBTX.QueryContext(ctx, query, args...)
-}
-
-func (db *queryCountingDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	db.queries++
-	return db.DBTX.QueryRowContext(ctx, query, args...)
-}
-
+// countQueries swaps in queryCountingDB (trip_details_benchmark_test.go) for the
+// rest of the test.
 func countQueries(t *testing.T, api *RestAPI) *queryCountingDB {
 	t.Helper()
 	originalQueries := api.GtfsManager.GtfsDB.Queries
@@ -945,7 +930,7 @@ func TestTripUpdateVehicleForTrip_NoQueriesWithoutTripUpdates(t *testing.T) {
 	counter := countQueries(t, api)
 
 	assert.Nil(t, api.tripUpdateVehicleForTrip(context.Background(), tripID, serviceDate))
-	assert.Zero(t, counter.queries)
+	assert.Zero(t, counter.count.Load())
 }
 
 // Any caller can ask for an unknown vehicle, so each one must not cost a query
@@ -963,7 +948,7 @@ func TestTripUpdateVehicleTrip_UnknownVehicleSkipsTripLookups(t *testing.T) {
 	_, _, found := api.tripUpdateVehicleTrip(context.Background(), "dp-agency", "nobody")
 
 	assert.False(t, found)
-	assert.Equal(t, 1, counter.queries, "only the block lookup should run")
+	assert.EqualValues(t, 1, counter.count.Load(), "only the block lookup should run")
 }
 
 // A trip-update vehicle positions its block several times per request, for its
@@ -997,7 +982,7 @@ func TestTripUpdateVehicleHandlers_ShareBlockSnapshots(t *testing.T) {
 			resp, _ := callAPIHandler[struct{}](t, api, tt.endpoint)
 
 			require.Equal(t, http.StatusOK, resp.StatusCode)
-			assert.LessOrEqual(t, counter.queries, tt.maxQueries)
+			assert.LessOrEqual(t, int(counter.count.Load()), tt.maxQueries)
 		})
 	}
 }
@@ -1432,7 +1417,7 @@ func TestBlockShiftTripIDs_CachedPerRequest(t *testing.T) {
 
 	again := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
 
-	assert.Zero(t, counter.queries)
+	assert.Zero(t, counter.count.Load())
 	assert.Equal(t, []string{tripID, laterTripID}, first)
 	assert.Equal(t, first, again)
 }
@@ -1571,7 +1556,7 @@ func TestTripAgencyID_CachedPerRequest(t *testing.T) {
 
 	again, againKnown := api.tripAgencyID(ctx, tripID)
 
-	assert.Zero(t, counter.queries)
+	assert.Zero(t, counter.count.Load())
 	assert.True(t, firstKnown)
 	assert.Equal(t, "dp-agency", first)
 	assert.Equal(t, againKnown, firstKnown)

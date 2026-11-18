@@ -175,9 +175,10 @@ func snapshotCacheFrom(ctx context.Context) *snapshotCache {
 // targetTripID. Trips with no block are treated as a one-trip block. Returns
 // nil when no stop times can be loaded.
 //
-// Cost is 4 DB round-trips per uncached call: blockTripIDsForServiceDate (1),
-// loadBlockTripData → GetStopTimesForTripIDs (1) + GetShapePointsByTripIDs (1),
-// and emitBlockStops → GetStopsByIDs (1, batched across every block-trip).
+// Cost per uncached call is a handful of batched DB round-trips rather than
+// one per block trip: blockTripIDsForServiceDate, loadBlockTripData (stop
+// times plus each distinct shape, see loadBlockShapes), and emitBlockStops →
+// GetStopsByIDs (batched across every block-trip).
 // When ctx carries a snapshotCache (see WithSnapshotCache), block-mates of
 // a previously-computed snapshot hit at zero DB cost; the plural arrivals
 // handler installs one such cache per request.
@@ -644,11 +645,10 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 	return ids
 }
 
-// loadBlockTripData fetches stop_times + shape for every tripID in one pair
-// of batched queries (GetStopTimesForTripIDs + GetShapePointsByTripIDs)
-// instead of the per-trip pair. For a block with N trips this is 2 DB
-// round-trips instead of 2N — a real handle on the plural arrivals
-// handler's amplification.
+// loadBlockTripData fetches stop_times and shape for every tripID in batched
+// queries (GetStopTimesForTripIDs and loadBlockShapes) instead of per trip.
+// For a block with N trips the round-trip count no longer grows with N,
+// a real handle on the plural arrivals handler's amplification.
 //
 // Trips with no stop_times are skipped. Shape errors / missing shapes
 // leave shapePoints empty; emitBlockStops falls back to stop-only
@@ -670,19 +670,7 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 		stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
 	}
 
-	// Shape errors are non-fatal — emitBlockStops falls back to haversine.
-	// A total failure of the batch query means we degrade every trip to
-	// the fallback, still correct just less precise. Log real DB errors
-	// so an operator sees the degradation instead of silently losing
-	// shape-based precision across every block trip.
-	shapeRows, err := q.GetShapePointsByTripIDs(ctx, tripIDs)
-	warnIfRealDBError(err, "loadBlockTripData: GetShapePointsByTripIDs failed, degrading every trip to haversine fallback",
-		slog.Int("trip_count", len(tripIDs)))
-	shapePointsByTrip := make(map[string][]gtfs.ShapePoint, len(tripIDs))
-	for _, sr := range shapeRows {
-		shapePointsByTrip[sr.TripID] = append(shapePointsByTrip[sr.TripID],
-			gtfs.ShapePoint{Latitude: sr.Lat, Longitude: sr.Lon})
-	}
+	shapesByTrip := api.loadBlockShapes(ctx, tripIDs)
 
 	out := make([]blockTripData, 0, len(tripIDs))
 	for _, id := range tripIDs {
@@ -690,19 +678,13 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 		if len(stopTimes) == 0 {
 			continue
 		}
-		shapePoints := shapePointsByTrip[id]
-		var cumDistances []float64
-		var totalDist float64
-		if len(shapePoints) >= 2 {
-			cumDistances = preCalculateCumulativeDistances(shapePoints)
-			totalDist = cumDistances[len(cumDistances)-1]
-		}
+		shape := shapesByTrip[id]
 		out = append(out, blockTripData{
 			id:           id,
 			stopTimes:    stopTimes,
-			shapePoints:  shapePoints,
-			cumDistances: cumDistances,
-			totalDist:    totalDist,
+			shapePoints:  shape.points,
+			cumDistances: shape.cumDistances,
+			totalDist:    shape.totalDist,
 			firstSeconds: utils.EffectiveStopTimeSeconds(stopTimes[0].ArrivalTime, stopTimes[0].DepartureTime),
 			lastSeconds: utils.EffectiveStopTimeSeconds(
 				stopTimes[len(stopTimes)-1].ArrivalTime,
@@ -711,6 +693,53 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []b
 		})
 	}
 	return out
+}
+
+// blockShape is one shape's points with their cumulative distances, which are
+// set only when the shape has at least two points.
+type blockShape struct {
+	points       []gtfs.ShapePoint
+	cumDistances []float64
+	totalDist    float64
+}
+
+// loadBlockShapes returns each trip's shape keyed by trip ID; a trip with no
+// shape is absent. Block-mates usually run the same few shapes, so each
+// distinct shape is loaded and measured once and shared between its trips.
+// Callers must treat the shared slices as read-only.
+//
+// Shape errors are non-fatal: emitBlockStops falls back to haversine, still
+// correct just less precise. Real DB errors are logged so an operator sees
+// the degradation instead of silently losing shape-based precision.
+func (api *RestAPI) loadBlockShapes(ctx context.Context, tripIDs []string) map[string]blockShape {
+	trips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDs)
+	var pointsByShapeID map[string][]gtfs.ShapePoint
+	if err == nil {
+		pointsByShapeID, err = api.shapePointsForTrips(ctx, trips)
+	}
+	if err != nil {
+		warnIfRealDBError(err, "loadBlockShapes: shape lookup failed, degrading every trip to haversine fallback",
+			slog.Int("trip_count", len(tripIDs)))
+		return nil
+	}
+
+	shapesByID := make(map[string]blockShape, len(pointsByShapeID))
+	for shapeID, points := range pointsByShapeID {
+		shape := blockShape{points: points}
+		if len(points) >= 2 {
+			shape.cumDistances = preCalculateCumulativeDistances(points)
+			shape.totalDist = shape.cumDistances[len(shape.cumDistances)-1]
+		}
+		shapesByID[shapeID] = shape
+	}
+
+	shapesByTrip := make(map[string]blockShape, len(trips))
+	for _, trip := range trips {
+		if shape, ok := shapesByID[nulls.StringOrEmpty(trip.ShapeID)]; ok {
+			shapesByTrip[trip.ID] = shape
+		}
+	}
+	return shapesByTrip
 }
 
 // fetchStopCoordsForStopTimes fetches the unique stops in stopTimes, batching

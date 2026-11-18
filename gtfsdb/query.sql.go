@@ -1156,45 +1156,30 @@ func (q *Queries) GetActiveRouteIDsForStopsOnDate(ctx context.Context, arg GetAc
 }
 
 const getActiveServiceIDsForDate = `-- name: GetActiveServiceIDsForDate :many
-WITH formatted_date AS (
-    SELECT STRFTIME('%w', SUBSTR(?1, 1, 4) || '-' || SUBSTR(?1, 5, 2) || '-' || SUBSTR(?1, 7, 2)) AS weekday
-),
-base_services AS (
-    SELECT c.id AS service_id
-    FROM calendar c, formatted_date fd
-    WHERE c.start_date <= ?1
-      AND c.end_date >= ?1
-      AND (
-        (fd.weekday = '0' AND c.sunday = 1) OR
-        (fd.weekday = '1' AND c.monday = 1) OR
-        (fd.weekday = '2' AND c.tuesday = 1) OR
-        (fd.weekday = '3' AND c.wednesday = 1) OR
-        (fd.weekday = '4' AND c.thursday = 1) OR
-        (fd.weekday = '5' AND c.friday = 1) OR
-        (fd.weekday = '6' AND c.saturday = 1)
-      )
-),
-removed_services AS (
-    SELECT service_id
-    FROM calendar_dates
-    WHERE date = ?1
-      AND exception_type = 2
-),
-added_services AS (
-    SELECT service_id
-    FROM calendar_dates
-    WHERE date = ?1
-      AND exception_type = 1
-)
-SELECT DISTINCT service_id
-FROM base_services
-WHERE service_id NOT IN (SELECT service_id FROM removed_services)
+SELECT c.id AS service_id
+FROM calendar c
+WHERE c.start_date <= ?1
+  AND c.end_date >= ?1
+  AND CASE STRFTIME('%w', SUBSTR(?1, 1, 4) || '-' || SUBSTR(?1, 5, 2) || '-' || SUBSTR(?1, 7, 2))
+      WHEN '0' THEN c.sunday
+      WHEN '1' THEN c.monday
+      WHEN '2' THEN c.tuesday
+      WHEN '3' THEN c.wednesday
+      WHEN '4' THEN c.thursday
+      WHEN '5' THEN c.friday
+      WHEN '6' THEN c.saturday
+  END = 1
+  AND c.id NOT IN (
+    SELECT service_id FROM calendar_dates WHERE date = ?1 AND exception_type = 2
+  )
 UNION
-SELECT DISTINCT service_id FROM added_services
+SELECT service_id FROM calendar_dates WHERE date = ?1 AND exception_type = 1
 `
 
-func (q *Queries) GetActiveServiceIDsForDate(ctx context.Context, substr interface{}) ([]string, error) {
-	rows, err := q.query(ctx, q.getActiveServiceIDsForDateStmt, getActiveServiceIDsForDate, substr)
+// Written without CTEs: the CTE form cost twice as much per call and, through
+// SQLite's allocator, contended badly when many requests ran it at once.
+func (q *Queries) GetActiveServiceIDsForDate(ctx context.Context, startDate string) ([]string, error) {
+	rows, err := q.query(ctx, q.getActiveServiceIDsForDateStmt, getActiveServiceIDsForDate, startDate)
 	if err != nil {
 		return nil, err
 	}
@@ -3491,72 +3476,6 @@ func (q *Queries) GetShapePointsByTripID(ctx context.Context, id string) ([]Shap
 		var i Shape
 		if err := rows.Scan(
 			&i.ID,
-			&i.ShapeID,
-			&i.Lat,
-			&i.Lon,
-			&i.ShapePtSequence,
-			&i.ShapeDistTraveled,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getShapePointsByTripIDs = `-- name: GetShapePointsByTripIDs :many
-SELECT
-    t.id AS trip_id,
-    s.shape_id,
-    s.lat,
-    s.lon,
-    s.shape_pt_sequence,
-    s.shape_dist_traveled
-FROM shapes s
-JOIN trips t ON t.shape_id = s.shape_id
-WHERE t.id IN (/*SLICE:trip_ids*/?)
-ORDER BY t.id ASC, s.shape_pt_sequence ASC
-`
-
-type GetShapePointsByTripIDsRow struct {
-	TripID            string
-	ShapeID           string
-	Lat               float64
-	Lon               float64
-	ShapePtSequence   int64
-	ShapeDistTraveled sql.NullFloat64
-}
-
-// Batch equivalent of GetShapePointsByTripID for N+1 avoidance when loading
-// an entire block's worth of trips at once (loadBlockTripData). Rows are
-// returned with their originating trip_id so callers can group them.
-func (q *Queries) GetShapePointsByTripIDs(ctx context.Context, tripIds []string) ([]GetShapePointsByTripIDsRow, error) {
-	query := getShapePointsByTripIDs
-	var queryParams []interface{}
-	if len(tripIds) > 0 {
-		for _, v := range tripIds {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:trip_ids*/?", strings.Repeat(",?", len(tripIds))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:trip_ids*/?", "NULL", 1)
-	}
-	rows, err := q.query(ctx, nil, query, queryParams...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetShapePointsByTripIDsRow
-	for rows.Next() {
-		var i GetShapePointsByTripIDsRow
-		if err := rows.Scan(
-			&i.TripID,
 			&i.ShapeID,
 			&i.Lat,
 			&i.Lon,
