@@ -285,7 +285,7 @@ func TestBuildVehicleStatus_BearingConversion(t *testing.T) {
 }
 
 func TestResolveActiveTripID(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	ctx := context.Background()
 

@@ -49,7 +49,7 @@ func TestProblemReportsForStopEmptyList(t *testing.T) {
 }
 
 func TestProblemReportsForStopSubmitThenRetrieve(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	api.Config.ProtectedApiKeys = []string{"PROTECTED-TEST"}
 	defer api.Shutdown()
 

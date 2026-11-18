@@ -22,7 +22,7 @@ func reportProblemWithTripURL(tripID string, params ...url.Values) string {
 }
 
 func TestReportProblemWithTripRequiresValidApiKey(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	resp, model := callAPIHandler[EmptyResponse](t, api,
@@ -34,7 +34,7 @@ func TestReportProblemWithTripRequiresValidApiKey(t *testing.T) {
 }
 
 func TestReportProblemWithTripEndToEnd(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	resp, model := callAPIHandler[EmptyResponse](t, api, reportProblemWithTripURL("1_12345", url.Values{
@@ -64,7 +64,7 @@ func TestReportProblemWithTripEndToEnd(t *testing.T) {
 }
 
 func TestReportProblemWithTripMinimalParams(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	resp, model := callAPIHandler[EmptyResponse](t, api, reportProblemWithTripURL("1_12345"))
@@ -74,7 +74,7 @@ func TestReportProblemWithTripMinimalParams(t *testing.T) {
 }
 
 func TestReportProblemWithTripSanitization(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	resp, model := callAPIHandler[EmptyResponse](t, api, reportProblemWithTripURL("1_12345", url.Values{
@@ -99,7 +99,7 @@ func TestReportProblemWithTripSanitization(t *testing.T) {
 // TestReportProblemWithTripCoordinateRangeValidation verifies that out-of-range userLat
 // and userLon parameters return HTTP 400 with validation errors instead of database 500s.
 func TestReportProblemWithTripCoordinateRangeValidation(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
 
@@ -158,7 +158,7 @@ func TestReportProblemWithTripDatabaseFailure(t *testing.T) {
 }
 
 func TestReportProblemWithTripNullStorage(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	resp, model := callAPIHandler[EmptyResponse](t, api, reportProblemWithTripURL("1_12345", url.Values{

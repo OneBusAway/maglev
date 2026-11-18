@@ -1211,7 +1211,7 @@ var tripsForLocationServiceDayClock = time.Date(2025, 6, 11, 19, 0, 0, 0, time.U
 // in service at the query time are returned from the schedule alone, with no
 // real-time feed configured.
 func TestTripsForLocationHandler_ScheduledTripsWithoutVehicles(t *testing.T) {
-	api := createTestApiWithClock(t, clock.NewMockClock(tripsForLocationServiceDayClock))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(tripsForLocationServiceDayClock))
 	defer api.Shutdown()
 
 	require.Empty(t, api.GtfsManager.GetRealTimeVehicles(),

@@ -248,7 +248,7 @@ func TestStopsForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {
 // "SortA_9", so this distinguishes combined-ID ordering from raw-ID ordering.
 func TestStopsForLocationSortsByCombinedStopID(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
 	ctx := context.Background()
@@ -317,7 +317,7 @@ func TestStopsForLocationSortsByCombinedStopID(t *testing.T) {
 // station must resolve in references.stops once, as it does for /stop/{id}.
 func TestStopsForLocationReturnsParentStation(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
 	ctx := context.Background()
@@ -619,7 +619,7 @@ func TestStopsForLocationQueryFallsBackToClosestMatch(t *testing.T) {
 // Merged feeds can repeat a stop code. DupB is seeded nearer than DupA, which sorts first by id.
 func TestStopsForLocationQueryTruncatesToMaxCount(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 12, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
 	ctx := context.Background()
