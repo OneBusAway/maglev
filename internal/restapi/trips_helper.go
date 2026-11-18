@@ -526,17 +526,14 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 }
 
 func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.Trip, agencyID string, serviceDate time.Time) (nextTripID string, previousTripID string, stopTimes []gtfsdb.StopTime, err error) {
-	if !trip.BlockID.Valid {
-		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
-		if stopErr != nil {
-			return "", "", nil, stopErr
-		}
-		return "", "", stopTimes, nil
+	effectiveBlockID := trip.BlockID
+	if !effectiveBlockID.Valid || effectiveBlockID.String == "" {
+		effectiveBlockID = nulls.String(trip.ID)
 	}
 
 	navResult, err := api.GtfsManager.GtfsDB.Queries.GetNextAndPreviousTripsInBlock(ctx, gtfsdb.GetNextAndPreviousTripsInBlockParams{
 		TripID:     trip.ID,
-		BlockID:    trip.BlockID,
+		BlockID:    effectiveBlockID,
 		ServiceIds: []string{trip.ServiceID},
 	})
 	if err != nil {
@@ -893,8 +890,9 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 		return 0, false
 	}
 
-	if !trip.BlockID.Valid {
-		return 0, false
+	effectiveBlockID := trip.BlockID
+	if !effectiveBlockID.Valid || effectiveBlockID.String == "" {
+		effectiveBlockID = nulls.String(trip.ID)
 	}
 
 	formattedDate := serviceDate.Format("20060102")
@@ -913,7 +911,7 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 	// Use optimized query with ROW_NUMBER() window function
 	seq, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripSequence(ctx, gtfsdb.GetBlockTripSequenceParams{
 		TripID:     tripID,
-		BlockID:    trip.BlockID,
+		BlockID:    effectiveBlockID,
 		ServiceIds: activeServiceIDs,
 	})
 	if err != nil {
@@ -1257,13 +1255,14 @@ func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTr
 			slog.String("error", err.Error()))
 		return nil
 	}
-	if !trip.BlockID.Valid {
-		return nil
+	effectiveBlockID := trip.BlockID
+	if !effectiveBlockID.Valid || effectiveBlockID.String == "" {
+		effectiveBlockID = nulls.String(trip.ID)
 	}
 
 	// Use optimized query with LEAD() window function
 	stopTime, err := api.GtfsManager.GtfsDB.Queries.GetFirstStopOfNextTripInBlock(ctx, gtfsdb.GetFirstStopOfNextTripInBlockParams{
-		BlockID:    trip.BlockID,
+		BlockID:    effectiveBlockID,
 		ServiceIds: []string{trip.ServiceID},
 		TripID:     currentTripID,
 	})

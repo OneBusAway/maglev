@@ -320,3 +320,48 @@ func TestBlockHandlerBlocklessTrip(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, respOther.StatusCode)
 	assert.Equal(t, http.StatusNotFound, modelOther.Code)
 }
+
+func TestBlockHandlerBlocklessTripSharingIDWithBlock(t *testing.T) {
+	files := basicTripsForRouteFiles()
+	// Trip with trip_id="shared-id" and no block_id (blockless trip)
+	// along with another trip with block_id="shared-id".
+	files["trips.txt"] = "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+		tripsForRouteRouteID + ",tfr-svc,shared-id," + tripsForRouteHeadsign + ",0,\n" +
+		tripsForRouteRouteID + ",tfr-svc,other-trip," + tripsForRouteHeadsign + ",0,shared-id\n"
+	files["stop_times.txt"] = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+		"other-trip,11:40:00,11:40:00," + tripsForRouteStop1ID + ",1\n" +
+		"other-trip,11:50:00,11:50:00," + tripsForRouteStop2ID + ",2\n" +
+		"shared-id,11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
+		"shared-id,12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n"
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "shared-block.zip", files)
+	defer api.Shutdown()
+
+	combinedBlockID := utils.FormCombinedID(tripsForRouteAgencyID, "shared-id")
+
+	// Querying block endpoint with shared-id returns 200 with both trips in configuration.
+	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL(combinedBlockID))
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, combinedBlockID, model.Data.Entry.ID)
+	require.Len(t, model.Data.Entry.Configurations, 1)
+
+	config := model.Data.Entry.Configurations[0]
+	assert.Equal(t, []string{utils.FormCombinedID(tripsForRouteAgencyID, "tfr-svc")}, config.ActiveServiceIds)
+	require.Len(t, config.Trips, 2)
+
+	// Trips are ordered by trip ID in configuration: other-trip, shared-id
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "other-trip"), config.Trips[0].TripId)
+	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "shared-id"), config.Trips[1].TripId)
+
+	// Both trips appear in references and both have BlockID matching combinedBlockID.
+	require.Len(t, model.Data.References.Trips, 2)
+	refMap := make(map[string]models.Trip)
+	for _, tripRef := range model.Data.References.Trips {
+		refMap[tripRef.ID] = tripRef
+	}
+	require.Contains(t, refMap, utils.FormCombinedID(tripsForRouteAgencyID, "other-trip"))
+	require.Contains(t, refMap, utils.FormCombinedID(tripsForRouteAgencyID, "shared-id"))
+	assert.Equal(t, combinedBlockID, refMap[utils.FormCombinedID(tripsForRouteAgencyID, "other-trip")].BlockID)
+	assert.Equal(t, combinedBlockID, refMap[utils.FormCombinedID(tripsForRouteAgencyID, "shared-id")].BlockID)
+}

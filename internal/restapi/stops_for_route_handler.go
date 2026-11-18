@@ -298,6 +298,9 @@ func processTripGroups(
 		if err != nil {
 			return err
 		}
+		if len(stopGroup.StopIds) == 0 {
+			continue
+		}
 		noDirection := !group.DirectionID.Valid
 		if noDirection {
 			stopGroup.ID = noDirectionGroupID

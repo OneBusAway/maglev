@@ -59,6 +59,8 @@ func (api *RestAPI) blockHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *RestAPI) getBlockRows(ctx context.Context, agencyID, blockID string) ([]gtfsdb.GetBlockDetailsRow, error) {
+	var block []gtfsdb.GetBlockDetailsRow
+
 	hasTrip, err := api.GtfsManager.GtfsDB.Queries.BlockHasTripForAgency(ctx, gtfsdb.BlockHasTripForAgencyParams{
 		BlockID:  nulls.String(blockID),
 		AgencyID: agencyID,
@@ -67,21 +69,35 @@ func (api *RestAPI) getBlockRows(ctx context.Context, agencyID, blockID string) 
 		return nil, err
 	}
 	if hasTrip > 0 {
-		return api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, nulls.String(blockID))
+		blockRows, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetails(ctx, nulls.String(blockID))
+		if err != nil {
+			return nil, err
+		}
+		block = append(block, blockRows...)
 	}
 
 	tripRows, err := api.GtfsManager.GtfsDB.Queries.GetBlockDetailsForTrip(ctx, gtfsdb.GetBlockDetailsForTripParams{
 		TripID:   blockID,
 		AgencyID: agencyID,
 	})
-	if err != nil || len(tripRows) == 0 {
+	if err != nil {
 		return nil, err
 	}
-
-	block := make([]gtfsdb.GetBlockDetailsRow, len(tripRows))
-	for i, row := range tripRows {
-		block[i] = gtfsdb.GetBlockDetailsRow(row)
+	for _, row := range tripRows {
+		block = append(block, gtfsdb.GetBlockDetailsRow(row))
 	}
+
+	if len(block) == 0 {
+		return nil, nil
+	}
+
+	slices.SortFunc(block, func(a, b gtfsdb.GetBlockDetailsRow) int {
+		if c := cmp.Compare(a.TripID, b.TripID); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.StopSequence, b.StopSequence)
+	})
+
 	return block, nil
 }
 

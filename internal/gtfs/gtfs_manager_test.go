@@ -15,8 +15,10 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 // TestGetStopsForLocationContextError ensures terminated requests return their
@@ -400,6 +402,87 @@ func TestManager_GetVehicleForTrip(t *testing.T) {
 	// Test Not Found
 	nilVehicle := manager.GetVehicleForTrip(context.Background(), "nonexistent")
 	assert.Nil(t, nilVehicle)
+}
+
+func TestManager_GetVehicleForTrip_BlocklessSharedBlock(t *testing.T) {
+	ctx := context.Background()
+
+	gtfsConfig := Config{
+		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
+		GTFSDataPath: ":memory:",
+		Env:          appconf.Test,
+	}
+	manager, err := InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+	defer manager.Shutdown(context.Background())
+
+	queries := manager.GtfsDB.Queries
+
+	trips, err := queries.ListTripsWithLimit(ctx, 1)
+	require.NoError(t, err)
+	require.NotEmpty(t, trips)
+	existingTrip := trips[0]
+
+	// Blockless trip whose ID is "shared-block-id"
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        "shared-block-id",
+		RouteID:   existingTrip.RouteID,
+		ServiceID: existingTrip.ServiceID,
+		BlockID:   nulls.String(""),
+	})
+	require.NoError(t, err)
+
+	// Blocked trip whose BlockID is "shared-block-id"
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        "blocked-trip-id",
+		RouteID:   existingTrip.RouteID,
+		ServiceID: existingTrip.ServiceID,
+		BlockID:   nulls.String("shared-block-id"),
+	})
+	require.NoError(t, err)
+
+	// Another unrelated blockless trip
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        "unrelated-blockless",
+		RouteID:   existingTrip.RouteID,
+		ServiceID: existingTrip.ServiceID,
+		BlockID:   nulls.String(""),
+	})
+	require.NoError(t, err)
+
+	// Lonely blockless trip with no vehicle anywhere
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        "lonely-blockless",
+		RouteID:   existingTrip.RouteID,
+		ServiceID: existingTrip.ServiceID,
+		BlockID:   nulls.String(""),
+	})
+	require.NoError(t, err)
+
+	// Assign vehicle to blocked-trip-id and unrelated-blockless
+	manager.feedVehicles = map[string][]gtfs.Vehicle{
+		"feed-0": {
+			{
+				ID:   &gtfs.VehicleID{ID: "vehicle-blocked"},
+				Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "blocked-trip-id"}},
+			},
+			{
+				ID:   &gtfs.VehicleID{ID: "vehicle-unrelated"},
+				Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "unrelated-blockless"}},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	// 1. Calling GetVehicleForTrip for blockless trip "shared-block-id" finds the vehicle
+	// on "blocked-trip-id" because they share the block.
+	vShared := manager.GetVehicleForTrip(ctx, "shared-block-id")
+	require.NotNil(t, vShared)
+	assert.Equal(t, "vehicle-blocked", vShared.ID.ID)
+
+	// 2. Calling GetVehicleForTrip for "lonely-blockless" must NOT leak any vehicles.
+	vLonely := manager.GetVehicleForTrip(ctx, "lonely-blockless")
+	assert.Nil(t, vLonely)
 }
 
 func TestRoutesForAgencyID_NonexistentId(t *testing.T) {
