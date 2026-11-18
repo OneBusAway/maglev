@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -410,6 +412,57 @@ func findTripWithBlockAndShape(t testing.TB, api *RestAPI) string {
 	return tripID
 }
 
+// blockTripRefsFor returns refs for tripIDs, in the given order, with each
+// trip's shape ID as stored in the database.
+func blockTripRefsFor(t testing.TB, api *RestAPI, tripIDs ...string) []blockTripRef {
+	t.Helper()
+	trips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(context.Background(), tripIDs)
+	require.NoError(t, err)
+	shapeIDs := make(map[string]string, len(trips))
+	for _, trip := range trips {
+		shapeIDs[trip.ID] = nulls.StringOrEmpty(trip.ShapeID)
+	}
+	refs := make([]blockTripRef, len(tripIDs))
+	for i, id := range tripIDs {
+		refs[i] = blockTripRef{id: id, shapeID: shapeIDs[id]}
+	}
+	return refs
+}
+
+func TestBlockTripsForServiceDate_CarriesEachTripsShapeID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	refs := api.blockTripsForServiceDate(ctx, findTripWithBlockAndShape(t, api), rabaServiceDate)
+	require.NotEmpty(t, refs)
+
+	ids := make([]string, len(refs))
+	for i, ref := range refs {
+		ids[i] = ref.id
+	}
+	assert.Equal(t, blockTripRefsFor(t, api, ids...), refs)
+}
+
+func TestBlockTripsForServiceDate_FallbackCarriesTripShape(t *testing.T) {
+	api := &RestAPI{Application: &app.Application{GtfsManager: newTestManagerNoData(t)}}
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{ID: "agency", Name: "Agency", Url: "https://example.com", Timezone: "UTC"})
+	require.NoError(t, err)
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{ID: "route", AgencyID: "agency", Type: 3})
+	require.NoError(t, err)
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{ID: "service", Monday: 1, StartDate: "20240101", EndDate: "20251231"})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: "blockless", RouteID: "route", ServiceID: "service", ShapeID: sql.NullString{String: "shape", Valid: true}})
+	require.NoError(t, err)
+
+	refs := api.blockTripsForServiceDate(ctx, "blockless", rabaServiceDate)
+
+	assert.Equal(t, []blockTripRef{{id: "blockless", shapeID: "shape"}}, refs)
+}
+
 func TestBlockTripIDsForServiceDate_ReturnsBlockMembers(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -458,7 +511,7 @@ func TestLoadBlockTripData_PopulatesStopTimesAndShape(t *testing.T) {
 	ctx := context.Background()
 
 	tripID := findTripWithBlockAndShape(t, api)
-	data := api.loadBlockTripData(ctx, []string{tripID})
+	data := api.loadBlockTripData(ctx, blockTripRefsFor(t, api, tripID))
 
 	require.Len(t, data, 1)
 	d := data[0]
@@ -487,11 +540,11 @@ func TestLoadBlockTripData_SharesShapeAcrossBlockMates(t *testing.T) {
 	).Scan(&firstTripID, &secondTripID)
 	require.NoError(t, err, "RABA fixture should contain two trips sharing a shape")
 
-	data := api.loadBlockTripData(ctx, []string{firstTripID, secondTripID})
+	data := api.loadBlockTripData(ctx, blockTripRefsFor(t, api, firstTripID, secondTripID))
 	require.Len(t, data, 2)
 
 	for _, d := range data {
-		alone := api.loadBlockTripData(ctx, []string{d.id})
+		alone := api.loadBlockTripData(ctx, blockTripRefsFor(t, api, d.id))
 		require.Len(t, alone, 1)
 		assert.Equal(t, alone[0].shapePoints, d.shapePoints, "trip %s shape points", d.id)
 		assert.Equal(t, alone[0].cumDistances, d.cumDistances, "trip %s cumulative distances", d.id)
@@ -524,7 +577,7 @@ func TestLoadBlockShapes_OmitsShapelessTrip(t *testing.T) {
 	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: "shapeless", RouteID: "route", ServiceID: "service"})
 	require.NoError(t, err)
 
-	shapes := api.loadBlockShapes(ctx, []string{"shaped", "shapeless"})
+	shapes := api.loadBlockShapes(ctx, []blockTripRef{{id: "shaped", shapeID: "shape"}, {id: "shapeless"}})
 
 	require.Contains(t, shapes, "shaped")
 	assert.Len(t, shapes["shaped"].points, 2)
@@ -533,12 +586,32 @@ func TestLoadBlockShapes_OmitsShapelessTrip(t *testing.T) {
 	assert.NotContains(t, shapes, "shapeless")
 }
 
+// The trips' order is the block order emitBlockStops walks, so it must follow
+// the input rather than any map built along the way.
+func TestLoadBlockTripData_KeepsInputOrder(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	refs := api.blockTripsForServiceDate(ctx, findTripWithBlockAndShape(t, api), rabaServiceDate)
+	require.Greater(t, len(refs), 2, "need a block with several trips")
+	slices.Reverse(refs)
+
+	for range 5 {
+		data := api.loadBlockTripData(ctx, refs)
+		require.Len(t, data, len(refs), "every RABA block trip has stop times")
+		for i, d := range data {
+			require.Equal(t, refs[i].id, d.id)
+		}
+	}
+}
+
 func TestLoadBlockTripData_SkipsTripsWithNoData(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	ctx := context.Background()
 
-	data := api.loadBlockTripData(ctx, []string{"trip-does-not-exist"})
+	data := api.loadBlockTripData(ctx, []blockTripRef{{id: "trip-does-not-exist"}})
 	assert.Empty(t, data)
 }
 
@@ -827,7 +900,7 @@ func TestProjectStopsInSequence_MonotonicAlongShape(t *testing.T) {
 	ctx := context.Background()
 
 	tripID := findTripWithBlockAndShape(t, api)
-	data := api.loadBlockTripData(ctx, []string{tripID})
+	data := api.loadBlockTripData(ctx, blockTripRefsFor(t, api, tripID))
 	require.Len(t, data, 1)
 	td := data[0]
 	require.GreaterOrEqual(t, len(td.stopTimes), 2)
@@ -988,7 +1061,7 @@ func TestApplyScheduledTripPositionToStatus_PopulatesFields(t *testing.T) {
 	ctx := context.Background()
 
 	tripID := findTripWithBlockAndShape(t, api)
-	data := api.loadBlockTripData(ctx, []string{tripID})
+	data := api.loadBlockTripData(ctx, blockTripRefsFor(t, api, tripID))
 	require.Len(t, data, 1)
 	td := data[0]
 

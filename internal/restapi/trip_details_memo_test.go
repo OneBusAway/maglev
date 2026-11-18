@@ -35,14 +35,14 @@ func TestTripDetailsQueryBudget(t *testing.T) {
 		withVehicle bool
 		maxQueries  int64
 	}{
-		{name: "few stops", tripID: benchTripFewStops, maxQueries: 21},
-		{name: "many stops", tripID: benchTripManyStops, maxQueries: 21},
-		{name: "long block", tripID: benchTripLongBlock, maxQueries: 21},
-		{name: "vehicle", tripID: benchTripManyStops, withVehicle: true, maxQueries: 21},
-		{name: "no schedule", tripID: benchTripManyStops, query: "&includeSchedule=false", maxQueries: 19},
+		{name: "few stops", tripID: benchTripFewStops, maxQueries: 20},
+		{name: "many stops", tripID: benchTripManyStops, maxQueries: 20},
+		{name: "long block", tripID: benchTripLongBlock, maxQueries: 20},
+		{name: "vehicle", tripID: benchTripManyStops, withVehicle: true, maxQueries: 20},
+		{name: "no schedule", tripID: benchTripManyStops, query: "&includeSchedule=false", maxQueries: 18},
 		{name: "no status", tripID: benchTripManyStops, query: "&includeStatus=false", maxQueries: 13},
-		{name: "no references", tripID: benchTripManyStops, query: "&includeReferences=false", maxQueries: 16},
-		{name: "service date", tripID: benchTripManyStops, query: "&serviceDate=" + arrivalsTestClock.Format(serviceDateLayout), maxQueries: 21},
+		{name: "no references", tripID: benchTripManyStops, query: "&includeReferences=false", maxQueries: 15},
+		{name: "service date", tripID: benchTripManyStops, query: "&serviceDate=" + arrivalsTestClock.Format(serviceDateLayout), maxQueries: 20},
 	}
 
 	for _, tt := range tests {
