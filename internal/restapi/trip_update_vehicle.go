@@ -269,10 +269,11 @@ func (api *RestAPI) requestedVehicleForTrip(ctx context.Context, requestedID, ag
 }
 
 // requestedPositionVehicle finds a position vehicle reporting tripID by its
-// agency-qualified ID and applies its record, or returns nil.
+// agency-qualified ID and applies its record, or returns nil. The ID is read after
+// agencyID's prefix, since an agency ID can itself contain an underscore.
 func (api *RestAPI) requestedPositionVehicle(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time) *gtfs.Vehicle {
-	requestedAgencyID, rawVehicleID, err := utils.ExtractAgencyIDAndCodeID(requestedID)
-	if err != nil || requestedAgencyID != agencyID {
+	rawVehicleID, hasAgencyPrefix := strings.CutPrefix(requestedID, agencyID+"_")
+	if !hasAgencyPrefix {
 		return nil
 	}
 	vehicle, err := api.GtfsManager.GetVehicleByID(rawVehicleID)

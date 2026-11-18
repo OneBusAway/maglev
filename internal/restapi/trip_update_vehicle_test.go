@@ -1532,3 +1532,27 @@ func TestTripUpdateVehicleForTrip_PositionVehicleAtAnotherAgency(t *testing.T) {
 		})
 	}
 }
+
+// An agency ID can contain an underscore, so the explicit vehicle ID is read
+// after the route's agency prefix rather than split at its first underscore.
+func TestRequestedVehicleForTrip_AgencyIDWithUnderscore(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	tripID := "underscore-agency-trip"
+	api.GtfsManager.MockAddVehicleWithOptions("busA", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+	api.GtfsManager.MockAddVehicleWithOptions("busB", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+
+	ctx := context.Background()
+	otherVehicleID := "busA"
+	if automatic := api.vehicleForTrip(ctx, tripID, serviceDate); automatic.ID.ID == "busA" {
+		otherVehicleID = "busB"
+	}
+
+	vehicle := api.requestedVehicleForTrip(ctx, "AGENCY_ONE_"+otherVehicleID, "AGENCY_ONE", tripID, serviceDate)
+
+	require.NotNil(t, vehicle)
+	assert.Equal(t, otherVehicleID, vehicle.ID.ID)
+}
