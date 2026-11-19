@@ -782,6 +782,25 @@ func sequenceIdentifiesVisit(stu gtfs.StopTimeUpdate, staticStops map[int64]stri
 	return ok && staticStop == *stu.StopID
 }
 
+// uniqueStaticSequence returns the stop_sequence of stopID when the trip
+// visits that stop once. A stop that appears more than once stays unresolved.
+func uniqueStaticSequence(staticStops map[int64]string, stopID string) (int64, bool) {
+	seq := int64(-1)
+	for candidate, id := range staticStops {
+		if id != stopID {
+			continue
+		}
+		if seq != -1 {
+			return 0, false
+		}
+		seq = candidate
+	}
+	if seq == -1 {
+		return 0, false
+	}
+	return seq, true
+}
+
 // staticStopsForTrip loads a trip's static schedule as a stop_sequence to
 // stop_id map. It returns an empty map when the lookup fails.
 func (api *RestAPI) staticStopsForTrip(ctx context.Context, tripID string) map[int64]string {
