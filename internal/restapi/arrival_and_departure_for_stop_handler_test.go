@@ -818,14 +818,6 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 
 	ctx := t.Context()
 	queries := api.GtfsManager.GtfsDB.Queries
-	registerStopFixtureCleanup(t, api.GtfsManager.GtfsDB.DB, `'MultiAgencyStop'`,
-		`DELETE FROM stop_times WHERE trip_id = 'TripB'`,
-		`DELETE FROM trips WHERE id = 'TripB'`,
-		`DELETE FROM routes WHERE id = 'RouteB'`,
-		`DELETE FROM calendar WHERE id = 'service1'`,
-		`DELETE FROM stops WHERE id = 'MultiAgencyStop'`,
-		`DELETE FROM agencies WHERE id IN ('AgencyA', 'AgencyB')`,
-	)
 
 	// 1. Setup: Agency A owns the stop
 	agencyA := "AgencyA"
