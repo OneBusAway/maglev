@@ -345,6 +345,7 @@ func buildNoServiceResponse(agencyID, routeID string, scheduleDate int64, agency
 	refs := models.NewEmptyReferences()
 	refs.Agencies = append(refs.Agencies, agencyModel)
 	refs.Routes = append(refs.Routes, routeModel)
+	refs.Normalize()
 	entry := models.ScheduleForRouteEntry{
 		RouteID:           utils.FormCombinedID(agencyID, routeID),
 		ScheduleDate:      scheduleDate,
