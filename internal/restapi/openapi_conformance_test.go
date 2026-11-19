@@ -123,28 +123,10 @@ func validateResponseSchema(t *testing.T, doc *openapi3.T, jsonBody any, specEnd
 // --- Conformance Tests ---
 
 // createConformanceTestApi creates a test API with a high rate limit suitable for conformance testing
-// where many sequential requests are made.
+// where many sequential requests are made. It uses a private copy of the database because the
+// report-problem endpoints it checks store rows.
 func createConformanceTestApi(t *testing.T) *RestAPI {
-	ctx := context.Background()
-
-	// Initialize the shared GTFS manager only once (reuses the same testDbSetupOnce from http_test.go)
-	testDbSetupOnce.Do(func() {
-		gtfsConfig := gtfs.Config{
-			GtfsURL:      filepath.Join("../../testdata", "raba.zip"),
-			GTFSDataPath: testDbPath,
-		}
-		var err error
-		testGtfsManager, err = gtfs.InitGTFSManager(ctx, gtfsConfig)
-		if err != nil {
-			t.Fatalf("Failed to initialize shared test GTFS manager: %v", err)
-		}
-		testDirectionCalculator = gtfs.NewAdvancedDirectionCalculator(testGtfsManager.GtfsDB.Queries)
-	})
-
-	gtfsConfig := gtfs.Config{
-		GtfsURL:      filepath.Join("../../testdata", "raba.zip"),
-		GTFSDataPath: testDbPath,
-	}
+	gtfsConfig, gtfsManager := newIsolatedTestManager(t)
 
 	application := &app.Application{
 		Config: appconf.Config{
@@ -153,8 +135,8 @@ func createConformanceTestApi(t *testing.T) *RestAPI {
 			RateLimit: 1000, // High rate limit for conformance testing
 		},
 		GtfsConfig:          gtfsConfig,
-		GtfsManager:         testGtfsManager,
-		DirectionCalculator: testDirectionCalculator,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries),
 		Clock:               clock.RealClock{},
 	}
 

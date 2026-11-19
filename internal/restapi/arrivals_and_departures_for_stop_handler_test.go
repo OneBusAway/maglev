@@ -672,7 +672,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, loc))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
 	ctx := context.Background()
@@ -878,7 +878,7 @@ func addDownstreamSTU(t *testing.T, api *RestAPI, tripID string, delay time.Dura
 // queried stop (by stop ID) is applied directly and marks the arrival as predicted.
 func TestPluralArrivals_ExactStopMatch(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -920,7 +920,7 @@ func TestPluralArrivals_ExactStopMatch(t *testing.T) {
 // matches the queried stop, the delay is propagated from the closest prior stop.
 func TestPluralArrivals_PriorStopPropagation(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -960,7 +960,7 @@ func TestPluralArrivals_PriorStopPropagation(t *testing.T) {
 // trip-level Delay but no StopTimeUpdates, that delay is applied to the arrival.
 func TestPluralArrivals_TripLevelDelayFallback(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -999,7 +999,7 @@ func TestPluralArrivals_TripLevelDelayFallback(t *testing.T) {
 // Prediction is no longer gated on vehicle != nil.
 func TestPluralArrivals_TripLevelDelayWithoutVehicle(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1035,7 +1035,7 @@ func TestPluralArrivals_TripLevelDelayWithoutVehicle(t *testing.T) {
 // (Sibling: TripLevelDelayWithoutVehicle covers the trip-level case.)
 func TestPluralArrivals_TripUpdateWithoutVehicle(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1094,7 +1094,7 @@ func TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 
 	// === Baseline: same fixture, NO TripUpdate. Captures the unshifted snapshot. ===
-	baselineAPI := createTestApiWithClock(t, mockClock)
+	baselineAPI := createIsolatedTestApiWithClock(t, mockClock)
 	defer baselineAPI.Shutdown()
 	_, combinedStopIDBaseline, baselineTripID, _ := setupDelayPropTestData(t, baselineAPI, 1)
 	baselineAPI.GtfsManager.MockAddVehicle("v1", baselineTripID, "dp-route")
@@ -1112,7 +1112,7 @@ func TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime(t *testing.T) {
 	require.NotNil(t, baseline, "baseline arrival missing for trip %s", expectedTripIDBaseline)
 
 	// === Subject: identical fixture + bogus 2h trip-level delay (above blockNotActive's 1h cap). ===
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -1152,7 +1152,7 @@ func TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime(t *testing.T) {
 // so it never calls setPredictedTimesFromScheduleDeviation for this stop.
 func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1174,7 +1174,7 @@ func TestPluralArrivals_NoMatchingOrPriorStop(t *testing.T) {
 // stop gets the block's deviation rather than no predicted times.
 func TestPluralArrivals_OneBasedDownstreamSTUAppliesBlockDeviation(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1197,7 +1197,7 @@ func TestPluralArrivals_OneBasedDownstreamSTUAppliesBlockDeviation(t *testing.T)
 // trip update the feed keeps repeating unchanged no longer predicts anything.
 func TestPluralArrivals_ExpiredTripUpdateIsNotPredicted(t *testing.T) {
 	now := time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1222,7 +1222,7 @@ func TestPluralArrivals_ExpiredTripUpdateIsNotPredicted(t *testing.T) {
 
 func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1260,7 +1260,7 @@ func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
 // predicted: there is no resolved schedule deviation to apply.
 func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1340,7 +1340,7 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-			api := createTestApiWithClock(t, mockClock)
+			api := createIsolatedTestApiWithClock(t, mockClock)
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1370,7 +1370,7 @@ func TestPluralArrivals_LayoverAbsorbsEarlierTripDelay(t *testing.T) {
 	// The earlier trip's 07:00 stop is still ahead of the late bus, and the
 	// queried stop is an hour later.
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 7, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1441,7 +1441,7 @@ func findArrivalForTrip(t *testing.T, arrivals []models.ArrivalAndDeparture, tri
 // absolute Time values for an exact stop match, the predicted times are set directly.
 func TestPluralArrivals_AbsoluteTimeStopEvent(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1482,7 +1482,7 @@ func TestPluralArrivals_AbsoluteTimeStopEvent(t *testing.T) {
 // stop has only absolute Time data (no Delay), propagatedDelayMs is reset to 0.
 func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1603,7 +1603,7 @@ func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
 	// (e.g. TestPluralArrivals_TripUpdateWithoutVehicle uses 2010-01-01).
 	// A unique date guarantees a cache miss so "nilid_service" is visible on first query.
 	mockClock := clock.NewMockClock(time.Date(2009, 6, 15, 8, 2, 0, 0, loc))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -1669,7 +1669,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *t
 
 	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
 	mockClock := clock.NewMockClock(queryTimeUTC)
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
 	ctx := context.Background()
@@ -1817,7 +1817,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *t
 func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *testing.T) {
 	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
 	mockClock := clock.NewMockClock(queryTimeUTC)
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
 	ctx := context.Background()
@@ -1832,23 +1832,6 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *
 		tripInvalid   = "TripInvalidErr"
 		calID         = "service_cal_err"
 	)
-
-	defer func() {
-		conn, err := api.GtfsManager.GtfsDB.DB.Conn(context.Background())
-		if err == nil {
-			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = OFF")
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_routes WHERE stop_id = ?", sharedStop)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_agencies WHERE stop_id = ?", sharedStop)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_times WHERE stop_id = ?", sharedStop)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM trips WHERE id = ?", tripInvalid)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM routes WHERE id IN (?, ?)", routePrimary, routeInvalid)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stops WHERE id = ?", sharedStop)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM calendars WHERE id = ?", calID)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM agencies WHERE id IN (?, ?)", agencyPrimary, agencyInvalid)
-			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
-			conn.Close()
-		}
-	}()
 
 	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
 		ID: agencyPrimary, Name: "Primary Agency", Url: "http://primary.com", Timezone: "UTC",
@@ -1912,7 +1895,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *
 func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySkipped(t *testing.T) {
 	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
 	mockClock := clock.NewMockClock(queryTimeUTC)
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
 	ctx := context.Background()
@@ -1928,23 +1911,6 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 		tripMissing   = "TripMissingAgency"
 		calID         = "service_cal_ok"
 	)
-
-	defer func() {
-		conn, err := api.GtfsManager.GtfsDB.DB.Conn(context.Background())
-		if err == nil {
-			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = OFF")
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_routes WHERE stop_id = ?", sharedStop)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_agencies WHERE stop_id = ?", sharedStop)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_times WHERE stop_id = ?", sharedStop)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM trips WHERE id IN (?, ?)", tripPrimary, tripMissing)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM routes WHERE id IN (?, ?)", routePrimary, routeMissing)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stops WHERE id = ?", sharedStop)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM calendars WHERE id = ?", calID)
-			_, _ = conn.ExecContext(context.Background(), "DELETE FROM agencies WHERE id IN (?, ?)", agencyPrimary, agencyMissing)
-			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
-			conn.Close()
-		}
-	}()
 
 	_, err := queries.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
 		ID: agencyPrimary, Name: "Primary Agency", Url: "http://primary-ok.com", Timezone: "UTC",
@@ -2010,6 +1976,10 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 	})
 	require.NoError(t, err)
 
+	// Build the stop indexes while the agency row still exists: the rebuild may run
+	// on any pooled connection, and those enforce foreign keys.
+	rebuildStopIndexes(t, api)
+
 	// Now delete the agency row with foreign keys disabled on a dedicated connection,
 	// leaving the route referencing a genuinely missing agency row (sql.ErrNoRows).
 	conn, err := api.GtfsManager.GtfsDB.DB.Conn(ctx)
@@ -2019,8 +1989,6 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 	_, err = conn.ExecContext(ctx, "DELETE FROM agencies WHERE id = ?", agencyMissing)
 	require.NoError(t, err)
 	conn.Close()
-
-	rebuildStopIndexes(t, api)
 
 	endpoint := arrivalsAndDeparturesURL(utils.FormCombinedID(agencyPrimary, sharedStop), url.Values{
 		"minutesBefore": {"5"},

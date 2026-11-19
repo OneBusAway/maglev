@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
 	"maps"
 	"net/http"
 	"net/url"
@@ -21,20 +20,6 @@ func searchStopsURL(params url.Values) string {
 	q := url.Values{"key": {"TEST"}}
 	maps.Copy(q, params)
 	return "/api/where/search/stop.json?" + q.Encode()
-}
-
-// registerFixtureCleanup schedules fixture deletions before the inserts run, so the rows
-// are still removed when an insert fails and aborts the test. The test database is shared
-// by every test in the package run, so leftover rows leak into other tests' results.
-func registerFixtureCleanup(t *testing.T, db *sql.DB, statements ...string) {
-	t.Helper()
-	t.Cleanup(func() {
-		for _, statement := range statements {
-			if _, err := db.ExecContext(context.Background(), statement); err != nil {
-				t.Errorf("fixture cleanup failed for %q: %v", statement, err)
-			}
-		}
-	})
 }
 
 func TestSearchStopsHandlerRequiresValidApiKey(t *testing.T) {
@@ -457,18 +442,10 @@ func TestSearchStopsHandlerLimitExceeded(t *testing.T) {
 }
 
 func TestSearchStopsHandlerOrdersByCombinedID(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	ctx := context.Background()
-
-	registerStopFixtureCleanup(t, api.GtfsManager.GtfsDB.DB, `'aaa_stop', 'zzz_stop'`,
-		`DELETE FROM stop_times WHERE trip_id IN ('trip_ord_alpha', 'trip_ord_zulu')`,
-		`DELETE FROM trips WHERE id IN ('trip_ord_alpha', 'trip_ord_zulu')`,
-		`DELETE FROM routes WHERE id IN ('route_ord_alpha', 'route_ord_zulu')`,
-		`DELETE FROM agencies WHERE id IN ('111', '999')`,
-		`DELETE FROM stops WHERE id IN ('aaa_stop', 'zzz_stop')`,
-	)
 
 	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `
 		INSERT INTO agencies (id, name, url, timezone)
@@ -533,18 +510,10 @@ func TestSearchStopsHandlerOrdersByCombinedID(t *testing.T) {
 // TestSearchStopsHandlerParentStationReferences verifies that parent stations,
 // routes, and agencies resolve across agencies without adding ambient situations.
 func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	ctx := context.Background()
-
-	registerStopFixtureCleanup(t, api.GtfsManager.GtfsDB.DB, `'child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared', 'child_stop_multi_agency'`,
-		`DELETE FROM stop_times WHERE trip_id IN ('trip_parent_test', 'trip_parent_test_2', 'trip_parent_only', 'trip_multi_agency')`,
-		`DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2', 'trip_parent_only', 'trip_multi_agency')`,
-		`DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2', 'route_parent_only')`,
-		`DELETE FROM agencies WHERE id IN ('999', '888')`,
-		`DELETE FROM stops WHERE id IN ('child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared', 'child_stop_multi_agency')`,
-	)
 
 	// routes.agency_id and trips.service_id are foreign keys, so the agencies and the
 	// calendar entry the fixture rows point at must exist before those rows are inserted.
@@ -790,18 +759,10 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 }
 
 func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	db := api.GtfsManager.GtfsDB.DB
-
-	// The RABA agency and the service_1 calendar are shared records and are left in place.
-	registerStopFixtureCleanup(t, db, `'zero_route_stop', 'school_bus_stop', 'valid_bus_stop', 'two_school_routes_stop', 'limit_ghost_1', 'limit_ghost_2', 'limit_valid_3'`,
-		`DELETE FROM stop_times WHERE trip_id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`,
-		`DELETE FROM trips WHERE id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`,
-		`DELETE FROM routes WHERE id IN ('school_route_1', 'school_route_2', 'valid_route_1')`,
-		`DELETE FROM stops WHERE id IN ('zero_route_stop', 'school_bus_stop', 'valid_bus_stop', 'two_school_routes_stop', 'limit_ghost_1', 'limit_ghost_2', 'limit_valid_3')`,
-	)
 
 	// Insert mock data for exclusion testing
 	_, err := db.Exec(`
@@ -883,18 +844,10 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 }
 
 func TestSearchStopsHandlerParentStationCrossAgencyReference(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	db := api.GtfsManager.GtfsDB.DB
-
-	registerStopFixtureCleanup(t, db, `'child_stop_cross', 'parent_station_cross'`,
-		`DELETE FROM stop_times WHERE trip_id IN ('child_trip', 'parent_trip')`,
-		`DELETE FROM trips WHERE id IN ('child_trip', 'parent_trip')`,
-		`DELETE FROM routes WHERE id IN ('child_route', 'parent_route')`,
-		`DELETE FROM stops WHERE id IN ('child_stop_cross', 'parent_station_cross')`,
-		`DELETE FROM agencies WHERE id IN ('888', '999')`,
-	)
 
 	// Insert mock data for cross-agency verification
 	_, err := db.Exec(`
@@ -953,17 +906,10 @@ func TestSearchStopsHandlerParentStationCrossAgencyReference(t *testing.T) {
 }
 
 func TestSearchStopsHandlerRevenueServiceFilter(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	db := api.GtfsManager.GtfsDB.DB
-
-	registerStopFixtureCleanup(t, db, `'revenue_both_restricted', 'revenue_pickup_only', 'revenue_dropoff_only', 'revenue_phone_agency', 'revenue_coordinate_driver', 'revenue_null_columns'`,
-		`DELETE FROM stop_times WHERE trip_id IN ('revenue_trip_1', 'revenue_trip_2', 'revenue_trip_3', 'revenue_trip_4', 'revenue_trip_5', 'revenue_trip_6')`,
-		`DELETE FROM trips WHERE id IN ('revenue_trip_1', 'revenue_trip_2', 'revenue_trip_3', 'revenue_trip_4', 'revenue_trip_5', 'revenue_trip_6')`,
-		`DELETE FROM routes WHERE id = 'revenue_route_1'`,
-		`DELETE FROM stops WHERE id IN ('revenue_both_restricted', 'revenue_pickup_only', 'revenue_dropoff_only', 'revenue_phone_agency', 'revenue_coordinate_driver', 'revenue_null_columns')`,
-	)
 
 	// Every fixture stop is served by the same single type-3 (Bus) route, so the route-type
 	// filter cannot confound the result - only the revenue filter is under test.

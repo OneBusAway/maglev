@@ -185,7 +185,7 @@ func TestArrivalAndDepartureForStopHandlerWithDateTimeFormat(t *testing.T) {
 	ctx := t.Context()
 	mockNow := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	mockClock := clock.NewMockClock(mockNow)
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
 	queries := api.GtfsManager.GtfsDB.Queries
@@ -562,7 +562,7 @@ func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
 
 func TestArrivalAndDepartureForStop_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -594,7 +594,7 @@ func TestArrivalAndDepartureForStop_NoRealTimeDataUsesZeroPredictionTimes(t *tes
 // getBestScheduleDeviation.
 func TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictedWithoutTimes(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -627,7 +627,7 @@ func TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictedWithoutTimes(t *te
 // last deviation sample downstream.
 func TestArrivalAndDepartureForStop_EarlierBlockTripSTUPropagatesDownstream(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -660,7 +660,7 @@ func TestArrivalAndDepartureForStop_LayoverAbsorbsEarlierTripDelay(t *testing.T)
 	// The earlier trip's 07:00 stop is still ahead of the late bus, and the
 	// queried stop is an hour later.
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 7, 2, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -809,7 +809,7 @@ func TestArrivalsAndDeparturesForStopHandlerInvalidTime(t *testing.T) {
 }
 
 func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	ctx := t.Context()
@@ -1251,7 +1251,7 @@ func TestGetPredictedTimes_UnequalAbsoluteTimes(t *testing.T) {
 }
 
 func TestArrivalAndDepartureForStop_PositiveUTCOffset_ServiceDateRegression(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	ctx := t.Context()
@@ -1377,7 +1377,7 @@ func TestFindStopTimeForTripStop(t *testing.T) {
 // stopSequence in the request is always a 0-based position, independent of
 // the feed's own raw numbering.
 func TestArrivalAndDepartureForStopHandler_StopSequenceStartsAtOne(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	ctx := t.Context()
@@ -1469,7 +1469,7 @@ func TestArrivalAndDepartureForStopHandler_StopSequenceStartsAtOne(t *testing.T)
 // the server must return the occurrence whose arrival/departure is closest
 // to the query time. not simply the first occurrence in the stop list.
 func TestArrivalAndDepartureForStopHandler_NoStopSequence_PicksClosestToQueryTime(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	ctx := t.Context()
@@ -1568,7 +1568,7 @@ func TestArrivalAndDepartureForStopHandler_NoStopSequence_PicksClosestToQueryTim
 // therefore returns no arrivals.
 func TestArrivalAndDepartureForStop_TimeZeroUsesNow(t *testing.T) {
 	when := time.Date(2025, 6, 1, 8, 50, 0, 0, time.UTC)
-	api := createTestApiWithClock(t, clock.NewMockClock(when))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(when))
 	defer api.Shutdown()
 
 	ctx := t.Context()
@@ -1905,7 +1905,7 @@ func TestGetPredictedTimes_LoopTripPrefersMatchingSequence(t *testing.T) {
 // alone. The same stop is served at two sequences with different delays, and a
 // request for the later visit must be answered with that visit's prediction.
 func TestArrivalAndDepartureForStop_LoopTripPredictionMatchesRequestedSequence(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -2092,7 +2092,7 @@ func TestArrivalAndDepartureForStopHandler_CrossAgencyTimezone(t *testing.T) {
 
 	queryTimeUTC := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
 	mockClock := clock.NewMockClock(queryTimeUTC)
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
 	ctx := context.Background()

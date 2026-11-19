@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -95,7 +96,7 @@ func TestStopHandler_NotFoundAndMalformed(t *testing.T) {
 // agencies returns routeIds prefixed by each route's own agency (not the stop's
 // agency) and includes both agencies in references.
 func TestStopHandlerMultiAgencyScenario(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	ctx := context.Background()
@@ -186,7 +187,7 @@ func TestStopHandlerMultiAgencyScenario(t *testing.T) {
 // in the database (Code is a null NullString), the response falls back to
 // returning the raw entity portion of the combined ID as the code field.
 func TestStopHandler_StopCodeFallback(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	ctx := context.Background()
@@ -261,7 +262,7 @@ func TestStopHandler_StopCodeFallback(t *testing.T) {
 //  2. Includes the parent stop in references.stops
 //  3. Includes the parent stop's routes and agencies in the references block
 func TestStopHandler_ParentStation(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	ctx := context.Background()
@@ -406,7 +407,7 @@ func TestStopHandler_ParentStation(t *testing.T) {
 }
 
 func TestStopHandler_NaturalSorting(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	ctx := context.Background()
@@ -480,7 +481,7 @@ func TestStopHandler_NaturalSorting(t *testing.T) {
 }
 
 func TestStopHandler_ParentStationNaturalSorting(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	ctx := context.Background()
@@ -589,8 +590,10 @@ func TestStopHandler_IncludeReferences(t *testing.T) {
 // but uses an incorrect agency namespace (one that does not serve the stop),
 // the API returns a 404 Not Found.
 func TestStopHandler_WrongAgency(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
+	// The six requests below exceed the shared test rate limit.
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
 
 	ctx := context.Background()
 	q := api.GtfsManager.GtfsDB.Queries
@@ -672,10 +675,6 @@ func TestStopHandler_WrongAgency(t *testing.T) {
 	respOrphanGhost, modelOrphanGhost := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID("GhostAgency", orphanStopID)))
 	require.Equal(t, http.StatusNotFound, respOrphanGhost.StatusCode)
 	assert.Equal(t, http.StatusNotFound, modelOrphanGhost.Code)
-
-	// Create a fresh API instance to avoid rate limiting on the 6th request
-	api = createTestApi(t)
-	defer api.Shutdown()
 
 	// Test 6: Request invalid agency namespace with includeReferences=false -> 404 Not Found
 	respInvalid, modelInvalid = callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(invalidAgency, stopID))+"&includeReferences=false")

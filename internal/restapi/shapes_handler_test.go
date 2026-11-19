@@ -83,7 +83,7 @@ func decodePolylinePoints(t *testing.T, encoded string) [][]float64 {
 }
 
 func TestShapesHandlerEndToEnd(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	points := []shapePoint{
@@ -223,7 +223,7 @@ func TestShapesHandler_PolylineDecoding(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Each subtest uses its own API so the agency-create doesn't conflict.
-			subAPI := createTestApi(t)
+			subAPI := createIsolatedTestApi(t)
 			defer subAPI.Shutdown()
 			combinedShapeID := setupShapeTest(t, subAPI, tt.shapeID, tt.input)
 
@@ -247,7 +247,7 @@ func TestShapesHandler_PolylineDecoding(t *testing.T) {
 // asserts that the encoded polyline reflects ascending shape_pt_sequence —
 // regression for ordering bugs in the shape query.
 func TestShapesHandlerOrdersBySequence(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 
 	// Inserted with sequences {5, 0, 2, 4, 1, 3} — handler must return them

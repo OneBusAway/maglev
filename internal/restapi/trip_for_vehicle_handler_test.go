@@ -32,7 +32,7 @@ func tripForVehicleURL(vehicleID string, params ...url.Values) string {
 // first static trip and returns the API plus the vehicle's combined ID.
 func setupTestApiWithMockVehicle(t *testing.T) (api *RestAPI, vehicleCombinedID string) {
 	t.Helper()
-	api = createTestApi(t)
+	api = createIsolatedTestApi(t)
 	t.Cleanup(api.Shutdown)
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -43,8 +43,7 @@ func setupTestApiWithMockVehicle(t *testing.T) (api *RestAPI, vehicleCombinedID 
 	api.GtfsManager.MockAddAgency(testdata.Raba.ID, "unitrans")
 	api.GtfsManager.MockAddRoute(combinedRouteID, testdata.Raba.ID, combinedRouteID)
 	// Deliberately no MockAddTrip: the trip already exists in the fixture DB, and
-	// MockAddTrip is an INSERT OR REPLACE that would wipe its block and shape IDs
-	// in the package-shared test database for every test that runs afterwards.
+	// MockAddTrip is an INSERT OR REPLACE that would wipe its block and shape IDs.
 	api.GtfsManager.MockAddVehicle(mockVehicleID, trip.ID, combinedRouteID)
 
 	return api, utils.FormCombinedID(testdata.Raba.ID, mockVehicleID)

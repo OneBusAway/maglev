@@ -16,7 +16,7 @@ import (
 )
 
 func TestCacheControlHeaders(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 
 	tests := []struct {
 		name           string
