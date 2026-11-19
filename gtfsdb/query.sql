@@ -689,6 +689,8 @@ WHERE
 SELECT DISTINCT
     routes.id AS route_id,
     routes.agency_id,
+    routes.short_name,
+    routes.long_name,
     stop_times.stop_id
 FROM
     stop_times
@@ -805,12 +807,8 @@ WHERE
 
 -- name: GetShapePointsByTripID :many
 SELECT
-    s.id,
-    s.shape_id,
     s.lat,
-    s.lon,
-    s.shape_pt_sequence,
-    s.shape_dist_traveled
+    s.lon
 FROM
     shapes s
     JOIN trips t ON t.shape_id = s.shape_id
@@ -1351,6 +1349,11 @@ WHERE id IN (sqlc.slice('trip_ids'));
 SELECT * FROM stop_times
 WHERE trip_id IN (sqlc.slice('trip_ids'))
 ORDER BY trip_id, stop_sequence;
+
+-- name: GetBlockStopTimesForTripIDs :many
+SELECT trip_id, stop_id, stop_sequence, arrival_time, departure_time FROM stop_times
+WHERE trip_id IN (sqlc.slice('trip_ids'))
+ORDER BY trip_id ASC, stop_sequence ASC;
 
 -- name: GetStopIDsForTripIDs :many
 SELECT trip_id, stop_id FROM stop_times

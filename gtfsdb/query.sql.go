@@ -1099,6 +1099,8 @@ const getActiveRouteIDsForStopsOnDate = `-- name: GetActiveRouteIDsForStopsOnDat
 SELECT DISTINCT
     routes.id AS route_id,
     routes.agency_id,
+    routes.short_name,
+    routes.long_name,
     stop_times.stop_id
 FROM
     stop_times
@@ -1115,9 +1117,11 @@ type GetActiveRouteIDsForStopsOnDateParams struct {
 }
 
 type GetActiveRouteIDsForStopsOnDateRow struct {
-	RouteID  string
-	AgencyID string
-	StopID   string
+	RouteID   string
+	AgencyID  string
+	ShortName sql.NullString
+	LongName  sql.NullString
+	StopID    string
 }
 
 func (q *Queries) GetActiveRouteIDsForStopsOnDate(ctx context.Context, arg GetActiveRouteIDsForStopsOnDateParams) ([]GetActiveRouteIDsForStopsOnDateRow, error) {
@@ -1147,7 +1151,13 @@ func (q *Queries) GetActiveRouteIDsForStopsOnDate(ctx context.Context, arg GetAc
 	var items []GetActiveRouteIDsForStopsOnDateRow
 	for rows.Next() {
 		var i GetActiveRouteIDsForStopsOnDateRow
-		if err := rows.Scan(&i.RouteID, &i.AgencyID, &i.StopID); err != nil {
+		if err := rows.Scan(
+			&i.RouteID,
+			&i.AgencyID,
+			&i.ShortName,
+			&i.LongName,
+			&i.StopID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1952,6 +1962,59 @@ func (q *Queries) GetBlockIDsForStops(ctx context.Context, arg GetBlockIDsForSto
 			return nil, err
 		}
 		items = append(items, block_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getBlockStopTimesForTripIDs = `-- name: GetBlockStopTimesForTripIDs :many
+SELECT trip_id, stop_id, stop_sequence, arrival_time, departure_time FROM stop_times
+WHERE trip_id IN (/*SLICE:trip_ids*/?)
+ORDER BY trip_id ASC, stop_sequence ASC
+`
+
+type GetBlockStopTimesForTripIDsRow struct {
+	TripID        string
+	StopID        string
+	StopSequence  int64
+	ArrivalTime   int64
+	DepartureTime int64
+}
+
+func (q *Queries) GetBlockStopTimesForTripIDs(ctx context.Context, tripIds []string) ([]GetBlockStopTimesForTripIDsRow, error) {
+	query := getBlockStopTimesForTripIDs
+	var queryParams []interface{}
+	if len(tripIds) > 0 {
+		for _, v := range tripIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", strings.Repeat(",?", len(tripIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:trip_ids*/?", "NULL", 1)
+	}
+	rows, err := q.query(ctx, nil, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetBlockStopTimesForTripIDsRow
+	for rows.Next() {
+		var i GetBlockStopTimesForTripIDsRow
+		if err := rows.Scan(
+			&i.TripID,
+			&i.StopID,
+			&i.StopSequence,
+			&i.ArrivalTime,
+			&i.DepartureTime,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -3464,12 +3527,8 @@ func (q *Queries) GetShapePointsByIDs(ctx context.Context, shapeIds []string) ([
 
 const getShapePointsByTripID = `-- name: GetShapePointsByTripID :many
 SELECT
-    s.id,
-    s.shape_id,
     s.lat,
-    s.lon,
-    s.shape_pt_sequence,
-    s.shape_dist_traveled
+    s.lon
 FROM
     shapes s
     JOIN trips t ON t.shape_id = s.shape_id
@@ -3479,23 +3538,21 @@ ORDER BY
     s.shape_pt_sequence ASC
 `
 
-func (q *Queries) GetShapePointsByTripID(ctx context.Context, id string) ([]Shape, error) {
+type GetShapePointsByTripIDRow struct {
+	Lat float64
+	Lon float64
+}
+
+func (q *Queries) GetShapePointsByTripID(ctx context.Context, id string) ([]GetShapePointsByTripIDRow, error) {
 	rows, err := q.query(ctx, q.getShapePointsByTripIDStmt, getShapePointsByTripID, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Shape
+	var items []GetShapePointsByTripIDRow
 	for rows.Next() {
-		var i Shape
-		if err := rows.Scan(
-			&i.ID,
-			&i.ShapeID,
-			&i.Lat,
-			&i.Lon,
-			&i.ShapePtSequence,
-			&i.ShapeDistTraveled,
-		); err != nil {
+		var i GetShapePointsByTripIDRow
+		if err := rows.Scan(&i.Lat, &i.Lon); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
