@@ -614,15 +614,17 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 // slack before the departure moves. Once the query time minus the deviation
 // is past the scheduled departure, the full deviation is kept. While that
 // instant falls inside the dwell, the remaining slack shrinks by the time
-// already spent there. A zero queryTime leaves the full slack. An early bus
-// keeps its early departure. Slack from earlier stops on the block is #1875.
+// already spent there. The query time is truncated to the second, matching
+// Java's whole-second schedule math. A zero queryTime is before any
+// scheduled arrival and leaves the full slack. An early bus keeps its early
+// departure. Slack from earlier stops on the block is #1875.
 func departureDeviationAtQuery(deviation time.Duration, queryTime, scheduledArrival, scheduledDeparture time.Time) time.Duration {
 	slack := scheduledDeparture.Sub(scheduledArrival)
 	if slack < 0 {
 		slack = 0
 	}
-	if deviation > 0 && !queryTime.IsZero() {
-		effective := queryTime.Add(-deviation)
+	if deviation > 0 {
+		effective := queryTime.Truncate(time.Second).Add(-deviation)
 		if effective.After(scheduledDeparture) {
 			return deviation
 		}
@@ -735,7 +737,6 @@ func (api *RestAPI) getPredictedTimes(
 	if target == nil {
 		target = stopIDFallback
 	}
-	departureFromFeed := false
 	if target != nil {
 		foundTarget = true
 		if target.Arrival != nil {
@@ -751,11 +752,9 @@ func (api *RestAPI) getPredictedTimes(
 			if target.Departure.Time != nil {
 				offset := target.Departure.Time.Sub(scheduledDepartureTime)
 				departureOffset = &offset
-				departureFromFeed = true
 			} else if target.Departure.Delay != nil {
 				offset := *target.Departure.Delay
 				departureOffset = &offset
-				departureFromFeed = true
 			}
 		}
 	}
@@ -803,7 +802,9 @@ func (api *RestAPI) getPredictedTimes(
 		departureOffset = &propagatedDelay
 	}
 	targetPastEarliestSTU := earliestSTUSequence >= 0 && targetStopSequence > earliestSTUSequence
-	if !departureFromFeed && dwellAbsorbsLateness(foundTarget, len(realTimeTrip.StopTimeUpdates), realTimeTrip.Delay != nil, targetPastEarliestSTU) {
+	// A feed departure is only recorded on the target stop, and
+	// dwellAbsorbsLateness already returns false when that stop was found.
+	if dwellAbsorbsLateness(foundTarget, len(realTimeTrip.StopTimeUpdates), realTimeTrip.Delay != nil, targetPastEarliestSTU) {
 		adjusted := departureDeviationAtQuery(*arrivalOffset, queryTime, scheduledArrivalTime, scheduledDepartureTime)
 		departureOffset = &adjusted
 	}

@@ -1306,6 +1306,52 @@ func TestGetPredictedTimes_DwellSlack(t *testing.T) {
 	}
 }
 
+// TestDwellSlack_QueryTimeReachesHandlers verifies that the request time
+// reaches getPredictedTimes on both arrival endpoints. A +4 minute trip delay
+// and a 08:00-08:05 dwell leave the departure at 08:07 for a request at
+// 08:07, and at 08:09 once the request is past the dwell. Dropping the query
+// time would absorb the whole delay and report 08:05 for both.
+func TestDwellSlack_QueryTimeReachesHandlers(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(time.Date(2010, 1, 1, 8, 10, 0, 0, time.UTC)))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	delay := 4 * time.Minute
+	api.GtfsManager.MockAddTripUpdate(tripID, &delay, nil)
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	during := time.Date(2010, 1, 1, 8, 7, 0, int(900*time.Millisecond), time.UTC)
+	after := time.Date(2010, 1, 1, 8, 10, 0, 0, time.UTC)
+	combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+
+	singular := func(at time.Time) models.ArrivalAndDeparture {
+		t.Helper()
+		endpoint := fmt.Sprintf(
+			"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1&time=%d",
+			combinedStopID, combinedTripID, serviceMidnight.UnixMilli(), at.UnixMilli(),
+		)
+		resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		return model.Data.Entry
+	}
+
+	duringEntry := singular(during)
+	assert.Equal(t, serviceMidnight.Add(8*time.Hour+7*time.Minute).UnixMilli(), duringEntry.PredictedDepartureTime.UnixMilli(),
+		"milliseconds inside the dwell must not change the departure")
+	afterEntry := singular(after)
+	assert.Equal(t, serviceMidnight.Add(8*time.Hour+9*time.Minute).UnixMilli(), afterEntry.PredictedDepartureTime.UnixMilli())
+
+	pluralURL := fmt.Sprintf(
+		"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&time=%d",
+		combinedStopID, after.UnixMilli(),
+	)
+	resp, plural := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, pluralURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	arrival := findArrivalForTrip(t, plural.Data.Entry.ArrivalsAndDepartures, combinedTripID)
+	assert.Equal(t, serviceMidnight.Add(8*time.Hour+9*time.Minute).UnixMilli(), arrival.PredictedDepartureTime.UnixMilli())
+}
+
 // An absolute Arrival.Time and Departure.Time pair goes down the same path as
 // delays, so the two sides must stay independent there too.
 func TestGetPredictedTimes_UnequalAbsoluteTimes(t *testing.T) {
