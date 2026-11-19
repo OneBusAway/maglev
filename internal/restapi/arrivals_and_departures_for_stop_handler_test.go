@@ -2065,6 +2065,37 @@ func TestArrivalsAndDeparturesForStopHandler_NoArrivalsStillListsNearbyStops(t *
 	assert.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
 }
 
+// TestArrivalsAndDeparturesForStop_ArrivalDepartureEnabledFlags checks that in
+// the plural endpoint, every arrival at the first stop of its trip has
+// arrivalEnabled=false and every arrival at the last stop has departureEnabled=false.
+// RABA stop 4062 only produces middle-stop rows in its window, so this test only
+// covers the middle branch; the first/last branches are covered by
+// TestArrivalsAndDeparturesForLocation_ArrivalDepartureEnabledFlags.
+func TestArrivalsAndDeparturesForStop_ArrivalDepartureEnabledFlags(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{"minutesBefore": {"60"}, "minutesAfter": {"240"}}))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.Entry.ArrivalsAndDepartures)
+
+	for i, a := range model.Data.Entry.ArrivalsAndDepartures {
+		if a.StopSequence == 0 {
+			assert.False(t, a.ArrivalEnabled, "arrival[%d]: first stop must have ArrivalEnabled=false", i)
+			assert.True(t, a.DepartureEnabled, "arrival[%d]: first stop must have DepartureEnabled=true", i)
+		}
+		if a.StopSequence == a.TotalStopsInTrip-1 {
+			assert.True(t, a.ArrivalEnabled, "arrival[%d]: last stop must have ArrivalEnabled=true", i)
+			assert.False(t, a.DepartureEnabled, "arrival[%d]: last stop must have DepartureEnabled=false", i)
+		}
+		if a.StopSequence > 0 && a.StopSequence < a.TotalStopsInTrip-1 {
+			assert.True(t, a.ArrivalEnabled, "arrival[%d]: middle stop must have ArrivalEnabled=true", i)
+			assert.True(t, a.DepartureEnabled, "arrival[%d]: middle stop must have DepartureEnabled=true", i)
+		}
+	}
+}
+
 // TestArrivalsAndDeparturesForStopHandler_EmptyWindowKeepsStopAndRouteReferences
 // checks that a window with no arrivals still references the requested stop and
 // the routes serving it, as Java does.

@@ -414,8 +414,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		predictedDepartureTime,                         // predictedDepartureTime
 		lastUpdateTime,                                 // lastUpdateTime
 		predicted,                                      // predicted
-		true,                                           // arrivalEnabled
-		true,                                           // departureEnabled
+		matchedIdx > 0,                                 // arrivalEnabled (false for first stop)
+		matchedIdx < totalStopsInTrip-1,                // departureEnabled (false for last stop)
 		matchedIdx,                                     // stopSequence (Zero-based position in the trip's stop list)
 		totalStopsInTrip,                               // totalStopsInTrip
 		numberOfStopsAway,                              // numberOfStopsAway

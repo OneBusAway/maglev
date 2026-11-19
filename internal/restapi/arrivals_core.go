@@ -1023,8 +1023,8 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 		predictedDepartureTime,                          // predictedDepartureTime
 		lastUpdateTime,                                  // lastUpdateTime
 		predicted,                                       // predicted
-		true,                                            // arrivalEnabled
-		true,                                            // departureEnabled
+		in.stopPosition > 0,                             // arrivalEnabled (false for first stop)
+		in.stopPosition < in.totalStopsInTrip-1,         // departureEnabled (false for last stop)
 		in.stopPosition,                                 // stopSequence (Zero-based position in the trip's stop list)
 		in.totalStopsInTrip,                             // totalStopsInTrip
 		0,                                               // numberOfStopsAway
