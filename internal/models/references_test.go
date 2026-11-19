@@ -72,3 +72,33 @@ func TestReferencesModelJSON(t *testing.T) {
 		t.Errorf("Expected agency id 'agency1', got %v", agency.ID)
 	}
 }
+func TestReferencesModel_MarshalJSON_NormalizesNilSlices(t *testing.T) {
+	var refs ReferencesModel
+
+	jsonData, err := json.Marshal(refs)
+	if err != nil {
+		t.Fatalf("Failed to marshal ReferencesModel: %v", err)
+	}
+
+	expected := `{"agencies":[],"routes":[],"situations":[],"stopTimes":[],"stops":[],"trips":[]}`
+	if string(jsonData) != expected {
+		t.Errorf("Expected %s, got %s", expected, string(jsonData))
+	}
+}
+
+func TestReferencesModel_MarshalJSON_InsideMap(t *testing.T) {
+	var refs ReferencesModel
+	envelope := map[string]any{
+		"references": refs,
+	}
+
+	jsonData, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("Failed to marshal envelope: %v", err)
+	}
+
+	expected := `{"references":{"agencies":[],"routes":[],"situations":[],"stopTimes":[],"stops":[],"trips":[]}}`
+	if string(jsonData) != expected {
+		t.Errorf("Expected %s, got %s", expected, string(jsonData))
+	}
+}
