@@ -374,7 +374,8 @@ func TestBuildRouteReferences_MultiAgencyScopingAndCollision(t *testing.T) {
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
 			"r100,svc1,t1,Headsign,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			"t1,08:00:00,08:00:00,s1,1\n",
+			"t1,08:00:00,08:00:00,s1,1\n" +
+			"t1,08:05:00,08:05:00,s2,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "multi-agency-routes.zip", multiAgencyFiles)
@@ -490,7 +491,9 @@ func TestAppendTripRouteReferences(t *testing.T) {
 			"r300,svc1,t2,Headsign,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"t1,08:00:00,08:00:00,s1,1\n" +
-			"t2,09:00:00,09:00:00,s1,1\n",
+			"t1,08:05:00,08:05:00,s1,2\n" +
+			"t2,09:00:00,09:00:00,s1,1\n" +
+			"t2,09:05:00,09:05:00,s1,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "trip-route-references.zip", files)
@@ -552,7 +555,9 @@ func TestBuildReferencedTrips_CrossAgencyRouteID(t *testing.T) {
 			"r300,svc1,t2,Headsign,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"t1,08:00:00,08:00:00,s1,1\n" +
-			"t2,09:00:00,09:00:00,s1,1\n",
+			"t1,08:05:00,08:05:00,s1,2\n" +
+			"t2,09:00:00,09:00:00,s1,1\n" +
+			"t2,09:05:00,09:05:00,s1,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "cross-agency-referenced-trips.zip", files)
@@ -585,7 +590,8 @@ func TestStopReferences_AgencyWithUnderscore(t *testing.T) {
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
 			"ROUTE_100,svc1,t1,Headsign,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			"t1,08:00:00,08:00:00,s1,1\n",
+			"t1,08:00:00,08:00:00,s1,1\n" +
+			"t1,08:05:00,08:05:00,s1,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "agency-with-underscore-stop-refs.zip", files)
@@ -645,7 +651,9 @@ func TestBuildRouteReferences_OverlappingAgencies(t *testing.T) {
 			"SUB_ROUTE_B,svc1,t2,Headsign 2,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"t1,08:00:00,08:00:00,s1,1\n" +
-			"t2,08:30:00,08:30:00,s1,2\n",
+			"t1,08:05:00,08:05:00,s1,2\n" +
+			"t2,08:30:00,08:30:00,s1,1\n" +
+			"t2,08:35:00,08:35:00,s1,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "overlapping-agencies.zip", files)
@@ -854,4 +862,68 @@ func TestExtractRawEntityIDs(t *testing.T) {
 	assert.Equal(t, "", r)
 	assert.Equal(t, "S1", s)
 	assert.Equal(t, "T1", tr)
+}
+
+func TestEndpoints_ReferencesNeverContainNullArrays(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	// Endpoints identified in #2121 and related issues, tested with
+	// empty, missing, or standard queries to verify reference arrays.
+	endpoints := []struct {
+		name string
+		url  string
+	}{
+		{
+			name: "search/route with no matches",
+			url:  "/api/where/search/route.json?key=TEST&input=nomatchxyz999",
+		},
+		{
+			name: "search/stop with no matches",
+			url:  "/api/where/search/stop.json?key=TEST&input=nomatchxyz999",
+		},
+		{
+			name: "stops-for-location empty area",
+			url:  "/api/where/stops-for-location.json?key=TEST&lat=0.0&lon=0.0&latSpan=0.01&lonSpan=0.01",
+		},
+		{
+			name: "stops-for-agency",
+			url:  "/api/where/stops-for-agency/25.json?key=TEST",
+		},
+		{
+			name: "routes-for-agency",
+			url:  "/api/where/routes-for-agency/25.json?key=TEST",
+		},
+	}
+
+	for _, tt := range endpoints {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := http.Get(server.URL + tt.url)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var body map[string]any
+			err = json.NewDecoder(resp.Body).Decode(&body)
+			require.NoError(t, err)
+
+			data, ok := body["data"].(map[string]any)
+			require.True(t, ok, "response should have a data object")
+
+			refs, ok := data["references"].(map[string]any)
+			require.True(t, ok, "response should have a references object")
+
+			// The 6 required reference lists per OpenAPI schema
+			expectedLists := []string{"agencies", "routes", "situations", "stopTimes", "stops", "trips"}
+			for _, listName := range expectedLists {
+				val, exists := refs[listName]
+				assert.True(t, exists, "references.%s should exist in response", listName)
+				assert.NotNil(t, val, "references.%s must serialize as [] and not null", listName)
+			}
+		})
+	}
 }

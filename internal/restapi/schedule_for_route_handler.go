@@ -39,6 +39,10 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		api.dbErrorResponse(w, r, err)
 		return
 	}
+	if route.ID == "" || route.AgencyID != agencyID {
+		api.sendNotFound(w, r)
+		return
+	}
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {

@@ -886,6 +886,8 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 	})
 	require.NoError(t, err)
 
+	rebuildStopRouteIndex(t, api)
+
 	combinedStopID := utils.FormCombinedID(agencyA, stopID)
 	combinedTripID := utils.FormCombinedID(agencyB, tripB_ID)
 	serviceDate := time.Now().UnixMilli()
@@ -2180,7 +2182,9 @@ func TestArrivalAndDepartureForStop_ArrivalDepartureEnabledFlags(t *testing.T) {
 	const agencyID = "25"
 	const bareTrip = "0f36bccf-c435-4b31-b001-da345d06a57d"
 	tripID := utils.FormCombinedID(agencyID, bareTrip)
-	serviceDate := time.Now()
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	serviceDate := time.Date(2025, 6, 13, 0, 0, 0, 0, loc)
 
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(context.Background(), bareTrip)
 	require.NoError(t, err)

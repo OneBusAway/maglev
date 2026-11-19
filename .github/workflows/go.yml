@@ -114,6 +114,8 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      # restapi and gtfsdb hold request-scoped caches (snapshotCache, the read
+      # memo) that assume a request never runs its helpers concurrently.
       - name: Run race detector on concurrent packages
-        run: go test -race -v -tags='sqlite_fts5 sqlite_math_functions' -timeout 20m ./internal/gtfs/...
+        run: go test -race -v -tags='sqlite_fts5 sqlite_math_functions' -timeout 20m ./internal/gtfs/... ./internal/restapi/... ./gtfsdb/...
         shell: bash
