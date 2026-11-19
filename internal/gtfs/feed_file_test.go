@@ -422,3 +422,19 @@ func TestFetchFeedFileDownloadErrorRedactsQuery(t *testing.T) {
 	assert.NotContains(t, err.Error(), "STATIC_ERROR_SECRET")
 	assert.Contains(t, err.Error(), appconf.RedactedValue)
 }
+
+func TestFetchFeedFile_MalformedHTTPSourceErrorRedactsQuery(t *testing.T) {
+	secretSource := "https:/feeds.example.test/missing.zip?token=LOCAL_PATH_SECRET"
+	_, err := fetchFeedFile(context.Background(), Config{GtfsURL: secretSource})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "LOCAL_PATH_SECRET")
+	assert.Contains(t, err.Error(), appconf.RedactedValue)
+}
+
+func TestFetchFeedFile_LocalPathErrorRemainsReadable(t *testing.T) {
+	localPath := filepath.Join(t.TempDir(), "missing-feed.zip")
+	_, err := fetchFeedFile(context.Background(), Config{GtfsURL: localPath})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), localPath)
+	assert.NotContains(t, err.Error(), appconf.RedactedValue)
+}

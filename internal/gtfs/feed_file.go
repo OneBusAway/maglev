@@ -69,7 +69,7 @@ func fetchFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 	}
 	contentHash, err := hashFile(config.GtfsURL)
 	if err != nil {
-		return nil, fmt.Errorf("error reading local GTFS file: %w", err)
+		return nil, fmt.Errorf("error reading local GTFS file: %w", appconf.RedactURLError(err, config.GtfsURL))
 	}
 	return &feedFile{path: config.GtfsURL, contentHash: contentHash}, nil
 }
