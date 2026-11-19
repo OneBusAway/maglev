@@ -3,6 +3,8 @@ package appconf
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"testing"
@@ -865,4 +867,40 @@ func TestRedactURLError_SourceInNonURLError(t *testing.T) {
 	assert.NotContains(t, redacted.Error(), "PARSE_ERROR_SECRET")
 	assert.Contains(t, redacted.Error(), RedactedValue)
 	assert.ErrorIs(t, redacted, cause)
+}
+
+func TestRedactURLError_QuotedURLWithControlCharacter(t *testing.T) {
+	secretURL := "https://feeds.example.test/trip.pb?token=QUOTED_URL_SECRET\t"
+	_, err := http.NewRequest(http.MethodGet, secretURL, nil)
+	require.Error(t, err)
+
+	redacted := RedactURLError(err, secretURL)
+	assert.NotContains(t, redacted.Error(), "QUOTED_URL_SECRET")
+	assert.Contains(t, redacted.Error(), RedactedValue)
+
+	var got *url.Error
+	require.ErrorAs(t, redacted, &got)
+	assert.NotContains(t, got.URL, "QUOTED_URL_SECRET")
+	assert.Contains(t, got.URL, RedactedValue)
+	assert.NotContains(t, got.Error(), "QUOTED_URL_SECRET")
+}
+
+func TestRedactURLError_RedactsMalformedRedirectURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "https://cdn.example.test/bad%zz?token=REDIRECT_URL_SECRET")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer server.Close()
+
+	_, err := http.Get(server.URL)
+	require.Error(t, err)
+
+	redacted := RedactURLError(err, server.URL)
+	assert.NotContains(t, redacted.Error(), "REDIRECT_URL_SECRET")
+	assert.Contains(t, redacted.Error(), RedactedValue)
+
+	var got *url.Error
+	require.ErrorAs(t, redacted, &got)
+	assert.NotContains(t, got.Err.Error(), "REDIRECT_URL_SECRET")
+	assert.Contains(t, got.Err.Error(), RedactedValue)
 }

@@ -9,7 +9,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -105,6 +107,32 @@ func RedactURLForLog(source string) string {
 	return RedactURL(trimmed)
 }
 
+// httpURLInErrorPattern finds HTTP(S) URLs embedded in error text, including
+// redirect targets that are not the original configured source.
+var httpURLInErrorPattern = regexp.MustCompile(`(?i)https?://[^\s"'<>]+`)
+
+// replaceURLText replaces both the literal URL and its Go-quoted form. The
+// quoted form is used by url.Error.Error and parse errors for URLs containing
+// control characters.
+func replaceURLText(message, raw, safe string) string {
+	if raw == "" {
+		return message
+	}
+	message = strings.ReplaceAll(message, strconv.Quote(raw), strconv.Quote(safe))
+	return strings.ReplaceAll(message, raw, safe)
+}
+
+// redactErrorMessage sanitizes configured source strings and any additional
+// HTTP(S) URLs embedded in diagnostic text, such as malformed redirect URLs.
+func redactErrorMessage(message string, sourceURLs ...string) string {
+	for _, source := range sourceURLs {
+		if source != "" {
+			message = replaceURLText(message, source, RedactURLForLog(source))
+		}
+	}
+	return httpURLInErrorPattern.ReplaceAllStringFunc(message, RedactURLForLog)
+}
+
 // RedactURLError removes source URLs from an error message while preserving
 // access to its underlying cause. sourceURLs covers errors from request
 // construction, which may include the raw URL without wrapping it in a
@@ -114,25 +142,31 @@ func RedactURLError(err error, sourceURLs ...string) error {
 		return nil
 	}
 
-	message := err.Error()
-	for _, source := range sourceURLs {
-		if source == "" {
-			continue
-		}
-		message = strings.ReplaceAll(message, source, RedactURLForLog(source))
-	}
+	originalMessage := err.Error()
+	message := redactErrorMessage(originalMessage, sourceURLs...)
 
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) && urlErr.URL != "" {
 		safeURL := RedactURLForLog(urlErr.URL)
-		message = strings.ReplaceAll(message, urlErr.URL, safeURL)
+		message = replaceURLText(message, urlErr.URL, safeURL)
+
+		// Keep the original cause available to errors.Is/errors.As, but expose
+		// only its sanitized diagnostic text through the error chain.
+		causeSources := append(append([]string(nil), sourceURLs...), urlErr.URL)
+		var safeErr error
+		if urlErr.Err != nil {
+			safeErr = &redactedURLError{
+				message: redactErrorMessage(urlErr.Err.Error(), causeSources...),
+				cause:   urlErr.Err,
+			}
+		}
 		// Put a sanitized *url.Error in the unwrap chain as well. Returning the
 		// original one would let errors.As recover its secret-bearing URL field.
-		safeCause := &url.Error{Op: urlErr.Op, URL: safeURL, Err: urlErr.Err}
+		safeCause := &url.Error{Op: urlErr.Op, URL: safeURL, Err: safeErr}
 		return &redactedURLError{message: message, cause: safeCause}
 	}
 
-	if message != err.Error() {
+	if message != originalMessage {
 		return &redactedURLError{message: message, cause: err}
 	}
 	return err
