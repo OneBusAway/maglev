@@ -257,13 +257,16 @@ func referencedStopIDs(status *models.TripStatus, schedule *models.Schedule) ([]
 }
 
 func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request, agencyID, vehicleID string) (string, bool) {
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	vehicle, err := api.GtfsManager.GetVehicleByID(agencyID, vehicleID)
 	if err != nil {
+		// Covers a vehicle known only under another agency, as well as an
+		// unknown one: the agency prefix is part of the vehicle's identity.
+		reqLogger.Debug("vehicle not found for agency",
+			"vehicleID", vehicleID, "agencyID", agencyID, "error", err)
 		api.sendNotFound(w, r)
 		return "", false
 	}
-
-	reqLogger := logging.ForComponent(r.Context(), "http_server")
 
 	// Return 404 when vehicle has no associated trip (idle vehicle)
 	// or when the trip ID is empty (avoiding a futile DB lookup)
