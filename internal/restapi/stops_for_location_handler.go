@@ -353,6 +353,7 @@ func (api *RestAPI) routeIDsByStop(
 	if err != nil {
 		return nil, err
 	}
+	utils.SortActiveRouteIDsForStopsRowsByName(rows)
 	for _, row := range rows {
 		collect(row.StopID, row.AgencyID, row.RouteID)
 	}
