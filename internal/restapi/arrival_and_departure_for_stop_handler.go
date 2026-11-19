@@ -488,36 +488,48 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 	}
 
-	// Build stops references
-	stopIDSet := make(map[string]bool)
+	// Build stops references: collect (combinedID → (bareID, agencyID)) pairs so
+	// that if the queried stop and a status stop share the same bare stop ID but
+	// different agency prefixes, both combined IDs get a reference entry and
+	// both resolve in the response.
+	type stopRefEntry struct {
+		bareID   string
+		agencyID string
+	}
+	stopCombinedIDs := make(map[string]stopRefEntry)
 	routeIDSet := make(map[string]*gtfsdb.Route)
 
-	stopIDSet[stop.ID] = true
+	// Always include the queried stop under its own agency.
+	stopCombinedIDs[utils.FormCombinedID(stopAgencyID, stop.ID)] = stopRefEntry{stop.ID, stopAgencyID}
 
-	// Include the next and closest stops if trip status is not null to stops reference
+	// Include the next and closest stops from trip status under the route's agency.
+	// Use extractBareEntityID with the route's agency so that agency IDs
+	// containing underscores are stripped correctly instead of splitting at the
+	// first underscore.
 	if tripStatus != nil {
-		if tripStatus.NextStop != "" {
-			_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.NextStop)
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
-			}
-
-			stopIDSet[nextStopID] = true
+		if nextBareID := extractBareEntityID(tripStatus.NextStop, route.AgencyID); nextBareID != "" {
+			nextCombined := utils.FormCombinedID(route.AgencyID, nextBareID)
+			stopCombinedIDs[nextCombined] = stopRefEntry{nextBareID, route.AgencyID}
+		} else if tripStatus.NextStop != "" {
+			reqLogger.Debug("nextStop agency does not match route agency; stop will be missing from references",
+				"nextStop", tripStatus.NextStop, "routeAgency", route.AgencyID)
 		}
-		if tripStatus.ClosestStop != "" {
-			_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ClosestStop)
-			if err != nil {
-				api.serverErrorResponse(w, r, err)
-				return
-			}
-			stopIDSet[closestStopID] = true
+		if closestBareID := extractBareEntityID(tripStatus.ClosestStop, route.AgencyID); closestBareID != "" {
+			closestCombined := utils.FormCombinedID(route.AgencyID, closestBareID)
+			stopCombinedIDs[closestCombined] = stopRefEntry{closestBareID, route.AgencyID}
+		} else if tripStatus.ClosestStop != "" {
+			reqLogger.Debug("closestStop agency does not match route agency; stop will be missing from references",
+				"closestStop", tripStatus.ClosestStop, "routeAgency", route.AgencyID)
 		}
 	}
-	// batch fetch
-	stopIDsSlice := make([]string, 0, len(stopIDSet))
-	for sid := range stopIDSet {
-		stopIDsSlice = append(stopIDsSlice, sid)
+	// Collect unique bare IDs for batch fetch.
+	bareIDSet := make(map[string]bool)
+	for _, se := range stopCombinedIDs {
+		bareIDSet[se.bareID] = true
+	}
+	stopIDsSlice := make([]string, 0, len(bareIDSet))
+	for bareID := range bareIDSet {
+		stopIDsSlice = append(stopIDsSlice, bareID)
 	}
 
 	batchedStops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, stopIDsSlice)
@@ -543,30 +555,30 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		routesByStopID[routeRow.StopID] = append(routesByStopID[routeRow.StopID], routeRow)
 	}
 
-	for _, sid := range stopIDsSlice {
-		stopData, exists := stopDataMap[sid]
+	for combinedID, se := range stopCombinedIDs {
+		stopData, exists := stopDataMap[se.bareID]
 		if !exists {
 			continue
 		}
 
-		routesForThisStop := routesByStopID[sid]
+		routesForThisStop := routesByStopID[se.bareID]
 		combinedRouteIDs := make([]string, len(routesForThisStop))
-		for i, route := range routesForThisStop {
-			combinedRouteIDs[i] = utils.FormCombinedID(route.AgencyID, route.ID)
-			if _, exists := routeIDSet[route.ID]; exists {
+		for i, rt := range routesForThisStop {
+			combinedRouteIDs[i] = utils.FormCombinedID(rt.AgencyID, rt.ID)
+			if _, exists := routeIDSet[rt.ID]; exists {
 				continue
 			}
-			routeCopy := routeFromStopRow(route)
-			routeIDSet[route.ID] = &routeCopy
+			routeCopy := routeFromStopRow(rt)
+			routeIDSet[rt.ID] = &routeCopy
 		}
 
 		stopRef := models.Stop{
-			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
+			ID:                 combinedID,
 			Name:               nulls.StringOrEmpty(stopData.Name),
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
-			Parent:             parentStationID(stopAgencyID, stopData),
+			Parent:             parentStationID(se.agencyID, stopData),
 			Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),

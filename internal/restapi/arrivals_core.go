@@ -10,6 +10,7 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
@@ -1176,6 +1177,18 @@ func (api *RestAPI) tripStatusForArrival(
 	}
 
 	return status, extras, distanceFromStop, numberOfStopsAway
+}
+
+// extractBareEntityID strips the agencyID prefix from a combined ID produced by
+// utils.FormCombinedID. It uses an exact prefix match, avoiding the
+// first-underscore split that breaks agency IDs containing underscores.
+// Returns an empty string when the prefix does not match.
+func extractBareEntityID(combinedID, agencyID string) string {
+	bareID, ok := strings.CutPrefix(combinedID, agencyID+"_")
+	if !ok {
+		return ""
+	}
+	return bareID
 }
 
 // recordTripStatusReferences pulls the stops and the reassigned active trip that
