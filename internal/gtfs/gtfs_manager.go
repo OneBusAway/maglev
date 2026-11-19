@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -184,6 +185,10 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	gtfsDB, err := openGtfsDB(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open GTFS database: %w", err)
+	}
+
+	if config.Clock == nil {
+		config.Clock = clock.RealClock{}
 	}
 
 	manager := &Manager{
@@ -712,7 +717,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 
 	reqLogger := logging.ForComponent(ctx, "gtfs_manager")
 
-	requestedTrip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	requestedTrip, err := manager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trip", err,
 			slog.String("trip_id", tripID))
@@ -726,7 +731,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
+	blockTrips, err := manager.GtfsDB.Queries.Memo(ctx).GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trips for block", err,
 			slog.String("block_id", requestedBlockID))

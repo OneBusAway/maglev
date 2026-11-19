@@ -28,7 +28,7 @@ func FilterRoutes(q *gtfsdb.Queries, ctx context.Context, present map[string]boo
 	if err != nil {
 		return nil, err
 	}
-	var refs []models.Route
+	refs := []models.Route{}
 	for _, r := range routes {
 		routeIDStr := FormCombinedID(r.AgencyID, r.ID)
 		if present[routeIDStr] {
