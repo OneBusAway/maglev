@@ -11,6 +11,12 @@ import (
 
 // stopsForAgencyHandler returns all stops belonging to a given agency with full stop details.
 func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, fieldErrors := ShouldIncludeReferences(r, nil)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
+
 	ctx := r.Context()
 
 	// Check if context is already cancelled
@@ -69,15 +75,17 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 
 	// Build references
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
-	references.Routes = routeRefs
-	references.Stops = parentRefs
+	if includeReferences {
+		references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
+		references.Routes = routeRefs
+		references.Stops = parentRefs
 
-	// A route in routeRefs can belong to a different agency than the one
-	// requested here (a stop can be served by more than one agency's routes).
-	// Every such route's agencyId must resolve against references.agencies too.
-	for _, route := range routeRefs {
-		api.appendRouteAgencyReference(ctx, references, route.AgencyID, id)
+		// A route in routeRefs can belong to a different agency than the one
+		// requested here (a stop can be served by more than one agency's routes).
+		// Every such route's agencyId must resolve against references.agencies too.
+		for _, route := range routeRefs {
+			api.appendRouteAgencyReference(ctx, references, route.AgencyID, id)
+		}
 	}
 
 	response := models.NewListResponse(stopsList, *references, false, api.Clock)
