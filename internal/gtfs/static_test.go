@@ -223,3 +223,26 @@ func TestLogFeedExpiryClassifiesFractionalDayExpiry(t *testing.T) {
 		})
 	}
 }
+
+func TestRTFeedConfigRedacted(t *testing.T) {
+	feed := RTFeedConfig{
+		TripUpdatesURL:      "https://example.test/trips.pb?token=TRIP_SECRET",
+		VehiclePositionsURL: "https://example.test/vehicles.pb?token=VEHICLE_SECRET",
+		ServiceAlertsURL:    "https://example.test/alerts.pb?token=ALERT_SECRET",
+		Headers:             map[string]string{"Authorization": "Bearer HEADER_SECRET"},
+	}
+
+	redacted := feed.Redacted()
+	assert.Contains(t, redacted.TripUpdatesURL, appconf.RedactedValue)
+	assert.Contains(t, redacted.VehiclePositionsURL, appconf.RedactedValue)
+	assert.Contains(t, redacted.ServiceAlertsURL, appconf.RedactedValue)
+	assert.Equal(t, map[string]string{"Authorization": appconf.RedactedValue}, redacted.Headers)
+	assert.Contains(t, feed.TripUpdatesURL, "TRIP_SECRET", "redaction must not mutate the original config")
+	assert.Equal(t, "./local-realtime.pb", RTFeedConfig{TripUpdatesURL: "./local-realtime.pb"}.Redacted().TripUpdatesURL)
+}
+
+func TestConfigStaticLogSource(t *testing.T) {
+	assert.Equal(t, "https://example.test/feed.zip?"+appconf.RedactedValue,
+		(Config{GtfsURL: "https://example.test/feed.zip?token=STATIC_SECRET"}).StaticLogSource())
+	assert.Equal(t, "./feeds/local.zip", (Config{GtfsURL: "./feeds/local.zip"}).StaticLogSource())
+}

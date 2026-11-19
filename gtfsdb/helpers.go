@@ -30,12 +30,22 @@ var ddl string
 // unchanged. Make one with ParseGtfsStream or ParseGtfsData: StoreGtfsData
 // reads the stop times and shape points from the stream they keep.
 type GtfsData struct {
-	Static *gtfs.Static
-	Hash   string
-	Source string
+	Static    *gtfs.Static
+	Hash      string
+	Source    string
+	LogSource string // Redacted source for operational logs; Source remains the import identity.
 
 	// stream reads the stop times and shape points, which Static lacks.
 	stream *gtfs.StaticStream
+}
+
+// logSource returns the sanitized source when supplied by the caller, and
+// falls back to Source for data constructed directly by gtfsdb consumers.
+func (data *GtfsData) logSource() string {
+	if data.LogSource != "" {
+		return data.LogSource
+	}
+	return appconf.RedactURLForLog(data.Source)
 }
 
 // errNotParsed rejects a GtfsData built by hand: only one made by
@@ -260,7 +270,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 		logging.LogOperation(logger, "gtfs_data_import_completed",
 			slog.Duration("duration_ms", c.importRuntime),
-			slog.String("source", data.Source))
+			slog.String("source", data.logSource()))
 	}()
 
 	// 1. Check if we already have this data imported
@@ -497,7 +507,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 	logging.LogOperation(logger, "updating_import_metadata",
 		slog.String("hash", data.Hash[:8]),
-		slog.String("source", data.Source))
+		slog.String("source", data.logSource()))
 
 	_, err = qtx.UpsertImportMetadata(ctx, UpsertImportMetadataParams{
 		FileHash:   data.Hash,

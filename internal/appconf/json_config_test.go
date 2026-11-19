@@ -1,6 +1,9 @@
 package appconf
 
 import (
+	"errors"
+	"fmt"
+	"net/url"
 	"os"
 	"testing"
 
@@ -784,4 +787,82 @@ func TestRedactURL(t *testing.T) {
 			assert.Equal(t, tt.want, RedactURL(tt.raw))
 		})
 	}
+}
+
+func TestRedactURLForLog(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{
+			name:   "redacts URL credentials",
+			source: "https://user:secret@example.com/feed.zip?token=secret",
+			want:   "https://user:xxxxx@example.com/feed.zip?" + RedactedValue,
+		},
+		{
+			name:   "redacts whitespace-prefixed URL credentials",
+			source: " \thttps://example.com/feed.zip?token=WHITESPACE_SECRET \t",
+			want:   "https://example.com/feed.zip?" + RedactedValue,
+		},
+		{
+			name:   "fails closed for malformed whitespace-prefixed URL",
+			source: " https://example.com/bad path?token=MALFORMED_SECRET ",
+			want:   RedactedValue,
+		},
+		{
+			name:   "fails closed for raw whitespace inside URL query",
+			source: "https://example.com/feed.zip?token=BAD SECRET",
+			want:   RedactedValue,
+		},
+		{
+			name:   "preserves local relative path",
+			source: "./feeds/local.zip",
+			want:   "./feeds/local.zip",
+		},
+		{
+			name:   "preserves local path with percent sign",
+			source: "C:/feeds/100%.zip",
+			want:   "C:/feeds/100%.zip",
+		},
+		{
+			name:   "fails closed for malformed HTTP scheme",
+			source: "https:/example.com/feed.zip?token=MALFORMED_SCHEME_SECRET",
+			want:   RedactedValue,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, RedactURLForLog(tt.source))
+		})
+	}
+}
+
+func TestRedactURLError(t *testing.T) {
+	secretURL := "https://feeds.example.test/trip.pb?token=URL_ERROR_SECRET"
+	underlying := errors.New("connection refused")
+	original := &url.Error{Op: "Get", URL: secretURL, Err: underlying}
+	wrapped := fmt.Errorf("request failed: %w", original)
+
+	redacted := RedactURLError(wrapped)
+	assert.NotContains(t, redacted.Error(), "URL_ERROR_SECRET")
+	assert.Contains(t, redacted.Error(), "https://feeds.example.test/trip.pb?"+RedactedValue)
+	assert.ErrorIs(t, redacted, underlying)
+	var got *url.Error
+	if assert.ErrorAs(t, redacted, &got) {
+		assert.NotContains(t, got.URL, "URL_ERROR_SECRET")
+		assert.Contains(t, got.URL, RedactedValue)
+		assert.NotContains(t, got.Error(), "URL_ERROR_SECRET")
+	}
+}
+
+func TestRedactURLError_SourceInNonURLError(t *testing.T) {
+	secretURL := "https://feeds.example.test/bad%zz?token=PARSE_ERROR_SECRET"
+	cause := errors.New("invalid URL escape")
+	original := fmt.Errorf("parse %q: %w", secretURL, cause)
+
+	redacted := RedactURLError(original, secretURL)
+	assert.NotContains(t, redacted.Error(), "PARSE_ERROR_SECRET")
+	assert.Contains(t, redacted.Error(), RedactedValue)
+	assert.ErrorIs(t, redacted, cause)
 }
