@@ -782,8 +782,19 @@ func (api *RestAPI) getPredictedTimes(
 			}
 		}
 
-		if seq != -1 && (earliestSTUSequence == -1 || seq < earliestSTUSequence) {
-			earliestSTUSequence = seq
+		// A stop_id with no stop_sequence still names the earliest update when
+		// that stop is visited once. A stop visited twice stays unresolved.
+		trackedSeq := seq
+		if trackedSeq == -1 && stu.StopID != nil {
+			if staticStops == nil {
+				staticStops = api.staticStopsForTrip(ctx, tripID)
+			}
+			if resolved, ok := uniqueStaticSequence(staticStops, *stu.StopID); ok {
+				trackedSeq = resolved
+			}
+		}
+		if trackedSeq != -1 && (earliestSTUSequence == -1 || trackedSeq < earliestSTUSequence) {
+			earliestSTUSequence = trackedSeq
 		}
 		if seq != -1 && seq < targetStopSequence && seq > closestPriorSequence {
 			closestPriorSequence = seq
