@@ -59,9 +59,10 @@ func RedactHeaderValues(headers map[string]string) map[string]string {
 	return redacted
 }
 
-// RedactURL preserves ordinary local paths while hiding URL query values
-// and passwords in URL userinfo. URL references without a scheme are also
-// handled. Malformed URL candidates fail closed.
+// RedactURL preserves ordinary local paths while hiding URL secrets: the
+// query string (holds a signed URL's signature) and the full userinfo,
+// including bare-username tokens (https://TOKEN@host/). URL references
+// without a scheme are also handled. Malformed URL candidates fail closed.
 func RedactURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	lower := strings.ToLower(trimmed)
@@ -94,8 +95,10 @@ func RedactURL(raw string) string {
 	if parsed.RawQuery != "" {
 		parsed.RawQuery = RedactedValue
 	}
-
-	return parsed.Redacted()
+	if parsed.User != nil {
+		parsed.User = url.User("xxxxx")
+	}
+	return parsed.String()
 }
 
 // replaceURLText replaces both the literal URL and its Go-quoted form. The

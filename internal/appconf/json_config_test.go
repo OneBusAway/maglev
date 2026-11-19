@@ -856,7 +856,7 @@ func TestGtfsStaticFeedRedacted(t *testing.T) {
 
 	redacted := feed.Redacted()
 
-	assert.Equal(t, "https://user:xxxxx@example.com/metro.zip?"+RedactedValue, redacted.URL)
+	assert.Equal(t, "https://xxxxx@example.com/metro.zip?"+RedactedValue, redacted.URL)
 	assert.Equal(t, RedactedValue, redacted.AuthHeaderValue)
 	assert.Equal(t, map[string]string{"Authorization": RedactedValue}, redacted.Headers)
 	assert.Equal(t, "https://user:static-password@example.com/metro.zip?api_key=STATIC_SECRET", feed.URL,
@@ -915,12 +915,22 @@ func TestRedactURL(t *testing.T) {
 		{
 			name: "password in userinfo",
 			raw:  "https://user:secret@example.com/b.json",
-			want: "https://user:xxxxx@example.com/b.json",
+			want: "https://xxxxx@example.com/b.json",
+		},
+		{
+			name: "token as username only",
+			raw:  "https://TOKEN@example.com/b.json",
+			want: "https://xxxxx@example.com/b.json",
+		},
+		{
+			name: "token with empty password",
+			raw:  "https://KEY:@example.com/b.json",
+			want: "https://xxxxx@example.com/b.json",
 		},
 		{
 			name: "redacts URL credentials and query",
 			raw:  "https://user:secret@example.com/feed.zip?token=secret",
-			want: "https://user:xxxxx@example.com/feed.zip?" + RedactedValue,
+			want: "https://xxxxx@example.com/feed.zip?" + RedactedValue,
 		},
 		{
 			name: "local relative path",
@@ -970,7 +980,7 @@ func TestRedactURL(t *testing.T) {
 		{
 			name: "FTP URL with password in userinfo",
 			raw:  "ftp://user:SECRET@host/x",
-			want: "ftp://user:xxxxx@host/x",
+			want: "ftp://xxxxx@host/x",
 		},
 	}
 
