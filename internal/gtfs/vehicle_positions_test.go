@@ -245,3 +245,26 @@ func TestRecordVehicleDataTime_KeepsRealHeaderTime(t *testing.T) {
 
 	assert.True(t, manager.feedVehicleDataTime["feed-a"].Equal(headerTime))
 }
+
+func TestGetVehicleByID_UnattributedVehicleFallback(t *testing.T) {
+	manager := newTestManager()
+
+	// Add an unattributed vehicle (no agency mapping)
+	veh := gtfs.Vehicle{
+		ID: &gtfs.VehicleID{ID: "unattributed_123"},
+	}
+	manager.feedVehicles["feed_1"] = []gtfs.Vehicle{veh}
+	manager.rebuildMergedRealtimeLocked()
+
+	// Query with an agency prefix; should fall back to the unattributed vehicle
+	found, err := manager.GetVehicleByID("some_agency", "unattributed_123")
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	assert.Equal(t, "unattributed_123", found.ID.ID)
+
+	// Direct query with empty agency should also find it
+	foundEmpty, err := manager.GetVehicleByID("", "unattributed_123")
+	require.NoError(t, err)
+	require.NotNil(t, foundEmpty)
+	assert.Equal(t, "unattributed_123", foundEmpty.ID.ID)
+}

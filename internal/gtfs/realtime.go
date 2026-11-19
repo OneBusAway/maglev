@@ -1348,6 +1348,60 @@ func routeBelongsToAllowedAgency(routeID string, allowed map[string]bool, routeA
 	return ok && allowed[agencyID]
 }
 
+type vehicleIndices struct {
+	allVehicles              []gtfs.Vehicle
+	vehicleLookupByTrip      map[string]int
+	vehicleLookupByVehicle   map[agencyVehicleKey]int
+	duplicatedVehicleByRoute map[string][]gtfs.Vehicle
+	vehiclesByRoute          map[string][]gtfs.Vehicle
+}
+
+func (manager *Manager) buildVehicleIndices(vehicleFeedIDs []string, totalVehicles int, tripLookup map[string]int, allTrips []gtfs.Trip) vehicleIndices {
+	indices := vehicleIndices{
+		allVehicles:              make([]gtfs.Vehicle, 0, totalVehicles),
+		vehicleLookupByTrip:      make(map[string]int, totalVehicles),
+		vehicleLookupByVehicle:   make(map[agencyVehicleKey]int, totalVehicles),
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
+		vehiclesByRoute:          make(map[string][]gtfs.Vehicle),
+	}
+
+	for _, feedID := range vehicleFeedIDs {
+		agencyMap := manager.feedVehicleAgency[feedID]
+		for _, vehicle := range manager.feedVehicles[feedID] {
+			indices.allVehicles = append(indices.allVehicles, vehicle)
+			i := len(indices.allVehicles) - 1
+
+			if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
+				indices.vehicleLookupByTrip[vehicle.Trip.ID.ID] = i
+			}
+			if vehicle.Trip != nil && vehicle.Trip.ID.RouteID != "" {
+				indices.vehiclesByRoute[vehicle.Trip.ID.RouteID] = append(indices.vehiclesByRoute[vehicle.Trip.ID.RouteID], vehicle)
+			}
+			if vehicle.ID != nil && vehicle.ID.ID != "" {
+				var agencyID string
+				if agencyMap != nil {
+					agencyID = agencyMap[newVehicleKey(vehicle.ID)]
+				}
+				key := agencyVehicleKey{agencyID: agencyID, vehicleID: vehicle.ID.ID}
+				indices.vehicleLookupByVehicle[key] = i
+			}
+			if vehicle.Trip == nil || vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
+				continue
+			}
+			routeID := vehicle.Trip.ID.RouteID
+			if routeID == "" && vehicle.Trip.ID.ID != "" {
+				if index, exists := tripLookup[vehicle.Trip.ID.ID]; exists {
+					routeID = allTrips[index].ID.RouteID
+				}
+			}
+			if routeID != "" {
+				indices.duplicatedVehicleByRoute[routeID] = append(indices.duplicatedVehicleByRoute[routeID], vehicle)
+			}
+		}
+	}
+	return indices
+}
+
 func (manager *Manager) rebuildMergedRealtimeLocked() {
 	builtAt := time.Now()
 	previous := manager.mergedRealtime()
@@ -1400,48 +1454,13 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		}
 	}
 
-	vehicleLookupByTrip := make(map[string]int, totalVehicles)
-	vehicleLookupByVehicle := make(map[agencyVehicleKey]int, totalVehicles)
-	duplicatedVehicleByRoute := make(map[string][]gtfs.Vehicle)
-	vehiclesByRoute := make(map[string][]gtfs.Vehicle)
+	vIndices := manager.buildVehicleIndices(vehicleFeedIDs, totalVehicles, tripLookup, allTrips)
+	allVehicles := vIndices.allVehicles
+	vehicleLookupByTrip := vIndices.vehicleLookupByTrip
+	vehicleLookupByVehicle := vIndices.vehicleLookupByVehicle
+	duplicatedVehicleByRoute := vIndices.duplicatedVehicleByRoute
+	vehiclesByRoute := vIndices.vehiclesByRoute
 
-	allVehicles := make([]gtfs.Vehicle, 0, totalVehicles)
-	for _, feedID := range vehicleFeedIDs {
-		agencyMap := manager.feedVehicleAgency[feedID]
-		for _, vehicle := range manager.feedVehicles[feedID] {
-			allVehicles = append(allVehicles, vehicle)
-			i := len(allVehicles) - 1
-
-			if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
-				vehicleLookupByTrip[vehicle.Trip.ID.ID] = i
-			}
-			if vehicle.Trip != nil && vehicle.Trip.ID.RouteID != "" {
-				vehiclesByRoute[vehicle.Trip.ID.RouteID] = append(vehiclesByRoute[vehicle.Trip.ID.RouteID], vehicle)
-			}
-			if vehicle.ID != nil && vehicle.ID.ID != "" {
-				var agencyID string
-				if agencyMap != nil {
-					agencyID = agencyMap[newVehicleKey(vehicle.ID)]
-				}
-				key := agencyVehicleKey{agencyID: agencyID, vehicleID: vehicle.ID.ID}
-				vehicleLookupByVehicle[key] = i
-			}
-			if vehicle.Trip == nil || vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
-				continue
-			}
-			routeID := vehicle.Trip.ID.RouteID
-			// Some feeds omit route_id in VehiclePosition trip descriptors.
-			// Fall back to the corresponding TripUpdate to resolve the route.
-			if routeID == "" && vehicle.Trip.ID.ID != "" {
-				if index, exists := tripLookup[vehicle.Trip.ID.ID]; exists {
-					routeID = allTrips[index].ID.RouteID
-				}
-			}
-			if routeID != "" {
-				duplicatedVehicleByRoute[routeID] = append(duplicatedVehicleByRoute[routeID], vehicle)
-			}
-		}
-	}
 	idx := alertIndex{
 		byTrip:   make(map[string][]FeedAlert),
 		byRoute:  make(map[string][]FeedAlert),

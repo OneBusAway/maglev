@@ -2169,3 +2169,23 @@ func TestArrivalAndDepartureForStopHandler_CrossAgencyTimezone(t *testing.T) {
 	assert.True(t, entry.ServiceDate.In(locLA).Equal(expectedMidnightLA),
 		"service date must be midnight in the trip agency timezone, got %v", entry.ServiceDate)
 }
+
+func TestArrivalAndDepartureForStopHandler_OtherAgencyVehicleId_ServesScheduledArrival(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	stopID := utils.FormCombinedID("25", "4062")
+	tripID := utils.FormCombinedID("25", "0f36bccf-c435-4b31-b001-da345d06a57d")
+	serviceDate := time.Now()
+
+	// Query with another agency's vehicle prefix; must not 404, should serve scheduled arrival
+	endpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&vehicleId=other_agency_veh_999",
+		stopID, tripID, serviceDate.UnixMilli())
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	// Must serve scheduled arrival: vehicleId must be empty and predicted false
+	assert.Empty(t, model.Data.Entry.VehicleID)
+	assert.False(t, model.Data.Entry.Predicted)
+}
