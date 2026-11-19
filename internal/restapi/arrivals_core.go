@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
@@ -125,7 +126,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 		if len(lookups.frequencies[st.TripID]) > 0 {
 			before, after = in.FrequencyBefore, in.FrequencyAfter
 		}
-		if !api.stopTimeInArrivalWindow(ctx, ast, ast.Location, in.QueryTime, before, after) {
+		if !api.stopTimeInArrivalWindow(ctx, ast, ast.Location, in.QueryTime, before, after, lookups.tripStops.schedules[st.TripID]) {
 			continue
 		}
 
@@ -152,6 +153,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 			stopID:           stopID,
 			totalStopsInTrip: lookups.tripStops.stopCounts[st.TripID],
 			stopPosition:     lookups.tripStops.stopPosition(st.TripID, st.StopSequence),
+			schedule:         lookups.tripStops.schedules[st.TripID],
 			freqMap:          lookups.frequencies,
 		}, acc)
 
@@ -715,7 +717,7 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 		if len(lookups.frequencies[st.TripID]) > 0 {
 			before, after = in.FrequencyBefore, in.FrequencyAfter
 		}
-		if !api.stopTimeInArrivalWindow(ctx, b.activeStopTime, b.Location, b.QueryTime, before, after) {
+		if !api.stopTimeInArrivalWindow(ctx, b.activeStopTime, b.Location, b.QueryTime, before, after, lookups.tripStops.schedules[st.TripID]) {
 			continue
 		}
 
@@ -734,6 +736,7 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 			stopID:           utils.FormCombinedID(b.AgencyID, b.StopCode),
 			totalStopsInTrip: lookups.tripStops.stopCounts[st.TripID],
 			stopPosition:     lookups.tripStops.stopPosition(st.TripID, st.StopSequence),
+			schedule:         lookups.tripStops.schedules[st.TripID],
 			freqMap:          lookups.frequencies,
 		}
 		arrival, vehicle := api.buildScheduledArrival(ctx, row, acc)
@@ -759,7 +762,7 @@ func arrivalCandidateWindow(queryTime time.Time, before, after time.Duration) (s
 // stopTimeInArrivalWindow checks scheduled and available predicted times against
 // the trip's window before expensive trip-status and reference construction.
 // Bounds are inclusive, matching the candidate queries and Java's range check.
-func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopTime, location *time.Location, queryTime time.Time, before, after time.Duration) bool {
+func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopTime, location *time.Location, queryTime time.Time, before, after time.Duration, schedule tripSchedule) bool {
 	start, end := queryTime.Add(-before), queryTime.Add(after)
 	inRange := func(t time.Time) bool {
 		return !t.IsZero() && !t.Before(start) && !t.After(end)
@@ -770,7 +773,7 @@ func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopT
 	if inRange(arrival) || inRange(departure) {
 		return true
 	}
-	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure)
+	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure, schedule)
 	return predicted && (inRange(predictedArrival) || inRange(predictedDeparture))
 }
 
@@ -888,6 +891,30 @@ func uniqueRouteAndTripIDs(allActiveStopTimes []activeStopTime) (routeIDs, tripI
 	return slices.Collect(maps.Keys(routeIDSet)), slices.Collect(maps.Keys(tripIDSet))
 }
 
+// loadTripSchedules retains the batched stop times for both predictions and
+// totalStopsInTrip. Query failures propagate to the handler.
+func (api *RestAPI) loadTripSchedules(ctx context.Context, tripIDs []string) (map[string]tripSchedule, error) {
+	schedules := make(map[string]tripSchedule, len(tripIDs))
+	if len(tripIDs) == 0 {
+		return schedules, nil
+	}
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
+	if err != nil {
+		return nil, fmt.Errorf("query stop times for trip index: %w", err)
+	}
+	// The query orders rows by trip_id and stop_sequence, so each trip can
+	// retain its portion of the batch without copying its stop-time rows.
+	for start := 0; start < len(stopTimes); {
+		end := start + 1
+		for end < len(stopTimes) && stopTimes[end].TripID == stopTimes[start].TripID {
+			end++
+		}
+		schedules[stopTimes[start].TripID] = newTripSchedule(stopTimes[start:end])
+		start = end
+	}
+	return schedules, nil
+}
+
 // tripStopKey identifies one visit of a stop on a trip by the feed's own
 // stop_sequence value, which GTFS guarantees is unique within a trip.
 type tripStopKey struct {
@@ -895,11 +922,11 @@ type tripStopKey struct {
 	stopSequence int64
 }
 
-// tripStopIndex holds the two per-trip facts an arrival row needs from a trip's
-// full ordered stop list: how many stops the trip has, and where in that list
-// each stop_time falls.
+// tripStopIndex shares each trip's ordered schedule, stop count and visit
+// positions across arrival construction, window filtering and predictions.
 type tripStopIndex struct {
 	stopCounts map[string]int
+	schedules  map[string]tripSchedule
 	positions  map[tripStopKey]int
 }
 
@@ -922,21 +949,16 @@ func (api *RestAPI) buildTripStopIndex(ctx context.Context, tripIDs []string) (t
 		stopCounts: make(map[string]int, len(tripIDs)),
 		positions:  make(map[tripStopKey]int),
 	}
-	if len(tripIDs) == 0 {
-		return idx, nil
-	}
-
-	// Ordered by (trip_id, stop_sequence), so each trip's running count is also
-	// the next row's position within that trip.
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
+	schedules, err := api.loadTripSchedules(ctx, tripIDs)
 	if err != nil {
-		return tripStopIndex{}, fmt.Errorf("query stop times for trip index: %w", err)
+		return tripStopIndex{}, err
 	}
-
-	for _, st := range stopTimes {
-		key := tripStopKey{tripID: st.TripID, stopSequence: st.StopSequence}
-		idx.positions[key] = idx.stopCounts[st.TripID]
-		idx.stopCounts[st.TripID]++
+	idx.schedules = schedules
+	for tripID, schedule := range idx.schedules {
+		idx.stopCounts[tripID] = len(schedule.stopTimes)
+		for position, st := range schedule.stopTimes {
+			idx.positions[tripStopKey{tripID: tripID, stopSequence: st.StopSequence}] = position
+		}
 	}
 	return idx, nil
 }
@@ -954,6 +976,7 @@ type arrivalInput struct {
 	stopID           string
 	totalStopsInTrip int
 	stopPosition     int
+	schedule         tripSchedule
 	freqMap          map[string][]gtfsdb.Frequency
 }
 
@@ -993,14 +1016,29 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 	// matching a prediction needs the unmodified value. The response's
 	// stopSequence field is a position within the trip instead — see
 	// tripStopIndex.stopPosition.
-	predictedArrivalTime, predictedDepartureTime, predicted := api.getPredictedTimes(
+	predictedArrivalTime, predictedDepartureTime, hasPredictionTimes := api.getPredictedTimes(
 		ctx,
 		st.TripID,
 		in.stopCode,
 		int64(st.StopSequence),
 		scheduledArrivalTime,
 		scheduledDepartureTime,
+		in.schedule,
 	)
+	// Noncanceled trip updates establish tracking. Calculated times also prove
+	// a match if the feed refreshes between the prediction and tracking lookups.
+	tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(st.TripID)
+	hasVehicleTracking := vehicle != nil && vehicle.Trip != nil &&
+		vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED
+	hasTripUpdateTracking := tripUpdate != nil && !api.tripUpdateExpired(*tripUpdate) &&
+		tripUpdate.ID.ScheduleRelationship != gtfsrt.TripDescriptor_CANCELED
+	isCanceled := arrivalIsCanceled(st.TripID, vehicle, tripUpdate)
+	hasRealtimeTracking := hasVehicleTracking || hasTripUpdateTracking || hasPredictionTimes
+	predicted := !isCanceled && hasRealtimeTracking
+	if !hasPredictionTimes || isCanceled {
+		predictedArrivalTime = time.Time{}
+		predictedDepartureTime = time.Time{}
+	}
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 
@@ -1050,6 +1088,12 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 	tripStatus, statusExtras, distanceFromStop, numberOfStopsAway := api.tripStatusForArrival(ctx, in, vehicle, acc)
 
 	api.applyTripStatusPrediction(ctx, arrival, tripStatus, statusExtras, in, acc.deviationSamples)
+	tripUpdate, _ := api.GtfsManager.GetTripUpdateByID(in.stopTime.TripID)
+	if arrivalIsCanceled(in.stopTime.TripID, vehicle, tripUpdate) || statusExtras.deviationDiscarded {
+		arrival.Predicted = false
+		arrival.PredictedArrivalTime = models.NewModelTime(time.Time{})
+		arrival.PredictedDepartureTime = models.NewModelTime(time.Time{})
+	}
 
 	arrival.TripStatus = tripStatus
 	arrival.DistanceFromStop = distanceFromStop
@@ -1060,11 +1104,11 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 	arrival.SituationIDs = acc.situations.addRefs(statusExtras.situations)
 }
 
-// applyTripStatusPrediction fills an unpredicted arrival's predicted times
-// from its trip status's schedule deviation when getPredictedTimes found no
-// per-stop prediction.
+// applyTripStatusPrediction fills missing times from the block's deviation,
+// independently of tracking. A direct trip update keeps its timing boundaries.
 func (api *RestAPI) applyTripStatusPrediction(ctx context.Context, arrival *models.ArrivalAndDeparture, tripStatus *models.TripStatus, statusExtras *tripStatusExtras, in arrivalInput, sampleCache deviationSampleCache) {
-	if arrival.Predicted {
+	hasPredictionTimes := !arrival.PredictedArrivalTime.IsZero() || !arrival.PredictedDepartureTime.IsZero()
+	if hasPredictionTimes || !api.canUseBlockPredictionFallback(in.stopTime.TripID, in.stopCode, in.stopTime.StopSequence, in.schedule, statusExtras) {
 		return
 	}
 	serviceStart := in.serviceDate.Start(in.location)
