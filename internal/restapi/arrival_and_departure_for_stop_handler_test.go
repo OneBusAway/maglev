@@ -1594,7 +1594,7 @@ func TestDwellSlack_StopIDOnlyUpdatesUseUniqueSequence(t *testing.T) {
 			}})
 
 			_, predDeparture, predicted := api.getPredictedTimes(
-				ctx, tripID, "dp-stop", 4, scheduledArrival, scheduledDeparture, time.Time{},
+				ctx, tripID, "dp-stop", 4, scheduledArrival, scheduledDeparture, predictionClock{},
 			)
 			assert.True(t, predicted)
 			assert.Equal(t, scheduledDeparture.Add(tc.wantDeparture), predDeparture)
