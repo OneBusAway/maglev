@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
 	"maps"
 	"net/http"
 	"net/url"
@@ -21,20 +20,6 @@ func searchStopsURL(params url.Values) string {
 	q := url.Values{"key": {"TEST"}}
 	maps.Copy(q, params)
 	return "/api/where/search/stop.json?" + q.Encode()
-}
-
-// registerFixtureCleanup schedules fixture deletions before the inserts run, so the rows
-// are still removed when an insert fails and aborts the test. The test database is shared
-// by every test in the package run, so leftover rows leak into other tests' results.
-func registerFixtureCleanup(t *testing.T, db *sql.DB, statements ...string) {
-	t.Helper()
-	t.Cleanup(func() {
-		for _, statement := range statements {
-			if _, err := db.ExecContext(context.Background(), statement); err != nil {
-				t.Errorf("fixture cleanup failed for %q: %v", statement, err)
-			}
-		}
-	})
 }
 
 func TestSearchStopsHandlerRequiresValidApiKey(t *testing.T) {
