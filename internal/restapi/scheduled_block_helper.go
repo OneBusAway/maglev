@@ -84,12 +84,21 @@ type scheduledStopKey struct {
 // the DB once per trip during snapshot construction.
 type blockTripData struct {
 	id           string
-	stopTimes    []gtfsdb.StopTime
+	stopTimes    []gtfsdb.GetBlockStopTimesForTripIDsRow
 	shapePoints  []gtfs.ShapePoint
 	cumDistances []float64
 	totalDist    float64
 	firstSeconds int64
 	lastSeconds  int64
+}
+
+// stopIDs returns the trip's stop IDs in stop_sequence order.
+func (t blockTripData) stopIDs() []string {
+	stopIDs := make([]string, len(t.stopTimes))
+	for i, stopTime := range t.stopTimes {
+		stopIDs[i] = stopTime.StopID
+	}
+	return stopIDs
 }
 
 // snapshotCache memoizes computeScheduledBlockSnapshot results for the
@@ -326,13 +335,15 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 	tripOffsets := make([]float64, len(trips))
 
 	// One DB call for the union of every block-trip's stops.
-	unionStopTimes := make([]gtfsdb.StopTime, 0, len(trips)*40)
-	for _, t := range trips {
-		unionStopTimes = append(unionStopTimes, t.stopTimes...)
+	stopIDsByTrip := make([][]string, len(trips))
+	unionStopIDs := make([]string, 0, len(trips)*40)
+	for i, t := range trips {
+		stopIDsByTrip[i] = t.stopIDs()
+		unionStopIDs = append(unionStopIDs, stopIDsByTrip[i]...)
 	}
 	// Block metrics degrade to zero distances rather than failing the
 	// snapshot; the helper logs the cause.
-	stopByID, _ := api.fetchStopCoordsForStopTimes(ctx, unionStopTimes)
+	stopByID, _ := api.fetchStopCoords(ctx, unionStopIDs)
 
 	var cumulativeBlockDist float64
 	var blockSeq int
@@ -341,7 +352,7 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 		var tripStopDistances []float64
 		var tripLength float64
 		if len(t.shapePoints) >= 2 {
-			tripStopDistances = projectStopsInSequence(t.stopTimes, stopByID, t.shapePoints, t.cumDistances)
+			tripStopDistances = projectStopsInSequence(stopIDsByTrip[i], stopByID, t.shapePoints, t.cumDistances)
 			tripLength = t.totalDist
 		} else {
 			// Shapeless trip (missing shape_id, unresolvable shape, or shape
@@ -352,7 +363,7 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 			// stop gets a distinct DistanceAlongBlock. Without this the
 			// trip collapses to zero and every later trip in the block is
 			// short by this trip's length.
-			tripStopDistances, tripLength = haversineStopDistances(t.stopTimes, stopByID)
+			tripStopDistances, tripLength = haversineStopDistances(stopIDsByTrip[i], stopByID)
 		}
 		for k, st := range t.stopTimes {
 			stops = append(stops, blockStopMetric{
@@ -500,7 +511,7 @@ func (api *RestAPI) applyScheduledTripPositionToStatus(
 	}
 	// Block metrics degrade to zero distances rather than failing the
 	// snapshot; the helper logs the cause.
-	stopByID, _ := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	stopByID, _ := api.fetchStopCoords(ctx, stopIDsOf(stopTimes))
 	pos, orient, dist := scheduledTripPosition(
 		stopTimes, stopByID, shapePoints, cumulativeDistances, currentTime, serviceDate)
 	status.ScheduledDistanceAlongTrip = dist
@@ -526,7 +537,7 @@ func scheduledTripPosition(
 	currentTime time.Time,
 	serviceDate time.Time,
 ) (position *models.Location, orientation float64, distanceAlongTrip float64) {
-	stopDistances := projectStopsInSequence(stopTimes, stopByID, shapePoints, cumulativeDistances)
+	stopDistances := projectStopsInSequence(stopIDsOf(stopTimes), stopByID, shapePoints, cumulativeDistances)
 
 	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
 	distanceAlongTrip = interpolateDistanceAtScheduledTime(currentSeconds, stopTimes, stopDistances)
@@ -654,7 +665,8 @@ func (api *RestAPI) blockTripsForServiceDate(
 }
 
 // loadBlockTripData fetches stop_times and shape for every tripID in batched
-// queries (GetStopTimesForTripIDs and loadBlockShapes) instead of per trip.
+// queries (GetBlockStopTimesForTripIDs and loadBlockShapes) instead of per trip.
+// It reads only the stop-time columns the snapshot uses.
 // For a block with N trips the round-trip count no longer grows with N,
 // a real handle on the plural arrivals handler's amplification.
 //
@@ -673,11 +685,11 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, blockTrips []blockTri
 		tripIDs[i] = blockTrip.id
 	}
 
-	stopTimeRows, err := q.GetStopTimesForTripIDs(ctx, tripIDs)
+	stopTimeRows, err := q.GetBlockStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
 		return nil
 	}
-	stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripIDs))
+	stopTimesByTrip := make(map[string][]gtfsdb.GetBlockStopTimesForTripIDsRow, len(tripIDs))
 	for _, st := range stopTimeRows {
 		stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
 	}
@@ -756,31 +768,31 @@ func (api *RestAPI) loadBlockShapes(ctx context.Context, blockTrips []blockTripR
 	return shapesByTrip
 }
 
-// fetchStopCoordsForStopTimes fetches the unique stops in stopTimes, batching
+// fetchStopCoords fetches the unique stops in stopIDs, batching
 // the lookup so an unbounded caller — the scheduled-position candidate set
 // among them — cannot overflow the bind variable limit. Returns the error on
 // failure; a request-path caller should propagate it rather than degrade
 // silently. Block-snapshot callers that intentionally tolerate a degraded
 // result discard the error explicitly at the call site.
-func (api *RestAPI) fetchStopCoordsForStopTimes(
+func (api *RestAPI) fetchStopCoords(
 	ctx context.Context,
-	stopTimes []gtfsdb.StopTime,
+	stopIDs []string,
 ) (map[string]gtfsdb.Stop, error) {
-	seen := make(map[string]struct{}, len(stopTimes))
-	ids := make([]string, 0, len(stopTimes))
-	for _, st := range stopTimes {
-		if _, ok := seen[st.StopID]; ok {
+	seen := make(map[string]struct{}, len(stopIDs))
+	ids := make([]string, 0, len(stopIDs))
+	for _, stopID := range stopIDs {
+		if _, ok := seen[stopID]; ok {
 			continue
 		}
-		seen[st.StopID] = struct{}{}
-		ids = append(ids, st.StopID)
+		seen[stopID] = struct{}{}
+		ids = append(ids, stopID)
 	}
 	if len(ids) == 0 {
 		return nil, nil
 	}
 	stops, err := utils.QueryInBatches(ctx, ids, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	if err != nil {
-		slog.Warn("fetchStopCoordsForStopTimes: GetStopsByIDs failed",
+		slog.Warn("fetchStopCoords: GetStopsByIDs failed",
 			slog.Int("stop_count", len(ids)), slog.String("error", err.Error()))
 		return nil, err
 	}
@@ -789,6 +801,15 @@ func (api *RestAPI) fetchStopCoordsForStopTimes(
 		byID[s.ID] = s
 	}
 	return byID, nil
+}
+
+// stopIDsOf returns each stop time's stop ID, in order.
+func stopIDsOf(stopTimes []gtfsdb.StopTime) []string {
+	stopIDs := make([]string, len(stopTimes))
+	for i, stopTime := range stopTimes {
+		stopIDs[i] = stopTime.StopID
+	}
+	return stopIDs
 }
 
 // projectStopsInSequence returns each stop's distance-along-trip in metres,
@@ -809,19 +830,19 @@ func (api *RestAPI) fetchStopCoordsForStopTimes(
 // would require porting that library; our simpler projection produces
 // values within ~90-250m of Java's, which is acceptable drift for our use.
 func projectStopsInSequence(
-	stopTimes []gtfsdb.StopTime,
+	stopIDs []string,
 	stopByID map[string]gtfsdb.Stop,
 	shapePoints []gtfs.ShapePoint,
 	cumulativeDistances []float64,
 ) []float64 {
-	distances := make([]float64, len(stopTimes))
+	distances := make([]float64, len(stopIDs))
 	if len(shapePoints) < 2 || len(cumulativeDistances) != len(shapePoints) {
 		return distances
 	}
 
 	lastMatchedIndex := 0
-	for i, st := range stopTimes {
-		stop, ok := stopByID[st.StopID]
+	for i, stopID := range stopIDs {
+		stop, ok := stopByID[stopID]
 		if !ok {
 			distances[i] = 0
 			continue
@@ -847,16 +868,16 @@ func projectStopsInSequence(
 // Returns a zero-filled slice and length 0 only when a stop's static
 // coordinates cannot be resolved (unknown stop_id in stopByID); at that
 // point we can't do any better than the pre-fix behaviour.
-func haversineStopDistances(stopTimes []gtfsdb.StopTime, stopByID map[string]gtfsdb.Stop) ([]float64, float64) {
-	distances := make([]float64, len(stopTimes))
-	if len(stopTimes) == 0 {
+func haversineStopDistances(stopIDs []string, stopByID map[string]gtfsdb.Stop) ([]float64, float64) {
+	distances := make([]float64, len(stopIDs))
+	if len(stopIDs) == 0 {
 		return distances, 0
 	}
 	var cumulative float64
-	prev, prevOK := stopByID[stopTimes[0].StopID]
+	prev, prevOK := stopByID[stopIDs[0]]
 	distances[0] = 0
-	for i := 1; i < len(stopTimes); i++ {
-		curr, currOK := stopByID[stopTimes[i].StopID]
+	for i := 1; i < len(stopIDs); i++ {
+		curr, currOK := stopByID[stopIDs[i]]
 		if prevOK && currOK {
 			cumulative += utils.Distance(prev.Lat, prev.Lon, curr.Lat, curr.Lon)
 		}
