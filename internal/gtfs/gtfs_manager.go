@@ -784,7 +784,7 @@ func (manager *Manager) GetVehicleByID(agencyID, vehicleID string) (*gtfs.Vehicl
 		vehicle := merged.vehicles[idx]
 		return &vehicle, nil
 	}
-	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
+	return nil, fmt.Errorf("vehicle with ID %s not found for agency %q", vehicleID, agencyID)
 }
 
 func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
