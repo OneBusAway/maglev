@@ -29,10 +29,9 @@ import (
 type tripStatusExtras struct {
 	snapshot   *scheduledBlockSnapshot
 	situations []situationRef
-	// deviationResolved reports that a deviation was resolved for this
-	// arrival. A TripUpdate inside Java's blockNotActive window sets
-	// status.ScheduleDeviation. A fresh vehicle with no TripUpdate resolves
-	// it to 0, which is BestScheduleDeviation's default.
+	// deviationResolved reports that status.ScheduleDeviation came from a
+	// TripUpdate inside Java's blockNotActive window. A vehicle position
+	// alone does not resolve a deviation.
 	deviationResolved bool
 	// recordDiscarded reports that the TripUpdate's deviation exceeded one
 	// hour, so Java drops the VehicleLocationRecord and predicted stays false.
