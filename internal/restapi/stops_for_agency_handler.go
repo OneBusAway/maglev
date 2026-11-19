@@ -129,6 +129,7 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 	if err != nil {
 		return nil, err
 	}
+	utils.SortRouteIDsForStopsRowsByName(routeIDsRows)
 
 	// Build a map of stop ID to route IDs in memory
 	routesByStop := make(map[string][]string)

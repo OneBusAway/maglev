@@ -666,6 +666,12 @@ func (api *RestAPI) shapePointsForTrips(ctx context.Context, trips []gtfsdb.Trip
 		shapeIDs = append(shapeIDs, shapeID)
 	}
 
+	return api.shapePointsByShapeIDs(ctx, shapeIDs)
+}
+
+// shapePointsByShapeIDs returns the points of each shape, keyed by shape ID.
+// A shape with no points is absent.
+func (api *RestAPI) shapePointsByShapeIDs(ctx context.Context, shapeIDs []string) (map[string][]gtfs.ShapePoint, error) {
 	byID := make(map[string][]gtfs.ShapePoint, len(shapeIDs))
 	if len(shapeIDs) == 0 {
 		return byID, nil

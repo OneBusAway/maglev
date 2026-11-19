@@ -51,6 +51,7 @@ func TestGetRouteIDsForStops_AgencyWithUnderscore(t *testing.T) {
 		VALUES ('TRIP_UNDERSCORE', 28800, 28800, 'STOP_UNDERSCORE', 1);
 	`)
 	require.NoError(t, err)
+	require.NoError(t, buildStopRouteIndex(ctx, client.Queries))
 
 	// Test GetRouteIDsForStops
 	rows, err := client.Queries.GetRouteIDsForStops(ctx, []string{"STOP_UNDERSCORE"})
@@ -70,4 +71,52 @@ func TestGetRouteIDsForStops_AgencyWithUnderscore(t *testing.T) {
 	assert.Equal(t, "STOP_UNDERSCORE", activeRows[0].StopID)
 	assert.Equal(t, "AGENCY_WITH_UNDERSCORE", activeRows[0].AgencyID)
 	assert.Equal(t, "ROUTE_42", activeRows[0].RouteID)
+}
+
+// GetRouteIDsForStops answers from stop_routes, so a pair the index does not list is
+// not returned even though stop times still produce it.
+func TestGetRouteIDsForStops_ReadsStopRouteIndex(t *testing.T) {
+	client := newTestClientWithRABA(t)
+	ctx := context.Background()
+
+	var stopID string
+	require.NoError(t, client.DB.QueryRowContext(ctx, "SELECT stop_id FROM stop_routes LIMIT 1").Scan(&stopID))
+	_, err := client.DB.ExecContext(ctx, "DELETE FROM stop_routes WHERE stop_id = ?", stopID)
+	require.NoError(t, err)
+
+	rows, err := client.Queries.GetRouteIDsForStops(ctx, []string{stopID})
+
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}
+
+// Reading the index must return the same rows as walking stop_times did. The query has
+// no ORDER BY and its callers sort, so only the set is compared.
+func TestGetRouteIDsForStops_MatchesStopTimesJoin(t *testing.T) {
+	client := newTestClientWithRABA(t)
+	ctx := context.Background()
+	addSecondRouteAtStop(t, client)
+
+	stopIDs := queryStrings(t, client, "SELECT id FROM stops ORDER BY id")
+	joinRows, err := client.DB.QueryContext(ctx, `
+		SELECT DISTINCT routes.id, routes.agency_id, routes.short_name, routes.long_name, stop_times.stop_id
+		FROM stop_times
+		JOIN trips ON stop_times.trip_id = trips.id
+		JOIN routes ON trips.route_id = routes.id
+	`)
+	require.NoError(t, err)
+	var want []GetRouteIDsForStopsRow
+	for joinRows.Next() {
+		var row GetRouteIDsForStopsRow
+		require.NoError(t, joinRows.Scan(&row.RouteID, &row.AgencyID, &row.ShortName, &row.LongName, &row.StopID))
+		want = append(want, row)
+	}
+	require.NoError(t, joinRows.Err())
+	require.NoError(t, joinRows.Close())
+	require.NotEmpty(t, want)
+
+	got, err := client.Queries.GetRouteIDsForStops(ctx, stopIDs)
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, want, got)
 }
