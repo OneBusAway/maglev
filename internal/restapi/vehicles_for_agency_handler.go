@@ -165,8 +165,11 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			tripStatus := models.NewTripStatus()
 			// Resolve the executing trip; may differ from the nominal trip when interlining.
 			activeTripID := api.resolveActiveTripID(ctx, vehicle.Trip.ID.ID, referenceTime)
-			// activeTripAgency is set to the executing trip's route agency once known;
-			// it falls back to the requested agency when the route lookup fails.
+			// activeTripAgency starts as the requested agency and is overridden
+			// with the nominal route's agency when that route is resolved, then
+			// further overridden with the active trip's route agency when the
+			// active trip differs and its route resolves. If neither lookup
+			// succeeds the requested agency remains as the last-resort fallback.
 			activeTripAgency := id
 			// Resolve the block trip sequence for the active (not nominal) trip,
 			// so it reflects the position of the trip actually being executed.
