@@ -11,29 +11,6 @@ import (
 	"strings"
 )
 
-const blockHasTripForAgency = `-- name: BlockHasTripForAgency :one
-SELECT CAST(EXISTS (
-    SELECT 1
-    FROM trips t
-    JOIN routes r ON r.id = t.route_id
-    WHERE t.block_id = ?1
-      AND r.agency_id = ?2
-) AS INTEGER) AS has_trip
-`
-
-type BlockHasTripForAgencyParams struct {
-	BlockID  sql.NullString
-	AgencyID string
-}
-
-// Returns 1 if a trip on one of the agency's routes is in the block, 0 otherwise.
-func (q *Queries) BlockHasTripForAgency(ctx context.Context, arg BlockHasTripForAgencyParams) (int64, error) {
-	row := q.queryRow(ctx, q.blockHasTripForAgencyStmt, blockHasTripForAgency, arg.BlockID, arg.AgencyID)
-	var has_trip int64
-	err := row.Scan(&has_trip)
-	return has_trip, err
-}
-
 const buildStopAgencies = `-- name: BuildStopAgencies :exec
 INSERT INTO
     stop_agencies (stop_id, agency_id)
@@ -1782,14 +1759,22 @@ SELECT
 FROM
     trips t
         JOIN
+    routes r ON r.id = t.route_id
+        JOIN
     stop_times st ON t.id = st.trip_id
         JOIN
     stops s ON st.stop_id = s.id
 WHERE
-    t.block_id = ?
+    t.block_id = ?1
+    AND r.agency_id = ?2
 ORDER BY
     t.id, st.stop_sequence
 `
+
+type GetBlockDetailsParams struct {
+	BlockID  sql.NullString
+	AgencyID string
+}
 
 type GetBlockDetailsRow struct {
 	ServiceID     string
@@ -1805,8 +1790,10 @@ type GetBlockDetailsRow struct {
 	Lon           float64
 }
 
-func (q *Queries) GetBlockDetails(ctx context.Context, blockID sql.NullString) ([]GetBlockDetailsRow, error) {
-	rows, err := q.query(ctx, q.getBlockDetailsStmt, getBlockDetails, blockID)
+// A block is keyed by agency and block_id, as in Java, so trips on another
+// agency's routes that share the block_id belong to that agency's block.
+func (q *Queries) GetBlockDetails(ctx context.Context, arg GetBlockDetailsParams) ([]GetBlockDetailsRow, error) {
+	rows, err := q.query(ctx, q.getBlockDetailsStmt, getBlockDetails, arg.BlockID, arg.AgencyID)
 	if err != nil {
 		return nil, err
 	}
