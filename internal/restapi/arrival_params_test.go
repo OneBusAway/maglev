@@ -74,6 +74,33 @@ func TestParseMinutesValue(t *testing.T) {
 			expected: maxWindow,
 		},
 		{
+			name:     "bounds max int32 at maxWindow",
+			params:   url.Values{"minutesAfter": {"2147483647"}},
+			key:      "minutesAfter",
+			expected: maxWindow,
+		},
+		{
+			name:         "reports error on int32 overflow 2147483648 and returns fallback",
+			params:       url.Values{"minutesAfter": {"2147483648"}},
+			key:          "minutesAfter",
+			expected:     fallback,
+			expectErrMsg: "must be a valid integer",
+		},
+		{
+			name:         "reports error on 64-bit integer overflow and returns fallback",
+			params:       url.Values{"minutesAfter": {"99999999999"}},
+			key:          "minutesAfter",
+			expected:     fallback,
+			expectErrMsg: "must be a valid integer",
+		},
+		{
+			name:         "reports error on int32 underflow and returns fallback",
+			params:       url.Values{"minutesAfter": {"-2147483649"}},
+			key:          "minutesAfter",
+			expected:     fallback,
+			expectErrMsg: "must be a valid integer",
+		},
+		{
 			name:         "reports error on negative integer and returns fallback",
 			params:       url.Values{"minutesBefore": {"-5"}},
 			key:          "minutesBefore",
@@ -105,84 +132,6 @@ func TestParseMinutesValue(t *testing.T) {
 			}
 
 			result := parseMinutesValue(tc.params, tc.key, fallback, maxWindow, addError)
-			assert.Equal(t, tc.expected, result)
-
-			if tc.expectErrMsg != "" {
-				assert.Equal(t, tc.key, recordedField)
-				assert.Equal(t, tc.expectErrMsg, recordedMsg)
-			} else {
-				assert.Empty(t, recordedField)
-				assert.Empty(t, recordedMsg)
-			}
-		})
-	}
-}
-
-func TestParseEpochMillisValue(t *testing.T) {
-	fallback := time.UnixMilli(1609459200000)
-
-	tests := []struct {
-		name         string
-		params       url.Values
-		key          string
-		expected     time.Time
-		expectErrMsg string
-	}{
-		{
-			name:     "returns fallback when key is missing",
-			params:   url.Values{},
-			key:      "time",
-			expected: fallback,
-		},
-		{
-			name:     "returns fallback when value slice is empty",
-			params:   url.Values{"time": {}},
-			key:      "time",
-			expected: fallback,
-		},
-		{
-			name:     "returns fallback when value is empty string",
-			params:   url.Values{"time": {""}},
-			key:      "time",
-			expected: fallback,
-		},
-		{
-			name:     "parses valid positive epoch milliseconds",
-			params:   url.Values{"time": {"1705305600000"}},
-			key:      "time",
-			expected: time.UnixMilli(1705305600000),
-		},
-		{
-			name:     "parses zero epoch milliseconds (1970 UTC)",
-			params:   url.Values{"time": {"0"}},
-			key:      "time",
-			expected: time.UnixMilli(0),
-		},
-		{
-			name:         "reports error on non-numeric string and returns fallback",
-			params:       url.Values{"time": {"not-a-timestamp"}},
-			key:          "time",
-			expected:     fallback,
-			expectErrMsg: "must be a valid Unix timestamp in milliseconds",
-		},
-		{
-			name:         "reports error on negative epoch timestamp and returns fallback",
-			params:       url.Values{"time": {"-1000"}},
-			key:          "time",
-			expected:     fallback,
-			expectErrMsg: "must be a valid Unix timestamp in milliseconds",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			var recordedField, recordedMsg string
-			addError := func(field, msg string) {
-				recordedField = field
-				recordedMsg = msg
-			}
-
-			result := parseEpochMillisValue(tc.params, tc.key, fallback, addError)
 			assert.Equal(t, tc.expected, result)
 
 			if tc.expectErrMsg != "" {

@@ -50,12 +50,22 @@ func checkGTFSTidyAvailable() (string, error) {
 	return path, nil
 }
 
-// tidyGTFSData processes GTFS data through gtfstidy with flags -OscRCSmeD
-// Returns the tidied GTFS zip data or an error
-func tidyGTFSData(ctx context.Context, inputZip []byte, logger *slog.Logger) ([]byte, error) {
+// tidyGTFSFile processes the GTFS zip at inputPath through gtfstidy with
+// flags -OscRCSmeD. gtfstidy reads the file itself, so the untidied feed is
+// never loaded into memory. Returns the tidied GTFS zip data or an error.
+func tidyGTFSFile(ctx context.Context, inputPath string, logger *slog.Logger) ([]byte, error) {
 	gtfstidyPath, err := checkGTFSTidyAvailable()
 	if err != nil {
 		return nil, err
+	}
+	// gtfstidy runs in its own directory, so a relative path would miss.
+	inputPath, err = filepath.Abs(inputPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve pristine GTFS zip path: %w", err)
+	}
+	input, err := os.Stat(inputPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read pristine GTFS zip: %w", err)
 	}
 
 	// Create temp directory for processing
@@ -71,19 +81,14 @@ func tidyGTFSData(ctx context.Context, inputZip []byte, logger *slog.Logger) ([]
 		}
 	}()
 
-	pristineZipPath := filepath.Join(tempDir, "gtfs_pristine.zip")
-	if err := os.WriteFile(pristineZipPath, inputZip, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write pristine GTFS zip: %w", err)
-	}
-
 	outputZipPath := filepath.Join(tempDir, "gtfs_tidied.zip")
 
 	logging.LogOperation(logger, "running_gtfstidy",
-		slog.String("input_file", pristineZipPath),
-		slog.Int("input_size_bytes", len(inputZip)))
+		slog.String("input_file", inputPath),
+		slog.Int64("input_size_bytes", input.Size()))
 
 	// -o: output file
-	cmd := exec.CommandContext(ctx, gtfstidyPath, "-OscRCSmeD", "-o", outputZipPath, pristineZipPath)
+	cmd := exec.CommandContext(ctx, gtfstidyPath, "-OscRCSmeD", "-o", outputZipPath, inputPath)
 	cmd.Dir = tempDir
 
 	var stdout, stderr bytes.Buffer
@@ -107,7 +112,7 @@ func tidyGTFSData(ctx context.Context, inputZip []byte, logger *slog.Logger) ([]
 
 	logging.LogOperation(logger, "gtfs_tidied_successfully",
 		slog.Int("output_size_bytes", len(tidiedZip)),
-		slog.Int("size_reduction_bytes", len(inputZip)-len(tidiedZip)))
+		slog.Int64("size_reduction_bytes", input.Size()-int64(len(tidiedZip))))
 
 	return tidiedZip, nil
 }

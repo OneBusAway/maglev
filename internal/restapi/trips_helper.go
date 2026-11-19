@@ -40,6 +40,9 @@ type tripStatusExtras struct {
 	// blockTripIDs are the block's trips in start order, from which Java
 	// builds its per-stop deviation samples.
 	blockTripIDs []string
+	// tripBlockSequence is the queried trip's position in its block. It can
+	// differ from status.BlockTripSequence, which follows the active trip.
+	tripBlockSequence int
 }
 
 // BuildTripStatus builds a TripStatus for the given trip.
@@ -87,6 +90,7 @@ func (api *RestAPI) BuildTripStatus(
 	if blockTripSequence > 0 {
 		status.BlockTripSequence = blockTripSequence
 	}
+	extras.tripBlockSequence = blockTripSequence
 
 	if vehicle != nil {
 		if vehicle.ID != nil {
@@ -122,7 +126,7 @@ func (api *RestAPI) BuildTripStatus(
 	// activeTripRawID may be a synthetic ID not in the DB, so fall back to tripID.
 	dbTripID := activeTripRawID
 	if activeTripRawID != tripID {
-		if _, lookupErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripRawID); lookupErr != nil {
+		if _, lookupErr := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, activeTripRawID); lookupErr != nil {
 			if !errors.Is(lookupErr, sql.ErrNoRows) {
 				slog.Warn("BuildTripStatus: failed to resolve active trip ID, falling back to trip ID",
 					slog.String("active_trip_id", activeTripRawID),
@@ -173,19 +177,17 @@ func (api *RestAPI) BuildTripStatus(
 	extras.blockTripIDs = blockTripIDs
 
 	hasVehicleRealtimeData := vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
-	// A discarded record is not a live vehicle. A fresh position with no
-	// TripUpdate still is: Java's applyTripUpdatesToRecord sets the
-	// deviation to 0, and the predicted times are the scheduled times.
+	// A discarded record is not predicted. A fresh position with no TripUpdate
+	// still marks tripStatus predicted. Java does not build an arrival record
+	// from that position, so the arrival flag stays false. The tripStatus
+	// mismatch is a separate change.
 	if discarded {
 		status.SetPredicted(false)
 	} else {
 		status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
-		if hasVehicleRealtimeData && !hasRealtimeTripUpdate {
-			extras.deviationResolved = true
-		}
 	}
 
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, dbTripID)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, dbTripID)
 	if err != nil {
 		slog.Warn("buildTripStatusCore: failed to get stop times",
 			slog.String("trip_id", dbTripID),
@@ -243,7 +245,7 @@ func (api *RestAPI) BuildTripStatus(
 		api.fillStopsFromSchedule(ctx, status, dbTripID, currentTime, serviceDate, agencyID, stopTimes)
 	}
 
-	shapeRows, shapeErr := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, dbTripID)
+	shapeRows, shapeErr := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetShapePointsByTripID(ctx, dbTripID)
 	if shapeErr != nil {
 		slog.Warn("buildTripStatusCore: failed to get shape points",
 			slog.String("trip_id", dbTripID),
@@ -277,6 +279,10 @@ func (api *RestAPI) BuildTripStatus(
 	// their defaults.
 	if snap != nil && snap.ActiveTripID != "" && snap.InRange {
 		status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
+		// Java's TripStatusBeanServiceImpl reports the active trip's sequence.
+		if snap.ActiveTripID != tripID {
+			status.BlockTripSequence = api.activeTripBlockSequence(ctx, snap.ActiveTripID, serviceDate)
+		}
 		status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
 		if snap.ActiveTripTotalDistance > 0 {
 			status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
@@ -468,12 +474,12 @@ func (api *RestAPI) fetchFrequenciesForTrips(ctx context.Context, tripIDs []stri
 // Frequency offsets are added to servicedate.OffsetBase(serviceDate), the
 // service-day start, not local midnight.
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, trip.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, trip.ID)
+	shapeRows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetShapePointsByTripID(ctx, trip.ID)
 	if err != nil {
 		slog.Warn(
 			"BuildTripSchedule: failed to get shape points",
@@ -513,7 +519,7 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 
 	// Populate frequency data for the schedule sub-object.
 	var scheduleFrequency *models.Frequency
-	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, trip.ID)
+	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetFrequenciesForTrip(ctx, trip.ID)
 	if freqErr != nil {
 		return nil, freqErr
 	}
@@ -534,7 +540,7 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 
 func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.Trip, agencyID string, serviceDate time.Time) (nextTripID string, previousTripID string, stopTimes []gtfsdb.StopTime, err error) {
 	if !trip.BlockID.Valid {
-		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, trip.ID)
 		if stopErr != nil {
 			return "", "", nil, stopErr
 		}
@@ -553,7 +559,7 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 		}
 		// ErrNoRows: trip not in block for this service date — no prev/next, but
 		// still fetch stop times so callers get the schedule for the trip itself.
-		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, trip.ID)
 		if stopErr != nil {
 			return "", "", nil, stopErr
 		}
@@ -595,7 +601,7 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 			slog.String("trip_id", trip.ID))
 	}
 
-	stopTimes, err = api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	stopTimes, err = api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, trip.ID)
 	if err != nil {
 		return nextTripID, previousTripID, nil, err
 	}
@@ -609,7 +615,7 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 		stopTimes = preloaded
 	} else {
 		var err error
-		stopTimes, err = api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+		stopTimes, err = api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, tripID)
 		if err != nil {
 			slog.Warn("fillStopsFromSchedule: failed to get stop times",
 				slog.String("trip_id", tripID),
@@ -680,13 +686,14 @@ type scheduleDeviationFallback struct {
 //   - Canceled trips are never predicted.
 //   - A TripUpdate whose deviation exceeds one hour is discarded, so
 //     predicted stays false.
-//   - A fresh vehicle position with no TripUpdate resolves its deviation
-//     to 0, so both predicted times equal the scheduled times.
+//   - A fresh vehicle position with no TripUpdate is not an arrival
+//     record, so predicted stays false and both predicted times stay zero.
 //   - When the block's StopTimeUpdates yield deviation samples,
 //     getBestScheduleDeviation takes the last sample at or before the stop
 //     and refuses to propagate upstream, so a stop before every sample is
 //     predicted but gets no predicted times.
-//   - Without samples, the block-level deviation is used.
+//   - Without samples, which is every feed numbering stops from 1 (see
+//     sampleEntryForSTU), the block-level deviation is used.
 //   - The deviation is applied less any scheduled slack the vehicle can
 //     absorb before reaching the stop.
 func (api *RestAPI) predictedTimesFromScheduleDeviation(ctx context.Context, in scheduleDeviationFallback) (predictedArrival, predictedDeparture time.Time, predicted bool) {
@@ -874,11 +881,27 @@ func (api *RestAPI) calculateBlockTripSequence(ctx context.Context, tripID strin
 	return seq
 }
 
+// activeTripBlockSequence is calculateBlockTripSequence, memoized in the
+// request's snapshot cache when it has one.
+func (api *RestAPI) activeTripBlockSequence(ctx context.Context, tripID string, serviceDate time.Time) int {
+	cache := snapshotCacheFrom(ctx)
+	if cache == nil {
+		return api.calculateBlockTripSequence(ctx, tripID, serviceDate)
+	}
+	key := activeTripSequenceKey{tripID: tripID, serviceDateUnix: serviceDate.UnixNano()}
+	if sequence, ok := cache.activeTripSequences[key]; ok {
+		return sequence
+	}
+	sequence := api.calculateBlockTripSequence(ctx, tripID, serviceDate)
+	cache.activeTripSequences[key] = sequence
+	return sequence
+}
+
 // blockTripSequence returns the zero-based index of a trip within its block's
 // ordered sequence for the given service date, and whether it was resolved.
 // Uses GetBlockTripSequence with ROW_NUMBER() window function instead of fetching all trips and looping.
 func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) (int, bool) {
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Warn("blockTripSequence: failed to get trip",
@@ -893,7 +916,7 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 	}
 
 	formattedDate := serviceDate.Format("20060102")
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, formattedDate)
 	if err != nil {
 		slog.Warn("blockTripSequence: failed to get active service IDs",
 			slog.String("trip_id", tripID),
@@ -915,7 +938,7 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Warn("blockTripSequence: failed to get block trip sequence",
 				slog.String("trip_id", tripID),
-				slog.String("block_id", trip.BlockID.String),
+				slog.String("block_id", nulls.StringOrEmpty(trip.BlockID)),
 				slog.String("error", err.Error()))
 		}
 		return 0, false
@@ -989,10 +1012,10 @@ func (api *RestAPI) situationRefsForTrip(ctx context.Context, tripID string) []s
 
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	if api.GtfsManager.GtfsDB != nil {
-		trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+		trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 		if err == nil {
 			routeID = trip.RouteID
-			route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
+			route, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetRoute(ctx, routeID)
 			if err == nil {
 				agencyID = route.AgencyID
 			} else if !errors.Is(err, sql.ErrNoRows) {
@@ -1087,7 +1110,7 @@ func (api *RestAPI) calculateBatchStopDistances(
 	}
 	if len(cumulativeDistances) == len(shapePoints) {
 		stopByID := stopByIDFromCoords(timeStops, stopCoords)
-		distances = projectStopsInSequence(timeStops, stopByID, shapePoints, cumulativeDistances)
+		distances = projectStopsInSequence(stopIDsOf(timeStops), stopByID, shapePoints, cumulativeDistances)
 	} else {
 		distances = make([]float64, len(timeStops))
 	}
@@ -1266,7 +1289,7 @@ func (api *RestAPI) getFirstStopOfNextTripInBlock(ctx context.Context, currentTr
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Warn("getFirstStopOfNextTripInBlock: query failed",
 				slog.String("trip_id", currentTripID),
-				slog.String("block_id", trip.BlockID.String),
+				slog.String("block_id", nulls.StringOrEmpty(trip.BlockID)),
 				slog.String("error", err.Error()))
 		}
 		return nil
@@ -1343,11 +1366,12 @@ func inferOrientationFromShape(lat, lon float64, shape []gtfs.ShapePoint) float6
 }
 
 // segmentOrientation returns the OBA orientation (degrees; 0=East, 90=North) of
-// the from→to segment.
+// the from→to segment. Like Java's SphericalGeometryLibrary.getOrientation it
+// measures the angle on raw latitude and longitude degrees, without
+// correcting longitude for latitude.
 func segmentOrientation(from, to gtfs.ShapePoint) float64 {
 	dLat := to.Latitude - from.Latitude
-	cosLat := math.Cos(from.Latitude * math.Pi / 180)
-	dLon := (to.Longitude - from.Longitude) * cosLat
+	dLon := to.Longitude - from.Longitude
 	deg := math.Atan2(dLat, dLon) * 180 / math.Pi
 	if deg < 0 {
 		deg += 360

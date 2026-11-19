@@ -84,6 +84,9 @@ func TestArrivalsAndDeparturesForLocationValidation(t *testing.T) {
 		{"negative frequencyMinutesBefore", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesBefore": {"-1"}}, []string{"frequencyMinutesBefore"}},
 		{"negative frequencyMinutesAfter", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "frequencyMinutesAfter": {"-1"}}, []string{"frequencyMinutesAfter"}},
 		{"non-numeric routeType", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"bus"}}, []string{"routeType"}},
+		{"overflow routeType positive", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"99999999999"}}, []string{"routeType"}},
+		{"overflow routeType int32 max plus one", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"2147483648"}}, []string{"routeType"}},
+		{"overflow routeType int32 min minus one", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "routeType": {"-2147483649"}}, []string{"routeType"}},
 		{"non-boolean emptyReturnsNotFound", url.Values{"lat": {"40.539367"}, "lon": {"-122.34952"}, "emptyReturnsNotFound": {"maybe"}}, []string{"emptyReturnsNotFound"}},
 	}
 
@@ -988,6 +991,7 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	// before the next test reads stop 4062 or the agency list.
 	t.Cleanup(func() {
 		api.GtfsManager.MockResetRealTimeData()
+		_, _ = db.Exec(`DELETE FROM stop_routes WHERE route_id = ?`, routeID)
 		_, _ = db.Exec(`DELETE FROM stop_times WHERE trip_id = ?`, tripID)
 		_, _ = db.Exec(`DELETE FROM trips WHERE id = ?`, tripID)
 		_, _ = db.Exec(`DELETE FROM routes WHERE id = ?`, routeID)
@@ -1005,6 +1009,7 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence) VALUES (?, 0, 0, ?, 1)`, tripID, testdata.Stop4062.Code)
 	require.NoError(t, err)
+	rebuildStopRouteIndex(t, api)
 
 	bareRoute := routeID
 	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
@@ -1023,7 +1028,7 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	assert.NotContains(t, ids, utils.FormCombinedID("a", alertID))
 }
 
-func TestArrivalsAndDeparturesForLocation_VehiclePositionAloneIsPredicted(t *testing.T) {
+func TestArrivalsAndDeparturesForLocation_VehiclePositionAloneIsNotPredicted(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
@@ -1041,9 +1046,47 @@ func TestArrivalsAndDeparturesForLocation_VehiclePositionAloneIsPredicted(t *tes
 
 	a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
 	require.NotNil(t, a.TripStatus)
-	assert.True(t, a.Predicted, "a fresh vehicle position is predicted even without a trip update")
-	assert.True(t, a.TripStatus.Predicted)
-	assert.Equal(t, 0, a.TripStatus.ScheduleDeviation)
-	assert.Equal(t, a.ScheduledArrivalTime.UnixMilli(), a.PredictedArrivalTime.UnixMilli())
-	assert.Equal(t, a.ScheduledDepartureTime.UnixMilli(), a.PredictedDepartureTime.UnixMilli())
+	assert.False(t, a.Predicted, "a vehicle position alone does not predict the arrival")
+	assert.True(t, a.PredictedArrivalTime.IsZero())
+	assert.True(t, a.PredictedDepartureTime.IsZero())
+}
+
+func TestRetainRoute_AgencyWithUnderscore(t *testing.T) {
+	acc := newArrivalsAccumulator("AGENCY_ONE")
+	refAcc := newArrivalsAccumulator("AGENCY_ONE")
+
+	route := gtfsdb.Route{
+		ID:       "ROUTE_100",
+		AgencyID: "AGENCY_ONE",
+	}
+	acc.routes[route.ID] = &route
+
+	// Combined ID with underscore in agency ID
+	combinedRouteID := "AGENCY_ONE_ROUTE_100"
+	retainRoute(refAcc, acc, combinedRouteID)
+
+	assert.Contains(t, refAcc.routes, "ROUTE_100", "retainRoute must retain the route even when agency ID contains an underscore")
+}
+
+func TestRetainRoute_RejectsOtherAgency(t *testing.T) {
+	acc := newArrivalsAccumulator("AGENCY_ONE")
+	acc.routes["ROUTE_100"] = &gtfsdb.Route{ID: "ROUTE_100", AgencyID: "OTHER"}
+
+	for _, combinedID := range []string{"AGENCY_ONE_ROUTE_100", "AGENCY_ROUTE_100"} {
+		t.Run(combinedID, func(t *testing.T) {
+			refAcc := newArrivalsAccumulator("AGENCY_ONE")
+			retainRoute(refAcc, acc, combinedID)
+			assert.Empty(t, refAcc.routes)
+		})
+	}
+}
+
+func TestRetainRoute_EmptyCombinedID(t *testing.T) {
+	acc := newArrivalsAccumulator("AGENCY_ONE")
+	refAcc := newArrivalsAccumulator("AGENCY_ONE")
+	acc.routes["ROUTE_100"] = &gtfsdb.Route{ID: "ROUTE_100"}
+
+	retainRoute(refAcc, acc, "")
+
+	assert.Empty(t, refAcc.routes)
 }

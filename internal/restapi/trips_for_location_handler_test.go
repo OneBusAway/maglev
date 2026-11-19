@@ -287,7 +287,9 @@ func multiTimezoneTripsForLocationFiles() map[string]string {
 			"chicago-route,shared-service,chicago-trip,Chicago,shared-block\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"la-trip,05:00:00,05:00:00,la-stop,1\n" +
-			"chicago-trip,07:00:00,07:00:00,chicago-stop,1\n",
+			"la-trip,05:05:00,05:05:00,la-stop,2\n" +
+			"chicago-trip,07:00:00,07:00:00,chicago-stop,1\n" +
+			"chicago-trip,07:05:00,07:05:00,chicago-stop,2\n",
 	}
 }
 
@@ -731,12 +733,12 @@ func TestTripsForLocationHandler_TimeParameterVariations(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	t.Run("Date String YYYY-MM-DD", func(t *testing.T) {
+	t.Run("Date String YYYY-MM-DD_HH-mm-ss", func(t *testing.T) {
 		loc, err := time.LoadLocation("America/Los_Angeles")
 		require.NoError(t, err)
 
-		dateStr := "2025-06-15"
-		parsedDate, err := time.ParseInLocation("2006-01-02", dateStr, loc)
+		dateStr := "2025-06-15_00-00-00"
+		parsedDate, err := time.ParseInLocation("2006-01-02_15-04-05", dateStr, loc)
 		require.NoError(t, err)
 		targetMidnight := time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, loc)
 
@@ -751,6 +753,15 @@ func TestTripsForLocationHandler_TimeParameterVariations(t *testing.T) {
 				assert.Equal(t, targetMidnight.UnixMilli(), entry.Status.ServiceDate.UnixMilli())
 			}
 		}
+	})
+
+	t.Run("Date String YYYY-MM-DD Rejected", func(t *testing.T) {
+		url := tripsForLocationURL(1.0, 1.0, "time=2025-06-15")
+		resp, model := callAPIHandler[TripsForLocationResponse](t, api, url)
+
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, model.Code)
+		assert.Equal(t, `Invalid field value for field "time".`, model.Text)
 	})
 
 	t.Run("Query Time Far Outside Service Window", func(t *testing.T) {

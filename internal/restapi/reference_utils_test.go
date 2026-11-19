@@ -2,13 +2,16 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -83,6 +86,53 @@ func TestDedupeStrings(t *testing.T) {
 			assert.Equal(t, tt.expected, dedupeStrings(tt.input))
 		})
 	}
+}
+
+func TestRecordRouteCandidates(t *testing.T) {
+	expected := make(map[string]bool)
+	seen := make(map[string]bool)
+	var candidates []string
+
+	// Empty route ID is skipped
+	candidates = recordRouteCandidates("", "AGENCY", expected, seen, candidates)
+	assert.Empty(t, candidates)
+	assert.Empty(t, expected)
+
+	// Route ID without underscore gets agency-qualified variant added to expected
+	candidates = recordRouteCandidates("100", "AGENCY", expected, seen, candidates)
+	assert.True(t, expected["100"])
+	assert.True(t, expected["AGENCY_100"])
+	assert.Equal(t, []string{"100"}, candidates)
+
+	// Route ID with underscore generates suffix candidates and does not add agency prefix
+	candidates = recordRouteCandidates("AGENCY_200", "AGENCY", expected, seen, candidates)
+	assert.True(t, expected["AGENCY_200"])
+	assert.Contains(t, candidates, "200")
+	assert.Contains(t, candidates, "AGENCY_200")
+
+	// Deduplication: re-recording the same route ID does not add duplicates
+	countBefore := len(candidates)
+	candidates = recordRouteCandidates("100", "AGENCY", expected, seen, candidates)
+	assert.Equal(t, countBefore, len(candidates))
+}
+
+func TestTripRouteCandidates(t *testing.T) {
+	present := map[string]bool{"AGENCY_R1": true}
+	trips := []models.Trip{
+		{ID: "t0", RouteID: ""},
+		{ID: "t1", RouteID: "AGENCY_R1"}, // already present
+		{ID: "t2", RouteID: "AGENCY_R2"},
+		{ID: "t3", RouteID: "R3"},
+	}
+
+	expectedCombinedIDs, candidates := tripRouteCandidates(trips, present, "AGENCY")
+	assert.False(t, expectedCombinedIDs["AGENCY_R1"])
+	assert.True(t, expectedCombinedIDs["AGENCY_R2"])
+	assert.True(t, expectedCombinedIDs["R3"])
+	assert.True(t, expectedCombinedIDs["AGENCY_R3"])
+	assert.Contains(t, candidates, "R2")
+	assert.Contains(t, candidates, "AGENCY_R2")
+	assert.Contains(t, candidates, "R3")
 }
 
 // firstRabaStopIDs returns raw (un-combined) stop IDs from the RABA test data.
@@ -324,11 +374,26 @@ func TestBuildRouteReferences_MultiAgencyScopingAndCollision(t *testing.T) {
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
 			"r100,svc1,t1,Headsign,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			"t1,08:00:00,08:00:00,s1,1\n",
+			"t1,08:00:00,08:00:00,s1,1\n" +
+			"t1,08:05:00,08:05:00,s2,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "multi-agency-routes.zip", multiAgencyFiles)
 	ctx := context.Background()
+
+	t.Run("route candidates exceed SQLite bind limit", func(t *testing.T) {
+		routeIDs := []string{"A1_r200"}
+		for i := 0; i < 9000; i++ {
+			routeIDs = append(routeIDs, "A1_missing_route_"+strconv.Itoa(i))
+		}
+		routeIDs = append(routeIDs, "A1_r100")
+
+		routes, err := api.BuildRouteReferences(ctx, "A1", []models.Stop{{StaticRouteIDs: routeIDs}})
+		require.NoError(t, err)
+		require.Len(t, routes, 2)
+		assert.Equal(t, "A1_r100", routes[0].ID)
+		assert.Equal(t, "A1_r200", routes[1].ID)
+	})
 
 	t.Run("Only referenced agency routes are returned", func(t *testing.T) {
 		// Stop only references A1's route r100
@@ -426,7 +491,9 @@ func TestAppendTripRouteReferences(t *testing.T) {
 			"r300,svc1,t2,Headsign,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"t1,08:00:00,08:00:00,s1,1\n" +
-			"t2,09:00:00,09:00:00,s1,1\n",
+			"t1,08:05:00,08:05:00,s1,2\n" +
+			"t2,09:00:00,09:00:00,s1,1\n" +
+			"t2,09:05:00,09:05:00,s1,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "trip-route-references.zip", files)
@@ -488,7 +555,9 @@ func TestBuildReferencedTrips_CrossAgencyRouteID(t *testing.T) {
 			"r300,svc1,t2,Headsign,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
 			"t1,08:00:00,08:00:00,s1,1\n" +
-			"t2,09:00:00,09:00:00,s1,1\n",
+			"t1,08:05:00,08:05:00,s1,2\n" +
+			"t2,09:00:00,09:00:00,s1,1\n" +
+			"t2,09:05:00,09:05:00,s1,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "cross-agency-referenced-trips.zip", files)
@@ -521,7 +590,8 @@ func TestStopReferences_AgencyWithUnderscore(t *testing.T) {
 		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
 			"ROUTE_100,svc1,t1,Headsign,0\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			"t1,08:00:00,08:00:00,s1,1\n",
+			"t1,08:00:00,08:00:00,s1,1\n" +
+			"t1,08:05:00,08:05:00,s1,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "agency-with-underscore-stop-refs.zip", files)
@@ -544,4 +614,316 @@ func TestStopReferences_AgencyWithUnderscore(t *testing.T) {
 	require.Len(t, routes, 1)
 	assert.Equal(t, "AGENCY_ONE", routes[0].agencyID)
 	assert.Equal(t, "ROUTE_100", routes[0].routeID)
+
+	// Verify BuildRouteReferences resolves static route IDs for an agency containing an underscore
+	routeRefs, err := api.BuildRouteReferences(ctx, "AGENCY_ONE", refs)
+	require.NoError(t, err)
+	require.Len(t, routeRefs, 1)
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", routeRefs[0].ID)
+	assert.Equal(t, "AGENCY_ONE", routeRefs[0].AgencyID)
+
+	// Verify appendTripRouteReferences resolves a trip whose routeId belongs to an agency with an underscore
+	tripRefs := &models.ReferencesModel{
+		Trips: []models.Trip{
+			{ID: "AGENCY_ONE_t1", RouteID: "AGENCY_ONE_ROUTE_100"},
+		},
+	}
+	require.NoError(t, api.appendTripRouteReferences(ctx, tripRefs, "AGENCY_ONE"))
+	require.Len(t, tripRefs.Routes, 1)
+	assert.Equal(t, "AGENCY_ONE_ROUTE_100", tripRefs.Routes[0].ID)
+	assert.Equal(t, "AGENCY_ONE", tripRefs.Routes[0].AgencyID)
+}
+
+func TestBuildRouteReferences_OverlappingAgencies(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"AGENCY,Agency Primary,http://agency.org,America/Los_Angeles\n" +
+			"AGENCY_SUB,Agency Sub,http://agencysub.org,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"ROUTE_A,AGENCY_SUB,RA,Route A,3\n" +
+			"SUB_ROUTE_B,AGENCY,RB,Route B,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1,Stop 1,37.7749,-122.4194\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"ROUTE_A,svc1,t1,Headsign 1,0\n" +
+			"SUB_ROUTE_B,svc1,t2,Headsign 2,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,08:00:00,08:00:00,s1,1\n" +
+			"t1,08:05:00,08:05:00,s1,2\n" +
+			"t2,08:30:00,08:30:00,s1,1\n" +
+			"t2,08:35:00,08:35:00,s1,2\n",
+	}
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "overlapping-agencies.zip", files)
+	ctx := context.Background()
+
+	stops := []models.Stop{
+		{ID: "AGENCY_s1", StaticRouteIDs: []string{"AGENCY_SUB_ROUTE_A", "AGENCY_SUB_ROUTE_B"}},
+	}
+
+	routes, err := api.BuildRouteReferences(ctx, "AGENCY", stops)
+	require.NoError(t, err)
+	require.Len(t, routes, 2)
+
+	routesByID := make(map[string]models.Route, len(routes))
+	for _, r := range routes {
+		routesByID[r.ID] = r
+	}
+
+	routeA, ok := routesByID["AGENCY_SUB_ROUTE_A"]
+	require.True(t, ok)
+	assert.Equal(t, "AGENCY_SUB", routeA.AgencyID)
+
+	routeB, ok := routesByID["AGENCY_SUB_ROUTE_B"]
+	require.True(t, ok)
+	assert.Equal(t, "AGENCY", routeB.AgencyID)
+
+	// Verify appendTripRouteReferences resolves trips across both overlapping agencies
+	tripRefs := &models.ReferencesModel{
+		Trips: []models.Trip{
+			{ID: "AGENCY_SUB_t1", RouteID: "AGENCY_SUB_ROUTE_A"},
+			{ID: "AGENCY_t2", RouteID: "AGENCY_SUB_ROUTE_B"},
+		},
+	}
+	require.NoError(t, api.appendTripRouteReferences(ctx, tripRefs, "AGENCY"))
+	require.Len(t, tripRefs.Routes, 2)
+
+	tripRoutesByID := make(map[string]models.Route, len(tripRefs.Routes))
+	for _, r := range tripRefs.Routes {
+		tripRoutesByID[r.ID] = r
+	}
+
+	tripRouteA, ok := tripRoutesByID["AGENCY_SUB_ROUTE_A"]
+	require.True(t, ok)
+	assert.Equal(t, "AGENCY_SUB", tripRouteA.AgencyID)
+
+	tripRouteB, ok := tripRoutesByID["AGENCY_SUB_ROUTE_B"]
+	require.True(t, ok)
+	assert.Equal(t, "AGENCY", tripRouteB.AgencyID)
+}
+
+func TestBuildSituationReferences_Parity(t *testing.T) {
+	api := &RestAPI{}
+	agency := "40"
+	route := "2LINE"
+	stop := "20770"
+	trip := "TRIP1"
+
+	prefixedRoute := "40_2LINE"
+	prefixedStop := "40_20770"
+	tripWithRoute := "TRIP_WITH_ROUTE"
+	otherRoute := "OTHER_ROUTE"
+
+	alerts := []gtfs.Alert{
+		{
+			ID:     "alert-full",
+			Cause:  gtfs.AlertCause(3),  // TECHNICAL_PROBLEM -> equipmentReason
+			Effect: gtfs.AlertEffect(4), // DETOUR -> condition "", empty conditionDetails
+			InformedEntities: []gtfs.AlertInformedEntity{
+				{
+					AgencyID: &agency,
+					RouteID:  &route,
+					StopID:   &stop,
+					TripID:   &gtfs.TripID{ID: trip},
+				},
+			},
+		},
+		{
+			ID: "alert-already-prefixed",
+			InformedEntities: []gtfs.AlertInformedEntity{
+				{
+					AgencyID: &agency,
+					RouteID:  &prefixedRoute,
+					StopID:   &prefixedStop,
+					TripID:   &gtfs.TripID{ID: "40_TRIP1"},
+				},
+			},
+		},
+		{
+			ID:     "alert-unknown-effect",
+			Effect: gtfs.UnknownEffect, // 8 -> proto default / absent effect
+			InformedEntities: []gtfs.AlertInformedEntity{
+				{
+					AgencyID: &agency,
+					RouteID:  &route,
+					TripID: &gtfs.TripID{
+						ID:      tripWithRoute,
+						RouteID: otherRoute, // should NOT overwrite routeID because trip_id is present
+					},
+				},
+			},
+		},
+		{
+			ID:     "alert-no-effect",
+			Effect: gtfs.NoEffect, // 10 -> NO_EFFECT: Java GtfsRealtimeAlertLibrary emits consequence for any effect present
+			InformedEntities: []gtfs.AlertInformedEntity{
+				{
+					AgencyID: &agency,
+					RouteID:  &route,
+				},
+			},
+		},
+		{
+			ID:     "alert-trip-route-only",
+			Effect: gtfs.AlertEffect(4),
+			InformedEntities: []gtfs.AlertInformedEntity{
+				{
+					AgencyID: &agency,
+					TripID: &gtfs.TripID{
+						ID:      "", // empty trip_id, so trip.route_id should be used
+						RouteID: otherRoute,
+					},
+				},
+			},
+		},
+	}
+
+	situations := api.BuildSituationReferences(context.Background(), feedAlertsForTest("", alerts))
+	require.Len(t, situations, 5)
+
+	// First alert: IDs are prefixed with agency
+	require.Len(t, situations[0].AllAffects, 1)
+	affect1 := situations[0].AllAffects[0]
+	assert.Equal(t, "40", affect1.AgencyID)
+	assert.Equal(t, "40_2LINE", affect1.RouteID)
+	assert.Equal(t, "40_20770", affect1.StopID)
+	assert.Equal(t, "40_TRIP1", affect1.TripID)
+
+	require.Len(t, situations[0].Consequences, 1)
+	assert.Equal(t, "", situations[0].Consequences[0].Condition)
+	consequenceJSON, err := json.Marshal(situations[0].Consequences[0])
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"condition":"","conditionDetails":{"diversionPath":{"length":0,"levels":"","points":""},"diversionStopIds":[]}}`, string(consequenceJSON))
+	assert.Equal(t, "equipmentReason", situations[0].Reason)
+	assert.Equal(t, "normal", situations[0].Severity)
+
+	// Second alert: Already prefixed IDs should not be double-prefixed
+	require.Len(t, situations[1].AllAffects, 1)
+	affect2 := situations[1].AllAffects[0]
+	assert.Equal(t, "40_2LINE", affect2.RouteID)
+	assert.Equal(t, "40_20770", affect2.StopID)
+	assert.Equal(t, "40_TRIP1", affect2.TripID)
+	assert.Empty(t, situations[1].Consequences)
+
+	// Third alert: UNKNOWN_EFFECT produces empty consequences, and trip.route_id does not overwrite routeID
+	require.Len(t, situations[2].AllAffects, 1)
+	affect3 := situations[2].AllAffects[0]
+	assert.Equal(t, "40_2LINE", affect3.RouteID)
+	assert.Equal(t, "40_TRIP_WITH_ROUTE", affect3.TripID)
+	assert.Empty(t, situations[2].Consequences)
+
+	// Fourth alert: NO_EFFECT emits consequence with empty condition and conditionDetails matching Java
+	require.Len(t, situations[3].Consequences, 1)
+	assert.Equal(t, "", situations[3].Consequences[0].Condition)
+	noEffectJSON, err := json.Marshal(situations[3].Consequences[0].ConditionDetails)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"diversionPath":{"length":0,"levels":"","points":""},"diversionStopIds":[]}`, string(noEffectJSON))
+
+	// Fifth alert: trip.route_id is used when trip_id is empty
+	require.Len(t, situations[4].AllAffects, 1)
+	affect5 := situations[4].AllAffects[0]
+	assert.Equal(t, "40_OTHER_ROUTE", affect5.RouteID)
+	assert.Empty(t, affect5.TripID)
+}
+
+func TestExtractRawEntityIDs(t *testing.T) {
+	route := "R1"
+	stop := "S1"
+
+	// 1. Both route and trip.route_id present: entity.RouteID wins
+	entity1 := gtfs.AlertInformedEntity{
+		RouteID: &route,
+		StopID:  &stop,
+		TripID:  &gtfs.TripID{ID: "T1", RouteID: "TRIP_R"},
+	}
+	r, s, tr := extractRawEntityIDs(entity1)
+	assert.Equal(t, "R1", r)
+	assert.Equal(t, "S1", s)
+	assert.Equal(t, "T1", tr)
+
+	// 2. Empty trip_id, route_id not set: falls back to trip.route_id
+	entity2 := gtfs.AlertInformedEntity{
+		StopID: &stop,
+		TripID: &gtfs.TripID{ID: "", RouteID: "TRIP_R"},
+	}
+	r, s, tr = extractRawEntityIDs(entity2)
+	assert.Equal(t, "TRIP_R", r)
+	assert.Equal(t, "S1", s)
+	assert.Equal(t, "", tr)
+
+	// 3. Non-empty trip_id, route_id not set: does not fall back to trip.route_id
+	entity3 := gtfs.AlertInformedEntity{
+		StopID: &stop,
+		TripID: &gtfs.TripID{ID: "T1", RouteID: "TRIP_R"},
+	}
+	r, s, tr = extractRawEntityIDs(entity3)
+	assert.Equal(t, "", r)
+	assert.Equal(t, "S1", s)
+	assert.Equal(t, "T1", tr)
+}
+
+func TestEndpoints_ReferencesNeverContainNullArrays(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	server := httptest.NewServer(api.SetupAPIRoutes())
+	defer server.Close()
+
+	// Endpoints identified in #2121 and related issues, tested with
+	// empty, missing, or standard queries to verify reference arrays.
+	endpoints := []struct {
+		name string
+		url  string
+	}{
+		{
+			name: "search/route with no matches",
+			url:  "/api/where/search/route.json?key=TEST&input=nomatchxyz999",
+		},
+		{
+			name: "search/stop with no matches",
+			url:  "/api/where/search/stop.json?key=TEST&input=nomatchxyz999",
+		},
+		{
+			name: "stops-for-location empty area",
+			url:  "/api/where/stops-for-location.json?key=TEST&lat=0.0&lon=0.0&latSpan=0.01&lonSpan=0.01",
+		},
+		{
+			name: "stops-for-agency",
+			url:  "/api/where/stops-for-agency/25.json?key=TEST",
+		},
+		{
+			name: "routes-for-agency",
+			url:  "/api/where/routes-for-agency/25.json?key=TEST",
+		},
+	}
+
+	for _, tt := range endpoints {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := http.Get(server.URL + tt.url)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var body map[string]any
+			err = json.NewDecoder(resp.Body).Decode(&body)
+			require.NoError(t, err)
+
+			data, ok := body["data"].(map[string]any)
+			require.True(t, ok, "response should have a data object")
+
+			refs, ok := data["references"].(map[string]any)
+			require.True(t, ok, "response should have a references object")
+
+			// The 6 required reference lists per OpenAPI schema
+			expectedLists := []string{"agencies", "routes", "situations", "stopTimes", "stops", "trips"}
+			for _, listName := range expectedLists {
+				val, exists := refs[listName]
+				assert.True(t, exists, "references.%s should exist in response", listName)
+				assert.NotNil(t, val, "references.%s must serialize as [] and not null", listName)
+			}
+		})
+	}
 }

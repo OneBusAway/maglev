@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -30,7 +31,7 @@ func TestWarnIfRealDBError(t *testing.T) {
 		{
 			name:      "ignores sql.ErrNoRows",
 			err:       sql.ErrNoRows,
-			op:        "GetBlockIDByTripID",
+			op:        "GetTrip",
 			expectLog: false,
 		},
 		{
@@ -49,10 +50,10 @@ func TestWarnIfRealDBError(t *testing.T) {
 		{
 			name:       "logs warning with extra structured attributes",
 			err:        errors.New("sqlite: database is locked"),
-			op:         "GetShapePointsByTripIDs",
+			op:         "GetShapePointsByIDs",
 			attrs:      []any{slog.String("trip_id", "t-123"), slog.Int("attempt", 2)},
 			expectLog:  true,
-			wantSubstr: []string{`"level":"WARN"`, `"msg":"GetShapePointsByTripIDs"`, `"error":"sqlite: database is locked"`, `"trip_id":"t-123"`, `"attempt":2`},
+			wantSubstr: []string{`"level":"WARN"`, `"msg":"GetShapePointsByIDs"`, `"error":"sqlite: database is locked"`, `"trip_id":"t-123"`, `"attempt":2`},
 		},
 	}
 
@@ -75,6 +76,69 @@ func TestWarnIfRealDBError(t *testing.T) {
 			for _, sub := range tc.wantSubstr {
 				assert.Contains(t, output, sub)
 			}
+		})
+	}
+}
+
+func TestLogQueryError(t *testing.T) {
+	tests := []struct {
+		name      string
+		msg       string
+		err       error
+		expectLog bool
+		warnLevel string
+	}{
+		{
+			name:      "Database error",
+			msg:       "database error message",
+			err:       errors.New("database error"),
+			expectLog: true,
+			warnLevel: "ERROR",
+		},
+		{
+			name:      "Context deadline exceeded error",
+			msg:       "context deadline exceeded message",
+			err:       context.DeadlineExceeded,
+			expectLog: true,
+			warnLevel: "WARN",
+		},
+		{
+			name:      "Wrapped context deadline exceeded error",
+			msg:       "context deadline exceeded message",
+			err:       fmt.Errorf("error: %w", context.DeadlineExceeded),
+			expectLog: true,
+			warnLevel: "WARN",
+		},
+		{
+			name:      "Context cancellation error",
+			msg:       "context cancelled message",
+			err:       context.Canceled,
+			expectLog: false,
+		},
+		{
+			name:      "Wrapped context cancellation error",
+			msg:       "context cancelled message",
+			err:       fmt.Errorf("error: %w", context.Canceled),
+			expectLog: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := logging.NewStructuredLogger(&buf, slog.LevelDebug)
+
+			logQueryError(logger, tc.msg, tc.err)
+
+			output := buf.String()
+			if !tc.expectLog {
+				assert.Empty(t, output)
+				return
+			}
+
+			assert.Contains(t, output, tc.msg)
+			assert.Contains(t, output, tc.warnLevel)
+			assert.Contains(t, output, tc.err.Error())
 		})
 	}
 }

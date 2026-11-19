@@ -117,10 +117,11 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 	if len(allActiveStopTimes) == 0 {
 		return result, nil
 	}
-	routesLookup, tripsLookup, tripStopCountMap, freqMap, err := api.batchArrivalEntities(ctx, allActiveStopTimes)
+	routes, trips, tripStops, frequencies, err := api.batchArrivalEntities(ctx, allActiveStopTimes)
 	if err != nil {
 		return result, err
 	}
+	lookups := batchedArrivalLookups{routes: routes, trips: trips, tripStops: tripStops, frequencies: frequencies}
 
 	for _, ast := range allActiveStopTimes {
 		if ctx.Err() != nil {
@@ -129,7 +130,7 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 
 		st := ast.GetStopTimesForStopInWindowRow
 
-		before, after := scheduledOrFrequencyWindow(in.Before, in.After, in.FrequencyBefore, in.FrequencyAfter, len(freqMap[st.TripID]) > 0)
+		before, after := scheduledOrFrequencyWindow(in.Before, in.After, in.FrequencyBefore, in.FrequencyAfter, len(lookups.frequencies[st.TripID]) > 0)
 		if !api.stopTimeInArrivalWindow(ctx, ast, ast.Location, in.QueryTime, before, after) {
 			continue
 		}
@@ -137,23 +138,8 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 		result.Matched = true
 		acc.stopIDs[in.StopCode] = true
 
-		route, routeExists := routesLookup[st.RouteID]
-		if !routeExists {
-			reqLogger.Debug("skipping stop time: route not found in batch fetch",
-				slog.String("routeID", st.RouteID),
-				slog.String("tripID", st.TripID))
-			continue
-		}
-
-		trip, tripExists := tripsLookup[st.TripID]
-		if !tripExists {
-			reqLogger.Debug("skipping stop time: trip not found in batch fetch",
-				slog.String("tripID", st.TripID),
-				slog.String("routeID", st.RouteID))
-			continue
-		}
-
-		if !isRouteTypeAllowed(route.Type, in.RouteTypes) {
+		route, trip, reportable := lookups.resolveRouteAndTrip(st, in.RouteTypes, reqLogger)
+		if !reportable {
 			continue
 		}
 
@@ -170,8 +156,9 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 			queryTime:        in.QueryTime,
 			stopCode:         in.StopCode,
 			stopID:           stopID,
-			totalStopsInTrip: tripStopCountMap[st.TripID],
-			freqMap:          freqMap,
+			totalStopsInTrip: lookups.tripStops.stopCounts[st.TripID],
+			stopPosition:     lookups.tripStops.stopPosition(st.TripID, st.StopSequence),
+			freqMap:          lookups.frequencies,
 		}, acc)
 
 		result.Arrivals = append(result.Arrivals, *arrival)
@@ -362,8 +349,8 @@ func (api *RestAPI) stopTimesForGroupServiceDay(
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	agencyLoc := group.location
 	// Fetch both trip windows before frequency metadata is available.
-	windowStart := in.QueryTime.Add(-max(in.Before, in.FrequencyBefore))
-	windowEnd := in.QueryTime.Add(max(in.After, in.FrequencyAfter))
+	windowStart, windowEnd := arrivalCandidateWindow(in.QueryTime,
+		max(in.Before, in.FrequencyBefore), max(in.After, in.FrequencyAfter))
 	serviceDate := servicedate.Of(in.QueryTime.In(agencyLoc)).AddDays(dayOffset)
 	serviceStart := serviceDate.Start(agencyLoc)
 	serviceDateStr := serviceDate.String()
@@ -447,8 +434,36 @@ type batchedActiveStopTime struct {
 type batchedArrivalLookups struct {
 	routes      map[string]gtfsdb.Route
 	trips       map[string]gtfsdb.Trip
-	stopCounts  map[string]int
+	tripStops   tripStopIndex
 	frequencies map[string][]gtfsdb.Frequency
+}
+
+// resolveRouteAndTrip returns the route and trip a stop_time belongs to, and
+// whether the row is reportable at all. A row is dropped when either entity
+// missed the batch fetch — which is a data gap worth logging, not an error —
+// or when the request's route-type filter excludes its route.
+func (lookups batchedArrivalLookups) resolveRouteAndTrip(st gtfsdb.GetStopTimesForStopInWindowRow, routeTypes []int, reqLogger *slog.Logger) (gtfsdb.Route, gtfsdb.Trip, bool) {
+	route, routeExists := lookups.routes[st.RouteID]
+	if !routeExists {
+		reqLogger.Debug("skipping stop time: route not found in batch fetch",
+			slog.String("routeID", st.RouteID),
+			slog.String("tripID", st.TripID))
+		return gtfsdb.Route{}, gtfsdb.Trip{}, false
+	}
+
+	trip, tripExists := lookups.trips[st.TripID]
+	if !tripExists {
+		reqLogger.Debug("skipping stop time: trip not found in batch fetch",
+			slog.String("tripID", st.TripID),
+			slog.String("routeID", st.RouteID))
+		return gtfsdb.Route{}, gtfsdb.Trip{}, false
+	}
+
+	if !isRouteTypeAllowed(route.Type, routeTypes) {
+		return gtfsdb.Route{}, gtfsdb.Trip{}, false
+	}
+
+	return route, trip, true
 }
 
 // multiStopArrivalsResult is the batched multi-stop arrivals pipeline before
@@ -501,7 +516,7 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 		acc.stopIDs[b.StopCode] = true
 	}
 
-	routesLookup, tripsLookup, tripStopCountMap, freqMap, err := api.batchArrivalEntities(ctx, plain)
+	routesLookup, tripsLookup, tripStops, freqMap, err := api.batchArrivalEntities(ctx, plain)
 	if err != nil {
 		return result, err
 	}
@@ -509,7 +524,7 @@ func (api *RestAPI) arrivalsForStops(ctx context.Context, in multiStopArrivalsIn
 	result.Arrivals, err = api.buildArrivalsFromRows(ctx, allActive, in, acc, batchedArrivalLookups{
 		routes:      routesLookup,
 		trips:       tripsLookup,
-		stopCounts:  tripStopCountMap,
+		tripStops:   tripStops,
 		frequencies: freqMap,
 	})
 	if err != nil {
@@ -615,8 +630,10 @@ func (api *RestAPI) appendBatchedStopTimesForDay(ctx context.Context, group agen
 		return nil
 	}
 
-	windowStartNanos := group.queryTime.Add(-max(in.Before, in.FrequencyBefore)).Sub(serviceStart).Nanoseconds()
-	windowEndNanos := group.queryTime.Add(max(in.After, in.FrequencyAfter)).Sub(serviceStart).Nanoseconds()
+	windowStart, windowEnd := arrivalCandidateWindow(group.queryTime,
+		max(in.Before, in.FrequencyBefore), max(in.After, in.FrequencyAfter))
+	windowStartNanos := windowStart.Sub(serviceStart).Nanoseconds()
+	windowEndNanos := windowEnd.Sub(serviceStart).Nanoseconds()
 	if windowEndNanos < 0 {
 		return nil
 	}
@@ -695,23 +712,8 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 
 		st := b.GetStopTimesForStopInWindowRow
 
-		route, routeExists := lookups.routes[st.RouteID]
-		if !routeExists {
-			reqLogger.Debug("skipping stop time: route not found in batch fetch",
-				slog.String("routeID", st.RouteID),
-				slog.String("tripID", st.TripID))
-			continue
-		}
-
-		trip, tripExists := lookups.trips[st.TripID]
-		if !tripExists {
-			reqLogger.Debug("skipping stop time: trip not found in batch fetch",
-				slog.String("tripID", st.TripID),
-				slog.String("routeID", st.RouteID))
-			continue
-		}
-
-		if !isRouteTypeAllowed(route.Type, in.RouteTypes) {
+		route, trip, reportable := lookups.resolveRouteAndTrip(st, in.RouteTypes, reqLogger)
+		if !reportable {
 			continue
 		}
 
@@ -733,7 +735,8 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 			queryTime:        b.QueryTime,
 			stopCode:         b.StopCode,
 			stopID:           utils.FormCombinedID(b.AgencyID, b.StopCode),
-			totalStopsInTrip: lookups.stopCounts[st.TripID],
+			totalStopsInTrip: lookups.tripStops.stopCounts[st.TripID],
+			stopPosition:     lookups.tripStops.stopPosition(st.TripID, st.StopSequence),
 			freqMap:          lookups.frequencies,
 		}
 		arrival, vehicle := api.buildScheduledArrival(ctx, row, acc)
@@ -744,6 +747,16 @@ func (api *RestAPI) buildArrivalsFromRows(ctx context.Context, allActive []batch
 		})
 	}
 	return arrivals, nil
+}
+
+// arrivalCandidateWindow returns the range the stop-time queries search. Like
+// Java's getArrivalsAndDeparturesForStopInTimeRange, it pads the requested
+// window by runningLate before and runningEarly after, so a late or early bus
+// whose scheduled time falls outside the window still becomes a candidate.
+// stopTimeInArrivalWindow then applies the requested window to scheduled and
+// predicted times.
+func arrivalCandidateWindow(queryTime time.Time, before, after time.Duration) (start, end time.Time) {
+	return queryTime.Add(-before - runningLate), queryTime.Add(after + runningEarly)
 }
 
 // stopTimeInArrivalWindow checks scheduled and available predicted times against
@@ -782,14 +795,14 @@ func convertStopsInWindowRow(row gtfsdb.GetStopTimesForStopsInWindowRow) gtfsdb.
 	}
 }
 
-// batchArrivalEntities resolves every route, trip, per-trip stop count and
+// batchArrivalEntities resolves every route, trip, per-trip stop index and
 // frequency row the matched stop_times need in four queries rather than per
-// row. A frequency fetch failure is fatal — unlike stop count, it cannot
-// silently degrade a field, since BuildTripStatus itself needs the map.
+// row. Any lookup failure is returned to the handler rather than publishing
+// arrivals with incomplete entity data.
 func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes []activeStopTime) (
 	routesLookup map[string]gtfsdb.Route,
 	tripsLookup map[string]gtfsdb.Trip,
-	tripStopCountMap map[string]int,
+	tripStops tripStopIndex,
 	freqMap map[string][]gtfsdb.Frequency,
 	err error,
 ) {
@@ -797,12 +810,12 @@ func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes
 
 	allRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, uniqueRouteIDs)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, tripStopIndex{}, nil, err
 	}
 
 	allTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, uniqueTripIDs)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, tripStopIndex{}, nil, err
 	}
 
 	routesLookup = make(map[string]gtfsdb.Route, len(allRoutes))
@@ -819,11 +832,15 @@ func (api *RestAPI) batchArrivalEntities(ctx context.Context, allActiveStopTimes
 	if len(uniqueTripIDs) > 0 {
 		freqMap, err = api.fetchFrequenciesForTrips(ctx, uniqueTripIDs)
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, tripStopIndex{}, nil, err
 		}
 	}
 
-	return routesLookup, tripsLookup, api.tripStopCounts(ctx, uniqueTripIDs), freqMap, nil
+	tripStops, err = api.buildTripStopIndex(ctx, uniqueTripIDs)
+	if err != nil {
+		return nil, nil, tripStopIndex{}, nil, err
+	}
+	return routesLookup, tripsLookup, tripStops, freqMap, nil
 }
 
 // bestArrivalMillis is the instant Java's ArrivalAndDepartureComparator sorts
@@ -874,27 +891,57 @@ func uniqueRouteAndTripIDs(allActiveStopTimes []activeStopTime) (routeIDs, tripI
 	return slices.Collect(maps.Keys(routeIDSet)), slices.Collect(maps.Keys(tripIDSet))
 }
 
-// tripStopCounts returns how many stops each trip has, batched to avoid a
-// per-arrival query for totalStopsInTrip. A failure yields an empty map rather
-// than an error: a missing count degrades one response field, and the arrivals
-// themselves are still worth returning.
-func (api *RestAPI) tripStopCounts(ctx context.Context, tripIDs []string) map[string]int {
-	counts := make(map[string]int, len(tripIDs))
-	if len(tripIDs) == 0 {
-		return counts
-	}
-	reqLogger := logging.ForComponent(ctx, "http_server")
+// tripStopKey identifies one visit of a stop on a trip by the feed's own
+// stop_sequence value, which GTFS guarantees is unique within a trip.
+type tripStopKey struct {
+	tripID       string
+	stopSequence int64
+}
 
+// tripStopIndex holds the two per-trip facts an arrival row needs from a trip's
+// full ordered stop list: how many stops the trip has, and where in that list
+// each stop_time falls.
+type tripStopIndex struct {
+	stopCounts map[string]int
+	positions  map[tripStopKey]int
+}
+
+// stopPosition returns the zero-based index of a stop_time within its trip's
+// ordered stop list — the "index of the stop into the sequence of stops" the
+// spec defines stopSequence as. It is deliberately not the feed's raw
+// stop_sequence: GTFS only requires that value to increase along the trip, so a
+// 0-based or sparsely numbered feed makes the two differ.
+//
+// An unknown trip yields 0.
+func (idx tripStopIndex) stopPosition(tripID string, stopSequence int64) int {
+	return idx.positions[tripStopKey{tripID: tripID, stopSequence: stopSequence}]
+}
+
+// buildTripStopIndex resolves each trip's stop count and per-stop positions in
+// one batched query rather than a pair of per-arrival lookups. A failed lookup
+// is returned so a database failure cannot be mistaken for a first stop.
+func (api *RestAPI) buildTripStopIndex(ctx context.Context, tripIDs []string) (tripStopIndex, error) {
+	idx := tripStopIndex{
+		stopCounts: make(map[string]int, len(tripIDs)),
+		positions:  make(map[tripStopKey]int),
+	}
+	if len(tripIDs) == 0 {
+		return idx, nil
+	}
+
+	// Ordered by (trip_id, stop_sequence), so each trip's running count is also
+	// the next row's position within that trip.
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
-		reqLogger.Warn("failed to batch fetch stop times for trips", slog.Any("error", err))
-		return counts
+		return tripStopIndex{}, fmt.Errorf("query stop times for trip index: %w", err)
 	}
 
 	for _, st := range stopTimes {
-		counts[st.TripID]++
+		key := tripStopKey{tripID: st.TripID, stopSequence: st.StopSequence}
+		idx.positions[key] = idx.stopCounts[st.TripID]
+		idx.stopCounts[st.TripID]++
 	}
-	return counts
+	return idx, nil
 }
 
 // arrivalInput carries the per-row values buildArrival needs. Grouped into a
@@ -909,6 +956,7 @@ type arrivalInput struct {
 	stopCode         string
 	stopID           string
 	totalStopsInTrip int
+	stopPosition     int
 	freqMap          map[string][]gtfsdb.Frequency
 }
 
@@ -943,6 +991,11 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, st.TripID)
 	vehicleID := api.combinedVehicleID(ctx, vehicle, route.AgencyID, st.TripID)
 
+	// The raw feed stop_sequence, not in.stopPosition: GTFS-RT
+	// stop_time_update.stop_sequence refers to the feed's own numbering, so
+	// matching a prediction needs the unmodified value. The response's
+	// stopSequence field is a position within the trip instead — see
+	// tripStopIndex.stopPosition.
 	predictedArrivalTime, predictedDepartureTime, predicted := api.getPredictedTimes(
 		ctx,
 		st.TripID,
@@ -960,10 +1013,10 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID),  // routeID
-		route.ShortName.String,                          // routeShortName
-		route.LongName.String,                           // routeLongName
+		nulls.StringOrEmpty(route.ShortName),            // routeShortName
+		nulls.StringOrEmpty(route.LongName),             // routeLongName
 		utils.FormCombinedID(route.AgencyID, st.TripID), // tripID
-		st.TripHeadsign.String,                          // tripHeadsign
+		nulls.StringOrEmpty(st.TripHeadsign),            // tripHeadsign
 		in.stopID,                                       // stopID
 		vehicleID,                                       // vehicleID
 		serviceStart,                                    // serviceDate
@@ -975,7 +1028,7 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 		predicted,                                       // predicted
 		true,                                            // arrivalEnabled
 		true,                                            // departureEnabled
-		int(st.StopSequence)-1,                          // stopSequence (Zero-based index)
+		in.stopPosition,                                 // stopSequence (Zero-based position in the trip's stop list)
 		in.totalStopsInTrip,                             // totalStopsInTrip
 		0,                                               // numberOfStopsAway
 		0,                                               // blockTripSequence
@@ -999,20 +1052,14 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.ArrivalAndDeparture, in arrivalInput, vehicle *gtfs.Vehicle, acc *arrivalsAccumulator) {
 	tripStatus, statusExtras, distanceFromStop, numberOfStopsAway := api.tripStatusForArrival(ctx, in, vehicle, acc)
 
-	// BuildTripStatus (via calculateBlockTripSequence) already computed
-	// this and set it on the status; reuse rather than redoing the block
-	// lookup for every arrival row.
-	blockTripSequence := 0
-	if tripStatus != nil {
-		blockTripSequence = tripStatus.BlockTripSequence
-	}
-
 	api.applyTripStatusPrediction(ctx, arrival, tripStatus, statusExtras, in, acc.deviationSamples)
 
 	arrival.TripStatus = tripStatus
 	arrival.DistanceFromStop = distanceFromStop
 	arrival.NumberOfStopsAway = numberOfStopsAway
-	arrival.BlockTripSequence = blockTripSequence
+	// Already computed by BuildTripStatus; reuse rather than redoing the block
+	// lookup for every arrival row.
+	arrival.BlockTripSequence = statusExtras.tripBlockSequence
 	arrival.SituationIDs = acc.situations.addRefs(statusExtras.situations)
 }
 
@@ -1252,11 +1299,11 @@ func (api *RestAPI) appendTripReferences(ctx context.Context, references *models
 			utils.FormCombinedID(routeAgencyID, trip.ID),        // Use route agency for trip ID
 			utils.FormCombinedID(routeAgencyID, trip.RouteID),   // Use route agency for route ID
 			utils.FormCombinedID(routeAgencyID, trip.ServiceID), // Use route agency for service ID
-			trip.TripHeadsign.String,
+			nulls.StringOrEmpty(trip.TripHeadsign),
 			"",
 			strconv.FormatInt(trip.DirectionID.Int64, 10),
-			utils.FormBlockID(routeAgencyID, trip.BlockID.String, trip.ID), // Use route agency for block ID
-			utils.FormCombinedID(routeAgencyID, trip.ShapeID.String),       // Use route agency for shape ID
+			utils.FormBlockID(routeAgencyID, nulls.StringOrEmpty(trip.BlockID), trip.ID), // Use route agency for block ID
+			utils.FormCombinedID(routeAgencyID, nulls.StringOrEmpty(trip.ShapeID)),       // Use route agency for shape ID
 		)
 		references.Trips = append(references.Trips, *tripRef)
 	}
@@ -1289,7 +1336,7 @@ func (api *RestAPI) appendStopReferences(ctx context.Context, references *models
 
 		references.Stops = append(references.Stops, models.Stop{
 			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
-			Name:               stopData.Name.String,
+			Name:               nulls.StringOrEmpty(stopData.Name),
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
@@ -1343,6 +1390,7 @@ func (api *RestAPI) loadStopReferenceData(ctx context.Context, stopIDs []string)
 		reqLogger.Warn("failed to batch fetch routes for stop references", slog.Any("error", err))
 		return stopsByID, routesByStop, nil
 	}
+	utils.SortRoutesForStopsRowsByName(routeRows)
 	for _, row := range routeRows {
 		routesByStop[row.StopID] = append(routesByStop[row.StopID], row)
 	}
@@ -1373,13 +1421,13 @@ func (api *RestAPI) appendRouteReferences(ctx context.Context, references *model
 		references.Routes = append(references.Routes, models.NewRoute(
 			utils.FormCombinedID(route.AgencyID, route.ID),
 			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String))
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor)))
 
 		// Add route agency to references if not already added
 		if !addedAgencyIDs[route.AgencyID] {

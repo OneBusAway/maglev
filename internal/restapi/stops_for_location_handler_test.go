@@ -295,6 +295,8 @@ func TestStopsForLocationSortsByCombinedStopID(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	rebuildStopAgencyIndex(t, api)
+
 	endpoint := fmt.Sprintf("/api/where/stops-for-location.json?key=TEST&lat=%f&lon=%f&radius=2000", lat, lon)
 	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
 
@@ -388,6 +390,9 @@ func TestStopsForLocationReturnsParentStation(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	rebuildStopAgencyIndex(t, api)
+	rebuildStopRouteIndex(t, api)
+
 	endpoint := fmt.Sprintf("/api/where/stops-for-location.json?key=TEST&lat=%f&lon=%f&radius=100", lat, lon)
 	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -415,9 +420,31 @@ func TestStopsForLocationReturnsParentStation(t *testing.T) {
 
 func TestStopsForLocationHandlerValidatesMaxCount(t *testing.T) {
 	api := createTestApi(t)
-	resp, model := callAPIHandler[StopsResponse](t, api, "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&maxCount=invalid")
-	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assert.Equal(t, http.StatusBadRequest, model.Code)
+
+	tests := []struct {
+		name        string
+		maxCount    string
+		wantStatus  int
+		wantMessage string
+	}{
+		{"non-numeric string", "invalid", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"64-bit integer overflow", "99999999999", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"int32 overflow 2147483648", "2147483648", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"int32 underflow -2147483649", "-2147483649", http.StatusBadRequest, `Invalid field value for field "maxCount".`},
+		{"max int32 2147483647 accepted", "2147483647", http.StatusOK, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := "/api/where/stops-for-location.json?key=TEST&lat=40.583321&lon=-122.426966&radius=1000&maxCount=" + tt.maxCount
+			resp, model := callAPIHandler[models.ResponseModel](t, api, url)
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+			assert.Equal(t, tt.wantStatus, model.Code)
+			if tt.wantMessage != "" {
+				assert.Contains(t, maxCountFieldErrors(t, model.Data), tt.wantMessage)
+			}
+		})
+	}
 }
 
 func TestStopsForLocationHandlerRouteTypeErrorLimit(t *testing.T) {
@@ -454,6 +481,18 @@ func TestStopsForLocationHandlerRouteTypeInvalidTokens(t *testing.T) {
 		{
 			name:      "trailing underscore",
 			routeType: "3_extra",
+		},
+		{
+			name:      "64-bit integer overflow exceeding int32",
+			routeType: "99999999999",
+		},
+		{
+			name:      "int32 max plus one",
+			routeType: "2147483648",
+		},
+		{
+			name:      "int32 min minus one",
+			routeType: "-2147483649",
 		},
 	}
 
@@ -624,6 +663,8 @@ func TestStopsForLocationQueryTruncatesToMaxCount(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	rebuildStopAgencyIndex(t, api)
+
 	endpoint := fmt.Sprintf(
 		"/api/where/stops-for-location.json?key=TEST&lat=%f&lon=%f&radius=2000&query=%s&maxCount=1",
 		lat, lon, sharedCode)
@@ -783,7 +824,7 @@ func TestStopsForLocationAcceptsDocumentedTimeFormats(t *testing.T) {
 	}{
 		{name: "epoch millis", timeParam: serviceDateEpochMs, expectStops: true},
 		{name: "date and time", timeParam: "2025-06-13_14-00-00", expectStops: true},
-		{name: "date only", timeParam: "2025-06-13", expectStops: true},
+		{name: "date only", timeParam: "2025-06-13", expectStops: false},
 		{name: "malformed", timeParam: "garbage", expectStops: false},
 		{name: "absent", timeParam: "", expectStops: false},
 	}
@@ -923,7 +964,8 @@ func TestStopsForLocationStopCodeFallback(t *testing.T) {
 		"trips.txt": "route_id,service_id,trip_id\n" +
 			routeID + "," + svcID + "," + tripID + "\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			tripID + ",12:00:00,12:00:00," + stopID + ",1\n",
+			tripID + ",12:00:00,12:00:00," + stopID + ",1\n" +
+			tripID + ",12:05:00,12:05:00," + stopID + ",2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, mockClock, "no-stop-code.zip", files)
@@ -953,7 +995,8 @@ func TestStopsForLocation_AgencyWithUnderscore(t *testing.T) {
 		"trips.txt": "route_id,service_id,trip_id\n" +
 			"ROUTE_100,svc1,t1\n",
 		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-			"t1,12:00:00,12:00:00,s1,1\n",
+			"t1,12:00:00,12:00:00,s1,1\n" +
+			"t1,12:05:00,12:05:00,s1,2\n",
 	}
 
 	api := createTestApiWithGTFSFixture(t, mockClock, "agency-underscore-location.zip", files)
