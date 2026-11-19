@@ -2082,6 +2082,10 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 	})
 	require.NoError(t, err)
 
+	// Build the stop indexes while the agency row still exists: the rebuild may run
+	// on any pooled connection, and those enforce foreign keys.
+	rebuildStopIndexes(t, api)
+
 	// Now delete the agency row with foreign keys disabled on a dedicated connection,
 	// leaving the route referencing a genuinely missing agency row (sql.ErrNoRows).
 	conn, err := api.GtfsManager.GtfsDB.DB.Conn(ctx)
@@ -2091,8 +2095,6 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 	_, err = conn.ExecContext(ctx, "DELETE FROM agencies WHERE id = ?", agencyMissing)
 	require.NoError(t, err)
 	conn.Close()
-
-	rebuildStopIndexes(t, api)
 
 	endpoint := arrivalsAndDeparturesURL(utils.FormCombinedID(agencyPrimary, sharedStop), url.Values{
 		"minutesBefore": {"5"},
