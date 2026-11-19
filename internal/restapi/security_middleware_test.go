@@ -122,30 +122,25 @@ func TestWithSecurityHeaders(t *testing.T) {
 	assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
 }
 
-func TestSecurityHeadersNoCORSWithoutOrigin(t *testing.T) {
-	// Create a simple handler for testing
+func TestSecurityHeadersCORSWithoutOrigin(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// Wrap with security headers
 	secureHandler := securityHeaders(handler)
 
-	// Create test request without Origin header
+	// A request without an Origin header (curl, mobile app, server) must still
+	// receive CORS headers so that a shared cache serving the response later to
+	// a browser client carries them.
 	req := httptest.NewRequest("GET", "/test", nil)
 	rec := httptest.NewRecorder()
-
-	// Execute request
 	secureHandler.ServeHTTP(rec, req)
 
-	// Verify CORS headers are NOT set when no Origin header
 	headers := rec.Header()
-	assert.Empty(t, headers.Get("Access-Control-Allow-Origin"))
-	assert.Empty(t, headers.Get("Access-Control-Allow-Methods"))
-	assert.Empty(t, headers.Get("Access-Control-Allow-Headers"))
-	assert.Empty(t, headers.Get("Access-Control-Max-Age"))
-
-	// But security headers should still be set
+	assert.Equal(t, "*", headers.Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "GET, OPTIONS", headers.Get("Access-Control-Allow-Methods"))
+	assert.Equal(t, "Content-Type, Authorization", headers.Get("Access-Control-Allow-Headers"))
+	assert.Equal(t, "86400", headers.Get("Access-Control-Max-Age"))
 	assert.Equal(t, "nosniff", headers.Get("X-Content-Type-Options"))
 	assert.Equal(t, "DENY", headers.Get("X-Frame-Options"))
 }
