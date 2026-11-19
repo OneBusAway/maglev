@@ -1368,38 +1368,51 @@ func (manager *Manager) buildVehicleIndices(vehicleFeedIDs []string, totalVehicl
 	for _, feedID := range vehicleFeedIDs {
 		agencyMap := manager.feedVehicleAgency[feedID]
 		for _, vehicle := range manager.feedVehicles[feedID] {
-			indices.allVehicles = append(indices.allVehicles, vehicle)
-			i := len(indices.allVehicles) - 1
-
-			if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
-				indices.vehicleLookupByTrip[vehicle.Trip.ID.ID] = i
-			}
-			if vehicle.Trip != nil && vehicle.Trip.ID.RouteID != "" {
-				indices.vehiclesByRoute[vehicle.Trip.ID.RouteID] = append(indices.vehiclesByRoute[vehicle.Trip.ID.RouteID], vehicle)
-			}
-			if vehicle.ID != nil && vehicle.ID.ID != "" {
-				var agencyID string
-				if agencyMap != nil {
-					agencyID = agencyMap[newVehicleKey(vehicle.ID)]
-				}
-				key := agencyVehicleKey{agencyID: agencyID, vehicleID: vehicle.ID.ID}
-				indices.vehicleLookupByVehicle[key] = i
-			}
-			if vehicle.Trip == nil || vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
-				continue
-			}
-			routeID := vehicle.Trip.ID.RouteID
-			if routeID == "" && vehicle.Trip.ID.ID != "" {
-				if index, exists := tripLookup[vehicle.Trip.ID.ID]; exists {
-					routeID = allTrips[index].ID.RouteID
-				}
-			}
-			if routeID != "" {
-				indices.duplicatedVehicleByRoute[routeID] = append(indices.duplicatedVehicleByRoute[routeID], vehicle)
-			}
+			indices.indexVehicle(vehicle, agencyMap, tripLookup, allTrips)
 		}
 	}
 	return indices
+}
+
+func (indices *vehicleIndices) indexVehicle(vehicle gtfs.Vehicle, agencyMap map[vehicleKey]string, tripLookup map[string]int, allTrips []gtfs.Trip) {
+	indices.allVehicles = append(indices.allVehicles, vehicle)
+	i := len(indices.allVehicles) - 1
+
+	if vehicle.Trip != nil {
+		if tripID := vehicle.Trip.ID.ID; tripID != "" {
+			indices.vehicleLookupByTrip[tripID] = i
+		}
+		if routeID := vehicle.Trip.ID.RouteID; routeID != "" {
+			indices.vehiclesByRoute[routeID] = append(indices.vehiclesByRoute[routeID], vehicle)
+		}
+	}
+
+	if vehicle.ID != nil && vehicle.ID.ID != "" {
+		var agencyID string
+		if agencyMap != nil {
+			agencyID = agencyMap[newVehicleKey(vehicle.ID)]
+		}
+		indices.vehicleLookupByVehicle[agencyVehicleKey{agencyID: agencyID, vehicleID: vehicle.ID.ID}] = i
+	}
+
+	indices.indexDuplicatedVehicle(vehicle, tripLookup, allTrips)
+}
+
+func (indices *vehicleIndices) indexDuplicatedVehicle(vehicle gtfs.Vehicle, tripLookup map[string]int, allTrips []gtfs.Trip) {
+	if vehicle.Trip == nil || vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
+		return
+	}
+	routeID := vehicle.Trip.ID.RouteID
+	// Some feeds omit route_id in VehiclePosition trip descriptors.
+	// Fall back to the corresponding TripUpdate to resolve the route.
+	if routeID == "" && vehicle.Trip.ID.ID != "" {
+		if index, exists := tripLookup[vehicle.Trip.ID.ID]; exists {
+			routeID = allTrips[index].ID.RouteID
+		}
+	}
+	if routeID != "" {
+		indices.duplicatedVehicleByRoute[routeID] = append(indices.duplicatedVehicleByRoute[routeID], vehicle)
+	}
 }
 
 func (manager *Manager) rebuildMergedRealtimeLocked() {
