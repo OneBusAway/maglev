@@ -41,6 +41,30 @@ type tripStatusExtras struct {
 	tripBlockSequence int
 }
 
+// activeTripAgencyID returns the agency that owns bareTripID in the static
+// GTFS (the agency of its route). That is the agency references emit the trip
+// under, so combined active-trip IDs built with it always resolve — matching
+// Java, which sets activeTripId from the active TripBean's own agency
+// (BeanFactoryV2.getTripStatus). Falls back to fallbackAgency when the trip
+// or its route is unknown.
+func (api *RestAPI) activeTripAgencyID(ctx context.Context, bareTripID, fallbackAgency string) string {
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, bareTripID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Debug("failed to query trip for active trip agency", "trip_id", bareTripID, "error", err)
+		}
+		return fallbackAgency
+	}
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Debug("failed to query route for active trip agency", "route_id", trip.RouteID, "error", err)
+		}
+		return fallbackAgency
+	}
+	return route.AgencyID
+}
+
 // BuildTripStatus builds a TripStatus for the given trip.
 //
 // Pass a non-nil vehicle when it is already known (e.g. DUPLICATED trips, or when
@@ -265,11 +289,13 @@ func (api *RestAPI) BuildTripStatus(
 	// null and the arrivals bean leaves tripStatus position fields at
 	// their defaults.
 	if snap != nil && snap.ActiveTripID != "" && snap.InRange {
-		status.ActiveTripID = utils.FormCombinedID(agencyID, snap.ActiveTripID)
-		// Java's TripStatusBeanServiceImpl reports the active trip's sequence.
+		activeAgency := agencyID
 		if snap.ActiveTripID != tripID {
+			activeAgency = api.activeTripAgencyID(ctx, snap.ActiveTripID, agencyID)
+			// Java's TripStatusBeanServiceImpl reports the active trip's sequence.
 			status.BlockTripSequence = api.activeTripBlockSequence(ctx, snap.ActiveTripID, serviceDate)
 		}
+		status.ActiveTripID = utils.FormCombinedID(activeAgency, snap.ActiveTripID)
 		status.ScheduledDistanceAlongTrip = snap.ActiveTripScheduledDistance
 		if snap.ActiveTripTotalDistance > 0 {
 			status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
