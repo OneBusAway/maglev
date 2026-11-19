@@ -762,8 +762,8 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "888_child_stop_multi_agency", childMultiAgency.ID)
 	assert.Equal(t, "888_parent_stat_1", childMultiAgency.Parent)
-	assert.Equal(t, []string{"888_route_parent_test_2", "999_route_parent_test"}, childMultiAgency.RouteIDs,
-		"routeIds must be in a stable, deterministic order")
+	assert.Equal(t, []string{"999_route_parent_test", "888_route_parent_test_2"}, childMultiAgency.RouteIDs,
+		"routeIds should be sorted by route name (RT-P before RT-P2), as Java does")
 
 	referenceIDs := make([]string, 0, len(stopsResp.Data.References.Stops))
 	for _, parentRef := range stopsResp.Data.References.Stops {
