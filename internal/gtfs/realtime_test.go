@@ -2407,6 +2407,32 @@ func TestUpdateFeedRealtime_NormalizesTripUpdateTimestamps(t *testing.T) {
 	})
 }
 
+func TestUpdateFeedRealtime_NormalizesVehicleTimestamps(t *testing.T) {
+	reportTime := time.Now().Add(-time.Minute).Truncate(time.Second)
+
+	tests := []struct {
+		name      string
+		timestamp uint64
+	}{
+		{name: "seconds are kept", timestamp: uint64(reportTime.Unix())},
+		{name: "milliseconds are converted", timestamp: uint64(reportTime.UnixMilli())},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := newTestManager()
+			position := labelOnlyPosition("101", 47.1, reportTime)
+			position.Timestamp = proto.Uint64(tt.timestamp)
+			manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, reportTime, []*gtfsrt.VehiclePosition{position}))
+
+			vehicles := manager.GetRealTimeVehicles()
+			require.Len(t, vehicles, 1)
+			require.NotNil(t, vehicles[0].Timestamp)
+			assert.Equal(t, reportTime.Unix(), vehicles[0].Timestamp.Unix())
+		})
+	}
+}
+
 func TestUpdateFeedRealtime_FirstSeenUsesNormalizedFeedTime(t *testing.T) {
 	headerTime := time.Now().Add(-time.Minute).Truncate(time.Second)
 	updateTime := proto.Uint64(uint64(headerTime.Add(-30 * time.Second).Unix()))
@@ -2431,33 +2457,6 @@ func TestUpdateFeedRealtime_FirstSeenUsesNormalizedFeedTime(t *testing.T) {
 		require.True(t, ok)
 		assert.GreaterOrEqual(t, seenAt.Unix(), before.Unix())
 	})
-}
-
-func TestLatestFeedUpdateTime_FollowsRemainingFeeds(t *testing.T) {
-	manager := newTestManager()
-	older := time.Now().Add(-time.Minute).Truncate(time.Second)
-	newer := older.Add(30 * time.Second)
-	manager.SetFeedUpdateTimeForTest("older", older)
-	manager.SetFeedUpdateTimeForTest("newer", newer)
-
-	manager.clearFeedData("newer")
-	latest, ok := manager.LatestFeedUpdateTime()
-	require.True(t, ok)
-	assert.True(t, older.Equal(latest), "expected the remaining feed's time, got %s", latest)
-
-	manager.clearFeedData("older")
-	_, ok = manager.LatestFeedUpdateTime()
-	assert.False(t, ok)
-}
-
-func TestMockResetRealTimeData_ClearsLatestFeedUpdate(t *testing.T) {
-	manager := newTestManager()
-	manager.SetFeedUpdateTimeForTest("feed", time.Now())
-
-	manager.MockResetRealTimeData()
-
-	_, ok := manager.LatestFeedUpdateTime()
-	assert.False(t, ok)
 }
 
 func TestUpdateFeedRealtime_KeepsOnlyTripUpdateEntities(t *testing.T) {

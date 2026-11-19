@@ -31,7 +31,7 @@ func TestWarnIfRealDBError(t *testing.T) {
 		{
 			name:      "ignores sql.ErrNoRows",
 			err:       sql.ErrNoRows,
-			op:        "GetBlockIDByTripID",
+			op:        "GetTrip",
 			expectLog: false,
 		},
 		{
@@ -50,10 +50,10 @@ func TestWarnIfRealDBError(t *testing.T) {
 		{
 			name:       "logs warning with extra structured attributes",
 			err:        errors.New("sqlite: database is locked"),
-			op:         "GetShapePointsByTripIDs",
+			op:         "GetShapePointsByIDs",
 			attrs:      []any{slog.String("trip_id", "t-123"), slog.Int("attempt", 2)},
 			expectLog:  true,
-			wantSubstr: []string{`"level":"WARN"`, `"msg":"GetShapePointsByTripIDs"`, `"error":"sqlite: database is locked"`, `"trip_id":"t-123"`, `"attempt":2`},
+			wantSubstr: []string{`"level":"WARN"`, `"msg":"GetShapePointsByIDs"`, `"error":"sqlite: database is locked"`, `"trip_id":"t-123"`, `"attempt":2`},
 		},
 	}
 

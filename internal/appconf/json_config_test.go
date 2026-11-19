@@ -413,6 +413,7 @@ func TestValidate_PathTraversalDataPath(t *testing.T) {
 				ProtectedApiKeys: []string{"test"},
 				RateLimit:        100,
 				DataPath:         tt.dataPath,
+				Role:             "all",
 				LogLevel:         "info",
 				LogFormat:        "text",
 			}
@@ -449,6 +450,7 @@ func TestValidate_FileURLNotAllowed(t *testing.T) {
 				GtfsStaticFeeds: []GtfsStaticFeed{{
 					URL: tt.gtfsURL,
 				}},
+				Role:      "all",
 				LogLevel:  "info",
 				LogFormat: "text",
 			}
@@ -487,6 +489,7 @@ func TestValidate_PathTraversalGtfsURL(t *testing.T) {
 				GtfsStaticFeeds: []GtfsStaticFeed{{
 					URL: tt.gtfsURL,
 				}},
+				Role:      "all",
 				LogLevel:  "info",
 				LogFormat: "text",
 			}
@@ -524,6 +527,7 @@ func TestValidate_ValidAbsolutePaths(t *testing.T) {
 					URL: tt.gtfsURL,
 				}},
 				DataPath:  "./gtfs.db",
+				Role:      "all",
 				LogLevel:  "info",
 				LogFormat: "text",
 			}
@@ -564,6 +568,7 @@ func TestValidate_PartialAuthHeaders(t *testing.T) {
 					AuthHeaderValue: tt.authValue,
 				}},
 				DataPath:  "./gtfs.db",
+				Role:      "all",
 				LogLevel:  "info",
 				LogFormat: "text",
 			}
@@ -730,6 +735,34 @@ func TestToGtfsConfigData_DuplicateIDs(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "duplicate feed ID")
+}
+
+func TestGtfsStaticFeedRedacted(t *testing.T) {
+	feed := GtfsStaticFeed{
+		URL:             "https://user:static-password@example.com/metro.zip?api_key=STATIC_SECRET",
+		AuthHeaderValue: "STATIC_HEADER_SECRET",
+		Headers: map[string]string{
+			"Authorization": "Bearer STATIC_BEARER_SECRET",
+		},
+	}
+
+	redacted := feed.Redacted()
+
+	assert.Equal(t, "https://user:xxxxx@example.com/metro.zip?"+RedactedValue, redacted.URL)
+	assert.Equal(t, RedactedValue, redacted.AuthHeaderValue)
+	assert.Equal(t, map[string]string{"Authorization": RedactedValue}, redacted.Headers)
+	assert.Equal(t, "https://user:static-password@example.com/metro.zip?api_key=STATIC_SECRET", feed.URL,
+		"redacting a feed must not mutate the original configuration")
+	assert.Equal(t, "STATIC_HEADER_SECRET", feed.AuthHeaderValue)
+	assert.Equal(t, "Bearer STATIC_BEARER_SECRET", feed.Headers["Authorization"])
+
+	localFeed := GtfsStaticFeed{URL: "./feeds/local-static.zip"}
+	assert.Equal(t, "./feeds/local-static.zip", localFeed.Redacted().URL,
+		"normal local file paths should remain readable in the config dump")
+
+	percentPathFeed := GtfsStaticFeed{URL: "./feeds/100%.zip"}
+	assert.Equal(t, "./feeds/100%.zip", percentPathFeed.Redacted().URL,
+		"local paths containing percent signs should remain readable")
 }
 
 func TestRedactURL(t *testing.T) {
