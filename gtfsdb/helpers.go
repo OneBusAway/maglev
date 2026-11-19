@@ -637,9 +637,12 @@ func buildStopAgencyIndex(ctx context.Context, qtx *Queries) error {
 	return nil
 }
 
-// updateFeedExpiresAtFromCalendar persists the end of the latest service date
-// in the latest-expiring agency timezone. Call within a transaction so expiry
-// is atomic with the calendar and agency data it was derived from.
+// updateFeedExpiresAtFromCalendar persists the expiry timestamp for the feed.
+// It uses the latest service date from the calendar and extends it by the
+// feed's latest departure time (feed-wide across all trips), so a Friday owl
+// trip ending at 27:00 pushes expiry past midnight even when the calendar's
+// last service date has no trips past 23:00. Call within a transaction so
+// expiry is atomic with the calendar and agency data it was derived from.
 func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 	val, err := qtx.GetFeedEndDate(ctx)
 	if err != nil {
@@ -668,11 +671,11 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 		if err != nil {
 			return fmt.Errorf("failed to get agency timezones: %w", err)
 		}
-		latestStopNs, err := feedLatestStopTimeNs(ctx, qtx)
+		latestDepartureNs, err := qtx.GetFeedLatestDepartureTime(ctx)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get feed latest departure time: %w", err)
 		}
-		expiresAt, err := latestAgencyExpiry(parsedTime, agencies, latestStopNs)
+		expiresAt, err := latestAgencyExpiry(parsedTime, agencies, latestDepartureNs)
 		if err != nil {
 			return err
 		}
@@ -685,20 +688,6 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 	return nil
 }
 
-// feedLatestStopTimeNs extracts the max departure time (ns since midnight) from
-// GetFeedLatestStopTime, which returns interface{} like all aggregated sqlc queries.
-// COALESCE guarantees a non-nil int64; other types are unexpected.
-func feedLatestStopTimeNs(ctx context.Context, qtx *Queries) (int64, error) {
-	val, err := qtx.GetFeedLatestStopTime(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get feed latest stop time: %w", err)
-	}
-	v, ok := val.(int64)
-	if !ok {
-		return 0, fmt.Errorf("unexpected type from GetFeedLatestStopTime: %T", val)
-	}
-	return v, nil
-}
 
 func latestAgencyExpiry(serviceDate time.Time, agencies []Agency, latestStopNs int64) (time.Time, error) {
 	if len(agencies) == 0 {

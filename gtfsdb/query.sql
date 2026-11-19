@@ -1418,10 +1418,10 @@ WHERE stop_id = ?
 ORDER BY created_at DESC;
 
 
--- name: GetFeedLatestStopTime :one
--- Returns the latest stop time in nanoseconds since midnight across all trips.
+-- name: GetFeedLatestDepartureTime :one
+-- Returns the latest departure time in nanoseconds since midnight across all trips.
 -- May exceed 86400000000000 (24 h) for trips running past midnight.
-SELECT COALESCE(MAX(max_departure_time), 0) FROM trips;
+SELECT CAST(COALESCE(MAX(max_departure_time), 0) AS INTEGER) AS latest_departure_ns FROM trips;
 
 -- name: GetFeedEndDate :one
 SELECT COALESCE(CAST(MAX(max_date) AS TEXT), '') AS feed_end_date

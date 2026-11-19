@@ -2204,17 +2204,17 @@ func (q *Queries) GetFeedEndDate(ctx context.Context) (interface{}, error) {
 	return feed_end_date, err
 }
 
-const getFeedLatestStopTime = `-- name: GetFeedLatestStopTime :one
-SELECT COALESCE(MAX(max_departure_time), 0) FROM trips
+const getFeedLatestDepartureTime = `-- name: GetFeedLatestDepartureTime :one
+SELECT CAST(COALESCE(MAX(max_departure_time), 0) AS INTEGER) AS latest_departure_ns FROM trips
 `
 
-// Returns the latest stop time in nanoseconds since midnight across all trips.
+// Returns the latest departure time in nanoseconds since midnight across all trips.
 // May exceed 86400000000000 (24 h) for trips running past midnight.
-func (q *Queries) GetFeedLatestStopTime(ctx context.Context) (interface{}, error) {
-	row := q.queryRow(ctx, q.getFeedLatestStopTimeStmt, getFeedLatestStopTime)
-	var coalesce interface{}
-	err := row.Scan(&coalesce)
-	return coalesce, err
+func (q *Queries) GetFeedLatestDepartureTime(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.getFeedLatestDepartureTimeStmt, getFeedLatestDepartureTime)
+	var latest_departure_ns int64
+	err := row.Scan(&latest_departure_ns)
+	return latest_departure_ns, err
 }
 
 const getFirstStopOfNextTripInBlock = `-- name: GetFirstStopOfNextTripInBlock :one
