@@ -689,6 +689,8 @@ WHERE
 SELECT DISTINCT
     routes.id AS route_id,
     routes.agency_id,
+    routes.short_name,
+    routes.long_name,
     stop_times.stop_id
 FROM
     stop_times

@@ -1122,6 +1122,8 @@ const getActiveRouteIDsForStopsOnDate = `-- name: GetActiveRouteIDsForStopsOnDat
 SELECT DISTINCT
     routes.id AS route_id,
     routes.agency_id,
+    routes.short_name,
+    routes.long_name,
     stop_times.stop_id
 FROM
     stop_times
@@ -1138,9 +1140,11 @@ type GetActiveRouteIDsForStopsOnDateParams struct {
 }
 
 type GetActiveRouteIDsForStopsOnDateRow struct {
-	RouteID  string
-	AgencyID string
-	StopID   string
+	RouteID   string
+	AgencyID  string
+	ShortName sql.NullString
+	LongName  sql.NullString
+	StopID    string
 }
 
 func (q *Queries) GetActiveRouteIDsForStopsOnDate(ctx context.Context, arg GetActiveRouteIDsForStopsOnDateParams) ([]GetActiveRouteIDsForStopsOnDateRow, error) {
@@ -1170,7 +1174,13 @@ func (q *Queries) GetActiveRouteIDsForStopsOnDate(ctx context.Context, arg GetAc
 	var items []GetActiveRouteIDsForStopsOnDateRow
 	for rows.Next() {
 		var i GetActiveRouteIDsForStopsOnDateRow
-		if err := rows.Scan(&i.RouteID, &i.AgencyID, &i.StopID); err != nil {
+		if err := rows.Scan(
+			&i.RouteID,
+			&i.AgencyID,
+			&i.ShortName,
+			&i.LongName,
+			&i.StopID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
