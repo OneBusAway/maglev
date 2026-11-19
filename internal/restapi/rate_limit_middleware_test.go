@@ -405,3 +405,23 @@ func TestRateLimitMiddleware_CorrectRetryAfterTime(t *testing.T) {
 		assert.Equal(t, expected, int(retryAfter))
 	})
 }
+
+func TestRateLimitMiddleware_429BodyHasSituations(t *testing.T) {
+	middleware := NewRateLimitMiddleware(0, time.Second, nil)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/test?key=k", nil)
+	w := httptest.NewRecorder()
+	middleware.Handler()(handler).ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	var body map[string]any
+	assert.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+	data, ok := body["data"].(map[string]any)
+	assert.True(t, ok, "data key must be present")
+	refs, ok := data["references"].(map[string]any)
+	assert.True(t, ok, "references key must be present")
+	_, hasSituations := refs["situations"]
+	assert.True(t, hasSituations, "references.situations must be present in 429 body")
+}

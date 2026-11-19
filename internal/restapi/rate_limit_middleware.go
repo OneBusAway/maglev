@@ -109,14 +109,8 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 		"code": http.StatusTooManyRequests,
 		"text": "Rate limit exceeded. Please try again later.",
 		"data": map[string]any{
-			"entry": nil,
-			"references": map[string]any{
-				"agencies":  []any{},
-				"routes":    []any{},
-				"stops":     []any{},
-				"trips":     []any{},
-				"stopTimes": []any{},
-			},
+			"entry":      nil,
+			"references": models.NewEmptyReferences(),
 		},
 		"currentTime": time.Now().UnixMilli(),
 		"version":     models.APIVersion,
