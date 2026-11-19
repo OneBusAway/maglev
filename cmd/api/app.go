@@ -360,9 +360,9 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	for _, feedCfg := range gtfsCfg.RTFeeds {
 		feed := map[string]any{
 			"id":                    feedCfg.ID,
-			"trip-updates-url":      feedCfg.TripUpdatesURL,
-			"vehicle-positions-url": feedCfg.VehiclePositionsURL,
-			"service-alerts-url":    feedCfg.ServiceAlertsURL,
+			"trip-updates-url":      appconf.RedactURL(feedCfg.TripUpdatesURL),
+			"vehicle-positions-url": appconf.RedactURL(feedCfg.VehiclePositionsURL),
+			"service-alerts-url":    appconf.RedactURL(feedCfg.ServiceAlertsURL),
 			"refresh-interval":      feedCfg.RefreshInterval,
 			"enabled":               feedCfg.Enabled,
 		}
@@ -388,8 +388,9 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 }
 
 // dumpStaticFeeds returns the static feeds with their secrets redacted.
-// GtfsStaticFeed carries the config-file keys, so the dump loads again
-// through appconf.LoadFromFile.
+// The redacted values still allow the dump to be parsed by
+// appconf.LoadFromFile, but the redacted URLs and auth values cannot be used
+// to fetch the configured feeds.
 func dumpStaticFeeds(feeds []appconf.GtfsStaticFeed) []appconf.GtfsStaticFeed {
 	dumped := make([]appconf.GtfsStaticFeed, 0, len(feeds))
 	for _, feed := range feeds {

@@ -690,6 +690,8 @@ WHERE
 SELECT DISTINCT
     routes.id AS route_id,
     routes.agency_id,
+    routes.short_name,
+    routes.long_name,
     stop_times.stop_id
 FROM
     stop_times
@@ -806,12 +808,8 @@ WHERE
 
 -- name: GetShapePointsByTripID :many
 SELECT
-    s.id,
-    s.shape_id,
     s.lat,
-    s.lon,
-    s.shape_pt_sequence,
-    s.shape_dist_traveled
+    s.lon
 FROM
     shapes s
     JOIN trips t ON t.shape_id = s.shape_id
@@ -903,6 +901,8 @@ ORDER BY
     t.id ASC, st.stop_sequence ASC;
 
 -- name: GetBlockDetails :many
+-- A block is keyed by agency and block_id, as in Java, so trips on another
+-- agency's routes that share the block_id belong to that agency's block.
 SELECT
     t.service_id,
     t.id as trip_id,
@@ -918,23 +918,16 @@ SELECT
 FROM
     trips t
         JOIN
+    routes r ON r.id = t.route_id
+        JOIN
     stop_times st ON t.id = st.trip_id
         JOIN
     stops s ON st.stop_id = s.id
 WHERE
-    t.block_id = ?
+    t.block_id = sqlc.arg(block_id)
+    AND r.agency_id = sqlc.arg(agency_id)
 ORDER BY
     t.id, st.stop_sequence;
-
--- name: BlockHasTripForAgency :one
--- Returns 1 if a trip on one of the agency's routes is in the block, 0 otherwise.
-SELECT CAST(EXISTS (
-    SELECT 1
-    FROM trips t
-    JOIN routes r ON r.id = t.route_id
-    WHERE t.block_id = sqlc.arg(block_id)
-      AND r.agency_id = sqlc.arg(agency_id)
-) AS INTEGER) AS has_trip;
 
 -- name: GetTripIDsForStops :many
 -- GetTripIDsForStops returns the IDs of the trips serving any of these stops.
@@ -1357,6 +1350,11 @@ WHERE id IN (sqlc.slice('trip_ids'));
 SELECT * FROM stop_times
 WHERE trip_id IN (sqlc.slice('trip_ids'))
 ORDER BY trip_id, stop_sequence;
+
+-- name: GetBlockStopTimesForTripIDs :many
+SELECT trip_id, stop_id, stop_sequence, arrival_time, departure_time FROM stop_times
+WHERE trip_id IN (sqlc.slice('trip_ids'))
+ORDER BY trip_id ASC, stop_sequence ASC;
 
 -- name: GetStopIDsForTripIDs :many
 SELECT trip_id, stop_id FROM stop_times
