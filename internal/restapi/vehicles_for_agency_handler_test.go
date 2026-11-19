@@ -944,6 +944,14 @@ func TestVehiclesForAgencyHandlerWithRealTimeData(t *testing.T) {
 // createTestApiWithRealTimeData creates a test API with real-time GTFS-RT data served
 // from local .pb files.
 func createTestApiWithRealTimeData(t testing.TB, c clock.Clock) (*RestAPI, func()) {
+	t.Helper()
+	tripUpdates, err := os.ReadFile(filepath.Join("../../testdata", "raba-trip-updates.pb"))
+	require.NoError(t, err)
+	return createTestApiWithTripUpdates(t, c, tripUpdates)
+}
+
+func createTestApiWithTripUpdates(t testing.TB, c clock.Clock, tripUpdates []byte) (*RestAPI, func()) {
+	t.Helper()
 	ctx := context.Background()
 
 	mux := http.NewServeMux()
@@ -959,14 +967,8 @@ func createTestApiWithRealTimeData(t testing.TB, c clock.Clock) (*RestAPI, func(
 		require.NoError(t, err)
 	})
 	mux.HandleFunc("/trip-updates", func(w http.ResponseWriter, r *http.Request) {
-		data, err := os.ReadFile(filepath.Join("../../testdata", "raba-trip-updates.pb"))
-		if err != nil {
-			t.Logf("Failed to read trip updates file: %v", err)
-			http.Error(w, "File not found", http.StatusNotFound)
-			return
-		}
 		w.Header().Set("Content-Type", "application/x-protobuf")
-		_, err = w.Write(data)
+		_, err := w.Write(tripUpdates)
 		require.NoError(t, err)
 	})
 
