@@ -7,5 +7,6 @@ func (webUI *WebUI) SetWebUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /marketing/{file}", webUI.marketingHandler)
 
 	mux.HandleFunc("GET /debug/", webUI.debugIndexHandler)
-	mux.HandleFunc("GET /", webUI.indexHandler)
+	// {$} matches "/" only, so unknown paths 404 instead of returning the landing page.
+	mux.HandleFunc("GET /{$}", webUI.indexHandler)
 }

@@ -75,6 +75,20 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// GetRoute is keyed by the route code alone, so a prefix for some other agency
+	// still finds the row and the handler would return that agency's trips. An
+	// unknown route falls through to the empty 200 below: this endpoint does not
+	// 404 a missing route.
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	if err == nil && (route.ID == "" || route.AgencyID != agencyID) {
+		api.sendEmptyTripsForRouteList(w, r, ctx, includeReferences, includeTrip)
+		return
+	}
+
 	agencies, err := api.GtfsManager.GetAgencies(ctx)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -116,14 +130,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	hasBlocks := slices.ContainsFunc(dayBlockIDs, func(blockIDs []string) bool { return len(blockIDs) > 0 })
 	if !hasBlocks && len(nullBlockTrips) == 0 {
-		var references models.ReferencesModel
-		if includeReferences {
-			references = api.buildTripReferences(ctx, tripReferenceParams{IncludeTrip: includeTrip})
-		} else {
-			references = *models.NewEmptyReferences()
-		}
-		response := models.NewListResponse([]models.TripsForRouteListEntry{}, references, false, api.Clock)
-		api.sendResponse(w, r, response)
+		api.sendEmptyTripsForRouteList(w, r, ctx, includeReferences, includeTrip)
 		return
 	}
 
@@ -464,6 +471,20 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 	api.sendResponse(w, r, response)
 }
 
+// sendEmptyTripsForRouteList answers a route with nothing in service, including
+// a prefix that does not own the route. The list is empty and includeReferences
+// is honored, matching an unknown route rather than a 404.
+func (api *RestAPI) sendEmptyTripsForRouteList(w http.ResponseWriter, r *http.Request, ctx context.Context, includeReferences, includeTrip bool) {
+	var references models.ReferencesModel
+	if includeReferences {
+		references = api.buildTripReferences(ctx, tripReferenceParams{IncludeTrip: includeTrip})
+	} else {
+		references = *models.NewEmptyReferences()
+	}
+	response := models.NewListResponse([]models.TripsForRouteListEntry{}, references, false, api.Clock)
+	api.sendResponse(w, r, response)
+}
+
 // resolveTripsForRouteBlocks returns the Java-style scheduled active trip for
 // every selected block. A block remains in service between two consecutive
 // trips: its scheduled position is interpolated across that gap, and the
@@ -549,7 +570,7 @@ func tripsForRouteBlockAnchors(
 // compareTripsForRouteBlockSpans orders spans by block, start time, and trip
 // ID. Batched query results are individually sorted but must be merged here.
 func compareTripsForRouteBlockSpans(a, b gtfsdb.GetTripSpansForBlocksRow) int {
-	if byBlock := strings.Compare(a.BlockID.String, b.BlockID.String); byBlock != 0 {
+	if byBlock := strings.Compare(nulls.StringOrEmpty(a.BlockID), nulls.StringOrEmpty(b.BlockID)); byBlock != 0 {
 		return byBlock
 	}
 	if a.MinArrivalTime.Int64 < b.MinArrivalTime.Int64 {
@@ -650,7 +671,7 @@ func (api *RestAPI) buildBlockTripForRoute(
 			bt.BlockID.Valid &&
 			bt.MinArrivalTime.Valid &&
 			bt.MaxDepartureTime.Valid {
-			key := bt.BlockID.String
+			key := nulls.StringOrEmpty(bt.BlockID)
 			blockTripForRoute[key] = append(blockTripForRoute[key], blockTripEntry{
 				ID:               bt.ID,
 				MinArrivalTime:   bt.MinArrivalTime.Int64,
@@ -700,7 +721,7 @@ func resolveInterlinedEntryTripID(
 	blockTripForRoute map[string][]blockTripEntry,
 	routeAgencyMap map[string]string,
 ) (result interlinedTripResolution, ok bool) {
-	entries := blockTripForRoute[fetchedTrip.BlockID.String]
+	entries := blockTripForRoute[nulls.StringOrEmpty(fetchedTrip.BlockID)]
 	if len(entries) == 0 {
 		return interlinedTripResolution{}, false
 	}
@@ -1093,7 +1114,8 @@ func (api *RestAPI) routeZones(
 func tripsByBlock(trips []gtfsdb.GetTripsByBlockIDsRow) map[string][]gtfsdb.GetTripsByBlockIDsRow {
 	byBlock := make(map[string][]gtfsdb.GetTripsByBlockIDsRow)
 	for _, trip := range trips {
-		byBlock[trip.BlockID.String] = append(byBlock[trip.BlockID.String], trip)
+		blockID := nulls.StringOrEmpty(trip.BlockID)
+		byBlock[blockID] = append(byBlock[blockID], trip)
 	}
 	return byBlock
 }
@@ -1172,9 +1194,7 @@ func (api *RestAPI) routeBlocksAndTripsInService(ctx context.Context, routeID st
 			return nil, nil, err
 		}
 		for _, blockID := range indexedBlocks {
-			if blockID.Valid {
-				blockIDs = append(blockIDs, blockID.String)
-			}
+			blockIDs = append(blockIDs, nulls.StringOrEmpty(blockID))
 		}
 	}
 
@@ -1299,14 +1319,18 @@ type tripReferenceSets struct {
 	// inferring them from a zero-valued reference, keeps it unambiguous which
 	// trips still need a lookup.
 	missing map[string]bool
+	// auxiliaryTripIDs tracks trips referenced by status (activeTripId) or
+	// schedule (previousTripId/nextTripId), which are preserved even when includeTrip=false.
+	auxiliaryTripIDs map[string]bool
 }
 
 func newTripReferenceSets() *tripReferenceSets {
 	return &tripReferenceSets{
-		trips:    make(map[string]models.Trip),
-		routes:   make(map[string]models.Route),
-		agencies: make(map[string]models.AgencyReference),
-		missing:  make(map[string]bool),
+		trips:            make(map[string]models.Trip),
+		routes:           make(map[string]models.Route),
+		agencies:         make(map[string]models.AgencyReference),
+		missing:          make(map[string]bool),
+		auxiliaryTripIDs: make(map[string]bool),
 	}
 }
 
@@ -1321,6 +1345,14 @@ func (s *tripReferenceSets) noteTripID(combinedID string) {
 		s.trips[tripID] = models.Trip{}
 		s.missing[tripID] = true
 	}
+}
+
+func (s *tripReferenceSets) noteAuxiliaryTripID(combinedID string) {
+	_, tripID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+	if err == nil && tripID != "" {
+		s.auxiliaryTripIDs[tripID] = true
+	}
+	s.noteTripID(combinedID)
 }
 
 func (s *tripReferenceSets) collectPreFetchedTrips(trips []gtfsdb.Trip) {
@@ -1338,11 +1370,11 @@ func (s *tripReferenceSets) collectTripIDsFromEntries(entries []models.TripsForR
 		s.noteTripID(entry.GetTripId())
 
 		if entry.Schedule != nil {
-			s.noteTripID(entry.Schedule.NextTripId)
-			s.noteTripID(entry.Schedule.PreviousTripId)
+			s.noteAuxiliaryTripID(entry.Schedule.NextTripId)
+			s.noteAuxiliaryTripID(entry.Schedule.PreviousTripId)
 		}
 		if entry.Status != nil {
-			s.noteTripID(entry.Status.ActiveTripID)
+			s.noteAuxiliaryTripID(entry.Status.ActiveTripID)
 		}
 	}
 }
@@ -1390,13 +1422,13 @@ func (api *RestAPI) fillRoutesAndAgencies(ctx context.Context, sets *tripReferen
 		sets.routes[route.ID] = models.NewRoute(
 			utils.FormCombinedID(route.AgencyID, route.ID),
 			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String)
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor))
 
 		api.addAgencyReference(ctx, sets, route.AgencyID)
 	}
@@ -1419,15 +1451,17 @@ func (api *RestAPI) addAgencyReference(ctx context.Context, sets *tripReferenceS
 
 // tripReferenceList emits the collected trips in combined-ID form. A trip whose
 // route was never resolved is skipped, since its agency is unknown.
+// When includeTrip is false, only trips referenced by schedule or status are included.
 func (s *tripReferenceSets) tripReferenceList(includeTrip bool) []models.Trip {
-	var tripsRefList []models.Trip
-	if !includeTrip {
-		return tripsRefList
-	}
+	tripsRefList := make([]models.Trip, 0, len(s.trips))
 
-	tripsRefList = make([]models.Trip, 0, len(s.trips))
+	for tripID, trip := range s.trips {
+		// When includeTrip=false, skip list entries' own trips unless they were
+		// also referenced by schedule or status.
+		if !includeTrip && !s.auxiliaryTripIDs[tripID] {
+			continue
+		}
 
-	for _, trip := range s.trips {
 		// A route that was noted but never resolved is still in the map as a
 		// zero value; combining IDs against its empty agency would emit
 		// references whose every ID is the empty string.
@@ -1466,11 +1500,11 @@ func newTripReference(trip gtfsdb.Trip) models.Trip {
 		ID:            trip.ID,
 		RouteID:       trip.RouteID,
 		ServiceID:     trip.ServiceID,
-		TripHeadsign:  trip.TripHeadsign.String,
-		TripShortName: trip.TripShortName.String,
+		TripHeadsign:  nulls.StringOrEmpty(trip.TripHeadsign),
+		TripShortName: nulls.StringOrEmpty(trip.TripShortName),
 		DirectionID:   strconv.FormatInt(trip.DirectionID.Int64, 10),
-		BlockID:       trip.BlockID.String,
-		ShapeID:       trip.ShapeID.String,
+		BlockID:       nulls.StringOrEmpty(trip.BlockID),
+		ShapeID:       nulls.StringOrEmpty(trip.ShapeID),
 	}
 }
 

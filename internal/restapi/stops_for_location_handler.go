@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,8 +46,8 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			for _, rtStr := range routeTypeStrs {
 				rtStr = strings.TrimSpace(rtStr)
 				if rtStr != "" {
-					var rt int
-					if _, err := fmt.Sscanf(rtStr, "%d", &rt); err != nil {
+					rt, err := strconv.ParseInt(rtStr, 10, 32)
+					if err != nil {
 						if fieldErrors == nil {
 							fieldErrors = make(map[string][]string)
 						}
@@ -56,7 +57,7 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 							}
 						}
 					} else {
-						routeTypes = append(routeTypes, rt)
+						routeTypes = append(routeTypes, int(rt))
 					}
 				}
 			}
@@ -98,7 +99,11 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 	var stops []gtfsdb.Stop
 	var limitExceeded bool
 	if !outOfRange {
-		stops, limitExceeded = api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
+		stops, limitExceeded, err = api.GtfsManager.GetStopsForLocation(ctx, loc, query, maxCount, routeTypes)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 	}
 
 	results := []models.Stop{}
@@ -225,13 +230,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		if agencies == nil {
-			agencies = []models.AgencyReference{}
-		}
-		if routes == nil {
-			routes = []models.Route{}
-		}
-
 		references.Agencies = agencies
 		references.Routes = routes
 	}
@@ -252,7 +250,7 @@ func parentStationID(agencyID string, stop gtfsdb.Stop) string {
 
 // parentStationReferences builds stop references for the parent stations of
 // the given stops, labelled with the same combined IDs the stops' parent
-// fields carry. It also returns the combined route IDs serving each station,
+// fields carry. It also returns the stopRoute pairs serving each station,
 // keyed by bare station ID, so their routes can be referenced too.
 func (api *RestAPI) parentStationReferences(
 	ctx context.Context,
@@ -337,6 +335,7 @@ func (api *RestAPI) routeIDsByStop(
 		if err != nil {
 			return nil, err
 		}
+		utils.SortRouteIDsForStopsRowsByName(rows)
 		for _, row := range rows {
 			collect(row.StopID, row.AgencyID, row.RouteID)
 		}
@@ -354,6 +353,7 @@ func (api *RestAPI) routeIDsByStop(
 	if err != nil {
 		return nil, err
 	}
+	utils.SortActiveRouteIDsForStopsRowsByName(rows)
 	for _, row := range rows {
 		collect(row.StopID, row.AgencyID, row.RouteID)
 	}

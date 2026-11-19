@@ -1,7 +1,12 @@
 package restapi
 
 import (
+	"database/sql"
+	"errors"
+	"log/slog"
 	"net/http"
+	"strconv"
+	"time"
 
 	"maglev.onebusaway.org/internal/buildinfo"
 	"maglev.onebusaway.org/internal/models"
@@ -34,12 +39,26 @@ func (api *RestAPI) configHandler(w http.ResponseWriter, r *http.Request) {
 		GitCommitIdDescribeShort: buildinfo.Version,
 	}
 
+	var serviceDateFrom, serviceDateTo string
+	if api.GtfsManager != nil && api.GtfsManager.GtfsDB != nil && api.GtfsManager.GtfsDB.Queries != nil {
+		metadata, err := api.GtfsManager.GtfsDB.Queries.GetImportMetadata(r.Context())
+		if err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				slog.ErrorContext(r.Context(), "failed to read import metadata for config service date range", "error", err)
+			}
+		} else if metadata.ImportTime != 0 {
+			importTime := time.Unix(0, metadata.ImportTime).UTC()
+			serviceDateFrom = strconv.FormatInt(importTime.UnixMilli(), 10)
+			serviceDateTo = strconv.FormatInt(importTime.Add(30*24*time.Hour).UnixMilli(), 10)
+		}
+	}
+
 	configEntry := models.ConfigModel{
 		GitProperties:   gitProps,
 		Id:              "oba-maglev",
 		Name:            "OneBusAway Go",
-		ServiceDateFrom: "",
-		ServiceDateTo:   "",
+		ServiceDateFrom: serviceDateFrom,
+		ServiceDateTo:   serviceDateTo,
 	}
 
 	response := models.NewEntryResponse(

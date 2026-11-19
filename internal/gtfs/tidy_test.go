@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestTidyGTFSData(t *testing.T) {
+func TestTidyGTFSFile(t *testing.T) {
 
 	projectRoot, err := findProjectRoot()
 	if err != nil {
@@ -38,9 +38,9 @@ func TestTidyGTFSData(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	// Run tidy
-	outputData, err := tidyGTFSData(context.Background(), inputData, logger)
+	outputData, err := tidyGTFSFile(context.Background(), testDataPath, logger)
 	if err != nil {
-		t.Fatalf("tidyGTFSData failed: %v", err)
+		t.Fatalf("tidyGTFSFile failed: %v", err)
 	}
 
 	// Verify output is not empty

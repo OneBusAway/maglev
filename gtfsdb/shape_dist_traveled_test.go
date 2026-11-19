@@ -1,8 +1,6 @@
 package gtfsdb
 
 import (
-	"archive/zip"
-	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,16 +47,7 @@ SHAPE1,40.7580,-73.9855,3,1500
 `,
 	}
 
-	var buf bytes.Buffer
-	zipWriter := zip.NewWriter(&buf)
-	for name, content := range files {
-		f, err := zipWriter.Create(name)
-		require.NoError(t, err)
-		_, err = f.Write([]byte(content))
-		require.NoError(t, err)
-	}
-	require.NoError(t, zipWriter.Close())
-	return buf.Bytes()
+	return writeGTFSZip(t, files)
 }
 
 // A shape_dist_traveled of 0 is a real position, the start of the shape, and has to

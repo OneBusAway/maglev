@@ -542,15 +542,11 @@ func TestParseTimeParameter(t *testing.T) {
 			},
 		},
 		{
-			name:         "Valid YYYY-MM-DD format (yesterday)",
-			timeParam:    yesterdayDateString,
-			expectedDate: yesterdayFormatted,
-			expectError:  false,
-			validateParsedTime: func(t *testing.T, parsedTime time.Time) {
-				assert.Equal(t, yesterday.Year(), parsedTime.Year())
-				assert.Equal(t, yesterday.Month(), parsedTime.Month())
-				assert.Equal(t, yesterday.Day(), parsedTime.Day())
-			},
+			name:             "Reject YYYY-MM-DD format without time (yesterday)",
+			timeParam:        yesterdayDateString,
+			expectedDate:     "",
+			expectError:      true,
+			expectedErrorKey: "time",
 		},
 		{
 			name:             "Invalid format",
@@ -561,7 +557,7 @@ func TestParseTimeParameter(t *testing.T) {
 		},
 		{
 			name:         "Future date",
-			timeParam:    now.AddDate(0, 0, 1).Format("2006-01-02"),
+			timeParam:    now.AddDate(0, 0, 1).Format("2006-01-02_15-04-05"),
 			expectedDate: now.AddDate(0, 0, 1).Format("20060102"),
 			expectError:  false,
 			validateParsedTime: func(t *testing.T, parsedTime time.Time) {
@@ -569,6 +565,9 @@ func TestParseTimeParameter(t *testing.T) {
 				assert.Equal(t, tomorrow.Year(), parsedTime.Year())
 				assert.Equal(t, tomorrow.Month(), parsedTime.Month())
 				assert.Equal(t, tomorrow.Day(), parsedTime.Day())
+				assert.Equal(t, tomorrow.Hour(), parsedTime.Hour())
+				assert.Equal(t, tomorrow.Minute(), parsedTime.Minute())
+				assert.Equal(t, tomorrow.Second(), parsedTime.Second())
 			},
 		},
 		{
@@ -681,7 +680,7 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 
 	t.Run("Today at midnight (edge case)", func(t *testing.T) {
 		todayMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-		todayDateStr := todayMidnight.Format("2006-01-02")
+		todayDateStr := todayMidnight.Format("2006-01-02_15-04-05")
 
 		dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter(todayDateStr, loc, clock.RealClock{})
 
@@ -691,6 +690,15 @@ func TestParseTimeParameter_EdgeCases(t *testing.T) {
 		assert.Equal(t, todayMidnight.Year(), parsedTime.Year())
 		assert.Equal(t, todayMidnight.Month(), parsedTime.Month())
 		assert.Equal(t, todayMidnight.Day(), parsedTime.Day())
+	})
+
+	t.Run("Reject YYYY-MM-DD format", func(t *testing.T) {
+		todayDateOnly := now.Format("2006-01-02")
+		_, _, fieldErrors, valid := ParseTimeParameter(todayDateOnly, loc, clock.RealClock{})
+
+		assert.False(t, valid)
+		assert.NotNil(t, fieldErrors)
+		assert.Contains(t, fieldErrors, "time")
 	})
 
 	t.Run("Malformed YYYY-MM-DD", func(t *testing.T) {
@@ -746,7 +754,7 @@ func TestParseTimeParameter_DateStringUsesProvidedLocation(t *testing.T) {
 	loc, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
 
-	dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter("2026-03-12", loc, clock.RealClock{})
+	dateStr, parsedTime, fieldErrors, valid := ParseTimeParameter("2026-03-12_00-00-00", loc, clock.RealClock{})
 
 	require.True(t, valid)
 	require.Nil(t, fieldErrors)
@@ -757,20 +765,85 @@ func TestParseTimeParameter_DateStringUsesProvidedLocation(t *testing.T) {
 	assert.Equal(t, loc.String(), parsedTime.Location().String())
 }
 
+func TestParseArrivalTimeParam(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectValue string
+		expectError bool
+	}{
+		{"empty string", "", "", false},
+		{"valid epoch millis", "1749837600000", "1749837600000", false},
+		{"epoch zero", "0", "0", false},
+		{"valid datetime format", "2025-06-13_08-00-00", "2025-06-13_08-00-00", false},
+		{"date only rejects matching Java", "2026-10-30", "", true},
+		{"invalid format", "invalid", "", true},
+		{"negative number", "-1000", "", true},
+		{"signed number", "+1749837600000", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			val, errs := ParseArrivalTimeParam(tt.input, nil)
+			if tt.expectError {
+				assert.Contains(t, errs, "time")
+				assert.Equal(t, `Invalid field value for field "time".`, errs["time"][0])
+				assert.Empty(t, val)
+			} else {
+				assert.Empty(t, errs)
+				assert.Equal(t, tt.expectValue, val)
+			}
+		})
+	}
+}
+
+func TestResolveArrivalTime(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	now := time.Date(2025, 6, 13, 10, 0, 0, 0, time.UTC)
+
+	t.Run("empty string falls back to now in location", func(t *testing.T) {
+		res := ResolveArrivalTime("", loc, now)
+		assert.Equal(t, now.In(loc), res)
+	})
+
+	t.Run("epoch 0 resolves to epoch 0 in location", func(t *testing.T) {
+		res := ResolveArrivalTime("0", loc, now)
+		assert.Equal(t, time.UnixMilli(0).In(loc), res)
+	})
+
+	t.Run("epoch millis converts to location", func(t *testing.T) {
+		epoch := int64(1749837600000)
+		res := ResolveArrivalTime("1749837600000", loc, now)
+		assert.Equal(t, time.UnixMilli(epoch).In(loc), res)
+	})
+
+	t.Run("datetime format resolves in location", func(t *testing.T) {
+		res := ResolveArrivalTime("2025-06-13_08-00-00", loc, now)
+		expected := time.Date(2025, 6, 13, 8, 0, 0, 0, loc)
+		assert.Equal(t, expected, res)
+	})
+}
+
 func TestParseMaxCountClamped(t *testing.T) {
 	tests := []struct {
-		name             string
-		maxCount         string
-		expectedMaxCount int
-		expectError      bool
+		name                 string
+		maxCount             string
+		expectedMaxCount     int
+		expectError          bool
+		expectedErrorMessage string
 	}{
-		{"omitted uses default", "", 100, false},
-		{"within cap unchanged", "10", 10, false},
-		{"at cap unchanged", "250", 250, false},
-		{"above cap clamps", "251", 250, false},
-		{"far above cap clamps", "10000", 250, false},
-		{"zero is an error", "0", 100, true},
-		{"negative is an error", "-1", 100, true},
+		{"omitted uses default", "", 100, false, ""},
+		{"within cap unchanged", "10", 10, false, ""},
+		{"at cap unchanged", "250", 250, false, ""},
+		{"above cap clamps", "251", 250, false, ""},
+		{"far above cap clamps", "10000", 250, false, ""},
+		{"at max int32 clamps", "2147483647", 250, false, ""},
+		{"overflow above int32 is error", "2147483648", 100, true, `Invalid field value for field "maxCount".`},
+		{"64-bit int overflow is error", "99999999999", 100, true, `Invalid field value for field "maxCount".`},
+		{"underflow below min int32 is error", "-2147483649", 100, true, `Invalid field value for field "maxCount".`},
+		{"zero is an error", "0", 100, true, "must be greater than zero"},
+		{"negative is an error", "-1", 100, true, "must be greater than zero"},
 	}
 
 	for _, tt := range tests {
@@ -785,6 +858,9 @@ func TestParseMaxCountClamped(t *testing.T) {
 			assert.Equal(t, tt.expectedMaxCount, maxCount)
 			if tt.expectError {
 				assert.Contains(t, fieldErrors, "maxCount")
+				if tt.expectedErrorMessage != "" {
+					assert.Contains(t, fieldErrors["maxCount"], tt.expectedErrorMessage)
+				}
 			} else {
 				assert.NotContains(t, fieldErrors, "maxCount")
 			}
@@ -794,12 +870,13 @@ func TestParseMaxCountClamped(t *testing.T) {
 
 func TestParseMaxCount(t *testing.T) {
 	tests := []struct {
-		name             string
-		expectError      bool
-		expectedErrorKey string
-		countQueryParams url.Values
-		defaultCount     int
-		expectedMaxCount int
+		name                 string
+		expectError          bool
+		expectedErrorKey     string
+		expectedErrorMessage string
+		countQueryParams     url.Values
+		defaultCount         int
+		expectedMaxCount     int
 	}{
 		{
 			name:             "Default Value, No MaxCount Provided",
@@ -834,45 +911,80 @@ func TestParseMaxCount(t *testing.T) {
 			countQueryParams: url.Values{
 				"maxCount": []string{"251"},
 			},
-			defaultCount:     100,
-			expectError:      true,
-			expectedErrorKey: "maxCount",
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: "must not exceed 250",
 		},
 		{
 			name: "MaxCount is 0",
 			countQueryParams: url.Values{
 				"maxCount": []string{"0"},
 			},
-			defaultCount:     100,
-			expectError:      true,
-			expectedErrorKey: "maxCount",
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: "must be greater than zero",
 		},
 		{
 			name: "maxCount is float",
 			countQueryParams: url.Values{
 				"maxCount": []string{"5.9"},
 			},
-			defaultCount:     100,
-			expectError:      true,
-			expectedErrorKey: "maxCount",
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: `Invalid field value for field "maxCount".`,
 		},
 		{
 			name: "maxCount is non numeric",
 			countQueryParams: url.Values{
 				"maxCount": []string{"Not a number"},
 			},
-			defaultCount:     100,
-			expectError:      true,
-			expectedErrorKey: "maxCount",
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: `Invalid field value for field "maxCount".`,
 		},
 		{
 			name: "maxCount is negative",
 			countQueryParams: url.Values{
 				"maxCount": []string{"-1"},
 			},
-			defaultCount:     100,
-			expectError:      true,
-			expectedErrorKey: "maxCount",
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: "must be greater than zero",
+		},
+		{
+			name: "maxCount 64-bit integer overflow",
+			countQueryParams: url.Values{
+				"maxCount": []string{"99999999999"},
+			},
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: `Invalid field value for field "maxCount".`,
+		},
+		{
+			name: "maxCount int32 overflow 2147483648",
+			countQueryParams: url.Values{
+				"maxCount": []string{"2147483648"},
+			},
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: `Invalid field value for field "maxCount".`,
+		},
+		{
+			name: "maxCount int32 underflow -2147483649",
+			countQueryParams: url.Values{
+				"maxCount": []string{"-2147483649"},
+			},
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: `Invalid field value for field "maxCount".`,
 		},
 	}
 
@@ -881,7 +993,9 @@ func TestParseMaxCount(t *testing.T) {
 			resultedMaxCount, fieldErrors := ParseMaxCount(tt.countQueryParams, tt.defaultCount, nil)
 			if tt.expectError {
 				assert.Contains(t, fieldErrors, tt.expectedErrorKey)
-
+				if tt.expectedErrorMessage != "" {
+					assert.Contains(t, fieldErrors[tt.expectedErrorKey], tt.expectedErrorMessage)
+				}
 			} else {
 				assert.NotContains(t, fieldErrors, tt.expectedErrorKey)
 				assert.Equal(t, tt.expectedMaxCount, resultedMaxCount)
@@ -1272,6 +1386,24 @@ func TestParseDate(t *testing.T) {
 		{
 			name:    "negative timestamp",
 			date:    "-1000",
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "negative zero timestamp",
+			date:    "-0",
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "negative zero padded timestamp",
+			date:    "-00",
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "positive signed timestamp",
+			date:    "+5",
 			wantErr: true,
 			errMsg:  "unix millisecond timestamp out of reasonable bounds",
 		},

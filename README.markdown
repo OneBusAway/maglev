@@ -120,6 +120,18 @@ Example `config.json`:
 }
 ```
 
+To load the static feeds that obacloud publishes, replace the static feed key with the manifest URL:
+
+```json
+{
+  "env": "production",
+  "gtfs-bundle-inputs-url": "https://example.com/bundles/bundle-inputs.json",
+  "data-path": "/data/gtfs.db"
+}
+```
+
+Maglev reads the manifest once, at startup, and retries a failed fetch with backoff before it gives up. The daily static reload downloads the feed URLs the manifest listed at startup, so restart Maglev to pick up a changed manifest. A query string in the manifest URL, such as a signature, is redacted in logs and in `-dump-config` output.
+
 **Note:** The `-f` flag is mutually exclusive with other command-line flags. If you use `-f`, all other configuration flags will be ignored. The system will return an error if you try to use both.
 
 **Dump Current Configuration:**
@@ -156,7 +168,9 @@ A JSON schema file is provided at `config.schema.json` for IDE autocomplete and 
 | `log-level`          | string  | "info"          | Log level (debug, info, warn, error)        |
 | `log-format`         | string  | "text"          | Log format (text, json)                     |
 | `rate-limit`         | integer | 100             | Requests per second across the whole service (shared bucket; exempt keys bypass it) |
-| `gtfs-static-feed`   | object  | (Sound Transit) | Static GTFS feed configuration              |
+| `gtfs-static-feeds`  | array   | (Sound Transit) | Static GTFS feeds, in load order (only the first is imported for now) |
+| `gtfs-static-feed`   | object  | (Sound Transit) | Legacy single static feed; read as a one-element `gtfs-static-feeds`. Cannot be combined with it |
+| `gtfs-bundle-inputs-url` | string | (none)      | URL or path of an obacloud `bundle-inputs.json` manifest that lists the static feeds, read at startup. Replaces both static feed keys (only the first manifest feed is imported for now) |
 | `gtfs-rt-feeds`      | array   | (Sound Transit) | GTFS-RT feed configurations (see below)     |
 | `data-path`          | string  | "./gtfs.db"     | Path to SQLite database                     |
 
@@ -470,9 +484,21 @@ and the first real-time fetch has been attempted, then `ok`.
 
 ### Environment Variables
 
-| Variable           | Description                            | Default |
-| ------------------ | -------------------------------------- | ------- |
-| `TZ`               | Timezone for the container             | `UTC`   |
+| Variable                   | Description                                                          | Default |
+| -------------------------- | -------------------------------------------------------------------- | ------- |
+| `TZ`                       | Timezone for the container                                           | `UTC`   |
+| `GTFS_API_KEYS`            | Comma-separated API keys; replaces `api-keys` from the config file   | —       |
+| `GTFS_PROTECTED_API_KEYS`  | Comma-separated keys for protected endpoints; replaces `protected-api-keys` from the config file. In a flag-based start the `-protected-api-keys` flag takes precedence | — |
+| `GTFS_STATIC_AUTH_NAME`    | Auth header name for the static GTFS feed                            | —       |
+| `GTFS_STATIC_AUTH_VALUE`   | Auth header value for the static GTFS feed                           | —       |
+| `GTFS_REALTIME_AUTH_NAME`  | Auth header name for the first GTFS-RT feed only                     | —       |
+| `GTFS_REALTIME_AUTH_VALUE` | Auth header value for the first GTFS-RT feed only                    | —       |
+| `MAGLEV_LOG_LEVEL`         | Log level; overrides the config file                                 | —       |
+| `MAGLEV_LOG_FORMAT`        | Log format; overrides the config file                                | —       |
+| `MAGLEV_ENABLE_PPROF`      | `1` starts the pprof server on `127.0.0.1:6060` (see Profiling)      | off     |
+| `MAGLEV_PROFILE_MUTEX`     | `1` enables mutex and block profiling (slows the server)             | off     |
+
+All except `TZ`, `GTFS_PROTECTED_API_KEYS` and the two profiling variables are read only when Maglev starts with a config file (`-f`).
 
 ### Troubleshooting
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/models"
@@ -189,7 +190,8 @@ func TestTripForVehicleHandler_NotFoundCases(t *testing.T) {
 		{"Unknown vehicle ID", utils.FormCombinedID(testdata.Raba.ID, "invalid")},
 		{"Vehicle with empty trip", utils.FormCombinedID(testdata.Raba.ID, idleVehicleID)},
 		{"Vehicle referencing non-existent trip", utils.FormCombinedID(testdata.Raba.ID, ghostVehicleID)},
-		{"Unknown agency", utils.FormCombinedID("INVALID_AGENCY", "MOCK_VEHICLE_1")},
+		{"Unknown agency with known vehicle", utils.FormCombinedID("UNKNOWN", "MOCK_VEHICLE_1")},
+		{"Unknown agency with underscore in ID", utils.FormCombinedID("INVALID_AGENCY", "MOCK_VEHICLE_1")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -197,6 +199,48 @@ func TestTripForVehicleHandler_NotFoundCases(t *testing.T) {
 
 			assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 			assert.Equal(t, http.StatusNotFound, model.Code)
+		})
+	}
+}
+
+// TestTripForVehicleHandler_AttributedAgency checks that, like Java, a vehicle
+// is found only under the agency it was attributed to at ingestion: another
+// agency's prefix gives 404 even when that agency exists.
+func TestTripForVehicleHandler_AttributedAgency(t *testing.T) {
+	api := createTestApi(t)
+	t.Cleanup(api.Shutdown)
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	const (
+		otherAgencyID = "OTHER"
+		vehicleID     = "ATTRIBUTED_VEHICLE"
+	)
+	api.GtfsManager.MockAddAgency(otherAgencyID, "Other Agency")
+	t.Cleanup(func() {
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(context.Background(), `DELETE FROM agencies WHERE id = ?`, otherAgencyID)
+	})
+
+	trip := mustGetTrip(t, api)
+	api.GtfsManager.MockSetAgencyVehicles("_test", testdata.Raba.ID, []gtfs.Vehicle{{
+		ID:   &gtfs.VehicleID{ID: vehicleID},
+		Trip: &gtfs.Trip{ID: gtfs.TripID{ID: trip.ID, RouteID: trip.RouteID}},
+	}})
+
+	tests := []struct {
+		name       string
+		agencyID   string
+		wantStatus int
+	}{
+		{"the vehicle's own agency", testdata.Raba.ID, http.StatusOK},
+		{"another existing agency", otherAgencyID, http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[TripDetailsResponse](t, api,
+				tripForVehicleURL(utils.FormCombinedID(tt.agencyID, vehicleID)))
+
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+			assert.Equal(t, tt.wantStatus, model.Code)
 		})
 	}
 }

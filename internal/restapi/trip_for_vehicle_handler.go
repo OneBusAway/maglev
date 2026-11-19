@@ -10,6 +10,7 @@ import (
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -37,7 +38,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		api.dbErrorResponse(w, r, err)
 		return
 	}
 
@@ -192,11 +193,11 @@ func (api *RestAPI) buildTripForVehicleReferences(ctx context.Context, agencyID 
 			utils.FormCombinedID(agencyID, trip.ID),
 			combinedRouteID,
 			utils.FormCombinedID(agencyID, trip.ServiceID),
-			trip.TripHeadsign.String,
-			trip.TripShortName.String,
+			nulls.StringOrEmpty(trip.TripHeadsign),
+			nulls.StringOrEmpty(trip.TripShortName),
 			strconv.FormatInt(trip.DirectionID.Int64, 10),
-			utils.FormBlockID(agencyID, trip.BlockID.String, trip.ID),
-			utils.FormCombinedID(agencyID, trip.ShapeID.String),
+			utils.FormBlockID(agencyID, nulls.StringOrEmpty(trip.BlockID), trip.ID),
+			utils.FormCombinedID(agencyID, nulls.StringOrEmpty(trip.ShapeID)),
 		)
 		references.Trips = append(references.Trips, *tripRef)
 	}
@@ -263,6 +264,17 @@ func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request
 	}
 
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
+	// Like Java, the agency prefix is part of the vehicle's identity. A vehicle
+	// with no attributed agency can't be checked, so it is still found.
+	attributedAgencyID, attributed := api.GtfsManager.VehicleAgencyID(vehicleID)
+	belongsToAnotherAgency := attributed && attributedAgencyID != agencyID
+	if belongsToAnotherAgency {
+		reqLogger.Debug("vehicle belongs to another agency",
+			"vehicleID", vehicleID, "agencyID", agencyID, "vehicleAgencyID", attributedAgencyID)
+		api.sendNotFound(w, r)
+		return "", false
+	}
+
 	// Return 404 when vehicle has no associated trip (idle vehicle)
 	// or when the trip ID is empty (avoiding a futile DB lookup)
 	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {

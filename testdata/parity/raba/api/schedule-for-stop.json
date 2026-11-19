@@ -1,0 +1,203 @@
+{
+  "code": 200,
+  "currentTime": 1749740400000,
+  "data": {
+    "entry": {
+      "date": 1749711600000,
+      "stopId": "25_1033",
+      "stopRouteSchedules": [
+        {
+          "routeId": "25_151",
+          "stopRouteDirectionSchedules": [
+            {
+              "scheduleFrequencies": [],
+              "scheduleStopTimes": [
+                {
+                  "arrivalEnabled": false,
+                  "arrivalTime": 1749732660000,
+                  "departureEnabled": true,
+                  "departureTime": 1749732660000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_84f4520e-88b6-4ee6-8975-856799bc1359"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749736260000,
+                  "departureEnabled": true,
+                  "departureTime": 1749736260000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_19de7512-7aea-47ad-804b-4626a4a149db"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749739860000,
+                  "departureEnabled": true,
+                  "departureTime": 1749739860000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_dcd9e9b6-e261-4020-87f7-b65bf6b34e87"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749743460000,
+                  "departureEnabled": true,
+                  "departureTime": 1749743460000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_18d5d560-4d07-4871-bc06-376c979c7a26"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749747060000,
+                  "departureEnabled": true,
+                  "departureTime": 1749747060000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_aefbe062-2e49-47f2-8307-7c31578a090f"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749750660000,
+                  "departureEnabled": true,
+                  "departureTime": 1749750660000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_3a61ae4c-c8af-4833-8540-ef9cc3782d1c"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749754260000,
+                  "departureEnabled": true,
+                  "departureTime": 1749754260000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_247a781b-d191-4945-aa11-9ea41f9bc52c"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749757860000,
+                  "departureEnabled": true,
+                  "departureTime": 1749757860000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_6d7980db-3683-4e28-991a-38eac0886ae9"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749761460000,
+                  "departureEnabled": true,
+                  "departureTime": 1749761460000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_0429fb67-fb86-47eb-973b-d9a837938bd9"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749765060000,
+                  "departureEnabled": true,
+                  "departureTime": 1749765060000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_86857351-2be8-4f4c-84ac-b7c46a64b0e1"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749768660000,
+                  "departureEnabled": true,
+                  "departureTime": 1749768660000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_bbf65f6c-1828-40bb-acb2-ab695ca04bdc"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749772260000,
+                  "departureEnabled": true,
+                  "departureTime": 1749772260000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_13ce8720-1009-4c8e-83f2-92df45e5df97"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749775860000,
+                  "departureEnabled": true,
+                  "departureTime": 1749775860000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_d8c1e986-b0d0-43a2-b0e5-5ca179b1feb9"
+                },
+                {
+                  "arrivalEnabled": true,
+                  "arrivalTime": 1749779460000,
+                  "departureEnabled": true,
+                  "departureTime": 1749779460000,
+                  "serviceId": "25_c_1658_b_18260_d_31",
+                  "stopHeadsign": "",
+                  "tripId": "25_b137c8a8-db88-4f7b-8b7f-4ccfe1ee4103"
+                }
+              ],
+              "tripHeadsign": "Shasta Lake"
+            }
+          ]
+        }
+      ]
+    },
+    "references": {
+      "agencies": [
+        {
+          "disclaimer": "",
+          "email": "",
+          "fareUrl": "",
+          "id": "25",
+          "lang": "en",
+          "name": "Redding Area Bus Authority",
+          "phone": "530-241-2877",
+          "privateService": false,
+          "timezone": "America/Los_Angeles",
+          "url": "http://www.rabaride.com/"
+        }
+      ],
+      "routes": [
+        {
+          "agencyId": "25",
+          "color": "55d1b0",
+          "description": "",
+          "id": "25_151",
+          "longName": "Route 1",
+          "nullSafeShortName": "1",
+          "shortName": "1",
+          "textColor": "000000",
+          "type": 3,
+          "url": "https://rabaride.com/Document%20Center/Services/Bus/Route01.pdf"
+        }
+      ],
+      "situations": [],
+      "stopTimes": [],
+      "stops": [
+        {
+          "code": "1033",
+          "direction": "E",
+          "id": "25_1033",
+          "lat": 40.680372,
+          "locationType": 0,
+          "lon": -122.363588,
+          "name": "Shasta Dam Blvd at Median Ave",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        }
+      ],
+      "trips": []
+    }
+  },
+  "text": "OK",
+  "version": 2
+}

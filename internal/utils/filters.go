@@ -5,12 +5,14 @@ import (
 
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 )
 
 // FilterAgencies filters a list of agencies based on their presence in the provided map.
 // It returns a slice of AgencyReference objects for the agencies that are present.
+// The slice is never nil, so it serializes as [] when no agency matches.
 func FilterAgencies(all []gtfsdb.Agency, present map[string]bool) []models.AgencyReference {
-	var refs []models.AgencyReference
+	refs := []models.AgencyReference{}
 	for _, a := range all {
 		if present[a.ID] {
 			refs = append(refs, models.AgencyReferenceFromDatabase(&a))
@@ -26,14 +28,14 @@ func FilterRoutes(q *gtfsdb.Queries, ctx context.Context, present map[string]boo
 	if err != nil {
 		return nil, err
 	}
-	var refs []models.Route
+	refs := []models.Route{}
 	for _, r := range routes {
 		routeIDStr := FormCombinedID(r.AgencyID, r.ID)
 		if present[routeIDStr] {
 			refs = append(refs, models.NewRoute(
-				routeIDStr, r.AgencyID, r.ShortName.String, r.LongName.String,
-				r.Desc.String, models.RouteType(r.Type), r.Url.String,
-				r.Color.String, r.TextColor.String))
+				routeIDStr, r.AgencyID, nulls.StringOrEmpty(r.ShortName), nulls.StringOrEmpty(r.LongName),
+				nulls.StringOrEmpty(r.Desc), models.RouteType(r.Type), nulls.StringOrEmpty(r.Url),
+				nulls.StringOrEmpty(r.Color), nulls.StringOrEmpty(r.TextColor)))
 		}
 	}
 	return refs, nil

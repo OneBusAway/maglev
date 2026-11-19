@@ -49,11 +49,7 @@ func loadLatencyFixture(tb testing.TB) (*Client, string, string) {
 		dbPath, _ = filepath.Abs(filepath.Join("..", "testdata", "perf", "trimet-perf.db"))
 	case latencyFileExists(rabaZip):
 		zipPath = rabaZip
-		tmpDir := filepath.Join(os.TempDir(), "maglev_query_latency")
-		if mkErr := os.MkdirAll(tmpDir, 0755); mkErr != nil {
-			tb.Fatalf("cannot create tmp dir: %v", mkErr)
-		}
-		dbPath = filepath.Join(tmpDir, "raba_latency.db")
+		dbPath = filepath.Join(tb.TempDir(), "raba_latency.db")
 	default:
 		tb.Skip("no GTFS dataset found – run scripts/download-perf-data.sh or ensure testdata/raba.zip exists")
 	}
@@ -370,12 +366,10 @@ SELECT st.trip_id, st.arrival_time, st.departure_time,
 FROM stop_times st
 JOIN trips t ON st.trip_id = t.id
 WHERE st.stop_id = ?
-  AND (
-      (st.arrival_time   BETWEEN ? AND ?)
-   OR (st.departure_time BETWEEN ? AND ?)
-  )
+  AND st.departure_time >= ?
+  AND st.arrival_time <= ?
 ORDER BY st.arrival_time`,
-			args: []any{stopID, windowStart, windowEnd, windowStart, windowEnd},
+			args: []any{stopID, windowStart, windowEnd},
 		},
 		{
 			name: "GetScheduleForStopOnDate",

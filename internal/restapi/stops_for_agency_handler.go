@@ -129,6 +129,7 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 	if err != nil {
 		return nil, err
 	}
+	utils.SortRouteIDsForStopsRowsByName(routeIDsRows)
 
 	// Build a map of stop ID to route IDs in memory
 	routesByStop := make(map[string][]string)
@@ -149,8 +150,8 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 		}
 
 		parentID := ""
-		if nulls.StringOrEmpty(stop.ParentStation) != "" {
-			parentID = utils.FormCombinedID(agencyID, stop.ParentStation.String)
+		if parentStation := nulls.StringOrEmpty(stop.ParentStation); parentStation != "" {
+			parentID = utils.FormCombinedID(agencyID, parentStation)
 		}
 
 		stopsList = append(stopsList, models.Stop{
@@ -160,7 +161,7 @@ func (api *RestAPI) buildStopsListForAgency(ctx context.Context, agencyID string
 			Lat:                stop.Lat,
 			LocationType:       int(stop.LocationType.Int64),
 			Lon:                stop.Lon,
-			Name:               stop.Name.String,
+			Name:               nulls.StringOrEmpty(stop.Name),
 			Parent:             parentID,
 			RouteIDs:           routeIdsString,
 			StaticRouteIDs:     routeIdsString,
