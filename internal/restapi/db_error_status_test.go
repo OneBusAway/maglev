@@ -66,7 +66,7 @@ func TestDatabaseFailureIsNotReportedAsNotFound(t *testing.T) {
 }
 
 // Subsequent lookups that follow an initial successful check (e.g., GetAgency or
-// BlockHasTripForAgency) must also report database failures as 500 rather than
+// GetBlockDetails) must also report database failures as 500 rather than
 // 404. We drop the downstream table on a RABA fixture so the initial lookup
 // succeeds and only the second lookup encounters the database failure.
 func TestSubsequentDatabaseFailureIsNotReportedAsNotFound(t *testing.T) {
@@ -87,8 +87,13 @@ func TestSubsequentDatabaseFailureIsNotReportedAsNotFound(t *testing.T) {
 		},
 		{
 			name:      "block",
-			dropTable: "stop_times",
+			dropTable: "stop_routes",
 			endpoint:  blockURL("25_1"),
+		},
+		{
+			name:      "routes-for-location text search",
+			dropTable: "routes_fts",
+			endpoint:  "/api/where/routes-for-location.json?lat=40.589123&lon=-122.390830&radius=5000&query=Redding&key=TEST",
 		},
 	}
 
@@ -139,6 +144,10 @@ func TestLocationSpatialQueryFailure(t *testing.T) {
 		{
 			name:     "trips-for-location",
 			endpoint: tripsForLocationURL(0.1, 0.1),
+		},
+		{
+			name:     "routes-for-location",
+			endpoint: "/api/where/routes-for-location.json?lat=40.589123&lon=-122.390830&radius=5000&key=TEST",
 		},
 	}
 	for _, tt := range tests {

@@ -1,0 +1,41 @@
+{
+  "code": 200,
+  "currentTime": 1749740400000,
+  "data": {
+    "entry": {
+      "agencyId": "25",
+      "color": "55d1b0",
+      "description": "",
+      "id": "25_151",
+      "longName": "Route 1",
+      "nullSafeShortName": "1",
+      "shortName": "1",
+      "textColor": "000000",
+      "type": 3,
+      "url": "https://rabaride.com/Document%20Center/Services/Bus/Route01.pdf"
+    },
+    "references": {
+      "agencies": [
+        {
+          "disclaimer": "",
+          "email": "",
+          "fareUrl": "",
+          "id": "25",
+          "lang": "en",
+          "name": "Redding Area Bus Authority",
+          "phone": "530-241-2877",
+          "privateService": false,
+          "timezone": "America/Los_Angeles",
+          "url": "http://www.rabaride.com/"
+        }
+      ],
+      "routes": [],
+      "situations": [],
+      "stopTimes": [],
+      "stops": [],
+      "trips": []
+    }
+  },
+  "text": "OK",
+  "version": 2
+}

@@ -70,7 +70,6 @@ const DefaultTripStatusValue = "default"
 
 // IsUntracked reports whether this TripStatus is merely the default placeholder
 // returned by BuildTripStatus when no real-time tracking record exists.
-// Extension 4e requires the status key to be omitted in this case.
 func (ts *TripStatus) IsUntracked() bool {
 	return ts.Status == DefaultTripStatusValue && !ts.Predicted
 }

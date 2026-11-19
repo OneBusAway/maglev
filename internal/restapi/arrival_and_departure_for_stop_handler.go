@@ -19,6 +19,7 @@ type ArrivalAndDepartureParams struct {
 	MinutesAfter  int
 	MinutesBefore int
 	Time          *time.Time
+	TimeParam     string
 	TripID        string
 	ServiceDate   *time.Time
 	VehicleID     string
@@ -44,13 +45,13 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 
 	// Validate minutesAfter
 	if minutesAfterStr := r.URL.Query().Get("minutesAfter"); minutesAfterStr != "" {
-		if minutesAfter, err := strconv.Atoi(minutesAfterStr); err == nil {
+		if minutesAfter, err := strconv.ParseInt(minutesAfterStr, 10, 32); err == nil {
 			if minutesAfter < 0 {
 				fieldErrors["minutesAfter"] = []string{"must be a non-negative integer"}
 			} else if minutesAfter > maxMinutesAfter {
 				params.MinutesAfter = maxMinutesAfter
 			} else {
-				params.MinutesAfter = minutesAfter
+				params.MinutesAfter = int(minutesAfter)
 			}
 		} else {
 			fieldErrors["minutesAfter"] = []string{"must be a valid integer"}
@@ -59,13 +60,13 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 
 	// Validate minutesBefore
 	if minutesBeforeStr := r.URL.Query().Get("minutesBefore"); minutesBeforeStr != "" {
-		if minutesBefore, err := strconv.Atoi(minutesBeforeStr); err == nil {
+		if minutesBefore, err := strconv.ParseInt(minutesBeforeStr, 10, 32); err == nil {
 			if minutesBefore < 0 {
 				fieldErrors["minutesBefore"] = []string{"must be a non-negative integer"}
 			} else if minutesBefore > maxMinutesBefore {
 				params.MinutesBefore = maxMinutesBefore
 			} else {
-				params.MinutesBefore = minutesBefore
+				params.MinutesBefore = int(minutesBefore)
 			}
 		} else {
 			fieldErrors["minutesBefore"] = []string{"must be a valid integer"}
@@ -73,12 +74,11 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 	}
 
 	// Validate time
-	if timeStr := r.URL.Query().Get("time"); timeStr != "" {
-		if timeMs, ok := utils.ParseEpochMillis(timeStr); ok {
-			timeParam := time.UnixMilli(timeMs)
-			params.Time = &timeParam
-		} else {
-			fieldErrors["time"] = []string{"must be a valid Unix timestamp in milliseconds"}
+	params.TimeParam, fieldErrors = utils.ParseArrivalTimeParam(r.URL.Query().Get("time"), fieldErrors)
+	if params.TimeParam != "" {
+		if ms, ok := utils.ParseEpochMillis(params.TimeParam); ok {
+			t := time.UnixMilli(ms)
+			params.Time = &t
 		}
 	}
 
@@ -104,8 +104,9 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 
 	// Validate stopSequence
 	if stopSequenceStr := r.URL.Query().Get("stopSequence"); stopSequenceStr != "" {
-		if stopSequence, err := strconv.Atoi(stopSequenceStr); err == nil {
-			params.StopSequence = &stopSequence
+		if stopSequence, err := strconv.ParseInt(stopSequenceStr, 10, 32); err == nil {
+			seq := int(stopSequence)
+			params.StopSequence = &seq
 		} else {
 			fieldErrors["stopSequence"] = []string{"must be a valid integer"}
 		}
@@ -126,9 +127,9 @@ func parseArrivalAndDepartureParams(r *http.Request, loc ...*time.Location) (Arr
 			localized := params.ServiceDate.In(loc[0])
 			params.ServiceDate = &localized
 		}
-		if params.Time != nil {
-			localized := params.Time.In(loc[0])
-			params.Time = &localized
+		if params.TimeParam != "" {
+			resolved := utils.ResolveArrivalTime(params.TimeParam, loc[0], time.Time{})
+			params.Time = &resolved
 		}
 	}
 
@@ -175,7 +176,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	_, tripID, err := utils.ExtractAgencyIDAndCodeID(params.TripID)
 	if err != nil {
 		fieldErrors := map[string][]string{
-			"id": {err.Error()},
+			"tripId": {err.Error()},
 		}
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -204,9 +205,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		localized := params.ServiceDate.In(loc)
 		params.ServiceDate = &localized
 	}
-	if params.Time != nil {
-		localized := params.Time.In(loc)
-		params.Time = &localized
+	if params.TimeParam != "" {
+		resolved := utils.ResolveArrivalTime(params.TimeParam, loc, api.Clock.Now())
+		params.Time = &resolved
 	}
 
 	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
@@ -247,9 +248,12 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		}
 	}
 
-	// Set current time
+	// Java treats time=0 as not supplied on this endpoint only
+	// (ArrivalAndDepartureForStopAction.java:105-106) and uses the current
+	// time. The plural arrivals-and-departures-for-stop endpoint does not:
+	// a supplied 0 stays 1970.
 	var currentTime time.Time
-	if params.Time != nil {
+	if params.Time != nil && params.Time.UnixMilli() != 0 {
 		currentTime = *params.Time
 	} else {
 		currentTime = api.Clock.Now().In(loc)
@@ -397,10 +401,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID), // routeID
-		route.ShortName.String,                         // routeShortName
-		route.LongName.String,                          // routeLongName
+		nulls.StringOrEmpty(route.ShortName),           // routeShortName
+		nulls.StringOrEmpty(route.LongName),            // routeLongName
 		utils.FormCombinedID(route.AgencyID, tripID),   // tripID
-		trip.TripHeadsign.String,                       // tripHeadsign
+		nulls.StringOrEmpty(trip.TripHeadsign),         // tripHeadsign
 		stopID,                                         // stopID
 		vehicleID,                                      // vehicleID
 		serviceStart,                                   // serviceDate
@@ -450,11 +454,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		utils.FormCombinedID(route.AgencyID, tripID),
 		utils.FormCombinedID(route.AgencyID, trip.RouteID),
 		utils.FormCombinedID(route.AgencyID, trip.ServiceID),
-		trip.TripHeadsign.String,
+		nulls.StringOrEmpty(trip.TripHeadsign),
 		"", // trip short name
 		strconv.FormatInt(trip.DirectionID.Int64, 10),
-		utils.FormBlockID(route.AgencyID, trip.BlockID.String, trip.ID),
-		utils.FormCombinedID(route.AgencyID, trip.ShapeID.String),
+		utils.FormBlockID(route.AgencyID, nulls.StringOrEmpty(trip.BlockID), trip.ID),
+		utils.FormCombinedID(route.AgencyID, nulls.StringOrEmpty(trip.ShapeID)),
 	)
 	references.Trips = append(references.Trips, *tripRef)
 
@@ -472,11 +476,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 						utils.FormCombinedID(activeRoute.AgencyID, activeTripID),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.RouteID),
 						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ServiceID),
-						activeTrip.TripHeadsign.String,
+						nulls.StringOrEmpty(activeTrip.TripHeadsign),
 						"", // trip short name
 						strconv.FormatInt(activeTrip.DirectionID.Int64, 10),
-						utils.FormBlockID(activeRoute.AgencyID, activeTrip.BlockID.String, activeTrip.ID),
-						utils.FormCombinedID(activeRoute.AgencyID, activeTrip.ShapeID.String),
+						utils.FormBlockID(activeRoute.AgencyID, nulls.StringOrEmpty(activeTrip.BlockID), activeTrip.ID),
+						utils.FormCombinedID(activeRoute.AgencyID, nulls.StringOrEmpty(activeTrip.ShapeID)),
 					)
 					references.Trips = append(references.Trips, *activeTripRef)
 				}
@@ -532,6 +536,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		reqLogger.Warn("failed to batch fetch routes for stops", "error", err)
 		batchedRoutesForStops = nil
 	}
+	utils.SortRoutesForStopsRowsByName(batchedRoutesForStops)
 
 	routesByStopID := make(map[string][]gtfsdb.GetRoutesForStopsRow)
 	for _, routeRow := range batchedRoutesForStops {
@@ -557,7 +562,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		stopRef := models.Stop{
 			ID:                 utils.FormCombinedID(stopAgencyID, stopData.ID),
-			Name:               stopData.Name.String,
+			Name:               nulls.StringOrEmpty(stopData.Name),
 			Lat:                stopData.Lat,
 			Lon:                stopData.Lon,
 			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
@@ -592,13 +597,13 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		routeRefs[combinedID] = models.NewRoute(
 			combinedID,
 			route.AgencyID,
-			route.ShortName.String,
-			route.LongName.String,
-			route.Desc.String,
+			nulls.StringOrEmpty(route.ShortName),
+			nulls.StringOrEmpty(route.LongName),
+			nulls.StringOrEmpty(route.Desc),
 			models.RouteType(route.Type),
-			route.Url.String,
-			route.Color.String,
-			route.TextColor.String)
+			nulls.StringOrEmpty(route.Url),
+			nulls.StringOrEmpty(route.Color),
+			nulls.StringOrEmpty(route.TextColor))
 	}
 	references.Routes = utils.MapValues(routeRefs)
 
@@ -682,6 +687,9 @@ func (api *RestAPI) getPredictedTimes(
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
+		return time.Time{}, time.Time{}, false
+	}
+	if api.tripUpdateExpired(*realTimeTrip) {
 		return time.Time{}, time.Time{}, false
 	}
 

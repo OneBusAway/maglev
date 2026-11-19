@@ -81,6 +81,7 @@ func TestFilterAgencies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := FilterAgencies(tt.all, tt.present)
+			assert.NotNil(t, result, "result must be non-nil so it serializes as []")
 			assert.Equal(t, tt.expected, len(result))
 
 			// Verify that returned agencies are correct

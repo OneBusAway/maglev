@@ -53,10 +53,10 @@ func (api *RestAPI) tripHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	blockID := utils.FormBlockID(agencyID, trip.BlockID.String, trip.ID)
+	blockID := utils.FormBlockID(agencyID, nulls.StringOrEmpty(trip.BlockID), trip.ID)
 	var shapeID string
 	if trip.ShapeID.Valid {
-		shapeID = utils.FormCombinedID(agencyID, trip.ShapeID.String)
+		shapeID = utils.FormCombinedID(agencyID, nulls.StringOrEmpty(trip.ShapeID))
 	}
 
 	tripModel := &models.Trip{

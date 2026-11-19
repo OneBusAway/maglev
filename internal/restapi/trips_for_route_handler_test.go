@@ -1186,6 +1186,7 @@ func TestTripsForRouteHandler_InvalidTimeParameter(t *testing.T) {
 		{name: "Garbage String", time: "garbage"},
 		{name: "Overflowing Epoch", time: "99999999999999999999"},
 		{name: "Invalid Calendar Date", time: "2024-13-45"},
+		{name: "Date Only YYYY-MM-DD", time: "2026-10-20"},
 	}
 
 	for _, tt := range tests {
@@ -1257,6 +1258,7 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 		name            string
 		includeTrip     string
 		includeSchedule string
+		includeStatus   string
 		wantTripsLen    int
 		wantStatus      int
 	}{
@@ -1264,6 +1266,7 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 			name:            "Include Trip (default)",
 			includeTrip:     "",
 			includeSchedule: "true",
+			includeStatus:   "true",
 			wantStatus:      http.StatusOK,
 			wantTripsLen:    1,
 		},
@@ -1271,13 +1274,23 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 			name:            "Include Trip Explicit",
 			includeTrip:     "true",
 			includeSchedule: "true",
+			includeStatus:   "true",
 			wantStatus:      http.StatusOK,
 			wantTripsLen:    1,
 		},
 		{
-			name:            "Exclude Trip",
+			name:            "Exclude Trip But Status Preserves Active Trip",
 			includeTrip:     "false",
 			includeSchedule: "true",
+			includeStatus:   "true",
+			wantStatus:      http.StatusOK,
+			wantTripsLen:    1,
+		},
+		{
+			name:            "Exclude Trip And Exclude Status Yields Zero Trips",
+			includeTrip:     "false",
+			includeSchedule: "true",
+			includeStatus:   "false",
 			wantStatus:      http.StatusOK,
 			wantTripsLen:    0,
 		},
@@ -1285,20 +1298,23 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 			name:            "No Schedule But Still Include Trip",
 			includeTrip:     "",
 			includeSchedule: "false",
+			includeStatus:   "true",
 			wantStatus:      http.StatusOK,
 			wantTripsLen:    1,
 		},
 		{
-			name:            "Exclude Trip (Uppercase FALSE)",
+			name:            "Exclude Trip (Uppercase FALSE) With Status Preserved",
 			includeTrip:     "FALSE",
 			includeSchedule: "true",
+			includeStatus:   "true",
 			wantStatus:      http.StatusOK,
-			wantTripsLen:    0,
+			wantTripsLen:    1,
 		},
 		{
 			name:            "Reject Trip (Numeric 0)",
 			includeTrip:     "0",
 			includeSchedule: "true",
+			includeStatus:   "true",
 			wantStatus:      http.StatusBadRequest,
 			wantTripsLen:    0,
 		},
@@ -1308,8 +1324,8 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=%s&time=%d",
-				combinedRouteID, tt.includeSchedule, timeMs)
+			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=%s&includeStatus=%s&time=%d",
+				combinedRouteID, tt.includeSchedule, tt.includeStatus, timeMs)
 			if tt.includeTrip != "" {
 				url += "&includeTrip=" + tt.includeTrip
 			}
@@ -1322,6 +1338,8 @@ func TestTripsForRouteHandler_TripInclusion(t *testing.T) {
 			}
 			require.NotEmpty(t, model.Data.List,
 				"fixture guarantees a trip at the pinned clock")
+			assert.NotNil(t, model.Data.References.Trips,
+				"references.trips should serialize as [], not null")
 			assert.Equal(t, tt.wantTripsLen, len(model.Data.References.Trips),
 				"references.trips should have the expected number of entries")
 
@@ -1576,6 +1594,11 @@ func TestTripsForRouteHandler_BoolParamParsing(t *testing.T) {
 		for _, tt := range values {
 			t.Run(flag+"/"+tt.name, func(t *testing.T) {
 				url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&time=%d", combinedRouteID, timeMs)
+				if flag == "includeTrip" {
+					// Isolate includeTrip by disabling schedule and status so auxiliary
+					// references (e.g. activeTripId) do not populate references.trips.
+					url += "&includeSchedule=false&includeStatus=false"
+				}
 				if tt.query != "" {
 					url += "&" + flag + tt.query
 				}
@@ -2242,6 +2265,33 @@ func TestTripsForRouteHandler_BlockSequence_AdjacentTripReferences(t *testing.T)
 				ref.TripHeadsign != refTrips[utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1")].TripHeadsign,
 			"adjacent trips must not both be the same record")
 	}
+}
+
+func TestTripsForRouteHandler_BlockSequence_IncludeTripFalseKeepsScheduleTrips(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(blockSequenceClock),
+		"trips-for-route-block-seq.zip", blockSequenceFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+	timeMs := blockSequenceClock.UnixMilli()
+	url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeSchedule=true&includeTrip=false&includeStatus=false&time=%d",
+		combinedRouteID, timeMs)
+
+	resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusOK, model.Code)
+	require.Len(t, model.Data.List, 1)
+
+	// With includeTrip=false&includeStatus=false, references.trips should contain
+	// exactly previousTripId and nextTripId (tfr-trip-1 and tfr-trip-3), without tfr-trip-2.
+	expectedTripIDs := []string{
+		utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1"),
+		utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-3"),
+	}
+	refTripIDs := make([]string, 0, len(model.Data.References.Trips))
+	for _, ref := range model.Data.References.Trips {
+		refTripIDs = append(refTripIDs, ref.ID)
+	}
+	assert.ElementsMatch(t, expectedTripIDs, refTripIDs)
 }
 
 // NullBlockServiceDayGuard verifies a trip found in both the current-day and
