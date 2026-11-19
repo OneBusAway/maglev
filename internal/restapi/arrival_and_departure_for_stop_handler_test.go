@@ -2171,3 +2171,24 @@ func TestArrivalAndDepartureForStopHandler_CrossAgencyTimezone(t *testing.T) {
 	assert.True(t, entry.ServiceDate.In(locLA).Equal(expectedMidnightLA),
 		"service date must be midnight in the trip agency timezone, got %v", entry.ServiceDate)
 }
+
+func TestArrivalAndDepartureForStopIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	stopID := utils.FormCombinedID("25", "4062")
+	tripID := utils.FormCombinedID("25", "0f36bccf-c435-4b31-b001-da345d06a57d")
+	serviceDate := time.Now()
+
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&includeReferences=false",
+		stopID, tripID, serviceDate.UnixMilli(),
+	)
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Empty(t, model.Data.References.Agencies, "references.agencies must be empty when includeReferences=false")
+	assert.Empty(t, model.Data.References.Routes, "references.routes must be empty when includeReferences=false")
+	assert.Empty(t, model.Data.References.Trips, "references.trips must be empty when includeReferences=false")
+	assert.Empty(t, model.Data.References.Stops, "references.stops must be empty when includeReferences=false")
+}

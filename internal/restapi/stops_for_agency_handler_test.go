@@ -147,3 +147,17 @@ func TestStopsForAgencyInvalidAgency(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, model.Code)
 	assert.Equal(t, "resource not found", model.Text)
 }
+
+func TestStopsForAgencyIncludeReferencesFalse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	params := url.Values{"includeReferences": {"false"}}
+	resp, model := callAPIHandler[StopsResponse](t, api, stopsForAgencyURL(testdata.Raba.ID, params))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.List, "stop list must not be empty")
+	assert.Empty(t, model.Data.References.Agencies, "references.agencies must be empty when includeReferences=false")
+	assert.Empty(t, model.Data.References.Routes, "references.routes must be empty when includeReferences=false")
+	assert.Empty(t, model.Data.References.Stops, "references.stops must be empty when includeReferences=false")
+}
