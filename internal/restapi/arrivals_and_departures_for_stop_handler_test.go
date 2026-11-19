@@ -408,10 +408,12 @@ func TestArrivalsAndDeparturesWithFrequency(t *testing.T) {
 	// The fixture serves stop A with freq-trip (06:00) and freq-exact-trip
 	// (06:00) from their 06:00-09:00 windows, and freq-normal-trip at 08:00.
 	// Querying at 06:02 (default frequency window 06:00-06:32) surfaces only the two
-	// frequency-based arrivals; querying at 08:05 surfaces only the normal one.
+	// frequency-based arrivals; querying at 08:05 with a zero frequency window
+	// isolates the normal scheduled arrival.
 	windowRequests := []struct {
 		name        string
 		timeMs      int64
+		extraParams url.Values
 		wantTripIDs []string
 		wantFreq    bool
 	}{
@@ -422,8 +424,12 @@ func TestArrivalsAndDeparturesWithFrequency(t *testing.T) {
 			wantFreq:    true,
 		},
 		{
-			name:        "non-frequency arrival keeps frequency null",
-			timeMs:      time.Date(2025, 6, 12, 8, 5, 0, 0, time.UTC).UnixMilli(),
+			name:   "non-frequency arrival keeps frequency null",
+			timeMs: time.Date(2025, 6, 12, 8, 5, 0, 0, time.UTC).UnixMilli(),
+			extraParams: url.Values{
+				"frequencyMinutesBefore": {"0"},
+				"frequencyMinutesAfter":  {"0"},
+			},
 			wantTripIDs: []string{freqNormalTripD},
 			wantFreq:    false,
 		},
@@ -431,9 +437,13 @@ func TestArrivalsAndDeparturesWithFrequency(t *testing.T) {
 
 	for _, tc := range windowRequests {
 		t.Run(tc.name, func(t *testing.T) {
-			endpoint := arrivalsAndDeparturesURL(combinedStopID, url.Values{
+			params := url.Values{
 				"time": {fmt.Sprintf("%d", tc.timeMs)},
-			})
+			}
+			for k, v := range tc.extraParams {
+				params[k] = v
+			}
+			endpoint := arrivalsAndDeparturesURL(combinedStopID, params)
 			resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
 
 			require.Equal(t, http.StatusOK, resp.StatusCode)

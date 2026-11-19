@@ -431,8 +431,16 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// The arrival's frequency uses the window-matched row fetched above.
 	if len(freqRows) > 0 {
-		converted := models.NewFrequencyFromServiceStart(*selectFrequencyFromStart(freqRows, serviceStart, currentTime), serviceStart)
-		arrival.Frequency = &converted
+		var firstDep int64
+		if len(orderedStopTimes) > 0 {
+			firstDep = orderedStopTimes[0].DepartureTime
+		}
+		stRow := gtfsdb.GetStopTimesForStopInWindowRow{
+			ArrivalTime:    matchedStopTime.ArrivalTime,
+			DepartureTime:  matchedStopTime.DepartureTime,
+			MinArrivalTime: nulls.Int64(firstDep),
+		}
+		applyFrequency(arrival, stRow, freqRows, serviceStart, currentTime, 0, 0)
 	}
 
 	references := models.NewEmptyReferences()

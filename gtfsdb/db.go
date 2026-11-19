@@ -216,6 +216,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getFrequenciesForTripsStmt, err = db.PrepareContext(ctx, getFrequenciesForTrips); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFrequenciesForTrips: %w", err)
 	}
+	if q.getFrequencyStopTimesForStopInWindowStmt, err = db.PrepareContext(ctx, getFrequencyStopTimesForStopInWindow); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFrequencyStopTimesForStopInWindow: %w", err)
+	}
+	if q.getFrequencyStopTimesForStopsInWindowStmt, err = db.PrepareContext(ctx, getFrequencyStopTimesForStopsInWindow); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFrequencyStopTimesForStopsInWindow: %w", err)
+	}
 	if q.getFrequencyTripIDsStmt, err = db.PrepareContext(ctx, getFrequencyTripIDs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFrequencyTripIDs: %w", err)
 	}
@@ -733,6 +739,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getFrequenciesForTripsStmt: %w", cerr)
 		}
 	}
+	if q.getFrequencyStopTimesForStopInWindowStmt != nil {
+		if cerr := q.getFrequencyStopTimesForStopInWindowStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFrequencyStopTimesForStopInWindowStmt: %w", cerr)
+		}
+	}
+	if q.getFrequencyStopTimesForStopsInWindowStmt != nil {
+		if cerr := q.getFrequencyStopTimesForStopsInWindowStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFrequencyStopTimesForStopsInWindowStmt: %w", cerr)
+		}
+	}
 	if q.getFrequencyTripIDsStmt != nil {
 		if cerr := q.getFrequencyTripIDsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFrequencyTripIDsStmt: %w", cerr)
@@ -1156,6 +1172,8 @@ type Queries struct {
 	getFirstStopOfNextTripInBlockStmt         *sql.Stmt
 	getFrequenciesForTripStmt                 *sql.Stmt
 	getFrequenciesForTripsStmt                *sql.Stmt
+	getFrequencyStopTimesForStopInWindowStmt  *sql.Stmt
+	getFrequencyStopTimesForStopsInWindowStmt *sql.Stmt
 	getFrequencyTripIDsStmt                   *sql.Stmt
 	getImportMetadataStmt                     *sql.Stmt
 	getInServiceTripIDsForStopsStmt           *sql.Stmt
@@ -1290,6 +1308,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getFirstStopOfNextTripInBlockStmt:         q.getFirstStopOfNextTripInBlockStmt,
 		getFrequenciesForTripStmt:                 q.getFrequenciesForTripStmt,
 		getFrequenciesForTripsStmt:                q.getFrequenciesForTripsStmt,
+		getFrequencyStopTimesForStopInWindowStmt:  q.getFrequencyStopTimesForStopInWindowStmt,
+		getFrequencyStopTimesForStopsInWindowStmt: q.getFrequencyStopTimesForStopsInWindowStmt,
 		getFrequencyTripIDsStmt:                   q.getFrequencyTripIDsStmt,
 		getImportMetadataStmt:                     q.getImportMetadataStmt,
 		getInServiceTripIDsForStopsStmt:           q.getInServiceTripIDsForStopsStmt,
