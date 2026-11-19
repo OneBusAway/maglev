@@ -2252,4 +2252,32 @@ func TestArrivalAndDepartureForStop_UnderscoreAgencyStatusStops(t *testing.T) {
 		_, ok := stopsByID[combinedID]
 		assert.Truef(t, ok, "references.stops must contain %q (route agency has underscores)", combinedID)
 	}
+
+	// When the queried stop is also a status stop, both combined IDs must resolve.
+	// Here we query A_s2 while the vehicle's nextStop is AGENCY_ONE_s2: without the
+	// fix, statusStopAgency would override the queried-stop reference from A_s2 to
+	// AGENCY_ONE_s2, leaving entry.stopId (A_s2) unresolvable.
+	endpoint2 := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=2",
+		utils.FormCombinedID(stopAgency, stopBID),
+		utils.FormCombinedID(stopAgency, tripID),
+		serviceMidnight.UnixMilli(),
+	)
+	resp2, model2 := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint2)
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
+
+	stopsByID2 := make(map[string]models.Stop, len(model2.Data.References.Stops))
+	for _, s := range model2.Data.References.Stops {
+		stopsByID2[s.ID] = s
+	}
+	// The queried stop must resolve under the stop agency.
+	_, ok := stopsByID2[utils.FormCombinedID(stopAgency, stopBID)]
+	assert.True(t, ok, "references.stops must contain the queried stop %q even when it is also a status stop",
+		utils.FormCombinedID(stopAgency, stopBID))
+	// The status stop reference under the route agency must also resolve.
+	status2 := model2.Data.Entry.TripStatus
+	if status2 != nil && status2.NextStop != "" {
+		_, ok = stopsByID2[status2.NextStop]
+		assert.True(t, ok, "references.stops must contain nextStop %q for the route-agency combined ID", status2.NextStop)
+	}
 }
