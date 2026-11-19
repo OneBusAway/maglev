@@ -266,9 +266,7 @@ func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	// Like Java, the agency prefix is part of the vehicle's identity. A vehicle
 	// with no attributed agency can't be checked, so it is still found.
-	attributedAgencyID, attributed := api.GtfsManager.VehicleAgencyID(vehicleID)
-	belongsToAnotherAgency := attributed && attributedAgencyID != agencyID
-	if belongsToAnotherAgency {
+	if attributedAgencyID, belongsToAnotherAgency := api.vehicleBelongsToAnotherAgency(agencyID, vehicleID); belongsToAnotherAgency {
 		reqLogger.Debug("vehicle belongs to another agency",
 			"vehicleID", vehicleID, "agencyID", agencyID, "vehicleAgencyID", attributedAgencyID)
 		api.sendNotFound(w, r)

@@ -701,3 +701,61 @@ func TestTripForVehicleHandler_ScheduleTripsResolve(t *testing.T) {
 		}
 	}
 }
+
+// TestTripForVehicleHandler_AttributedRouteFromAnotherAgency covers a vehicle on
+// another agency's route, attributed to that agency as ingestion does: it is
+// found under the route's agency with its references intact, and under no other.
+func TestTripForVehicleHandler_AttributedRouteFromAnotherAgency(t *testing.T) {
+	api := createTestApi(t)
+	t.Cleanup(api.Shutdown)
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	const (
+		otherAgencyID    = "OTHERAGENCY"
+		otherRouteID     = "OTHERROUTE"
+		crossAgencyTrip  = "TRIP_ON_OTHER_AGENCY_ROUTE"
+		crossAgencyVehID = "CROSS_AGENCY_VEHICLE"
+	)
+
+	api.GtfsManager.MockAddAgency(otherAgencyID, "Other Agency")
+	api.GtfsManager.MockAddRoute(otherRouteID, otherAgencyID, "Cross-agency route")
+	insertStubTrip(t, api, crossAgencyTrip, otherRouteID)
+	api.GtfsManager.MockSetAgencyVehicles("_test", otherAgencyID, []gtfs.Vehicle{{
+		ID:   &gtfs.VehicleID{ID: crossAgencyVehID},
+		Trip: &gtfs.Trip{ID: gtfs.TripID{ID: crossAgencyTrip, RouteID: otherRouteID}},
+	}})
+
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id = ?`, crossAgencyTrip)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM routes WHERE id = ?`, otherRouteID)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM agencies WHERE id = ?`, otherAgencyID)
+	})
+
+	includeTrip := url.Values{"includeTrip": {"true"}}
+
+	t.Run("another agency's prefix is 404", func(t *testing.T) {
+		resp, _ := callAPIHandler[TripDetailsResponse](t, api,
+			tripForVehicleURL(utils.FormCombinedID(testdata.Raba.ID, crossAgencyVehID), includeTrip))
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("the attributed agency keeps its references", func(t *testing.T) {
+		resp, model := callAPIHandler[TripDetailsResponse](t, api,
+			tripForVehicleURL(utils.FormCombinedID(otherAgencyID, crossAgencyVehID), includeTrip))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		refs := model.Data.References
+		require.NotEmpty(t, refs.Trips)
+		require.NotEmpty(t, refs.Routes)
+
+		agencyIDs := make([]string, 0, len(refs.Agencies))
+		for _, agency := range refs.Agencies {
+			agencyIDs = append(agencyIDs, agency.ID)
+		}
+		assert.Contains(t, agencyIDs, otherAgencyID)
+		assert.Equal(t, otherAgencyID, refs.Routes[0].AgencyID)
+		assert.Equal(t, refs.Routes[0].ID, refs.Trips[0].RouteID,
+			"the trip's routeId must resolve against references.routes")
+	})
+}
