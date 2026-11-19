@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -591,6 +592,8 @@ func TestStopHandler_IncludeReferences(t *testing.T) {
 func TestStopHandler_WrongAgency(t *testing.T) {
 	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
+	// The six requests below exceed the shared test rate limit.
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
 
 	ctx := context.Background()
 	q := api.GtfsManager.GtfsDB.Queries
@@ -672,10 +675,6 @@ func TestStopHandler_WrongAgency(t *testing.T) {
 	respOrphanGhost, modelOrphanGhost := callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID("GhostAgency", orphanStopID)))
 	require.Equal(t, http.StatusNotFound, respOrphanGhost.StatusCode)
 	assert.Equal(t, http.StatusNotFound, modelOrphanGhost.Code)
-
-	// Create a fresh API instance to avoid rate limiting on the 6th request
-	api = createIsolatedTestApi(t)
-	defer api.Shutdown()
 
 	// Test 6: Request invalid agency namespace with includeReferences=false -> 404 Not Found
 	respInvalid, modelInvalid = callAPIHandler[StopEntryResponse](t, api, stopURL(utils.FormCombinedID(invalidAgency, stopID))+"&includeReferences=false")
