@@ -324,7 +324,7 @@ func (api *RestAPI) blocklessScheduledTripIDsInBounds(
 	}
 	// One lookup for the union of every candidate's stops. Fetching per trip
 	// would be a query per candidate, and the candidate set runs to hundreds.
-	stopsByID, err := api.fetchStopCoordsForStopTimes(ctx, unionStopTimes(stopTimesByTrip))
+	stopsByID, err := api.fetchStopCoords(ctx, unionStopIDs(stopTimesByTrip))
 	if err != nil {
 		return nil, err
 	}
@@ -352,17 +352,19 @@ func (api *RestAPI) blocklessScheduledTripIDsInBounds(
 	return visible, nil
 }
 
-// unionStopTimes flattens per-trip stop times into one slice, so their stops can
-// be fetched in a single query.
-func unionStopTimes(stopTimesByTrip map[string][]gtfsdb.StopTime) []gtfsdb.StopTime {
+// unionStopIDs flattens per-trip stop times into one slice of stop IDs, so
+// their stops can be fetched in a single query.
+func unionStopIDs(stopTimesByTrip map[string][]gtfsdb.StopTime) []string {
 	total := 0
 	for _, stopTimes := range stopTimesByTrip {
 		total += len(stopTimes)
 	}
 
-	union := make([]gtfsdb.StopTime, 0, total)
+	union := make([]string, 0, total)
 	for _, stopTimes := range stopTimesByTrip {
-		union = append(union, stopTimes...)
+		for _, stopTime := range stopTimes {
+			union = append(union, stopTime.StopID)
+		}
 	}
 	return union
 }

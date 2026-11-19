@@ -186,6 +186,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getBlockIDsForStopsStmt, err = db.PrepareContext(ctx, getBlockIDsForStops); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBlockIDsForStops: %w", err)
 	}
+	if q.getBlockStopTimesForTripIDsStmt, err = db.PrepareContext(ctx, getBlockStopTimesForTripIDs); err != nil {
+		return nil, fmt.Errorf("error preparing query GetBlockStopTimesForTripIDs: %w", err)
+	}
 	if q.getBlockTripIndexIDsForBlocksStmt, err = db.PrepareContext(ctx, getBlockTripIndexIDsForBlocks); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBlockTripIndexIDsForBlocks: %w", err)
 	}
@@ -683,6 +686,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getBlockIDsForStopsStmt: %w", cerr)
 		}
 	}
+	if q.getBlockStopTimesForTripIDsStmt != nil {
+		if cerr := q.getBlockStopTimesForTripIDsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getBlockStopTimesForTripIDsStmt: %w", cerr)
+		}
+	}
 	if q.getBlockTripIndexIDsForBlocksStmt != nil {
 		if cerr := q.getBlockTripIndexIDsForBlocksStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getBlockTripIndexIDsForBlocksStmt: %w", cerr)
@@ -1146,6 +1154,7 @@ type Queries struct {
 	getBlockDetailsStmt                       *sql.Stmt
 	getBlockDetailsForTripStmt                *sql.Stmt
 	getBlockIDsForStopsStmt                   *sql.Stmt
+	getBlockStopTimesForTripIDsStmt           *sql.Stmt
 	getBlockTripIndexIDsForBlocksStmt         *sql.Stmt
 	getBlockTripIndexIDsForRouteStmt          *sql.Stmt
 	getBlockTripSequenceStmt                  *sql.Stmt
@@ -1280,6 +1289,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getBlockDetailsStmt:                       q.getBlockDetailsStmt,
 		getBlockDetailsForTripStmt:                q.getBlockDetailsForTripStmt,
 		getBlockIDsForStopsStmt:                   q.getBlockIDsForStopsStmt,
+		getBlockStopTimesForTripIDsStmt:           q.getBlockStopTimesForTripIDsStmt,
 		getBlockTripIndexIDsForBlocksStmt:         q.getBlockTripIndexIDsForBlocksStmt,
 		getBlockTripIndexIDsForRouteStmt:          q.getBlockTripIndexIDsForRouteStmt,
 		getBlockTripSequenceStmt:                  q.getBlockTripSequenceStmt,
