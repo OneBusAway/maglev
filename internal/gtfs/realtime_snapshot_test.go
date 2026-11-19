@@ -213,3 +213,62 @@ func TestConcurrentGetterReadsDuringRebuild(t *testing.T) {
 	stop.Store(true)
 	wg.Wait()
 }
+
+// TestGetVehicleByID_AgencyKeyedLookup checks which feed's report
+// GetVehicleByID returns when several feeds and agencies share a vehicle ID.
+// Each vehicle's trip ID names the feed report it came from.
+func TestGetVehicleByID_AgencyKeyedLookup(t *testing.T) {
+	vehicle := func(id, tripID string) gtfs.Vehicle {
+		return gtfs.Vehicle{ID: &gtfs.VehicleID{ID: id}, Trip: &gtfs.Trip{ID: gtfs.TripID{ID: tripID}}}
+	}
+	key := func(id string) vehicleKey { return newVehicleKey(&gtfs.VehicleID{ID: id}) }
+	manager := snapshotTestManager()
+	manager.feedVehicles["feed-a"] = []gtfs.Vehicle{
+		vehicle("shared", "a-shared"),
+		vehicle("attributed", "a-attributed"),
+		vehicle("superseded", "a-superseded"),
+		vehicle("late-attributed", "a-late-attributed"),
+	}
+	manager.feedVehicles["feed-b"] = []gtfs.Vehicle{
+		vehicle("shared", "b-shared"),
+		vehicle("superseded", "b-superseded"),
+		vehicle("late-attributed", "b-late-attributed"),
+	}
+	manager.feedVehicleAgency = map[string]map[vehicleKey]string{
+		"feed-a": {key("shared"): "A", key("attributed"): "A", key("superseded"): "A"},
+		"feed-b": {key("shared"): "B", key("late-attributed"): "A"},
+	}
+	manager.realTimeMutex.Lock()
+	manager.rebuildMergedRealtimeLocked()
+	manager.realTimeMutex.Unlock()
+
+	tests := []struct {
+		name       string
+		agencyID   string
+		vehicleID  string
+		wantTripID string
+	}{
+		{"agency A's copy of a shared ID", "A", "shared", "a-shared"},
+		{"agency B's copy of a shared ID", "B", "shared", "b-shared"},
+		{"agency with no copy of a shared ID", "C", "shared", ""},
+		{"attributed vehicle", "A", "attributed", "a-attributed"},
+		{"vehicle attributed to another agency", "B", "attributed", ""},
+		{"later unattributed report replaces the agency's own", "A", "superseded", "b-superseded"},
+		{"unattributed report serves any agency", "B", "superseded", "b-superseded"},
+		{"later attributed report replaces an unattributed one", "A", "late-attributed", "b-late-attributed"},
+		{"unattributed report serves another agency", "B", "late-attributed", "a-late-attributed"},
+		{"unknown vehicle", "A", "missing", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			found, err := manager.GetVehicleByID(tt.agencyID, tt.vehicleID)
+			if tt.wantTripID == "" {
+				assert.Error(t, err)
+				assert.Nil(t, found)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantTripID, found.Trip.ID.ID)
+		})
+	}
+}

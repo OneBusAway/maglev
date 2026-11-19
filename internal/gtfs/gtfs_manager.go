@@ -756,19 +756,22 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 
 // resolveVehicleIndex returns the index of the vehicle in merged.vehicles
 // matching the agency and vehicle ID, falling back to an unattributed vehicle
-// if agencyID is non-empty.
+// if agencyID is non-empty. When both exist, the one indexed later wins:
+// indices follow feed order, so a later feed's unattributed report replaces
+// an earlier feed's attributed one, as a later feed's report always has.
 func (merged *mergedRealtime) resolveVehicleIndex(agencyID, vehicleID string) (int, bool) {
-	key := agencyVehicleKey{agencyID: agencyID, vehicleID: vehicleID}
-	if idx, exists := merged.vehicleLookupByVehicle[key]; exists {
-		return idx, true
+	exactIdx, exactFound := merged.vehicleLookupByVehicle[agencyVehicleKey{agencyID: agencyID, vehicleID: vehicleID}]
+	if agencyID == "" {
+		return exactIdx, exactFound
 	}
-	if agencyID != "" {
-		fallbackKey := agencyVehicleKey{agencyID: "", vehicleID: vehicleID}
-		if idx, exists := merged.vehicleLookupByVehicle[fallbackKey]; exists {
-			return idx, true
-		}
+	unattributedIdx, unattributedFound := merged.vehicleLookupByVehicle[agencyVehicleKey{vehicleID: vehicleID}]
+	if !unattributedFound {
+		return exactIdx, exactFound
 	}
-	return 0, false
+	if !exactFound {
+		return unattributedIdx, true
+	}
+	return max(exactIdx, unattributedIdx), true
 }
 
 // GetVehicleByID returns the vehicle matching the agency and vehicle ID.
