@@ -72,8 +72,10 @@ func TestReferencesModelJSON(t *testing.T) {
 		t.Errorf("Expected agency id 'agency1', got %v", agency.ID)
 	}
 }
-func TestReferencesModel_MarshalJSON_NormalizesNilSlices(t *testing.T) {
+
+func TestReferencesModel_Normalize_SerializesAsEmptyArrays(t *testing.T) {
 	var refs ReferencesModel
+	refs.Normalize()
 
 	jsonData, err := json.Marshal(refs)
 	if err != nil {
@@ -86,8 +88,9 @@ func TestReferencesModel_MarshalJSON_NormalizesNilSlices(t *testing.T) {
 	}
 }
 
-func TestReferencesModel_MarshalJSON_InsideMap(t *testing.T) {
+func TestReferencesModel_Normalize_InsideMap(t *testing.T) {
 	var refs ReferencesModel
+	refs.Normalize()
 	envelope := map[string]any{
 		"references": refs,
 	}
