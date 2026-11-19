@@ -48,7 +48,7 @@ func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []
 // scheduleDeviationForTrips is GetScheduleDeviationForBlock with Java's
 // blockNotActive outcome kept separate from "no TripUpdate". A discarded
 // record must not be treated as a fresh vehicle position.
-func (api *RestAPI) scheduleDeviationForTrips(ctx context.Context, tripIDs []string, serviceDate time.Time, currentTime time.Time) (deviation int, hasUpdate, discarded bool) {
+func (api *RestAPI) scheduleDeviationForTrips(ctx context.Context, tripIDs []string, serviceDate, currentTime time.Time) (deviation int, hasUpdate, discarded bool) {
 	if len(tripIDs) == 0 {
 		return 0, false, false
 	}
