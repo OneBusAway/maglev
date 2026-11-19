@@ -110,9 +110,9 @@ func (c *Client) backfillStopAgencyIndex(ctx context.Context) error {
 
 // backfillStopRouteIndex builds stop_routes for a database imported before the table
 // existed. An import is skipped when the feed hash is unchanged, so such a database would
-// otherwise keep an empty index for as long as its feed stays the same. Like
-// backfillStopAgencyIndex, it rebuilds only when some stop_time joins to a route, so a
-// feed whose stop_times resolve to nothing doesn't rebuild on every start.
+// otherwise keep an empty index for as long as its feed stays the same. It rebuilds only
+// when some stop_time joins to a route, so a feed whose stop_times resolve to nothing
+// doesn't rebuild on every start.
 func (c *Client) backfillStopRouteIndex(ctx context.Context) error {
 	var indexed, joinable int
 	err := c.DB.QueryRowContext(ctx, `
