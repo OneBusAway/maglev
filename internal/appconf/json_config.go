@@ -2,6 +2,7 @@ package appconf
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // defaultStaticFeedURL is used when no static feed key is configured.
@@ -71,6 +73,78 @@ func RedactURL(raw string) string {
 	}
 	return parsed.Redacted()
 }
+
+// RedactURLForLog keeps ordinary local paths readable while removing
+// credentials from HTTP(S) source URLs. It is intended for operational logs,
+// not for changing the configured source used to fetch or identify a feed.
+func RedactURLForLog(source string) string {
+	// Trim only for classification and parsing. HTTP URLs with surrounding
+	// whitespace are malformed as request targets, but may still contain
+	// credentials that must not be written to logs.
+	trimmed := strings.TrimSpace(source)
+	lower := strings.ToLower(trimmed)
+
+	isHTTP := strings.HasPrefix(lower, "http:")
+	isHTTPS := strings.HasPrefix(lower, "https:")
+
+	if !isHTTP && !isHTTPS {
+		return source
+	}
+
+	if !strings.HasPrefix(lower, "http://") &&
+		!strings.HasPrefix(lower, "https://") {
+		return RedactedValue
+	}
+
+	// net/url.Parse accepts raw spaces in URL paths and escapes them when
+	// formatting the URL. Such input is malformed as configured; fail closed
+	// instead of attempting to partially normalize an invalid source.
+	if strings.IndexFunc(trimmed, unicode.IsSpace) >= 0 {
+		return RedactedValue
+	}
+	return RedactURL(trimmed)
+}
+
+// RedactURLError removes source URLs from an error message while preserving
+// access to its underlying cause. sourceURLs covers errors from request
+// construction, which may include the raw URL without wrapping it in a
+// *url.Error.
+func RedactURLError(err error, sourceURLs ...string) error {
+	if err == nil {
+		return nil
+	}
+
+	message := err.Error()
+	for _, source := range sourceURLs {
+		if source == "" {
+			continue
+		}
+		message = strings.ReplaceAll(message, source, RedactURLForLog(source))
+	}
+
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.URL != "" {
+		safeURL := RedactURLForLog(urlErr.URL)
+		message = strings.ReplaceAll(message, urlErr.URL, safeURL)
+		// Put a sanitized *url.Error in the unwrap chain as well. Returning the
+		// original one would let errors.As recover its secret-bearing URL field.
+		safeCause := &url.Error{Op: urlErr.Op, URL: safeURL, Err: urlErr.Err}
+		return &redactedURLError{message: message, cause: safeCause}
+	}
+
+	if message != err.Error() {
+		return &redactedURLError{message: message, cause: err}
+	}
+	return err
+}
+
+type redactedURLError struct {
+	message string
+	cause   error
+}
+
+func (err *redactedURLError) Error() string { return err.message }
+func (err *redactedURLError) Unwrap() error { return err.cause }
 
 // GtfsRtFeed represents a single GTFS-RT feed configuration
 type GtfsRtFeed struct {

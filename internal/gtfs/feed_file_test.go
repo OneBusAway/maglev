@@ -411,3 +411,14 @@ func TestParsedFeedFileIsClosedAndRemoved(t *testing.T) {
 	_, err = os.Stat(feed.path)
 	assert.True(t, os.IsNotExist(err))
 }
+
+func TestFetchFeedFileDownloadErrorRedactsQuery(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	serverURL := server.URL
+	server.Close() // force the HTTP client to return a wrapped *url.Error
+
+	_, err := fetchFeedFile(context.Background(), Config{GtfsURL: serverURL + "/gtfs.zip?token=STATIC_ERROR_SECRET"})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "STATIC_ERROR_SECRET")
+	assert.Contains(t, err.Error(), appconf.RedactedValue)
+}
