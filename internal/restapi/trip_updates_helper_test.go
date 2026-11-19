@@ -373,9 +373,7 @@ func TestGetScheduleDeviationForBlock_ClosestInTimeAgainstRealSchedule(t *testin
 	trip := mustGetTrip(t, api)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 	require.NoError(t, err, "GetStopTimesForTrip failed for %s: a real DB error must not be masked as a benign skip", trip.ID)
-	if len(stopTimes) < 3 {
-		t.Skip("need a real trip with >= 3 stop_times for this path")
-	}
+	require.GreaterOrEqual(t, len(stopTimes), 3, "RABA fixture must have a trip with >= 3 stop_times")
 
 	// nearStop ≈ at currentTime (~12h into the service day in our default
 	// devNow); farStop is the trip's first stop (typically early morning).
@@ -391,10 +389,8 @@ func TestGetScheduleDeviationForBlock_ClosestInTimeAgainstRealSchedule(t *testin
 
 	// Align currentTime to the near stop's scheduled arrival so delta=0
 	// at that candidate.
-	loc := time.UTC
-	if z, _ := time.LoadLocation("America/Los_Angeles"); z != nil {
-		loc = z
-	}
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
 	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
 	var nearScheduledSec int64
 	for _, st := range stopTimes {
@@ -425,9 +421,7 @@ func TestGetScheduleDeviationForBlock_ClosestInTime_SkipsSkippedSTUs(t *testing.
 	trip := mustGetTrip(t, api)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 	require.NoError(t, err)
-	if len(stopTimes) < 2 {
-		t.Skip("need a real trip with >= 2 stop_times for this path")
-	}
+	require.GreaterOrEqual(t, len(stopTimes), 2, "RABA fixture must have a trip with >= 2 stop_times")
 
 	// nearStop is the middle stop of the trip; we align currentTime to its
 	// scheduled arrival (delta=0) and mark it SKIPPED so it must be ignored.
@@ -449,10 +443,8 @@ func TestGetScheduleDeviationForBlock_ClosestInTime_SkipsSkippedSTUs(t *testing.
 	})
 
 	// Align currentTime to the skipped stop so delta=0 for the excluded update.
-	loc := time.UTC
-	if z, _ := time.LoadLocation("America/Los_Angeles"); z != nil {
-		loc = z
-	}
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
 	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
 	var nearScheduledSec int64
 	for _, st := range stopTimes {
