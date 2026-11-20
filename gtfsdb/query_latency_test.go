@@ -212,7 +212,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 	now := time.Now()
 	windowStart := int64(5 * time.Hour) // 05:00 as nanoseconds-since-midnight
 	windowEnd := int64(23 * time.Hour)  // 23:00 as nanoseconds-since-midnight
-	dateStr := now.Format("20060102")
+	dateStr := "20250616" // Use a date within the RABA fixture's service calendar.
 	weekday := strings.ToLower(now.Weekday().String())
 
 	routeIDs := latencyFetchRouteIDsForStop(ctx, t, client.Queries, stopID)
@@ -221,6 +221,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 	type querySpec struct {
 		name string
 		fn   func() error
+		skip bool
 	}
 	querySpecs := []querySpec{
 		{
@@ -258,6 +259,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 		},
 		{
 			name: "GetActiveRouteIDsForStopsOnDate (stops-for-location batch)",
+			skip: len(svcIDs)==0,
 			fn: func() error {
 				if len(svcIDs) == 0 {
 					return nil
@@ -271,6 +273,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 		},
 		{
 			name: "GetActiveRouteIDsForStopsInInterval (nearby stops batch)",
+			skip: len(svcIDs)==0,
 			fn: func() error {
 				if len(svcIDs) == 0 {
 					return nil
@@ -300,6 +303,12 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 		concurrency, iterations, latencyIsWALEnabled(ctx, t, client.DB))
 
 	for _, q := range querySpecs {
+
+		if q.skip {
+			t.Logf("Skipping %s: no active service IDs for today", q.name)
+			continue
+		}
+
 		stat := &queryLatencyStat{name: q.name}
 		var mu sync.Mutex
 		var wg sync.WaitGroup
