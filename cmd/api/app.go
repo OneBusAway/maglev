@@ -193,6 +193,22 @@ func createClock(env appconf.Environment) clock.Clock {
 
 // CreateServer creates and configures the HTTP server with routes and middleware.
 // Sets up both REST API routes and WebUI routes, applies security headers, and adds request logging.
+// wrapServerMiddleware applies the server-wide middleware around h.
+// Order, outermost first: request ID, request logging, metrics, panic
+// recovery, body size limit.
+//
+// Recovery sits inside the request ID, request logging and metrics layers,
+// so a recovered panic is logged with its request_id, written to the access
+// log and counted in the metrics like any other 500. Those three layers run
+// no handler code, and net/http still recovers a panic in them.
+func wrapServerMiddleware(h http.Handler, m *metrics.Metrics, logger *slog.Logger, c clock.Clock) http.Handler {
+	h = restapi.SizeLimitMiddleware(1 << 20)(h) // 1 MB limit
+	h = restapi.NewRecoveryMiddleware(logger, c)(h)
+	h = restapi.MetricsHandler(m)(h)
+	h = restapi.NewRequestLoggingMiddleware(logger)(h)
+	return restapi.RequestIDMiddleware(h)
+}
+
 func CreateServer(coreApp *app.Application, cfg appconf.Config, logger *slog.Logger) (*http.Server, *restapi.RestAPI) {
 	api := restapi.NewRestAPI(coreApp)
 
@@ -227,22 +243,9 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config, logger *slog.Log
 	// Wrap with security middleware
 	secureHandler := api.WithSecurityHeaders(freshnessHandler)
 
-	// Add metrics middleware
-	metricsHandler := restapi.MetricsHandler(coreApp.Metrics)(secureHandler)
-
-	// Add request logging middleware (outermost)
-	requestLogMiddleware := restapi.NewRequestLoggingMiddleware(logger)
-
-	sizeLimitMiddleware := restapi.SizeLimitMiddleware(1 << 20) // 1 MB limit
-
-	// Panic recovery outermost so all handler panics are caught
-	handler := restapi.NewRecoveryMiddleware(logger, coreApp.Clock)(
-		sizeLimitMiddleware(restapi.RequestIDMiddleware(requestLogMiddleware(metricsHandler))),
-	)
-
 	srv := &http.Server{
 		Addr:           net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
-		Handler:        handler,
+		Handler:        wrapServerMiddleware(secureHandler, coreApp.Metrics, logger, coreApp.Clock),
 		IdleTimeout:    time.Minute,
 		ReadTimeout:    5 * time.Second,
 		WriteTimeout:   10 * time.Second,
