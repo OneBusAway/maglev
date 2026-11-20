@@ -191,8 +191,6 @@ func createClock(env appconf.Environment) clock.Clock {
 	}
 }
 
-// CreateServer creates and configures the HTTP server with routes and middleware.
-// Sets up both REST API routes and WebUI routes, applies security headers, and adds request logging.
 // wrapServerMiddleware applies the server-wide middleware around h.
 // Order, outermost first: request ID, request logging, metrics, panic
 // recovery, body size limit.
@@ -209,6 +207,8 @@ func wrapServerMiddleware(h http.Handler, m *metrics.Metrics, logger *slog.Logge
 	return restapi.RequestIDMiddleware(h)
 }
 
+// CreateServer creates and configures the HTTP server with routes and middleware.
+// Sets up both REST API routes and WebUI routes, applies security headers, and adds request logging.
 func CreateServer(coreApp *app.Application, cfg appconf.Config, logger *slog.Logger) (*http.Server, *restapi.RestAPI) {
 	api := restapi.NewRestAPI(coreApp)
 
