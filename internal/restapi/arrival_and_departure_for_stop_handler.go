@@ -741,8 +741,8 @@ func (api *RestAPI) getPredictedTimes(
 		if trackedSeq != -1 && (earliestSTUSequence == -1 || trackedSeq < earliestSTUSequence) {
 			earliestSTUSequence = trackedSeq
 		}
-		if seq != -1 && seq < targetStopSequence && seq > closestPriorSequence {
-			closestPriorSequence = seq
+		if trackedSeq != -1 && trackedSeq < targetStopSequence && trackedSeq > closestPriorSequence {
+			closestPriorSequence = trackedSeq
 			propagatedDelay = 0
 			if stu.Departure != nil && stu.Departure.Delay != nil {
 				propagatedDelay = *stu.Departure.Delay

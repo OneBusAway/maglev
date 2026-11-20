@@ -1614,6 +1614,57 @@ func TestDwellSlack_StopIDOnlyUpdatesUseUniqueSequence(t *testing.T) {
 	}
 }
 
+// TestDwellSlack_StopIDOnlyPriorDelayBeatsTripDelay verifies that a prior
+// stop named only by stop id supplies its own delay. A 4 minute trip delay
+// would be absorbed by the 5 minute dwell. The closer prior stop is 9
+// minutes late, so the arrival stays 9 minutes late and the departure 4.
+func TestDwellSlack_StopIDOnlyPriorDelayBeatsTripDelay(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 4)
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+	addStop := func(id string, seq int64) {
+		t.Helper()
+		_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+			ID: id, Name: nulls.String(id), Lat: 47.0, Lon: -122.0,
+		})
+		require.NoError(t, err)
+		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: tripID, StopID: id, StopSequence: seq,
+			ArrivalTime:   int64(6 * time.Hour),
+			DepartureTime: int64(6*time.Hour + time.Minute),
+		})
+		require.NoError(t, err)
+	}
+	far, near := "dp-far", "dp-near"
+	addStop(far, 1)
+	addStop(near, 2)
+
+	tripDelay := 4 * time.Minute
+	farDelay := time.Minute
+	nearDelay := 9 * time.Minute
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+		ID:    gtfs.TripID{ID: tripID},
+		Delay: &tripDelay,
+		StopTimeUpdates: []gtfs.StopTimeUpdate{
+			{StopID: &far, Departure: &gtfs.StopTimeEvent{Delay: &farDelay}},
+			{StopID: &near, Departure: &gtfs.StopTimeEvent{Delay: &nearDelay}},
+		},
+	}})
+
+	scheduledArrival := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+	scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
+	query := time.Date(2010, 1, 1, 7, 50, 0, 0, time.UTC)
+	arrival, departure, predicted := api.getPredictedTimes(
+		ctx, tripID, "dp-stop", 4, scheduledArrival, scheduledDeparture, query,
+	)
+	require.True(t, predicted)
+	assert.Equal(t, scheduledArrival.Add(9*time.Minute), arrival)
+	assert.Equal(t, scheduledDeparture.Add(4*time.Minute), departure)
+}
+
 // An absolute Arrival.Time and Departure.Time pair goes down the same path as
 // delays, so the two sides must stay independent there too.
 func TestGetPredictedTimes_UnequalAbsoluteTimes(t *testing.T) {
