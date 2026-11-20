@@ -1524,6 +1524,79 @@ func TestBlockDeviationChoosesTheNextStop(t *testing.T) {
 	assert.Equal(t, wantDeparture, arrival.PredictedDepartureTime.UnixMilli())
 }
 
+// TestSlackAdjustedArrivalEntersTheWindow is the plural case where the
+// scheduled times are outside the requested window and only the
+// slack-adjusted arrival falls inside it. The raw delay stays outside, so
+// dropping serviceDate from the window check's prediction clock removes the row.
+func TestSlackAdjustedArrivalEntersTheWindow(t *testing.T) {
+	when := time.Date(2010, 1, 1, 8, 1, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(when))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, _, _, _ = setupDelayPropTestData(t, api, 1)
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+	tripID := "win-trip-" + t.Name()
+	_, err := q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: "dp-route", ServiceID: "dp-svc",
+		BlockID: nulls.String("win-block-" + t.Name()),
+	})
+	require.NoError(t, err)
+
+	type visit struct {
+		seq int64
+		arr time.Duration
+		dep time.Duration
+	}
+	visits := []visit{
+		{1, 7 * time.Hour, 7 * time.Hour},
+		{2, 7*time.Hour + 40*time.Minute, 7*time.Hour + 50*time.Minute},
+		{3, 7*time.Hour + 50*time.Minute, 7*time.Hour + 52*time.Minute},
+	}
+	var targetStop string
+	for _, v := range visits {
+		stopID := fmt.Sprintf("win-%d-%s", v.seq, t.Name())
+		if v.seq == 3 {
+			targetStop = stopID
+		}
+		_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+			ID: stopID, Name: nulls.String(stopID), Lat: 47.0, Lon: -122.0,
+		})
+		require.NoError(t, err)
+		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: tripID, StopID: stopID, StopSequence: v.seq,
+			ArrivalTime: int64(v.arr), DepartureTime: int64(v.dep),
+		})
+		require.NoError(t, err)
+	}
+	delay := 31 * time.Minute
+	api.GtfsManager.MockAddTripUpdate(tripID, &delay, nil)
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	schedArr := serviceMidnight.Add(7*time.Hour + 50*time.Minute)
+	schedDep := serviceMidnight.Add(7*time.Hour + 52*time.Minute)
+	slackArr, _, slackOK := api.getPredictedTimes(ctx, tripID, targetStop, 3, schedArr, schedDep, predictionClock{queryTime: when, serviceDate: serviceMidnight})
+	rawArr, _, rawOK := api.getPredictedTimes(ctx, tripID, targetStop, 3, schedArr, schedDep, predictionClock{queryTime: when})
+	require.True(t, slackOK)
+	require.True(t, rawOK)
+	windowEnd := when.Add(12 * time.Minute)
+	require.True(t, !slackArr.Before(when) && !slackArr.After(windowEnd), "slack arrival %s", slackArr)
+	require.True(t, rawArr.After(windowEnd), "raw arrival %s", rawArr)
+
+	combinedStopID := utils.FormCombinedID("dp-agency", targetStop)
+	combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+	pluralURL := arrivalsAndDeparturesURL(combinedStopID, url.Values{
+		"time":          {fmt.Sprintf("%d", when.UnixMilli())},
+		"minutesBefore": {"0"},
+		"minutesAfter":  {"12"},
+	})
+	resp, plural := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, pluralURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	arrival := findArrivalForTrip(t, plural.Data.Entry.ArrivalsAndDepartures, combinedTripID)
+	assert.Equal(t, slackArr.UnixMilli(), arrival.PredictedArrivalTime.UnixMilli())
+}
+
 // addEarlierBlockTrip adds a trip that runs earlier in the same block as the
 // trip created by setupDelayPropTestData, and returns its ID.
 func addEarlierBlockTrip(t *testing.T, api *RestAPI) string {
