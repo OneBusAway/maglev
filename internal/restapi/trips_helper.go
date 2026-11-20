@@ -683,8 +683,8 @@ type scheduleDeviationFallback struct {
 // and applyBlockLocationToBean:
 //
 //   - Canceled trips are never predicted.
-//   - A TripUpdate whose deviation exceeds one hour is discarded, so
-//     predicted stays false.
+//   - A TripUpdate whose deviation exceeds one hour does not resolve a
+//     deviation, so the usable-deviation check leaves it unpredicted.
 //   - A fresh vehicle position with no TripUpdate is not an arrival
 //     record, so predicted stays false and both predicted times stay zero.
 //   - When the block's StopTimeUpdates yield deviation samples,
@@ -697,9 +697,6 @@ type scheduleDeviationFallback struct {
 //     absorb before reaching the stop.
 func (api *RestAPI) predictedTimesFromScheduleDeviation(ctx context.Context, in scheduleDeviationFallback) (predictedArrival, predictedDeparture time.Time, predicted bool) {
 	if in.status != nil && in.status.Status == "CANCELED" {
-		return time.Time{}, time.Time{}, false
-	}
-	if in.extras != nil && in.extras.recordDiscarded {
 		return time.Time{}, time.Time{}, false
 	}
 	hasUsableDeviation := in.status != nil && in.extras != nil && in.extras.deviationResolved
