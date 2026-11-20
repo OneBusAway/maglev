@@ -191,6 +191,19 @@ CREATE TABLE
 CREATE INDEX IF NOT EXISTS idx_stop_agencies_agency ON stop_agencies (agency_id, stop_id);
 
 -- migrate
+-- One row per (stop, route) pair, derived from stop_times -> trips -> routes and rebuilt on
+-- every import, so "which routes serve these stops" reads the answer instead of walking
+-- every stop_time at the stops.
+CREATE TABLE
+    IF NOT EXISTS stop_routes (
+        stop_id TEXT NOT NULL,
+        route_id TEXT NOT NULL,
+        PRIMARY KEY (stop_id, route_id),
+        FOREIGN KEY (stop_id) REFERENCES stops (id),
+        FOREIGN KEY (route_id) REFERENCES routes (id)
+    ) STRICT;
+
+-- migrate
 CREATE VIRTUAL TABLE IF NOT EXISTS stops_rtree USING rtree (
     id, -- Integer primary key for the R*Tree
     min_lat,
