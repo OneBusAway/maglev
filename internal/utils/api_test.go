@@ -827,18 +827,23 @@ func TestResolveArrivalTime(t *testing.T) {
 
 func TestParseMaxCountClamped(t *testing.T) {
 	tests := []struct {
-		name             string
-		maxCount         string
-		expectedMaxCount int
-		expectError      bool
+		name                 string
+		maxCount             string
+		expectedMaxCount     int
+		expectError          bool
+		expectedErrorMessage string
 	}{
-		{"omitted uses default", "", 100, false},
-		{"within cap unchanged", "10", 10, false},
-		{"at cap unchanged", "250", 250, false},
-		{"above cap clamps", "251", 250, false},
-		{"far above cap clamps", "10000", 250, false},
-		{"zero is an error", "0", 100, true},
-		{"negative is an error", "-1", 100, true},
+		{"omitted uses default", "", 100, false, ""},
+		{"within cap unchanged", "10", 10, false, ""},
+		{"at cap unchanged", "250", 250, false, ""},
+		{"above cap clamps", "251", 250, false, ""},
+		{"far above cap clamps", "10000", 250, false, ""},
+		{"at max int32 clamps", "2147483647", 250, false, ""},
+		{"overflow above int32 is error", "2147483648", 100, true, `Invalid field value for field "maxCount".`},
+		{"64-bit int overflow is error", "99999999999", 100, true, `Invalid field value for field "maxCount".`},
+		{"underflow below min int32 is error", "-2147483649", 100, true, `Invalid field value for field "maxCount".`},
+		{"zero is an error", "0", 100, true, "must be greater than zero"},
+		{"negative is an error", "-1", 100, true, "must be greater than zero"},
 	}
 
 	for _, tt := range tests {
@@ -853,6 +858,9 @@ func TestParseMaxCountClamped(t *testing.T) {
 			assert.Equal(t, tt.expectedMaxCount, maxCount)
 			if tt.expectError {
 				assert.Contains(t, fieldErrors, "maxCount")
+				if tt.expectedErrorMessage != "" {
+					assert.Contains(t, fieldErrors["maxCount"], tt.expectedErrorMessage)
+				}
 			} else {
 				assert.NotContains(t, fieldErrors, "maxCount")
 			}
@@ -862,12 +870,13 @@ func TestParseMaxCountClamped(t *testing.T) {
 
 func TestParseMaxCount(t *testing.T) {
 	tests := []struct {
-		name             string
-		expectError      bool
-		expectedErrorKey string
-		countQueryParams url.Values
-		defaultCount     int
-		expectedMaxCount int
+		name                 string
+		expectError          bool
+		expectedErrorKey     string
+		expectedErrorMessage string
+		countQueryParams     url.Values
+		defaultCount         int
+		expectedMaxCount     int
 	}{
 		{
 			name:             "Default Value, No MaxCount Provided",
@@ -902,45 +911,80 @@ func TestParseMaxCount(t *testing.T) {
 			countQueryParams: url.Values{
 				"maxCount": []string{"251"},
 			},
-			defaultCount:     100,
-			expectError:      true,
-			expectedErrorKey: "maxCount",
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: "must not exceed 250",
 		},
 		{
 			name: "MaxCount is 0",
 			countQueryParams: url.Values{
 				"maxCount": []string{"0"},
 			},
-			defaultCount:     100,
-			expectError:      true,
-			expectedErrorKey: "maxCount",
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: "must be greater than zero",
 		},
 		{
 			name: "maxCount is float",
 			countQueryParams: url.Values{
 				"maxCount": []string{"5.9"},
 			},
-			defaultCount:     100,
-			expectError:      true,
-			expectedErrorKey: "maxCount",
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: `Invalid field value for field "maxCount".`,
 		},
 		{
 			name: "maxCount is non numeric",
 			countQueryParams: url.Values{
 				"maxCount": []string{"Not a number"},
 			},
-			defaultCount:     100,
-			expectError:      true,
-			expectedErrorKey: "maxCount",
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: `Invalid field value for field "maxCount".`,
 		},
 		{
 			name: "maxCount is negative",
 			countQueryParams: url.Values{
 				"maxCount": []string{"-1"},
 			},
-			defaultCount:     100,
-			expectError:      true,
-			expectedErrorKey: "maxCount",
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: "must be greater than zero",
+		},
+		{
+			name: "maxCount 64-bit integer overflow",
+			countQueryParams: url.Values{
+				"maxCount": []string{"99999999999"},
+			},
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: `Invalid field value for field "maxCount".`,
+		},
+		{
+			name: "maxCount int32 overflow 2147483648",
+			countQueryParams: url.Values{
+				"maxCount": []string{"2147483648"},
+			},
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: `Invalid field value for field "maxCount".`,
+		},
+		{
+			name: "maxCount int32 underflow -2147483649",
+			countQueryParams: url.Values{
+				"maxCount": []string{"-2147483649"},
+			},
+			defaultCount:         100,
+			expectError:          true,
+			expectedErrorKey:     "maxCount",
+			expectedErrorMessage: `Invalid field value for field "maxCount".`,
 		},
 	}
 
@@ -949,7 +993,9 @@ func TestParseMaxCount(t *testing.T) {
 			resultedMaxCount, fieldErrors := ParseMaxCount(tt.countQueryParams, tt.defaultCount, nil)
 			if tt.expectError {
 				assert.Contains(t, fieldErrors, tt.expectedErrorKey)
-
+				if tt.expectedErrorMessage != "" {
+					assert.Contains(t, fieldErrors[tt.expectedErrorKey], tt.expectedErrorMessage)
+				}
 			} else {
 				assert.NotContains(t, fieldErrors, tt.expectedErrorKey)
 				assert.Equal(t, tt.expectedMaxCount, resultedMaxCount)
