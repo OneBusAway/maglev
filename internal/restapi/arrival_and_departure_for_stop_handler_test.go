@@ -1534,12 +1534,16 @@ func TestDwellSlack_StopIDOnlyUpdatesUseUniqueSequence(t *testing.T) {
 	delay := 9 * time.Minute
 
 	tests := []struct {
-		name          string
-		repeated      bool
-		wantDeparture time.Duration
+		name              string
+		repeated          bool
+		withTripDelay     bool
+		wantPredicted     bool
+		wantDeparture     time.Duration
+		wantScheduleReads int64
 	}{
-		{name: "unique earlier stops absorb", wantDeparture: 4 * time.Minute},
-		{name: "a repeated stop stays unresolved", repeated: true, wantDeparture: 9 * time.Minute},
+		{name: "unique earlier stops absorb", withTripDelay: true, wantPredicted: true, wantDeparture: 4 * time.Minute, wantScheduleReads: 1},
+		{name: "a repeated stop stays unresolved", repeated: true, withTripDelay: true, wantPredicted: true, wantDeparture: 9 * time.Minute, wantScheduleReads: 1},
+		{name: "no trip delay skips the schedule read", wantScheduleReads: 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1587,17 +1591,25 @@ func TestDwellSlack_StopIDOnlyUpdatesUseUniqueSequence(t *testing.T) {
 					{StopID: &earlyB, Departure: &gtfs.StopTimeEvent{Delay: &delay}},
 				}
 			}
+			var tripDelay *time.Duration
+			if tc.withTripDelay {
+				tripDelay = &delay
+			}
 			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
 				ID:              gtfs.TripID{ID: tripID},
-				Delay:           &delay,
+				Delay:           tripDelay,
 				StopTimeUpdates: updates,
 			}})
 
+			counter := swapInQueryCounter(t, api)
 			_, predDeparture, predicted := api.getPredictedTimes(
 				ctx, tripID, "dp-stop", 4, scheduledArrival, scheduledDeparture, time.Time{},
 			)
-			assert.True(t, predicted)
-			assert.Equal(t, scheduledDeparture.Add(tc.wantDeparture), predDeparture)
+			assert.Equal(t, tc.wantScheduleReads, counter.count.Load())
+			assert.Equal(t, tc.wantPredicted, predicted)
+			if tc.wantPredicted {
+				assert.Equal(t, scheduledDeparture.Add(tc.wantDeparture), predDeparture)
+			}
 		})
 	}
 }
