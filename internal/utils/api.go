@@ -362,9 +362,11 @@ func parseMaxCount(queryParams url.Values, defaultCount, ceiling int, overflow m
 }
 
 // ParsePaginationParams parses offset and limit from request parameters.
-// maxCount is the primary parameter for limit, falling back to limit.
-// If neither is present, limit is -1 (return all).
-// Default offset is 0.
+// maxCount is strictly validated against 32-bit signed integer limits with
+// Struts-compatible field errors, matching Java AgenciesWithCoverageAction.
+// offset and limit use lenient parsing (ignoring unparseable values) to
+// maintain parity with Java, which does not define them on this endpoint.
+// Default offset is 0. If neither maxCount nor limit is present, limit is -1.
 func ParsePaginationParams(r *http.Request, fieldErrors map[string][]string) (int, int, map[string][]string) {
 	if fieldErrors == nil {
 		fieldErrors = make(map[string][]string)
@@ -373,23 +375,24 @@ func ParsePaginationParams(r *http.Request, fieldErrors map[string][]string) (in
 	queryParams := r.URL.Query()
 
 	offset := 0
-	parsedOffset, fieldErrors := ParseInt32Param(queryParams, "offset", fieldErrors)
-	if parsedOffset != nil && *parsedOffset >= 0 {
-		offset = int(*parsedOffset)
+	if val := queryParams.Get("offset"); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed >= 0 {
+			offset = parsed
+		}
 	}
 
 	limit := -1 // Default to no limit
 
-	// Check maxCount first (OBA convention)
+	// Check maxCount first (OBA convention) - strictly validated matching Java
 	parsedMaxCount, fieldErrors := ParseInt32Param(queryParams, "maxCount", fieldErrors)
 	if parsedMaxCount != nil && *parsedMaxCount > 0 {
 		limit = int(*parsedMaxCount)
 	} else if queryParams.Get("maxCount") == "" {
-		// Fallback to limit if maxCount was not provided
-		var parsedLimit *int32
-		parsedLimit, fieldErrors = ParseInt32Param(queryParams, "limit", fieldErrors)
-		if parsedLimit != nil && *parsedLimit > 0 {
-			limit = int(*parsedLimit)
+		// Fallback to limit if maxCount was not provided (lenient parsing matching Java)
+		if val := queryParams.Get("limit"); val != "" {
+			if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+				limit = parsed
+			}
 		}
 	}
 

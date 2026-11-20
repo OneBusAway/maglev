@@ -1275,20 +1275,25 @@ func TestParsePaginationParams(t *testing.T) {
 			expectedLimit:  1000,
 		},
 		{
-			name:           "Non-numeric values report field errors",
+			name:           "Non-numeric offset and limit leniently ignored",
 			urlParams:      "?offset=abc&limit=xyz",
 			expectedOffset: 0,
 			expectedLimit:  -1,
-			expectedErrors: map[string]string{
-				"offset": `Invalid field value for field "offset".`,
-				"limit":  `Invalid field value for field "limit".`,
-			},
 		},
 		{
 			name:           "Explicit offset zero and small limit",
 			urlParams:      "?offset=0&limit=1",
 			expectedOffset: 0,
 			expectedLimit:  1,
+		},
+		{
+			name:           "maxCount non-numeric reports field error",
+			urlParams:      "?maxCount=abc",
+			expectedOffset: 0,
+			expectedLimit:  -1,
+			expectedErrors: map[string]string{
+				"maxCount": `Invalid field value for field "maxCount".`,
+			},
 		},
 		{
 			name:           "maxCount exceeds signed 32-bit integer range",
@@ -1309,22 +1314,16 @@ func TestParsePaginationParams(t *testing.T) {
 			},
 		},
 		{
-			name:           "offset exceeds signed 32-bit integer range",
-			urlParams:      "?offset=2147483648",
+			name:           "offset overflow beyond int size leniently ignored",
+			urlParams:      "?offset=99999999999999999999",
 			expectedOffset: 0,
 			expectedLimit:  -1,
-			expectedErrors: map[string]string{
-				"offset": `Invalid field value for field "offset".`,
-			},
 		},
 		{
-			name:           "limit exceeds signed 32-bit integer range",
-			urlParams:      "?limit=2147483648",
+			name:           "limit overflow beyond int size leniently ignored",
+			urlParams:      "?limit=99999999999999999999",
 			expectedOffset: 0,
 			expectedLimit:  -1,
-			expectedErrors: map[string]string{
-				"limit": `Invalid field value for field "limit".`,
-			},
 		},
 		{
 			name:           "maxCount whitespace padded rejected",
