@@ -61,50 +61,39 @@ func RedactHeaderValues(headers map[string]string) map[string]string {
 	return redacted
 }
 
-// RedactURL hides the secrets a URL can carry, for logs and dumped
-// config: the query string, which holds a signed URL's signature, and a
-// userinfo password. A URL that does not parse is hidden whole, since its
-// secrets cannot be found.
+// RedactURL preserves local paths while hiding credentials in HTTP(S)
+// source URLs. Malformed HTTP-style sources fail closed.
 func RedactURL(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return RedactedValue
-	}
-	if parsed.RawQuery != "" {
-		parsed.RawQuery = RedactedValue
-	}
-	return parsed.Redacted()
-}
-
-// RedactURLForLog keeps ordinary local paths readable while removing
-// credentials from HTTP(S) source URLs. It is intended for operational logs,
-// not for changing the configured source used to fetch or identify a feed.
-func RedactURLForLog(source string) string {
-	// Trim only for classification and parsing. HTTP URLs with surrounding
-	// whitespace are malformed as request targets, but may still contain
-	// credentials that must not be written to logs.
-	trimmed := strings.TrimSpace(source)
+	trimmed := strings.TrimSpace(raw)
 	lower := strings.ToLower(trimmed)
 
-	isHTTP := strings.HasPrefix(lower, "http:")
-	isHTTPS := strings.HasPrefix(lower, "https:")
-
-	if !isHTTP && !isHTTPS {
-		return source
+	// Preserve ordinary local paths.
+	if !strings.HasPrefix(lower, "http:") &&
+		!strings.HasPrefix(lower, "https:") {
+		return raw
 	}
 
+	// Fail closed for malformed HTTP schemes.
 	if !strings.HasPrefix(lower, "http://") &&
 		!strings.HasPrefix(lower, "https://") {
 		return RedactedValue
 	}
 
-	// net/url.Parse accepts raw spaces in URL paths and escapes them when
-	// formatting the URL. Such input is malformed as configured; fail closed
-	// instead of attempting to partially normalize an invalid source.
+	// Do not normalize malformed URLs into apparently valid ones.
 	if strings.IndexFunc(trimmed, unicode.IsSpace) >= 0 {
 		return RedactedValue
 	}
-	return RedactURL(trimmed)
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return RedactedValue
+	}
+
+	if parsed.RawQuery != "" {
+		parsed.RawQuery = RedactedValue
+	}
+
+	return parsed.Redacted()
 }
 
 // httpURLInErrorPattern finds HTTP(S) URLs embedded in error text, including
@@ -122,21 +111,61 @@ func replaceURLText(message, raw, safe string) string {
 	return strings.ReplaceAll(message, raw, safe)
 }
 
+// redactLocationHeader removes the complete redirect target from Go HTTP
+// redirect diagnostics. The target is quoted with %q and can be either
+// absolute or relative. Replacing the complete target avoids incomplete
+// matches when it contains apostrophes or escaped control characters.
+func redactLocationHeader(message string) string {
+	const marker = "Location header "
+
+	start := strings.Index(message, marker)
+	if start < 0 {
+		return message
+	}
+
+	quotedStart := start + len(marker)
+
+	quoted, err := strconv.QuotedPrefix(message[quotedStart:])
+	if err != nil {
+		return message
+	}
+
+	location, err := strconv.Unquote(quoted)
+	if err != nil {
+		return message
+	}
+
+	return replaceURLText(message, location, RedactedValue)
+}
+
 // redactErrorMessage sanitizes configured source strings and any additional
 // HTTP(S) URLs embedded in diagnostic text, such as malformed redirect URLs.
+
 func redactErrorMessage(message string, sourceURLs ...string) string {
 	for _, source := range sourceURLs {
 		if source != "" {
-			message = replaceURLText(message, source, RedactURLForLog(source))
+			message = replaceURLText(
+				message,
+				source,
+				RedactURL(source),
+			)
 		}
 	}
-	return httpURLInErrorPattern.ReplaceAllStringFunc(message, RedactURLForLog)
+
+	// Handle the complete quoted redirect target before the fallback
+	// HTTP URL scan. This also covers relative targets.
+	message = redactLocationHeader(message)
+
+	return httpURLInErrorPattern.ReplaceAllStringFunc(
+		message,
+		RedactURL,
+	)
 }
 
-// RedactURLError removes source URLs from an error message while preserving
-// access to its underlying cause. sourceURLs covers errors from request
-// construction, which may include the raw URL without wrapping it in a
-// *url.Error.
+// RedactURLError sanitizes source URLs in an error message while preserving
+// errors.Is matching without exposing the original cause through Unwrap.
+// sourceURLs covers errors from request construction, which may include the
+// raw URL without wrapping it in a *url.Error.
 func RedactURLError(err error, sourceURLs ...string) error {
 	if err == nil {
 		return nil
@@ -147,17 +176,19 @@ func RedactURLError(err error, sourceURLs ...string) error {
 
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) && urlErr.URL != "" {
-		safeURL := RedactURLForLog(urlErr.URL)
+		safeURL := RedactURL(urlErr.URL)
 		message = replaceURLText(message, urlErr.URL, safeURL)
 
-		// Keep the original cause available to errors.Is/errors.As, but expose
-		// only its sanitized diagnostic text through the error chain.
+		// Preserve errors.Is matching without exposing the original cause message.
 		causeSources := append(append([]string(nil), sourceURLs...), urlErr.URL)
 		var safeErr error
 		if urlErr.Err != nil {
-			safeErr = &redactedURLError{
-				message: redactErrorMessage(urlErr.Err.Error(), causeSources...),
-				cause:   urlErr.Err,
+			safeErr = &redactedCauseError{
+				message: redactErrorMessage(
+					urlErr.Err.Error(),
+					causeSources...,
+				),
+				cause: urlErr.Err,
 			}
 		}
 		// Put a sanitized *url.Error in the unwrap chain as well. Returning the
@@ -167,7 +198,10 @@ func RedactURLError(err error, sourceURLs ...string) error {
 	}
 
 	if message != originalMessage {
-		return &redactedURLError{message: message, cause: err}
+		return &redactedCauseError{
+			message: message,
+			cause:   err,
+		}
 	}
 	return err
 }
@@ -179,6 +213,23 @@ type redactedURLError struct {
 
 func (err *redactedURLError) Error() string { return err.message }
 func (err *redactedURLError) Unwrap() error { return err.cause }
+
+// redactedCauseError retains error matching without exposing the original
+// error through Unwrap. The original cause can contain sensitive diagnostic
+// text, so it must remain private.
+type redactedCauseError struct {
+	message string
+	cause   error
+}
+
+func (err *redactedCauseError) Error() string {
+	return err.message
+}
+
+// Is preserves errors.Is matching without exposing the original cause.
+func (err *redactedCauseError) Is(target error) bool {
+	return err.cause != nil && errors.Is(err.cause, target)
+}
 
 // GtfsRtFeed represents a single GTFS-RT feed configuration
 type GtfsRtFeed struct {

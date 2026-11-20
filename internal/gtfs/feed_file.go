@@ -112,7 +112,7 @@ func (f *feedFile) makePrivate(config Config) error {
 func downloadFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, config.GtfsURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("error creating GTFS request for %s: %w", config.StaticLogSource(), appconf.RedactURLError(err, config.GtfsURL))
+		return nil, fmt.Errorf("error creating GTFS request: %w", appconf.RedactURLError(err, config.GtfsURL))
 	}
 	if config.StaticAuthHeaderKey != "" && config.StaticAuthHeaderValue != "" {
 		req.Header.Set(config.StaticAuthHeaderKey, config.StaticAuthHeaderValue)
@@ -120,7 +120,7 @@ func downloadFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 
 	resp, err := staticHTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("error downloading GTFS data from %s: %w", config.StaticLogSource(), appconf.RedactURLError(err, config.GtfsURL))
+		return nil, fmt.Errorf("error downloading GTFS data: %w", appconf.RedactURLError(err, config.GtfsURL))
 	}
 	defer logging.SafeCloseWithLogging(resp.Body,
 		slog.Default().With(slog.String("component", "gtfs_downloader")),
@@ -313,7 +313,6 @@ func (f *feedFile) parse(ctx context.Context, config Config) (*gtfsdb.GtfsData, 
 		return nil, err
 	}
 
-	data.LogSource = config.StaticLogSource()
 	if err := validateStaticAgencyTimezones(data.Static); err != nil {
 		return nil, fmt.Errorf("invalid GTFS agency timezone: %w", err)
 	}

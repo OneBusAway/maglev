@@ -13,39 +13,6 @@ import (
 	"maglev.onebusaway.org/internal/appconf"
 )
 
-func TestGtfsDataLogSource(t *testing.T) {
-	tests := []struct {
-		name string
-		data GtfsData
-		want string
-	}{
-		{
-			name: "explicit redacted source takes precedence",
-			data: GtfsData{
-				Source:    "https://feeds.example.test/static.zip?token=RAW_SECRET",
-				LogSource: "https://feeds.example.test/static.zip?" + appconf.RedactedValue,
-			},
-			want: "https://feeds.example.test/static.zip?" + appconf.RedactedValue,
-		},
-		{
-			name: "fallback redacts raw URL",
-			data: GtfsData{Source: "https://feeds.example.test/static.zip?token=RAW_SECRET"},
-			want: "https://feeds.example.test/static.zip?" + appconf.RedactedValue,
-		},
-		{
-			name: "local source remains readable",
-			data: GtfsData{Source: "./feeds/static.zip"},
-			want: "./feeds/static.zip",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.data.logSource())
-		})
-	}
-}
-
 func TestPerformDatabaseMigration_Idempotency(t *testing.T) {
 	db, err := sql.Open(DriverName, ":memory:")
 	assert.NoError(t, err)
