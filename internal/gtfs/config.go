@@ -20,17 +20,6 @@ type RTFeedConfig struct {
 	Enabled             bool
 }
 
-// Redacted returns a copy of the realtime feed config with source URLs and
-// header values safe for operational logs. The original config remains intact
-// for HTTP requests.
-func (config RTFeedConfig) Redacted() RTFeedConfig {
-	config.TripUpdatesURL = appconf.RedactURL(config.TripUpdatesURL)
-	config.VehiclePositionsURL = appconf.RedactURL(config.VehiclePositionsURL)
-	config.ServiceAlertsURL = appconf.RedactURL(config.ServiceAlertsURL)
-	config.Headers = appconf.RedactHeaderValues(config.Headers)
-	return config
-}
-
 // Config holds GTFS configuration for the manager.
 type Config struct {
 	// StaticFeeds lists every static feed in load order. StaticFeeds[0] is
@@ -94,11 +83,6 @@ func (config Config) feedAgencyFilters() map[string]map[string]bool {
 		filters[feed.ID] = filter
 	}
 	return filters
-}
-
-// StaticLogSource returns the configured static feed source safe for logs.
-func (config Config) StaticLogSource() string {
-	return appconf.RedactURL(config.GtfsURL)
 }
 
 func (config Config) isLocalFile() bool {

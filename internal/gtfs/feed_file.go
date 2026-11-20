@@ -62,7 +62,7 @@ func (f *feedFile) close() {
 // database and hashed on the way. Call close when done.
 func fetchFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 	logger := slog.Default().With(slog.String("component", "gtfs_loader"))
-	logging.LogOperation(logger, "reading_gtfs_data", slog.String("source", config.StaticLogSource()))
+	logging.LogOperation(logger, "reading_gtfs_data", slog.String("source", appconf.RedactURL(config.GtfsURL)))
 
 	if !config.isLocalFile() {
 		return downloadFeedFile(ctx, config)

@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -96,10 +95,6 @@ func RedactURL(raw string) string {
 	return parsed.Redacted()
 }
 
-// httpURLInErrorPattern finds HTTP(S) URLs embedded in error text, including
-// redirect targets that are not the original configured source.
-var httpURLInErrorPattern = regexp.MustCompile(`(?i)https?://[^\s"'<>]+`)
-
 // replaceURLText replaces both the literal URL and its Go-quoted form. The
 // quoted form is used by url.Error.Error and parse errors for URLs containing
 // control characters.
@@ -109,33 +104,6 @@ func replaceURLText(message, raw, safe string) string {
 	}
 	message = strings.ReplaceAll(message, strconv.Quote(raw), strconv.Quote(safe))
 	return strings.ReplaceAll(message, raw, safe)
-}
-
-// redactLocationHeader removes the complete redirect target from Go HTTP
-// redirect diagnostics. The target is quoted with %q and can be either
-// absolute or relative. Replacing the complete target avoids incomplete
-// matches when it contains apostrophes or escaped control characters.
-func redactLocationHeader(message string) string {
-	const marker = "Location header "
-
-	start := strings.Index(message, marker)
-	if start < 0 {
-		return message
-	}
-
-	quotedStart := start + len(marker)
-
-	quoted, err := strconv.QuotedPrefix(message[quotedStart:])
-	if err != nil {
-		return message
-	}
-
-	location, err := strconv.Unquote(quoted)
-	if err != nil {
-		return message
-	}
-
-	return replaceURLText(message, location, RedactedValue)
 }
 
 // redactErrorMessage sanitizes configured source strings and any additional
@@ -152,14 +120,7 @@ func redactErrorMessage(message string, sourceURLs ...string) string {
 		}
 	}
 
-	// Handle the complete quoted redirect target before the fallback
-	// HTTP URL scan. This also covers relative targets.
-	message = redactLocationHeader(message)
-
-	return httpURLInErrorPattern.ReplaceAllStringFunc(
-		message,
-		RedactURL,
-	)
+	return message
 }
 
 // RedactURLError sanitizes source URLs in an error message while preserving
