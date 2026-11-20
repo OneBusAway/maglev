@@ -756,17 +756,29 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 
 // resolveVehicleIndex returns the index of the vehicle in merged.vehicles
 // matching the agency and vehicle ID, falling back to an unattributed vehicle
-// if agencyID is non-empty.
+// if agencyID is non-empty. When both an attributed and an unattributed entry
+// exist, the one with the higher index wins because indices follow feed order.
 func (merged *mergedRealtime) resolveVehicleIndex(agencyID, vehicleID string) (int, bool) {
 	key := agencyVehicleKey{agencyID: agencyID, vehicleID: vehicleID}
-	if idx, exists := merged.vehicleLookupByVehicle[key]; exists {
-		return idx, true
-	}
+	idxExact, hasExact := merged.vehicleLookupByVehicle[key]
+
 	if agencyID != "" {
 		fallbackKey := agencyVehicleKey{agencyID: "", vehicleID: vehicleID}
-		if idx, exists := merged.vehicleLookupByVehicle[fallbackKey]; exists {
-			return idx, true
+		idxFallback, hasFallback := merged.vehicleLookupByVehicle[fallbackKey]
+
+		if hasExact && hasFallback {
+			if idxFallback > idxExact {
+				return idxFallback, true
+			}
+			return idxExact, true
 		}
+		if hasFallback {
+			return idxFallback, true
+		}
+	}
+
+	if hasExact {
+		return idxExact, true
 	}
 	return 0, false
 }
@@ -780,6 +792,9 @@ func (manager *Manager) GetVehicleByID(agencyID, vehicleID string) (*gtfs.Vehicl
 	if idx, ok := merged.resolveVehicleIndex(agencyID, vehicleID); ok {
 		vehicle := merged.vehicles[idx]
 		return &vehicle, nil
+	}
+	if agencyID != "" {
+		return nil, fmt.Errorf("vehicle with ID %s not found for agency %s", vehicleID, agencyID)
 	}
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
 }

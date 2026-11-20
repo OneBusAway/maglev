@@ -1388,10 +1388,7 @@ func (indices *vehicleIndices) indexVehicle(vehicle gtfs.Vehicle, agencyMap map[
 	}
 
 	if vehicle.ID != nil && vehicle.ID.ID != "" {
-		var agencyID string
-		if agencyMap != nil {
-			agencyID = agencyMap[newVehicleKey(vehicle.ID)]
-		}
+		agencyID := agencyMap[newVehicleKey(vehicle.ID)]
 		indices.vehicleLookupByVehicle[agencyVehicleKey{agencyID: agencyID, vehicleID: vehicle.ID.ID}] = i
 	}
 
@@ -1467,12 +1464,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		}
 	}
 
-	vIndices := manager.buildVehicleIndices(vehicleFeedIDs, totalVehicles, tripLookup, allTrips)
-	allVehicles := vIndices.allVehicles
-	vehicleLookupByTrip := vIndices.vehicleLookupByTrip
-	vehicleLookupByVehicle := vIndices.vehicleLookupByVehicle
-	duplicatedVehicleByRoute := vIndices.duplicatedVehicleByRoute
-	vehiclesByRoute := vIndices.vehiclesByRoute
+	vehicleIndex := manager.buildVehicleIndices(vehicleFeedIDs, totalVehicles, tripLookup, allTrips)
 
 	idx := alertIndex{
 		byTrip:   make(map[string][]FeedAlert),
@@ -1529,13 +1521,13 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 
 	manager.merged.Store(&mergedRealtime{
 		trips:                    allTrips,
-		vehicles:                 allVehicles,
+		vehicles:                 vehicleIndex.allVehicles,
 		tripLookup:               tripLookup,
 		tripUpdateSeenAt:         tripUpdateSeenAt,
-		vehicleLookupByTrip:      vehicleLookupByTrip,
-		vehicleLookupByVehicle:   vehicleLookupByVehicle,
-		duplicatedVehicleByRoute: duplicatedVehicleByRoute,
-		vehiclesByRoute:          vehiclesByRoute,
+		vehicleLookupByTrip:      vehicleIndex.vehicleLookupByTrip,
+		vehicleLookupByVehicle:   vehicleIndex.vehicleLookupByVehicle,
+		duplicatedVehicleByRoute: vehicleIndex.duplicatedVehicleByRoute,
+		vehiclesByRoute:          vehicleIndex.vehiclesByRoute,
 		vehiclePositionsByAgency: manager.buildVehiclePositionsByAgency(vehicleFeedIDs, builtAt),
 		alerts:                   idx,
 		alertFeedsByAgency:       manager.buildAlertFeedsByAgency(alertFeedIDs, previous, builtAt),

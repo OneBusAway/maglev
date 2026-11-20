@@ -257,13 +257,14 @@ func referencedStopIDs(status *models.TripStatus, schedule *models.Schedule) ([]
 }
 
 func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request, agencyID, vehicleID string) (string, bool) {
+	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	vehicle, err := api.GtfsManager.GetVehicleByID(agencyID, vehicleID)
 	if err != nil {
+		reqLogger.Debug("vehicle not found for agency",
+			"agencyID", agencyID, "vehicleID", vehicleID, "error", err)
 		api.sendNotFound(w, r)
 		return "", false
 	}
-
-	reqLogger := logging.ForComponent(r.Context(), "http_server")
 
 	// Return 404 when vehicle has no associated trip (idle vehicle)
 	// or when the trip ID is empty (avoiding a futile DB lookup)

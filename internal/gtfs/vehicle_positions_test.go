@@ -246,25 +246,71 @@ func TestRecordVehicleDataTime_KeepsRealHeaderTime(t *testing.T) {
 	assert.True(t, manager.feedVehicleDataTime["feed-a"].Equal(headerTime))
 }
 
-func TestGetVehicleByID_UnattributedVehicleFallback(t *testing.T) {
-	manager := newTestManager()
-
-	// Add an unattributed vehicle (no agency mapping)
-	veh := gtfs.Vehicle{
-		ID: &gtfs.VehicleID{ID: "unattributed_123"},
+func TestGetVehicleByID_AgencyLookupAndFallback(t *testing.T) {
+	vehicleWithTrip := func(id, tripID string) gtfs.Vehicle {
+		return gtfs.Vehicle{
+			ID:   &gtfs.VehicleID{ID: id},
+			Trip: &gtfs.Trip{ID: gtfs.TripID{ID: tripID}},
+		}
 	}
-	manager.feedVehicles["feed_1"] = []gtfs.Vehicle{veh}
+	manager := newTestManager()
+	// feed-a is earlier, feed-b is later (sorted feed IDs: feed-a, feed-b)
+	manager.feedVehicles["feed-a"] = []gtfs.Vehicle{
+		vehicleWithTrip("shared", "trip-a"),
+		vehicleWithTrip("only-a", "trip-only-a"),
+		vehicleWithTrip("unattributed-early", "trip-unattr-early"),
+		vehicleWithTrip("later-unattributed", "trip-attr-early"),
+	}
+	manager.feedVehicles["feed-b"] = []gtfs.Vehicle{
+		vehicleWithTrip("shared", "trip-b"),
+		vehicleWithTrip("only-b", "trip-only-b"),
+		vehicleWithTrip("unattributed-late", "trip-unattr-late"),
+		vehicleWithTrip("later-unattributed", "trip-unattr-late"),
+	}
+	manager.feedVehicleAgency = map[string]map[vehicleKey]string{
+		"feed-a": {
+			newVehicleKey(&gtfs.VehicleID{ID: "shared"}):             "A",
+			newVehicleKey(&gtfs.VehicleID{ID: "only-a"}):             "A",
+			newVehicleKey(&gtfs.VehicleID{ID: "later-unattributed"}): "A",
+		},
+		"feed-b": {
+			newVehicleKey(&gtfs.VehicleID{ID: "shared"}): "B",
+			newVehicleKey(&gtfs.VehicleID{ID: "only-b"}): "B",
+		},
+	}
 	manager.rebuildMergedRealtimeLocked()
 
-	// Query with an agency prefix; should fall back to the unattributed vehicle
-	found, err := manager.GetVehicleByID("some_agency", "unattributed_123")
-	require.NoError(t, err)
-	require.NotNil(t, found)
-	assert.Equal(t, "unattributed_123", found.ID.ID)
+	tests := []struct {
+		name       string
+		agencyID   string
+		vehicleID  string
+		wantTripID string
+		wantErr    bool
+	}{
+		{"exact match agency A", "A", "shared", "trip-a", false},
+		{"exact match agency B", "B", "shared", "trip-b", false},
+		{"wrong agency returns not found", "B", "only-a", "", true},
+		{"unattributed fallback when requesting agency A", "A", "unattributed-early", "trip-unattr-early", false},
+		{"unattributed fallback when requesting agency B", "B", "unattributed-late", "trip-unattr-late", false},
+		{"later unattributed report wins over earlier attributed report", "A", "later-unattributed", "trip-unattr-late", false},
+		{"completely missing vehicle", "A", "missing", "", true},
+	}
 
-	// Direct query with empty agency should also find it
-	foundEmpty, err := manager.GetVehicleByID("", "unattributed_123")
-	require.NoError(t, err)
-	require.NotNil(t, foundEmpty)
-	assert.Equal(t, "unattributed_123", foundEmpty.ID.ID)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			veh, err := manager.GetVehicleByID(tt.agencyID, tt.vehicleID)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.vehicleID)
+				if tt.agencyID != "" {
+					assert.Contains(t, err.Error(), tt.agencyID)
+				}
+				assert.Nil(t, veh)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, veh)
+			assert.Equal(t, tt.wantTripID, veh.Trip.ID.ID)
+		})
+	}
 }
