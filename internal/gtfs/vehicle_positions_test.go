@@ -292,7 +292,8 @@ func TestGetVehicleByID_AgencyLookupAndFallback(t *testing.T) {
 		{"wrong agency returns not found", "B", "only-a", "", true},
 		{"unattributed fallback when requesting agency A", "A", "unattributed-early", "trip-unattr-early", false},
 		{"unattributed fallback when requesting agency B", "B", "unattributed-late", "trip-unattr-late", false},
-		{"later unattributed report wins over earlier attributed report", "A", "later-unattributed", "trip-unattr-late", false},
+		{"exact match takes precedence over later unattributed report", "A", "later-unattributed", "trip-attr-early", false},
+		{"unattributed fallback when requesting agency without exact match", "B", "later-unattributed", "trip-unattr-late", false},
 		{"completely missing vehicle", "A", "missing", "", true},
 	}
 
