@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -108,6 +109,19 @@ func cliProtectedAPIKeys(protectedAPIKeysFlag string, env string) []string {
 		return envKeys
 	}
 	return appconf.DefaultProtectedAPIKeys(env)
+}
+
+// apiKeysFlagExplicit reports whether -api-keys was set on the command line.
+// The flag defaults to "test", so callers must use flag.Visit (not a non-empty
+// value check) to distinguish an explicit set from the default.
+func apiKeysFlagExplicit() bool {
+	explicit := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "api-keys" {
+			explicit = true
+		}
+	})
+	return explicit
 }
 
 func parseLogLevel(level string) slog.Level {

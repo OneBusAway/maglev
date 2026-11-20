@@ -707,6 +707,87 @@ func TestLoadFromFile_EnvVarOverrides(t *testing.T) {
 	})
 }
 
+func cliShapedConfig() JSONConfig {
+	return JSONConfig{
+		ApiKeys: []string{"test"},
+		GtfsStaticFeeds: []GtfsStaticFeed{{
+			URL: "https://example.com/static.zip",
+		}},
+		GtfsRtFeeds: []GtfsRtFeed{{
+			ID: "feed-0",
+		}},
+	}
+}
+
+func TestApplyEnvironmentOverrides(t *testing.T) {
+	t.Run("applies API keys when not skipped", func(t *testing.T) {
+		t.Setenv("GTFS_API_KEYS", "env1, env2")
+		t.Setenv("GTFS_STATIC_AUTH_NAME", "")
+		t.Setenv("GTFS_STATIC_AUTH_VALUE", "")
+		t.Setenv("GTFS_REALTIME_AUTH_NAME", "")
+		t.Setenv("GTFS_REALTIME_AUTH_VALUE", "")
+
+		cfg := cliShapedConfig()
+		require.NoError(t, cfg.ApplyEnvironmentOverrides(EnvOverrideOptions{}))
+		assert.Equal(t, []string{"env1", "env2"}, cfg.ApiKeys)
+	})
+
+	t.Run("skips API keys when SkipAPIKeys is set", func(t *testing.T) {
+		t.Setenv("GTFS_API_KEYS", "env1,env2")
+		t.Setenv("GTFS_STATIC_AUTH_NAME", "")
+		t.Setenv("GTFS_STATIC_AUTH_VALUE", "")
+		t.Setenv("GTFS_REALTIME_AUTH_NAME", "")
+		t.Setenv("GTFS_REALTIME_AUTH_VALUE", "")
+
+		cfg := cliShapedConfig()
+		require.NoError(t, cfg.ApplyEnvironmentOverrides(EnvOverrideOptions{SkipAPIKeys: true}))
+		assert.Equal(t, []string{"test"}, cfg.ApiKeys)
+	})
+
+	t.Run("whitespace-only GTFS_API_KEYS leaves keys unchanged", func(t *testing.T) {
+		t.Setenv("GTFS_API_KEYS", "  ,  , ")
+		t.Setenv("GTFS_STATIC_AUTH_NAME", "")
+		t.Setenv("GTFS_STATIC_AUTH_VALUE", "")
+		t.Setenv("GTFS_REALTIME_AUTH_NAME", "")
+		t.Setenv("GTFS_REALTIME_AUTH_VALUE", "")
+
+		cfg := cliShapedConfig()
+		require.NoError(t, cfg.ApplyEnvironmentOverrides(EnvOverrideOptions{}))
+		assert.Equal(t, []string{"test"}, cfg.ApiKeys)
+	})
+
+	t.Run("applies static and realtime auth env", func(t *testing.T) {
+		t.Setenv("GTFS_API_KEYS", "")
+		t.Setenv("GTFS_STATIC_AUTH_NAME", "X-Api-Key")
+		t.Setenv("GTFS_STATIC_AUTH_VALUE", "static-secret")
+		t.Setenv("GTFS_REALTIME_AUTH_NAME", "X-Api-Key")
+		t.Setenv("GTFS_REALTIME_AUTH_VALUE", "rt-secret")
+
+		cfg := cliShapedConfig()
+		require.NoError(t, cfg.ApplyEnvironmentOverrides(EnvOverrideOptions{}))
+		assert.Equal(t, "X-Api-Key", cfg.GtfsStaticFeeds[0].AuthHeaderName)
+		assert.Equal(t, "static-secret", cfg.GtfsStaticFeeds[0].AuthHeaderValue)
+		assert.Equal(t, "X-Api-Key", cfg.GtfsRtFeeds[0].RealTimeAuthHeaderName)
+		assert.Equal(t, "rt-secret", cfg.GtfsRtFeeds[0].RealTimeAuthHeaderValue)
+	})
+
+	t.Run("multi static feed auth env returns error", func(t *testing.T) {
+		t.Setenv("GTFS_API_KEYS", "")
+		t.Setenv("GTFS_STATIC_AUTH_NAME", "X-Api-Key")
+		t.Setenv("GTFS_STATIC_AUTH_VALUE", "static-secret")
+		t.Setenv("GTFS_REALTIME_AUTH_NAME", "")
+		t.Setenv("GTFS_REALTIME_AUTH_VALUE", "")
+
+		cfg := cliShapedConfig()
+		cfg.GtfsStaticFeeds = append(cfg.GtfsStaticFeeds, GtfsStaticFeed{
+			URL: "https://example.com/other.zip",
+		})
+		err := cfg.ApplyEnvironmentOverrides(EnvOverrideOptions{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "apply to one static feed")
+	})
+}
+
 func TestToGtfsConfigData_NoDuplicates(t *testing.T) {
 	// Passing unique IDs
 	j := &JSONConfig{
