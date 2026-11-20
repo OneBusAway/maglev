@@ -588,6 +588,67 @@ func TestArrivalAndDepartureForStop_NoRealTimeDataUsesZeroPredictionTimes(t *tes
 	assert.True(t, entry.LastUpdateTime.IsZero())
 }
 
+func TestArrivalAndDepartureForStop_VehiclePositionAloneIsNotPredicted(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	vehicleTimestamp := mockClock.Now()
+	api.GtfsManager.MockAddVehicleWithOptions("v1", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+		Timestamp: &vehicleTimestamp,
+	})
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID("dp-agency", tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	require.NotNil(t, entry.TripStatus)
+	assert.False(t, entry.Predicted, "a vehicle position alone does not predict the arrival")
+	assert.True(t, entry.PredictedArrivalTime.IsZero())
+	assert.True(t, entry.PredictedDepartureTime.IsZero())
+}
+
+func TestArrivalAndDepartureForStop_BlockNotActiveIsNotPredicted(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	vehicleTimestamp := mockClock.Now()
+	api.GtfsManager.MockAddVehicleWithOptions("v1", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+		Timestamp: &vehicleTimestamp,
+	})
+	delay := 2 * time.Hour
+	api.GtfsManager.MockAddTripUpdate(tripID, &delay, nil)
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID("dp-agency", tripID),
+		serviceMidnight.UnixMilli(),
+	)
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	entry := model.Data.Entry
+	require.NotNil(t, entry.TripStatus)
+	assert.False(t, entry.Predicted)
+	assert.False(t, entry.TripStatus.Predicted)
+	assert.True(t, entry.PredictedArrivalTime.IsZero())
+	assert.True(t, entry.PredictedDepartureTime.IsZero())
+}
+
 // TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictedWithoutTimes
 // verifies that a StopTimeUpdate only for a later stop marks the arrival
 // predicted without propagating its deviation upstream, matching Java's

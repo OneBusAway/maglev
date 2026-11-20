@@ -1132,6 +1132,11 @@ func TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime(t *testing.T) {
 	require.NotNil(t, subject, "subject arrival missing for trip %s", expectedTripID)
 	require.NotNil(t, subject.TripStatus, "tripStatus must still be emitted even when RT is discarded")
 
+	assert.False(t, subject.Predicted, "a deviation beyond one hour drops the record, so the arrival is not predicted")
+	assert.False(t, subject.TripStatus.Predicted)
+	assert.True(t, subject.PredictedArrivalTime.IsZero())
+	assert.True(t, subject.PredictedDepartureTime.IsZero())
+
 	// Java's blockNotActive: deviation surfaces as 0.
 	assert.Equal(t, 0, subject.TripStatus.ScheduleDeviation,
 		"|delay| > 1h must be discarded; tripStatus.scheduleDeviation should be 0, not %d", subject.TripStatus.ScheduleDeviation)
@@ -1255,9 +1260,9 @@ func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
 	t.Fatalf("expected to find arrival for trip %s", expectedTripID)
 }
 
-// TestPluralArrivals_VehiclePositionAloneDoesNotPredict verifies that a fresh
-// vehicle position without any TripUpdate does NOT mark the arrival as
-// predicted: there is no resolved schedule deviation to apply.
+// TestPluralArrivals_VehiclePositionAloneDoesNotPredict verifies that a
+// fresh vehicle position without a TripUpdate leaves the arrival unpredicted.
+// Java never builds a VehicleLocationRecord from a position alone.
 func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
@@ -1273,7 +1278,8 @@ func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
 	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
 
 	a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
-	assert.False(t, a.Predicted, "vehicle position alone should not mark arrival as predicted")
+	require.NotNil(t, a.TripStatus)
+	assert.False(t, a.Predicted, "a vehicle position alone does not predict the arrival")
 	assert.True(t, a.PredictedArrivalTime.IsZero())
 	assert.True(t, a.PredictedDepartureTime.IsZero())
 }
