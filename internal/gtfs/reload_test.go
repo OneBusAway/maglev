@@ -79,7 +79,7 @@ func TestReload_QueriesCompleteDuringReload(t *testing.T) {
 	newSource := models.GetFixturePath(t, "gtfs.zip")
 	manager.SetGtfsURL("https://feeds.example.test/static.zip?token=ROTATED_STATIC_SECRET")
 	assert.Equal(t, "https://feeds.example.test/static.zip?"+appconf.RedactedValue, manager.config.StaticLogSource(),
-		"updating the source must also refresh the precomputed safe log value")
+		"updating the source must be reflected in the redacted log value")
 	manager.SetGtfsURL(newSource)
 	assert.Equal(t, newSource, manager.config.StaticLogSource(), "local source paths remain readable after URL updates")
 

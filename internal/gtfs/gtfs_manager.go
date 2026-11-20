@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
-	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/models"
@@ -170,7 +169,6 @@ func (manager *Manager) MarkReady() {
 // The source can be either a URL or a local file path
 func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	logger := slog.Default().With(slog.String("component", "gtfs_manager"))
-	config.gtfsLogURL = appconf.RedactURLForLog(config.GtfsURL)
 
 	// Use configurable backoffs or default to production values
 	backoffs := config.StartupRetries
@@ -310,7 +308,6 @@ func (manager *Manager) SetGtfsURL(url string) {
 	manager.staticUpdateMutex.Lock()
 	defer manager.staticUpdateMutex.Unlock()
 	manager.config.GtfsURL = url
-	manager.config.gtfsLogURL = appconf.RedactURLForLog(url)
 }
 
 // Shutdown stops the background workers and closes the database once they

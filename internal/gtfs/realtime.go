@@ -466,7 +466,7 @@ func (manager *Manager) GetAlertsForStop(stopID, agencyID string) []FeedAlert {
 func loadRealtimeData(ctx context.Context, source string, headers map[string]string) (*gtfs.Realtime, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", source, nil)
 	if err != nil {
-		return nil, fmt.Errorf("invalid GTFS-RT source URL %s: %w", appconf.RedactURLForLog(source), appconf.RedactURLError(err, source))
+		return nil, fmt.Errorf("invalid GTFS-RT source URL %s: %w", appconf.RedactURL(source), appconf.RedactURLError(err, source))
 	}
 
 	for key, value := range headers {
@@ -475,7 +475,7 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 
 	resp, err := realtimeHTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute GTFS-RT request for %s: %w", appconf.RedactURLForLog(source), appconf.RedactURLError(err, source))
+		return nil, fmt.Errorf("failed to execute GTFS-RT request for %s: %w", appconf.RedactURL(source), appconf.RedactURLError(err, source))
 	}
 
 	defer logging.SafeCloseWithLogging(resp.Body,
@@ -483,7 +483,7 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 		"http_response_body")
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gtfs-rt fetch failed: %s returned %s", appconf.RedactURLForLog(source), resp.Status)
+		return nil, fmt.Errorf("gtfs-rt fetch failed: %s returned %s", appconf.RedactURL(source), resp.Status)
 	}
 
 	const maxBodySize = 25 * 1024 * 1024
