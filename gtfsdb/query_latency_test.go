@@ -212,7 +212,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 	now := time.Now()
 	windowStart := int64(5 * time.Hour) // 05:00 as nanoseconds-since-midnight
 	windowEnd := int64(23 * time.Hour)  // 23:00 as nanoseconds-since-midnight
-	dateStr := "20250616" // Use a date within the RABA fixture's service calendar.
+	dateStr := now.Format("20060102")
 	weekday := strings.ToLower(now.Weekday().String())
 
 	routeIDs := latencyFetchRouteIDsForStop(ctx, t, client.Queries, stopID)
@@ -259,7 +259,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 		},
 		{
 			name: "GetActiveRouteIDsForStopsOnDate (stops-for-location batch)",
-			skip: len(svcIDs)==0,
+			skip: len(svcIDs) == 0,
 			fn: func() error {
 				if len(svcIDs) == 0 {
 					return nil
@@ -273,7 +273,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 		},
 		{
 			name: "GetActiveRouteIDsForStopsInInterval (nearby stops batch)",
-			skip: len(svcIDs)==0,
+			skip: len(svcIDs) == 0,
 			fn: func() error {
 				if len(svcIDs) == 0 {
 					return nil
