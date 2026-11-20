@@ -475,7 +475,10 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 
 	resp, err := realtimeHTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute GTFS-RT request for %s: %w", appconf.RedactURL(source), appconf.RedactURLError(err, source))
+		return nil, fmt.Errorf(
+			"failed to execute GTFS-RT request: %w",
+			appconf.RedactURLError(err, source),
+		)
 	}
 
 	defer logging.SafeCloseWithLogging(resp.Body,
@@ -505,7 +508,6 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedConfig) bool {
 	logger := logging.ForComponent(ctx, "gtfs_realtime")
 	feedID := feedCfg.ID
-	logFeedCfg := feedCfg.Redacted()
 
 	var wg sync.WaitGroup
 	var tripData, vehicleData, alertData *gtfs.Realtime
@@ -520,7 +522,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			if tripErr != nil {
 				logging.LogError(logger, "Error loading GTFS-RT trip updates data", tripErr,
 					slog.String("feed", feedID),
-					slog.String("url", logFeedCfg.TripUpdatesURL))
+					slog.String("url", appconf.RedactURL(feedCfg.TripUpdatesURL)))
 			}
 		}()
 	}
@@ -533,7 +535,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			if vehicleErr != nil {
 				logging.LogError(logger, "Error loading GTFS-RT vehicle positions data", vehicleErr,
 					slog.String("feed", feedID),
-					slog.String("url", logFeedCfg.VehiclePositionsURL))
+					slog.String("url", appconf.RedactURL(feedCfg.VehiclePositionsURL)))
 			}
 		}()
 	}
@@ -546,7 +548,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			if alertErr != nil {
 				logging.LogError(logger, "Error loading GTFS-RT service alerts data", alertErr,
 					slog.String("feed", feedID),
-					slog.String("url", logFeedCfg.ServiceAlertsURL))
+					slog.String("url", appconf.RedactURL(feedCfg.ServiceAlertsURL)))
 			}
 		}()
 	}
@@ -1585,7 +1587,6 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 	}
 
 	logger := slog.Default().With(slog.String("component", "gtfs_realtime_updater"))
-	logFeedCfg := feedCfg.Redacted()
 	baseInterval := time.Duration(feedCfg.RefreshInterval) * time.Second
 	maxInterval := 5 * time.Minute
 
@@ -1597,9 +1598,9 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 	logging.LogOperation(logger, "started_realtime_feed_poller",
 		slog.String("feed", feedCfg.ID),
 		slog.Float64("interval_ms", float64(baseInterval)/float64(time.Millisecond)),
-		slog.String("tripUpdatesURL", logFeedCfg.TripUpdatesURL),
-		slog.String("vehiclePositionsURL", logFeedCfg.VehiclePositionsURL),
-		slog.String("serviceAlertsURL", logFeedCfg.ServiceAlertsURL),
+		slog.String("tripUpdatesURL", appconf.RedactURL(feedCfg.TripUpdatesURL)),
+		slog.String("vehiclePositionsURL", appconf.RedactURL(feedCfg.VehiclePositionsURL)),
+		slog.String("serviceAlertsURL", appconf.RedactURL(feedCfg.ServiceAlertsURL)),
 	)
 
 	// Use a Timer instead of Ticker to dynamically control intervals (backoff/jitter)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/logging"
 )
 
@@ -80,7 +81,7 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 				_, err := manager.ReloadStatic(ctx)
 				if err != nil {
 					logging.LogError(logger, "Error updating GTFS data", err,
-						slog.String("source", manager.config.StaticLogSource()))
+						slog.String("source", appconf.RedactURL(manager.config.GtfsURL)))
 				}
 			}()
 		case <-manager.shutdownChan:
@@ -112,7 +113,7 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		precomputeStopDirections(ctx, manager.GtfsDB)
 	} else {
 		logging.LogOperation(logger, "gtfs_static_data_unchanged",
-			slog.String("source", manager.config.StaticLogSource()))
+			slog.String("source", appconf.RedactURL(manager.config.GtfsURL)))
 	}
 
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
@@ -133,7 +134,7 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	}
 
 	logging.LogOperation(logger, "gtfs_static_data_reloaded",
-		slog.String("source", manager.config.StaticLogSource()),
+		slog.String("source", appconf.RedactURL(manager.config.GtfsURL)),
 		slog.String("db_path", manager.config.GTFSDataPath),
 		slog.Bool("changed", changed))
 
@@ -151,7 +152,7 @@ func (manager *Manager) storeConfiguredFeed(ctx context.Context, logger *slog.Lo
 	feed, err := fetchFeedFile(ctx, manager.config)
 	if err != nil {
 		logging.LogError(logger, "Error loading GTFS data", err,
-			slog.String("source", manager.config.StaticLogSource()))
+			slog.String("source", appconf.RedactURL(manager.config.GtfsURL)))
 		return false, err
 	}
 	defer feed.close()
@@ -159,7 +160,7 @@ func (manager *Manager) storeConfiguredFeed(ctx context.Context, logger *slog.Lo
 	skipped, err := manager.GtfsDB.SkipIfImported(ctx, feed.identity(manager.config))
 	if err != nil {
 		logging.LogError(logger, "Error checking whether GTFS data is already imported", err,
-			slog.String("source", manager.config.StaticLogSource()))
+			slog.String("source", appconf.RedactURL(manager.config.GtfsURL)))
 		return false, err
 	}
 	if skipped {
@@ -169,7 +170,7 @@ func (manager *Manager) storeConfiguredFeed(ctx context.Context, logger *slog.Lo
 	newData, err := feed.parse(ctx, manager.config)
 	if err != nil {
 		logging.LogError(logger, "Error loading GTFS data", err,
-			slog.String("source", manager.config.StaticLogSource()))
+			slog.String("source", appconf.RedactURL(manager.config.GtfsURL)))
 		return false, err
 	}
 

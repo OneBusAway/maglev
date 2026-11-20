@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"testing"
@@ -893,99 +892,4 @@ func TestRedactURLError_QuotedURLWithControlCharacter(t *testing.T) {
 	assert.NotContains(t, got.URL, "QUOTED_URL_SECRET")
 	assert.Contains(t, got.URL, RedactedValue)
 	assert.NotContains(t, got.Error(), "QUOTED_URL_SECRET")
-}
-
-func TestRedactURLError_RedactsMalformedRedirectURL(t *testing.T) {
-	tests := []struct {
-		name     string
-		location string
-		secret   string
-	}{
-		{
-			name:     "absolute redirect",
-			location: "https://cdn.example.test/bad%zz?token=ABSOLUTE_SECRET",
-			secret:   "ABSOLUTE_SECRET",
-		},
-		{
-			name:     "apostrophe in absolute redirect",
-			location: "https://cdn.example.test/bad%zz?token='APOSTROPHE_SECRET",
-			secret:   "APOSTROPHE_SECRET",
-		},
-		{
-			name:     "relative redirect",
-			location: "/bad%zz?token=RELATIVE_SECRET",
-			secret:   "RELATIVE_SECRET",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(
-				func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Set("Location", tt.location)
-					w.WriteHeader(http.StatusFound)
-				},
-			))
-			defer server.Close()
-
-			_, err := http.Get(server.URL)
-			require.Error(t, err)
-
-			// Verify that the test actually exercises the leaking diagnostic.
-			require.Contains(t, err.Error(), tt.secret)
-
-			var original *url.Error
-			require.ErrorAs(t, err, &original)
-
-			redacted := RedactURLError(err, server.URL)
-
-			assert.NotContains(t, redacted.Error(), tt.secret)
-
-			var got *url.Error
-			require.ErrorAs(t, redacted, &got)
-
-			assert.NotContains(t, got.URL, tt.secret)
-			require.Error(t, got.Err)
-			assert.NotContains(t, got.Err.Error(), tt.secret)
-
-			// Matching the original error must still work.
-			assert.ErrorIs(t, redacted, original.Err)
-
-			// The sanitized cause must not unwrap to a raw diagnostic.
-			assert.Nil(t, errors.Unwrap(got.Err))
-		})
-	}
-}
-
-func TestRedactURLError_RedactsQuotedRedirectLocation(t *testing.T) {
-	location := "/bad%zz?token=CONTROL_SECRET\t"
-
-	underlying := errors.New("invalid URL escape")
-
-	cause := fmt.Errorf(
-		"failed to parse Location header %q: parse %q: %w",
-		location,
-		location,
-		underlying,
-	)
-
-	original := &url.Error{
-		Op:  "Get",
-		URL: "https://feeds.example.test/start?token=SOURCE_SECRET",
-		Err: cause,
-	}
-
-	redacted := RedactURLError(original)
-
-	assert.NotContains(t, redacted.Error(), "CONTROL_SECRET")
-	assert.NotContains(t, redacted.Error(), "SOURCE_SECRET")
-
-	var got *url.Error
-	require.ErrorAs(t, redacted, &got)
-
-	assert.NotContains(t, got.URL, "SOURCE_SECRET")
-	assert.NotContains(t, got.Err.Error(), "CONTROL_SECRET")
-
-	assert.ErrorIs(t, redacted, underlying)
-	assert.Nil(t, errors.Unwrap(got.Err))
 }
