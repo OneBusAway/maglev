@@ -782,6 +782,17 @@ func sequenceIdentifiesVisit(stu gtfs.StopTimeUpdate, staticStops map[int64]stri
 	return ok && staticStop == *stu.StopID
 }
 
+// uniqueStopSequence resolves stopID to its static sequence when the trip
+// visits that stop once. The schedule is loaded on the first call. A stop
+// visited twice stays unresolved.
+func (api *RestAPI) uniqueStopSequence(ctx context.Context, tripID, stopID string, staticStops *map[int64]string) (int64, bool) {
+	if *staticStops == nil {
+		loaded := api.staticStopsForTrip(ctx, tripID)
+		*staticStops = loaded
+	}
+	return uniqueStaticSequence(*staticStops, stopID)
+}
+
 // uniqueStaticSequence returns the stop_sequence of stopID when the trip
 // visits that stop once. A stop that appears more than once stays unresolved.
 func uniqueStaticSequence(staticStops map[int64]string, stopID string) (int64, bool) {

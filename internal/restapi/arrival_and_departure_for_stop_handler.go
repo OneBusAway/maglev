@@ -759,6 +759,10 @@ func (api *RestAPI) getPredictedTimes(
 	// to stop_id for updates whose sequence doesn't name a visit to this stop.
 	var target, stopIDFallback *gtfs.StopTimeUpdate
 	var staticStops map[int64]string
+	// earliestSTUSequence matters only for a trip delay with two or more
+	// updates. Stop-id-only updates resolve a sequence in that case alone,
+	// so other feeds do not load the trip's stop times.
+	resolveUniqueStop := realTimeTrip.Delay != nil && len(realTimeTrip.StopTimeUpdates) >= 2
 
 	for i := range realTimeTrip.StopTimeUpdates {
 		stu := &realTimeTrip.StopTimeUpdates[i]
@@ -782,14 +786,9 @@ func (api *RestAPI) getPredictedTimes(
 			}
 		}
 
-		// A stop_id with no stop_sequence still names the earliest update when
-		// that stop is visited once. A stop visited twice stays unresolved.
 		trackedSeq := seq
-		if trackedSeq == -1 && stu.StopID != nil {
-			if staticStops == nil {
-				staticStops = api.staticStopsForTrip(ctx, tripID)
-			}
-			if resolved, ok := uniqueStaticSequence(staticStops, *stu.StopID); ok {
+		if trackedSeq == -1 && resolveUniqueStop && stu.StopID != nil {
+			if resolved, ok := api.uniqueStopSequence(ctx, tripID, *stu.StopID, &staticStops); ok {
 				trackedSeq = resolved
 			}
 		}
