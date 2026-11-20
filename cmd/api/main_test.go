@@ -136,9 +136,9 @@ func TestMain_CommandLineFlagsPassValidation(t *testing.T) {
 
 func TestMain_FlagPathEnvironmentOverrides(t *testing.T) {
 	tests := []struct {
-		name string
-		args string
-		env  map[string]string
+		name  string
+		args  string
+		env   map[string]string
 		check func(t *testing.T, exitCode int, output string)
 	}{
 		{
