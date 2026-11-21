@@ -109,9 +109,7 @@ func replaceURLText(message, raw, safe string) string {
 	return strings.ReplaceAll(message, raw, safe)
 }
 
-// redactErrorMessage sanitizes configured source strings and any additional
-// HTTP(S) URLs embedded in diagnostic text, such as malformed redirect URLs.
-
+// redactErrorMessage sanitizes explicitly configured source URLs in diagnostic text.
 func redactErrorMessage(message string, sourceURLs ...string) string {
 	for _, source := range sourceURLs {
 		if source != "" {

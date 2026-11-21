@@ -475,7 +475,7 @@ func (manager *Manager) GetAlertsForStop(stopID, agencyID string) []FeedAlert {
 func loadRealtimeData(ctx context.Context, source string, headers map[string]string) (*gtfs.Realtime, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", source, nil)
 	if err != nil {
-		return nil, fmt.Errorf("invalid GTFS-RT source URL %s: %w", appconf.RedactURL(source), appconf.RedactURLError(err, source))
+		return nil, fmt.Errorf("invalid GTFS-RT source URL: %w", appconf.RedactURLError(err, source))
 	}
 
 	for key, value := range headers {

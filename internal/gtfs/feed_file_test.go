@@ -438,3 +438,28 @@ func TestFetchFeedFile_LocalPathErrorRemainsReadable(t *testing.T) {
 	assert.Contains(t, err.Error(), localPath)
 	assert.NotContains(t, err.Error(), appconf.RedactedValue)
 }
+
+func TestFetchFeedFileLogRedactsSource(t *testing.T) {
+	logOutput := captureStructuredLogOutput(t)
+
+	const secret = "STATIC_LOG_SECRET"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	sourceURL := server.URL + "/feed.zip?token=" + secret
+
+	_, err := fetchFeedFile(context.Background(), Config{
+		GtfsURL: sourceURL,
+	})
+
+	require.Error(t, err)
+
+	output := logOutput.String()
+
+	require.Contains(t, output, `"msg":"reading_gtfs_data"`)
+	assert.Contains(t, output, server.URL+"/feed.zip?"+appconf.RedactedValue)
+	assert.NotContains(t, output, secret)
+}

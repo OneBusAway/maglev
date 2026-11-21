@@ -2557,3 +2557,38 @@ func serveTripUpdate(t *testing.T, manager *Manager, tripID string, timestamp, h
 	defer server.Close()
 	manager.updateFeedRealtime(context.Background(), RTFeedConfig{ID: "feed", TripUpdatesURL: server.URL, Enabled: true})
 }
+
+func TestPollFeedLogRedactsConfiguredURLs(t *testing.T) {
+	logOutput := captureStructuredLogOutput(t)
+
+	feedCfg := RTFeedConfig{
+		ID:                  "test-feed",
+		RefreshInterval:     60,
+		TripUpdatesURL:      "https://example.com/trips?token=TRIP_SECRET",
+		VehiclePositionsURL: "https://example.com/vehicles?token=VEHICLE_SECRET",
+		ServiceAlertsURL:    "https://example.com/alerts?token=ALERT_SECRET",
+	}
+
+	manager := &Manager{
+		shutdownChan: make(chan struct{}),
+	}
+
+	manager.wg.Add(1)
+	go manager.pollFeed(feedCfg)
+
+	// The poller logs its configured URLs before waiting on this channel.
+	close(manager.shutdownChan)
+	manager.wg.Wait()
+
+	output := logOutput.String()
+
+	require.Contains(t, output, `"msg":"started_realtime_feed_poller"`)
+
+	require.Contains(t, output, `"tripUpdatesURL":"https://example.com/trips?`+appconf.RedactedValue+`"`)
+	require.Contains(t, output, `"vehiclePositionsURL":"https://example.com/vehicles?`+appconf.RedactedValue+`"`)
+	require.Contains(t, output, `"serviceAlertsURL":"https://example.com/alerts?`+appconf.RedactedValue+`"`)
+
+	assert.NotContains(t, output, "TRIP_SECRET")
+	assert.NotContains(t, output, "VEHICLE_SECRET")
+	assert.NotContains(t, output, "ALERT_SECRET")
+}
