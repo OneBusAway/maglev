@@ -622,6 +622,10 @@ func vehicleRecordUpdates(updates []tripUpdateForTrip, vehicle *gtfs.Vehicle) []
 // updateBelongsToVehicleRecord matches named updates by vehicle ID and anonymous
 // updates by trip, except that a block stand-in owns all anonymous block updates.
 // The caller must supply a non-nil vehicle with an ID.
+//
+// Named updates match by raw vehicle ID, not agency. A block's trips come from
+// one static feed, so a mismatch needs two of its agencies to share a block_id
+// and also reuse a vehicle ID.
 func updateBelongsToVehicleRecord(update tripUpdateForTrip, vehicle *gtfs.Vehicle) bool {
 	isBlockVehicle := isTripUpdateVehicle(vehicle) && !namesVehicle(*vehicle.Trip)
 	if namesVehicle(update.tu) {
