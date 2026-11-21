@@ -256,16 +256,6 @@ status, phase := GetVehicleStatusAndPhase(vehicle)
 // For nil vehicle: ("default", "")
 ```
 
-**Known difference — partial vehicle-record scoping ([#2105](https://github.com/OneBusAway/maglev/issues/2105)):**
-Record timestamps and record-based placement use updates naming the vehicle,
-anonymous updates on its own trip, or anonymous block updates for a block
-standing in as the vehicle. This is not full per-vehicle record isolation:
-vehicle retention/expiry, deviation samples and cancellation lookups still use
-block-wide update collections, subject to their existing trip/vehicle guards.
-A fresh update from another vehicle can therefore retain a bus whose own record
-has expired, producing block-derived predictions alongside request-time/GPS
-placement. Do not assume timestamp scoping also isolates these other paths.
-
 ## Database Management
 
 The project uses SQLite with sqlc for type-safe database access:

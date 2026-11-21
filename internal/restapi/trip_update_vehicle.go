@@ -538,6 +538,12 @@ func (api *RestAPI) statusBlockSnapshot(
 // trip, which leaves the static block schedule. Updates naming this vehicle
 // contribute, as do anonymous updates on its own trip. A block standing in as
 // the vehicle uses anonymous updates from across the block.
+//
+// This scopes record time, not the entire record: vehicle retention/expiry,
+// deviation and cancellation still use block-wide updates with their existing
+// guards. Another vehicle's fresh update can retain a bus whose own record has
+// expired, leaving block-derived predictions alongside request-time/GPS placement
+// (see #2105).
 func (api *RestAPI) vehicleRecordTime(vehicle *gtfs.Vehicle, blockTripIDs []string) (time.Time, bool) {
 	if vehicle == nil || vehicle.ID == nil || runsOwnSchedule(vehicle) {
 		return time.Time{}, false
