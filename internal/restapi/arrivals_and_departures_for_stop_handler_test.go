@@ -638,7 +638,7 @@ func TestParseArrivalsAndDeparturesParams_InvalidValues(t *testing.T) {
 func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(100, time.Second, nil)
+	api.rateLimiter = NewRateLimitMiddleware(100, time.Second, nil, api.Clock)
 
 	tests := []struct {
 		name   string
