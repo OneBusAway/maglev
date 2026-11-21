@@ -467,7 +467,7 @@ func seedRoutesNearLocation(t *testing.T, api *RestAPI, lat, lon float64, count 
 			id, stopID)
 		require.NoError(t, err)
 	}
-	rebuildStopRouteIndex(t, api)
+	rebuildStopIndexes(t, api)
 }
 
 func TestRoutesForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {
