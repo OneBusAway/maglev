@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -80,20 +81,25 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// noTripsResponse distinguishes the two no-service cases for this route: if the
-	// route has no service on any date after the requested one, the reason is
-	// ServiceDateOutOfRange; otherwise the route simply has no service that day
-	// (NoServiceThatDay). Both return body code 200 with an empty-schedule body.
+	// noTripsResponse distinguishes the two empty-schedule cases for this route
+	// using the planned service span (wiki SD-01): outside [first, last] is
+	// ServiceDateOutOfRange; inside with no trips that day is NoServiceThatDay.
+	// Both return body code 200 with an empty-schedule body.
 	noTripsResponse := func() (models.ResponseModel, error) {
-		hasFuture, err := api.GtfsManager.GtfsDB.Queries.RouteHasFutureService(ctx, gtfsdb.RouteHasFutureServiceParams{
-			RouteID: routeID,
-			RefDate: targetDate,
-		})
+		span, err := api.GtfsManager.GtfsDB.Queries.GetRouteServiceSpan(ctx, routeID)
+		if err != nil {
+			return models.ResponseModel{}, err
+		}
+		first, err := coalesceYYYYMMDD(span.FirstDate)
+		if err != nil {
+			return models.ResponseModel{}, err
+		}
+		last, err := coalesceYYYYMMDD(span.LastDate)
 		if err != nil {
 			return models.ResponseModel{}, err
 		}
 		text := "NoServiceThatDay"
-		if hasFuture == 0 {
+		if first == "" || last == "" || targetDate < first || targetDate > last {
 			text = "ServiceDateOutOfRange"
 		}
 		return buildNoServiceResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, text, api.Clock), nil
@@ -347,6 +353,22 @@ func buildNoServiceResponse(agencyID, routeID string, scheduleDate int64, agency
 		"references": *refs,
 	}
 	return models.NewResponse(200, data, text, clk)
+}
+
+// coalesceYYYYMMDD normalizes sqlc's interface{} date columns (SQLite TEXT /
+// []byte / NULL) to a YYYYMMDD string. Empty means no planned span. Unexpected
+// types error the same way GetFeedEndDate handling does in gtfsdb/helpers.go.
+func coalesceYYYYMMDD(v interface{}) (string, error) {
+	switch d := v.(type) {
+	case nil:
+		return "", nil
+	case string:
+		return d, nil
+	case []byte:
+		return string(d), nil
+	default:
+		return "", fmt.Errorf("unexpected type from GetRouteServiceSpan: %T", v)
+	}
 }
 
 func (api *RestAPI) orderGroupStops(ctx context.Context, trips []gtfsdb.Trip, stopTimesByTrip map[string][]gtfsdb.StopTime) ([]string, error) {
