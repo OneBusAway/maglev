@@ -11,6 +11,7 @@ import (
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -135,27 +136,37 @@ func (manager *Manager) activeTripsForAgency(ctx context.Context, now time.Time,
 	if err != nil {
 		loc = time.UTC
 	}
-	localNow := now.In(loc)
-	// Wall-clock math matches GTFS seconds-since-midnight semantics:
-	// time.Sub diverges by 3600s during the DST fall-back ambiguous hour
-	// (see CalculateSecondsSinceServiceDate for the full explanation).
-	h, m, s := localNow.Clock()
-	sinceMidnight := time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second
+	todayDate := servicedate.Of(now.In(loc))
+	todayOffset := now.Sub(todayDate.Start(loc))
 
-	today, err := manager.countActiveBlocksAt(ctx, agency.ID, serviceIDCache, localNow, sinceMidnight)
+	today, err := manager.countActiveBlocksAt(ctx, agency.ID, serviceIDCache, todayDate.Midnight(loc), todayOffset)
 	if err != nil {
 		return 0, err
 	}
 
-	// GTFS allows departure times past 24:00:00 for trips that started
-	// yesterday but are still running (e.g. 25:30:00 = 1:30 AM). Check
-	// yesterday's service against the same instant shifted +24h.
-	yesterday, err := manager.countActiveBlocksAt(ctx, agency.ID, serviceIDCache, localNow.AddDate(0, 0, -1), sinceMidnight+24*time.Hour)
+	// Yesterday's service can run past 24:00. Its GTFS start must be
+	// calculated independently: consecutive starts can be 23 or 25 hours
+	// apart across DST transitions. Keep calendar dates separate from starts,
+	// which can fall on the preceding calendar day.
+	yesterdayDate := todayDate.AddDays(-1)
+	yesterdayOffset := now.Sub(yesterdayDate.Start(loc))
+	yesterday, err := manager.countActiveBlocksAt(ctx, agency.ID, serviceIDCache, yesterdayDate.Midnight(loc), yesterdayOffset)
 	if err != nil {
 		return 0, err
 	}
 
-	return today + yesterday, nil
+	// On spring-forward eve, tomorrow's GTFS start can fall before local
+	// midnight. Include that service only once its start has been reached.
+	tomorrowDate := todayDate.AddDays(1)
+	tomorrowStart := tomorrowDate.Start(loc)
+	if now.Before(tomorrowStart) {
+		return today + yesterday, nil
+	}
+	tomorrow, err := manager.countActiveBlocksAt(ctx, agency.ID, serviceIDCache, tomorrowDate.Midnight(loc), now.Sub(tomorrowStart))
+	if err != nil {
+		return 0, err
+	}
+	return today + yesterday + tomorrow, nil
 }
 
 // serviceIDsByDate caches active service IDs by YYYYMMDD date for one
