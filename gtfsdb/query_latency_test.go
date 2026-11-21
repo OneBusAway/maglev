@@ -221,6 +221,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 	type querySpec struct {
 		name string
 		fn   func() error
+		skip bool
 	}
 	querySpecs := []querySpec{
 		{
@@ -258,6 +259,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 		},
 		{
 			name: "GetActiveRouteIDsForStopsOnDate (stops-for-location batch)",
+			skip: len(svcIDs) == 0,
 			fn: func() error {
 				if len(svcIDs) == 0 {
 					return nil
@@ -265,6 +267,21 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 				_, err := client.Queries.GetActiveRouteIDsForStopsOnDate(ctx, GetActiveRouteIDsForStopsOnDateParams{
 					StopIds:    []string{stopID},
 					ServiceIds: svcIDs,
+				})
+				return err
+			},
+		},
+		{
+			name: "GetActiveRouteIDsForStopsInInterval (nearby stops batch)",
+			skip: len(svcIDs) == 0,
+			fn: func() error {
+				if len(svcIDs) == 0 {
+					return nil
+				}
+				_, err := client.Queries.GetActiveRouteIDsForStopsInInterval(ctx, GetActiveRouteIDsForStopsInIntervalParams{
+					StopIds:     []string{stopID},
+					ServiceIds:  svcIDs,
+					IntervalEnd: int64(24 * time.Hour),
 				})
 				return err
 			},
@@ -286,6 +303,12 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 		concurrency, iterations, latencyIsWALEnabled(ctx, t, client.DB))
 
 	for _, q := range querySpecs {
+
+		if q.skip {
+			t.Logf("Skipping %s: no active service IDs for today", q.name)
+			continue
+		}
+
 		stat := &queryLatencyStat{name: q.name}
 		var mu sync.Mutex
 		var wg sync.WaitGroup
