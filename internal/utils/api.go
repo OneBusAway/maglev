@@ -173,6 +173,45 @@ func isFinite(f float64) bool {
 	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }
 
+func parseIntParam(params url.Values, key string, bitSize int, fieldErrors map[string][]string) (*int64, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
+	val := params.Get(key)
+	if val == "" {
+		return nil, fieldErrors
+	}
+
+	parsed, err := strconv.ParseInt(val, 10, bitSize)
+	if err != nil {
+		fieldErrors[key] = append(fieldErrors[key], fmt.Sprintf("Invalid field value for field %q.", key))
+		return nil, fieldErrors
+	}
+
+	return &parsed, fieldErrors
+}
+
+// ParseInt32Param retrieves an optional signed 32-bit integer from the provided URL query parameters.
+// If the key is not present or empty, it returns nil and the unmodified fieldErrors map.
+// If the key is present but cannot be parsed as a signed 32-bit integer, it returns nil and updates
+// the fieldErrors map with a validation error matching Java Struts type conversion.
+// - params: URL query parameters.
+// - key: The key to look for in the query parameters.
+// - fieldErrors: A map to collect validation errors for fields.
+// Returns:
+// - A pointer to the parsed int32 value (or nil if omitted/invalid).
+// - The updated fieldErrors map containing any validation errors.
+func ParseInt32Param(params url.Values, key string, fieldErrors map[string][]string) (*int32, map[string][]string) {
+	parsed, fieldErrors := parseIntParam(params, key, 32, fieldErrors)
+	if parsed == nil {
+		return nil, fieldErrors
+	}
+
+	v := int32(*parsed)
+	return &v, fieldErrors
+}
+
 // ParseTimeParameter parses an epoch millisecond timestamp or legacy date-time
 // string (yyyy-MM-dd_HH-mm-ss) in the provided location. If timeParam is empty,
 // it uses the current time from the provided clock.
@@ -323,30 +362,37 @@ func parseMaxCount(queryParams url.Values, defaultCount, ceiling int, overflow m
 }
 
 // ParsePaginationParams parses offset and limit from request parameters.
-// maxCount is the primary parameter for limit, falling back to limit.
-// If neither is present, limit is -1 (return all).
-// Default offset is 0.
-func ParsePaginationParams(r *http.Request) (offset int, limit int) {
+// maxCount is strictly validated against 32-bit signed integer limits with
+// Struts-compatible field errors, matching Java AgenciesWithCoverageAction.
+// offset and limit use lenient parsing (ignoring unparseable values) to
+// maintain parity with Java, which does not define them on this endpoint.
+// Default offset is 0. If neither maxCount nor limit is present, limit is -1.
+func ParsePaginationParams(r *http.Request, fieldErrors map[string][]string) (int, int, map[string][]string) {
+	if fieldErrors == nil {
+		fieldErrors = make(map[string][]string)
+	}
+
 	queryParams := r.URL.Query()
 
-	offset = 0
+	offset := 0
 	if val := queryParams.Get("offset"); val != "" {
 		if parsed, err := strconv.Atoi(val); err == nil && parsed >= 0 {
 			offset = parsed
 		}
 	}
 
-	limit = -1 // Default to no limit
+	limit := -1 // Default to no limit
 
-	// Check maxCount first (OBA convention)
-	if val := queryParams.Get("maxCount"); val != "" {
-		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	} else if val := queryParams.Get("limit"); val != "" {
-		// Fallback to limit
-		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
-			limit = parsed
+	// Check maxCount first (OBA convention) - strictly validated matching Java
+	parsedMaxCount, fieldErrors := ParseInt32Param(queryParams, "maxCount", fieldErrors)
+	if parsedMaxCount != nil && *parsedMaxCount > 0 {
+		limit = int(*parsedMaxCount)
+	} else if queryParams.Get("maxCount") == "" {
+		// Fallback to limit if maxCount was not provided (lenient parsing matching Java)
+		if val := queryParams.Get("limit"); val != "" {
+			if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+				limit = parsed
+			}
 		}
 	}
 
@@ -355,7 +401,7 @@ func ParsePaginationParams(r *http.Request) (offset int, limit int) {
 		limit = 1000
 	}
 
-	return offset, limit
+	return offset, limit, fieldErrors
 }
 
 // PaginateSlice slices a slice based on offset and limit.
