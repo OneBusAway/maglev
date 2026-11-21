@@ -38,7 +38,9 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ctx := r.Context()
+	// BuildTripStatus and BuildTripSchedule look up the same trip, stop-time,
+	// shape and frequency rows; the read memo fetches each once.
+	ctx := gtfsdb.WithReadMemo(r.Context())
 
 	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
 	if err != nil {
@@ -77,7 +79,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
-	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	freqRows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -309,7 +311,7 @@ func (api *RestAPI) positionVehicleRecordExpired(ctx context.Context, agencyID, 
 
 func (api *RestAPI) getTripOr404(ctx context.Context, w http.ResponseWriter, r *http.Request, agencyID, vehicleID, tripID string) (gtfsdb.Trip, bool) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		// If the trip doesn't exist in our DB (sql.ErrNoRows), return 404 instead of 500
 		if errors.Is(err, sql.ErrNoRows) {
