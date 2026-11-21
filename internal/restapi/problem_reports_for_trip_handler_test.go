@@ -70,7 +70,7 @@ func TestProblemReportsForTripSubmitThenRetrieve(t *testing.T) {
 	require.Len(t, model.Data.List, 1, "Should have exactly one report")
 
 	report := model.Data.List[0]
-	assert.Equal(t, "12345", report.TripID)
+	assert.Equal(t, testTripForProblemReports, report.TripID)
 	assert.Equal(t, "vehicle_never_came", report.Code)
 	assert.Equal(t, "Test report", report.UserComment)
 	assert.InDelta(t, 47.6097, report.UserLat, 0.001)
