@@ -382,3 +382,75 @@ func TestBlockHandlerCrossAgencyBlock(t *testing.T) {
 		})
 	}
 }
+
+func TestBlockHandlerCrossAgencyStop(t *testing.T) {
+	files := crossAgencyInterlineFiles()
+	files["agency.txt"] += "agency-a,Agency A,https://agency-a.example.com,America/New_York\n" +
+		"agency-b,Agency B,https://agency-b.example.com,America/New_York\n"
+	files["routes.txt"] += "route-a,agency-a,A1,Route A,3\n" +
+		"route-b,agency-b,B1,Route B,3\n"
+	files["trips.txt"] += "route-a,tfr-svc-today,trip-a,Headsign A,0,block-a\n" +
+		"route-b,tfr-svc-yest,trip-b,Headsign B,0,block-b\n"
+	files["stops.txt"] += "stop-1,Shared Stop,47.6062,-122.3321\n" +
+		"stop-2,Second Stop,47.6100,-122.3300\n"
+	files["stop_times.txt"] += "trip-a,08:00:00,08:00:00,stop-1,1\n" +
+		"trip-a,08:10:00,08:10:00,stop-2,2\n" +
+		"trip-b,08:05:00,08:05:00,stop-1,1\n" +
+		"trip-b,08:15:00,08:15:00,stop-2,2\n"
+
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "cross-agency-stop.zip", files)
+	defer api.Shutdown()
+
+	tests := []struct {
+		name     string
+		agencyID string
+		blockID  string
+	}{
+		{
+			name:     "Agency A",
+			agencyID: "agency-a",
+			blockID:  "block-a",
+		},
+		{
+			name:     "Agency B",
+			agencyID: "agency-b",
+			blockID:  "block-b",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blockID := utils.FormCombinedID(tt.agencyID, tt.blockID)
+			resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL(blockID))
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			assert.Len(t, model.Data.References.Agencies, 2)
+			agencyIDs := make([]string, 0, len(model.Data.References.Agencies))
+			for _, a := range model.Data.References.Agencies {
+				agencyIDs = append(agencyIDs, a.ID)
+			}
+			assert.ElementsMatch(t, []string{"agency-a", "agency-b"}, agencyIDs)
+
+			assert.Len(t, model.Data.References.Stops, 2)
+			stopIDs := make([]string, 0, len(model.Data.References.Stops))
+			for _, s := range model.Data.References.Stops {
+				stopIDs = append(stopIDs, s.ID)
+			}
+			assert.ElementsMatch(t, []string{
+				utils.FormCombinedID(tt.agencyID, "stop-1"),
+				utils.FormCombinedID(tt.agencyID, "stop-2"),
+			}, stopIDs)
+
+			assert.Len(t, model.Data.References.Routes, 2)
+			routeIDs := make([]string, 0, len(model.Data.References.Routes))
+			for _, r := range model.Data.References.Routes {
+				routeIDs = append(routeIDs, r.ID)
+			}
+			assert.ElementsMatch(t, []string{
+				utils.FormCombinedID("agency-a", "route-a"),
+				utils.FormCombinedID("agency-b", "route-b"),
+			}, routeIDs)
+		})
+	}
+}
