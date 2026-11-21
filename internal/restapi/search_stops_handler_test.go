@@ -300,43 +300,6 @@ func TestSearchStopsHandlerFTSInjectionAttempt(t *testing.T) {
 	assert.LessOrEqual(t, len(stopsResp.Data.List), 20)
 }
 
-func TestSanitizeFTS5Query(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{"empty string", "", ""},
-		{"whitespace only", "     ", ""},
-		{"all special characters", `"*()`, ""},
-		// Operator words are kept verbatim - the caller quotes every term, so FTS5 reads
-		// them as literal tokens. Stop names such as "Park and Ride" depend on this.
-		{"operator word AND preserved", "test AND foo", "test AND foo"},
-		{"operator word And preserved", "test And foo", "test And foo"},
-		{"operator word aNd preserved", "test aNd foo", "test aNd foo"},
-		{"consecutive operator words preserved", "foo AND AND bar", "foo AND AND bar"},
-		{"operator word at beginning preserved", "AND test", "AND test"},
-		{"operator word at end preserved", "test OR", "test OR"},
-		{"unicode input", "中央駅 テスト", "中央駅 テスト"},
-		{"colon character", "column:value", "column value"},
-		{"caret character", "test^2", "test 2"},
-		{"curly braces", "test{foo}bar", "test foo bar"},
-		{"square brackets", "test[foo]bar", "test foo bar"},
-		{"angle brackets", "test<foo>bar", "test foo bar"},
-		{"tilde character", "test~2", "test 2"},
-		{"pipe character", "test|foo", "test foo"},
-		{"operator word NEAR preserved", "test NEAR foo", "test NEAR foo"},
-		{"operator word near preserved", "test near foo", "test near foo"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			out := sanitizeFTS5Query(tt.input)
-			assert.Equal(t, tt.expected, out)
-		})
-	}
-}
-
 func TestSearchStopsHandlerMultiWordWithSymbols(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

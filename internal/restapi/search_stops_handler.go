@@ -5,18 +5,12 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
-	"regexp"
-	"strings"
 
 	"maglev.onebusaway.org/gtfsdb"
-	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
-
-// Pre-compiled regex pattern for FTS5 query sanitization
-var fts5SpecialCharsRegex = regexp.MustCompile(`[*"():^$@#~<>{}[\]\\|&!]`)
 
 // GTFS extended special-vehicle route types. A stop served by exactly one route of
 // one of these types is excluded from stop search results.
@@ -37,38 +31,11 @@ func isSpecialVehicleRouteType(routeType int64) bool {
 	return false
 }
 
-// sanitizeFTS5Query removes special FTS5 characters by replacing them with spaces
-// to prevent query syntax errors. Does not preserve the original characters.
-//
-// Operator words (AND, OR, NOT, NEAR) are deliberately left intact: every term is wrapped
-// in double quotes before the query is assembled, so FTS5 reads them as literal tokens
-// rather than syntax. Stripping them made stop names containing those words unsearchable.
-func sanitizeFTS5Query(input string) string {
-	sanitized := fts5SpecialCharsRegex.ReplaceAllString(input, " ")
-	sanitized = strings.TrimSpace(sanitized)
-
-	return strings.Join(strings.Fields(sanitized), " ")
-}
-
-// extractFTS5Terms splits sanitized input into terms and filters out stray punctuation
-// (such as "/" or "-") that FTS5 tokenizes to nothing and would otherwise cause syntax errors.
-func extractFTS5Terms(sanitizedQuery string) []string {
-	rawTerms := strings.Fields(sanitizedQuery)
-	terms := make([]string, 0, len(rawTerms))
-	for _, term := range rawTerms {
-		if utils.ContainsLetterOrDigit(term) {
-			terms = append(terms, term)
-		}
-	}
-	return terms
-}
-
 // searchStopsHandler searches for stops matching a user-provided query string
 // using full-text search, with optional geographic bounds filtering.
 func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 	includeReferences, referenceErrors := ShouldIncludeReferences(r, nil)
 
-	reqLogger := logging.ForComponent(r.Context(), "http_server")
 	ctx := r.Context()
 
 	// 1. Parse Parameters
@@ -83,66 +50,16 @@ func (api *RestAPI) searchStopsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Sanitize and construct FTS5 query
-	sanitizedQuery := sanitizeFTS5Query(query)
-	terms := extractFTS5Terms(sanitizedQuery)
-
-	if len(terms) == 0 {
-		response := models.NewListResponseWithRange([]models.Stop{}, *models.NewEmptyReferences(), false, api.Clock, false)
-		api.sendResponse(w, r, response)
-		return
-	}
-
-	queryTerms := make([]string, len(terms))
-	for i, term := range terms {
-		queryTerms[i] = `"` + term + `"*`
-	}
-	searchQuery := strings.Join(queryTerms, " AND ")
-
-	searchParams := gtfsdb.SearchStopsByNameParams{
-		SearchQuery: searchQuery,
+	// 2. Perform Full Text Search via gtfsdb
+	stops, err := api.GtfsManager.GtfsDB.Queries.SearchStops(ctx, gtfsdb.SearchRequest{
+		Query:       query,
+		Operator:    gtfsdb.SearchOperatorAnd,
+		PrefixMatch: true,
 		Limit:       int64(limit + 1), // Request limit + 1 to accurately determine if pagination boundaries are exceeded.
-	}
-
-	// 3. Perform Full Text Search (with logged fallback)
-	stops, err := api.GtfsManager.GtfsDB.Queries.SearchStopsByName(ctx, searchParams)
+	})
 	if err != nil {
-		// Check for FTS5-specific errors before retrying
-		// This prevents retries on infrastructure errors (context canceled, db locked, etc.)
-		errStr := err.Error()
-		if strings.Contains(errStr, "fts5") || strings.Contains(errStr, "syntax") {
-			reqLogger.Warn(
-				"FTS5 wildcard query failed, retrying without wildcard",
-				"original_error", err,
-				"fts_query", searchQuery,
-				"sanitized_input", sanitizedQuery,
-			)
-
-			fallbackTerms := make([]string, len(terms))
-			for i, term := range terms {
-				fallbackTerms[i] = `"` + term + `"`
-			}
-			searchQuery = strings.Join(fallbackTerms, " AND ")
-
-			searchParams.SearchQuery = searchQuery
-
-			stops, err = api.GtfsManager.GtfsDB.Queries.SearchStopsByName(ctx, searchParams)
-			if err != nil {
-				api.serverErrorResponse(
-					w,
-					r,
-					fmt.Errorf("SearchStopsByName failed for query %q: %w", searchParams.SearchQuery, err),
-				)
-				return
-			}
-		} else {
-			api.serverErrorResponse(
-				w,
-				r,
-				fmt.Errorf("SearchStopsByName failed for query %q: %w", searchParams.SearchQuery, err),
-			)
-			return
-		}
+		api.serverErrorResponse(w, r, err)
+		return
 	}
 
 	stops, isLimitExceeded := utils.PaginateSlice(stops, 0, limit)
