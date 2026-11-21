@@ -536,6 +536,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		reqLogger.Warn("failed to batch fetch routes for stops", "error", err)
 		batchedRoutesForStops = nil
 	}
+	utils.SortRoutesForStopsRowsByName(batchedRoutesForStops)
 
 	routesByStopID := make(map[string][]gtfsdb.GetRoutesForStopsRow)
 	for _, routeRow := range batchedRoutesForStops {
@@ -629,6 +630,9 @@ func (api *RestAPI) getPredictedTimes(
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
+		return time.Time{}, time.Time{}, false
+	}
+	if api.tripUpdateExpired(*realTimeTrip) {
 		return time.Time{}, time.Time{}, false
 	}
 

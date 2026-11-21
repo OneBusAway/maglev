@@ -1049,20 +1049,14 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.ArrivalAndDeparture, in arrivalInput, vehicle *gtfs.Vehicle, acc *arrivalsAccumulator) {
 	tripStatus, statusExtras, distanceFromStop, numberOfStopsAway := api.tripStatusForArrival(ctx, in, vehicle, acc)
 
-	// BuildTripStatus (via calculateBlockTripSequence) already computed
-	// this and set it on the status; reuse rather than redoing the block
-	// lookup for every arrival row.
-	blockTripSequence := 0
-	if tripStatus != nil {
-		blockTripSequence = tripStatus.BlockTripSequence
-	}
-
 	api.applyTripStatusPrediction(ctx, arrival, tripStatus, statusExtras, in, acc.deviationSamples)
 
 	arrival.TripStatus = tripStatus
 	arrival.DistanceFromStop = distanceFromStop
 	arrival.NumberOfStopsAway = numberOfStopsAway
-	arrival.BlockTripSequence = blockTripSequence
+	// Already computed by BuildTripStatus; reuse rather than redoing the block
+	// lookup for every arrival row.
+	arrival.BlockTripSequence = statusExtras.tripBlockSequence
 	arrival.SituationIDs = acc.situations.addRefs(statusExtras.situations)
 }
 
@@ -1387,6 +1381,7 @@ func (api *RestAPI) loadStopReferenceData(ctx context.Context, stopIDs []string)
 		reqLogger.Warn("failed to batch fetch routes for stop references", slog.Any("error", err))
 		return stopsByID, routesByStop, nil
 	}
+	utils.SortRoutesForStopsRowsByName(routeRows)
 	for _, row := range routeRows {
 		routesByStop[row.StopID] = append(routesByStop[row.StopID], row)
 	}

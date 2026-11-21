@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -71,6 +72,8 @@ type Manager struct {
 	// Per-feed time its trip data was produced: the trip-updates feed's
 	// header timestamp, else its fetch time.
 	feedTripDataTime map[string]time.Time
+	// Per-feed, per-trip moment the trip update's current timestamp first arrived.
+	feedTripUpdateSeen map[string]map[string]tripUpdateSeen
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
 	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
 	// No lock is required for reads.
@@ -113,6 +116,7 @@ func (manager *Manager) clearFeedData(feedID string) {
 	delete(manager.feedUnattributedTrips, feedID)
 	delete(manager.feedTripAgency, feedID)
 	delete(manager.feedTripDataTime, feedID)
+	delete(manager.feedTripUpdateSeen, feedID)
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
 
@@ -181,6 +185,10 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	gtfsDB, err := openGtfsDB(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open GTFS database: %w", err)
+	}
+
+	if config.Clock == nil {
+		config.Clock = clock.RealClock{}
 	}
 
 	manager := &Manager{
@@ -709,7 +717,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 
 	reqLogger := logging.ForComponent(ctx, "gtfs_manager")
 
-	requestedTrip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	requestedTrip, err := manager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trip", err,
 			slog.String("trip_id", tripID))
@@ -723,7 +731,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
+	blockTrips, err := manager.GtfsDB.Queries.Memo(ctx).GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trips for block", err,
 			slog.String("block_id", requestedBlockID))
@@ -755,6 +763,14 @@ func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) 
 	}
 
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
+}
+
+// VehicleAgencyID returns the agency the vehicle GetVehicleByID finds was
+// attributed to at ingestion. ok is false when the vehicle is unknown or has
+// no attributed agency.
+func (manager *Manager) VehicleAgencyID(vehicleID string) (agencyID string, ok bool) {
+	agencyID, ok = manager.mergedRealtime().vehicleAgencyByVehicle[vehicleID]
+	return agencyID, ok
 }
 
 func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
@@ -920,6 +936,21 @@ func (manager *Manager) GetStaticLastUpdated(ctx context.Context) time.Time {
 	return time.Unix(0, metadata.ImportTime).UTC()
 }
 
+// TripUpdateFirstSeen returns the feed time at which a trip's update first arrived
+// with its current timestamp, and false when no feed has delivered one. It takes
+// no lock, so request paths can call it per row.
+func (manager *Manager) TripUpdateFirstSeen(tripID string) (time.Time, bool) {
+	seenAt, ok := manager.mergedRealtime().tripUpdateSeenAt[tripID]
+	return seenAt, ok
+}
+
+func (manager *Manager) recordFeedUpdateLocked(feedID string, updatedAt time.Time) {
+	if manager.feedLastUpdate == nil {
+		manager.feedLastUpdate = make(map[string]time.Time)
+	}
+	manager.feedLastUpdate[feedID] = updatedAt
+}
+
 // GetFeedUpdateTimes returns a copy of the last update times for all realtime feeds.
 func (manager *Manager) GetFeedUpdateTimes() map[string]time.Time {
 	manager.realTimeMutex.RLock()
@@ -938,12 +969,7 @@ func (manager *Manager) SetFeedUpdateTimeForTest(feedID string, t time.Time) {
 	manager.realTimeMutex.Lock()
 	defer manager.realTimeMutex.Unlock()
 
-	// Ensure map is initialized (helpful for tests)
-	if manager.feedLastUpdate == nil {
-		manager.feedLastUpdate = make(map[string]time.Time)
-	}
-
-	manager.feedLastUpdate[feedID] = t
+	manager.recordFeedUpdateLocked(feedID, t)
 }
 
 // SetStaticLastUpdatedForTest writes the static data timestamp to the database for testing purposes.
