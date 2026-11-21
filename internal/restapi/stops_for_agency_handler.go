@@ -55,27 +55,27 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Resolve parent stations referenced by any stop into references.stops.
-	parentRefs, err := api.buildParentStationReferences(ctx, id, stopsList)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-
-	// Route references cover the listed stops and their parent stations, so a
-	// route that serves only the station still resolves.
-	routeSource := make([]models.Stop, 0, len(stopsList)+len(parentRefs))
-	routeSource = append(routeSource, stopsList...)
-	routeSource = append(routeSource, parentRefs...)
-	routeRefs, err := api.BuildRouteReferences(ctx, id, routeSource)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-
 	// Build references
 	references := models.NewEmptyReferences()
 	if includeReferences {
+		// Resolve parent stations referenced by any stop into references.stops.
+		parentRefs, err := api.buildParentStationReferences(ctx, id, stopsList)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+
+		// Route references cover the listed stops and their parent stations, so a
+		// route that serves only the station still resolves.
+		routeSource := make([]models.Stop, 0, len(stopsList)+len(parentRefs))
+		routeSource = append(routeSource, stopsList...)
+		routeSource = append(routeSource, parentRefs...)
+		routeRefs, err := api.BuildRouteReferences(ctx, id, routeSource)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+
 		references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
 		references.Routes = routeRefs
 		references.Stops = parentRefs
