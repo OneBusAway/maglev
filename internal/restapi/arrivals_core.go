@@ -72,12 +72,6 @@ func newArrivalsAccumulator(primaryAgencyID string) *arrivalsAccumulator {
 // stopArrivalsResult is what one stop contributed to a request.
 type stopArrivalsResult struct {
 	Arrivals []models.ArrivalAndDeparture
-
-	// Matched reports whether any stop_time fell inside the window at all,
-	// which is distinct from Arrivals being empty (every matched row can still
-	// be dropped for a missing route or trip). The per-stop handler short-
-	// circuits reference and nearby-stop work when nothing matched.
-	Matched bool
 }
 
 // activeStopTime pairs a stop_time row with the service date it was matched on,
@@ -129,7 +123,6 @@ func (api *RestAPI) arrivalsForStop(ctx context.Context, in stopArrivalsInput, a
 			continue
 		}
 
-		result.Matched = true
 		acc.stopIDs[in.StopCode] = true
 
 		route, trip, reportable := lookups.resolveRouteAndTrip(st, in.RouteTypes, reqLogger)
