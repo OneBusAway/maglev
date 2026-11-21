@@ -117,6 +117,23 @@ type snapshotCache struct {
 	// activeTripSequences memoizes a block-trip sequence lookup, which rows on
 	// one block all make for the same active trip.
 	activeTripSequences map[activeTripSequenceKey]int
+	// blockShiftTripIDs memoizes blockShiftTripIDsSortedByStartTime, which the
+	// vehicle lookup, the cancellation check and the deviation each make for
+	// every arrival row.
+	blockShiftTripIDs map[blockShiftKey][]string
+	// tripAgencies memoizes tripAgencyID, which building a trip-update vehicle
+	// makes for each named update on the block.
+	tripAgencies map[string]tripAgency
+}
+
+type tripAgency struct {
+	agencyID string
+	known    bool
+}
+
+type blockShiftKey struct {
+	tripID          string
+	serviceDateUnix int64
 }
 
 type activeTripSequenceKey struct {
@@ -134,6 +151,8 @@ func newSnapshotCache() *snapshotCache {
 	return &snapshotCache{
 		m:                   make(map[snapshotCacheEntryKey]*scheduledBlockSnapshot),
 		activeTripSequences: make(map[activeTripSequenceKey]int),
+		blockShiftTripIDs:   make(map[blockShiftKey][]string),
+		tripAgencies:        make(map[string]tripAgency),
 	}
 }
 
@@ -465,13 +484,9 @@ func shapeGapDistance(from, to blockTripData) float64 {
 //     short-circuits applyBlockLocationToBean; without this guard our
 //     snapshot clamps to the last stop's distance, producing "bus is 7 km
 //     past your stop" for trips that ended hours ago), or
-//   - !InRange (currentTime is before or after the block's schedule
-//     window). BuildTripStatus deliberately leaves the tripStatus distance
-//     fields at their defaults when InRange is false; callers of this
-//     method must apply the same gate or the arrival's distanceFromStop /
-//     numberOfStopsAway will report a clamped-to-block-start position for
-//     a bus that hasn't left the depot yet — e.g. "14 stops away" on an
-//     08:00 request for a trip departing 23:00 the same service day.
+//   - !InRange (currentTime is outside the block's schedule window). Callers
+//     wanting Java's position before the block starts pass the block's start
+//     time: see statusBlockSnapshot.
 func (s *scheduledBlockSnapshot) metricsForStop(
 	tripID string,
 	stopSequenceInTrip int,
