@@ -206,7 +206,7 @@ Located in `internal/restapi/`:
 Middleware is applied at two levels, each listed innermost to outermost:
 
 - **Per route** (`internal/restapi/routes.go`): `handler → rate limiting → API key validation → Cache-Control`. Some handlers are also wrapped in an ETag middleware (`etagStatic`) inside rate limiting.
-- **Around the whole mux** (`cmd/api/app.go`): `GTFS expiry → version validation → compression → freshness → security headers → metrics → request logging → request ID → size limit → panic recovery`.
+- **Around the whole mux** (`cmd/api/app.go`): `GTFS expiry → version validation → compression → freshness → security headers → size limit → panic recovery → metrics → request logging → request ID`. Panic recovery sits inside metrics, request logging and request ID, so a recovered panic is counted, access-logged and logged with its `request_id` like any other 500.
 
 ## Helper Modules
 

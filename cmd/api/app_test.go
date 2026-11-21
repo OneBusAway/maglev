@@ -13,11 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/gtfs"
+	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/restapi"
 )
 
@@ -1050,4 +1053,52 @@ func TestDumpConfigJSON_OmitsEmptyBundleInputsURL(t *testing.T) {
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal(output, &parsed))
 	assert.NotContains(t, parsed, "gtfs-bundle-inputs-url")
+}
+
+// A recovered panic must be as observable as any other 500: its log entry
+// carries the request_id the client received, it gets an access-log line,
+// and it is counted in the request metrics.
+func TestWrapServerMiddlewareRecordsRecoveredPanic(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	// main sets the default logger too, and recovery falls back to it.
+	previous := slog.Default()
+	slog.SetDefault(logger)
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	m := metrics.New()
+	t.Cleanup(m.Shutdown)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /panic", func(http.ResponseWriter, *http.Request) { panic("boom") })
+
+	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	req.Header.Set("X-Request-ID", "panic-request-1")
+	rec := httptest.NewRecorder()
+	wrapServerMiddleware(mux, m, logger, clock.RealClock{}).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, "panic-request-1", rec.Header().Get("X-Request-ID"))
+
+	var panicLog, accessLog map[string]any
+	for _, line := range bytes.Split(logs.Bytes(), []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var entry map[string]any
+		require.NoError(t, json.Unmarshal(line, &entry))
+		switch entry["msg"] {
+		case "handler panic recovered":
+			panicLog = entry
+		case "http_request":
+			accessLog = entry
+		}
+	}
+	require.NotNil(t, panicLog, "the panic must be logged")
+	assert.Equal(t, "panic-request-1", panicLog["request_id"])
+	require.NotNil(t, accessLog, "the panicking request must have an access-log line")
+	assert.Equal(t, "panic-request-1", accessLog["request_id"])
+	assert.EqualValues(t, http.StatusInternalServerError, accessLog["status"])
+
+	assert.Equal(t, 1.0, testutil.ToFloat64(m.HTTPRequestsTotal.WithLabelValues(http.MethodGet, "GET /panic", "500")),
+		"the panicking request must be counted as a 500")
 }
