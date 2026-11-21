@@ -37,9 +37,8 @@ const RedactedValue = "***REDACTED***"
 // credentials and passwords, AuthHeaderValue, and every Headers value.
 // Update it when adding a field that can hold a secret.
 func (feed GtfsStaticFeed) Redacted() GtfsStaticFeed {
-	if IsHTTPURL(feed.URL) {
-		feed.URL = RedactURL(feed.URL)
-	}
+	feed.URL = RedactURL(feed.URL)
+
 	if feed.AuthHeaderValue != "" {
 		feed.AuthHeaderValue = RedactedValue
 	}
@@ -60,27 +59,31 @@ func RedactHeaderValues(headers map[string]string) map[string]string {
 	return redacted
 }
 
-// RedactURL preserves local paths while hiding credentials in HTTP(S)
-// source URLs. Malformed HTTP-style sources fail closed.
+// RedactURL preserves ordinary local paths while hiding URL query values
+// and passwords in URL userinfo. URL references without a scheme are also
+// handled. Malformed URL candidates fail closed.
 func RedactURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	lower := strings.ToLower(trimmed)
 
-	// Preserve ordinary local paths.
-	if !strings.HasPrefix(lower, "http:") &&
-		!strings.HasPrefix(lower, "https:") {
+	isHTTPStyle := strings.HasPrefix(lower, "http:") ||
+		strings.HasPrefix(lower, "https:")
+
+	if isHTTPStyle {
+		// Fail closed for malformed HTTP schemes.
+		if !strings.HasPrefix(lower, "http://") &&
+			!strings.HasPrefix(lower, "https://") {
+			return RedactedValue
+		}
+
+		// Do not normalize malformed URLs into apparently valid ones.
+		if strings.IndexFunc(trimmed, unicode.IsSpace) >= 0 {
+			return RedactedValue
+		}
+	} else if !strings.ContainsAny(trimmed, "?@") &&
+		!strings.Contains(trimmed, "://") {
+		// Ordinary local paths do not have URL query or userinfo markers.
 		return raw
-	}
-
-	// Fail closed for malformed HTTP schemes.
-	if !strings.HasPrefix(lower, "http://") &&
-		!strings.HasPrefix(lower, "https://") {
-		return RedactedValue
-	}
-
-	// Do not normalize malformed URLs into apparently valid ones.
-	if strings.IndexFunc(trimmed, unicode.IsSpace) >= 0 {
-		return RedactedValue
 	}
 
 	parsed, err := url.Parse(trimmed)

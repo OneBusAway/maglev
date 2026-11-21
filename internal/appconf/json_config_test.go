@@ -767,6 +767,24 @@ func TestGtfsStaticFeedRedacted(t *testing.T) {
 	percentPathFeed := GtfsStaticFeed{URL: "./feeds/100%.zip"}
 	assert.Equal(t, "./feeds/100%.zip", percentPathFeed.Redacted().URL,
 		"local paths containing percent signs should remain readable")
+
+	schemelessFeed := GtfsStaticFeed{
+		URL: "feeds.example.com/gtfs.zip?api_key=SECRET",
+	}
+	assert.Equal(
+		t,
+		"feeds.example.com/gtfs.zip?"+RedactedValue,
+		schemelessFeed.Redacted().URL,
+	)
+
+	ftpFeed := GtfsStaticFeed{
+		URL: "ftp://user:SECRET@host/x",
+	}
+	assert.Equal(
+		t,
+		"ftp://user:xxxxx@host/x",
+		ftpFeed.Redacted().URL,
+	)
 }
 
 func TestRedactURL(t *testing.T) {
@@ -839,6 +857,16 @@ func TestRedactURL(t *testing.T) {
 			name: "whitespace in URL query",
 			raw:  "https://example.com/feed.zip?token=BAD SECRET",
 			want: RedactedValue,
+		},
+		{
+			name: "scheme-less URL with query",
+			raw:  "feeds.example.com/gtfs.zip?api_key=SECRET",
+			want: "feeds.example.com/gtfs.zip?" + RedactedValue,
+		},
+		{
+			name: "FTP URL with password in userinfo",
+			raw:  "ftp://user:SECRET@host/x",
+			want: "ftp://user:xxxxx@host/x",
 		},
 	}
 
