@@ -455,7 +455,9 @@ func (api *RestAPI) applySnapshotToStatus(
 // subtract active-trip block offset). See
 // summary/distance-along-shape-library-port.md, the tracked followup.
 //
-// Until then, we produce a best-effort value in two tiers:
+// A vehicle with a trip-update record always reports the scheduled distance,
+// since Java's record fixes its position, and leaves LastKnownDistanceAlongTrip
+// unset. Without a record, we produce a best-effort value in two tiers:
 //
 //  1. When snap's distance-picked active trip matches the vehicle's RT-declared
 //     trip, snap.ActiveTripShape IS the vehicle's shape, so projecting the
