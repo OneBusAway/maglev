@@ -101,7 +101,7 @@ func TestReportProblemWithTripSanitization(t *testing.T) {
 func TestReportProblemWithTripCoordinateRangeValidation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil, api.Clock)
 
 	tests := []struct {
 		name           string
