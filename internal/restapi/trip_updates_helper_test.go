@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/clock"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -1396,4 +1397,81 @@ func TestSampleEntryForSTU_SequenceWithoutStopID(t *testing.T) {
 			assert.Equal(t, tt.wantArr, arrival)
 		})
 	}
+}
+
+// TestPickClosestSTUDeviation_SkipsSkippedSTUs exercises pickClosestSTUDeviation
+// directly — the path reached when the trip has real static stop times in the
+// DB. The test inserts a trip with two stops, adds a mock update that marks the
+// first stop as SKIPPED (delay 999s) and leaves the second non-skipped
+// (delay 60s). Without the SKIPPED guard in pickClosestSTUDeviation the picker
+// would see the SKIPPED stop's data and return the wrong deviation.
+func TestPickClosestSTUDeviation_SkipsSkippedSTUs(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	agencyID := "pstd-agency"
+	tripID := "pstd-trip-" + t.Name()
+	routeID := "pstd-route"
+	serviceID := "pstd-svc"
+	stopSkipped := "pstd-stop-skipped"
+	stopServed := "pstd-stop-served"
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{
+		ID: agencyID, Name: "PSTD Agency", Url: "http://example.com", Timezone: "UTC",
+	})
+	require.NoError(t, err)
+	for _, sid := range []string{stopSkipped, stopServed} {
+		_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{ID: sid, Name: nulls.String(sid), Lat: 47.0, Lon: -122.0})
+		require.NoError(t, err)
+	}
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID: routeID, AgencyID: agencyID, ShortName: nulls.String("PS"), LongName: nulls.String("PSTD Route"), Type: 3,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{
+		ID: serviceID, Monday: 1, Tuesday: 1, Wednesday: 1, Thursday: 1, Friday: 1, Saturday: 1, Sunday: 1,
+		StartDate: "20100101", EndDate: "20301231",
+	})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: tripID, RouteID: routeID, ServiceID: serviceID})
+	require.NoError(t, err)
+
+	// stopSkipped: scheduled 08:00 arrival, stopServed: scheduled 08:30 arrival.
+	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopSkipped, StopSequence: 1,
+		ArrivalTime: int64(8 * time.Hour), DepartureTime: int64(8*time.Hour + 1*time.Minute),
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopServed, StopSequence: 2,
+		ArrivalTime: int64(8*time.Hour + 30*time.Minute), DepartureTime: int64(8*time.Hour + 31*time.Minute),
+	})
+	require.NoError(t, err)
+
+	// Service date 2010-01-01; currentTime = 08:15 so the served stop (08:30) is
+	// upcoming and wins the picker if the SKIPPED one is correctly skipped.
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := serviceDate.Add(8*time.Hour + 15*time.Minute)
+
+	skippedDelay := 999 * time.Second
+	servedDelay := 60 * time.Second
+	skippedSTU := gtfs.StopTimeUpdate{
+		StopID:  &stopSkipped,
+		Arrival: &gtfs.StopTimeEvent{Delay: &skippedDelay},
+	}
+	skippedSTU.ScheduleRelationship = gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED
+	updates := []gtfs.StopTimeUpdate{
+		skippedSTU,
+		{StopID: &stopServed, Arrival: &gtfs.StopTimeEvent{Delay: &servedDelay}},
+	}
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, updates)
+
+	deviation, hasData := api.GetScheduleDeviationForBlock(ctx, []string{tripID}, serviceDate, currentTime)
+	assert.True(t, hasData)
+	assert.Equal(t, 60, deviation,
+		"pickClosestSTUDeviation must skip SKIPPED STUs; 999s delay must not win")
 }
