@@ -100,6 +100,13 @@ func TestArrivalsAndDeparturesForLocationValidation(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 			for _, field := range tt.wantFields {
 				assert.Contains(t, model.Data.FieldErrors, field)
+				// The invalid (unparseable) frequency-window values share
+				// parseMinutesValue, which now matches Java's field-error
+				// wording; negative values keep the non-negative message.
+				if tt.query.Get(field) == "invalid" &&
+					(field == "frequencyMinutesBefore" || field == "frequencyMinutesAfter") {
+					assert.Equal(t, `Invalid field value for field "`+field+`".`, model.Data.FieldErrors[field][0])
+				}
 			}
 		})
 	}
