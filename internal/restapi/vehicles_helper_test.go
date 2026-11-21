@@ -17,7 +17,7 @@ import (
 func TestGetVehicleStatusAndPhase_NilVehicle(t *testing.T) {
 	status, phase := GetVehicleStatusAndPhase(nil)
 	assert.Equal(t, "default", status)
-	assert.Equal(t, "scheduled", phase)
+	assert.Empty(t, phase)
 }
 
 func TestGetVehicleStatusAndPhase_ScheduledTrip(t *testing.T) {
@@ -151,7 +151,7 @@ func TestBuildVehicleStatus_NilVehicleSetsDefaultStatus(t *testing.T) {
 	api.BuildVehicleStatus(ctx, nil, "any-trip", "any-agency", status, now)
 
 	assert.Equal(t, "default", status.Status)
-	assert.Equal(t, "scheduled", status.Phase)
+	assert.Empty(t, status.Phase)
 	assert.False(t, status.Predicted, "BuildVehicleStatus must not set Predicted")
 }
 
@@ -171,7 +171,7 @@ func TestBuildVehicleStatus_StaleVehicleSetsDefaultStatus(t *testing.T) {
 	api.BuildVehicleStatus(ctx, vehicle, "any-trip", "any-agency", status, now)
 
 	assert.Equal(t, "default", status.Status)
-	assert.Equal(t, "scheduled", status.Phase)
+	assert.Empty(t, status.Phase)
 }
 
 func TestBuildVehicleStatus_FreshVehicleWithPosition_SetsLocationAndPhase(t *testing.T) {

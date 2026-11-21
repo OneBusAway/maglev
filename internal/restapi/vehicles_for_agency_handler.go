@@ -292,8 +292,7 @@ func (api *RestAPI) vehiclesForAgencyHandler(w http.ResponseWriter, r *http.Requ
 			stopIDs = append(stopIDs, statusStopIDs...)
 		} else {
 			defaultTripStatus := models.NewTripStatus()
-			defaultTripStatus.Status = "default"
-			defaultTripStatus.Phase = "scheduled"
+			defaultTripStatus.Status, defaultTripStatus.Phase = GetVehicleStatusAndPhase(nil)
 			vehicleStatus.TripStatus = defaultTripStatus
 		}
 

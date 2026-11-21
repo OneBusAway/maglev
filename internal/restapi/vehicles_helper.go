@@ -76,16 +76,16 @@ func scheduleRelationshipStatus(sr gtfs.TripScheduleRelationship) string {
 //
 // The Java implementation does not map directly to GTFS-RT CurrentStatus values.
 // Instead, it uses a simple rule: if a vehicle location record has been received,
-// the trip is "in_progress"; otherwise it remains "scheduled". The phase is
+// the trip is "in_progress"; otherwise it has no phase. The phase is
 // determined solely by the presence of the vehicle, not by its GTFS-RT stop status.
 // Status comes from the trip's schedule relationship ("SCHEDULED", "CANCELED", "ADDED", "DUPLICATED").
-// "default" is only returned when no real-time data exists at all.
+// "default" and an empty phase are only returned when no real-time data exists at all.
 func GetVehicleStatusAndPhase(vehicle *gtfs.Vehicle) (status string, phase string) {
 	if vehicle == nil {
 		// "default" matches the Java OBA behavior. In TripStatusBeanServiceImpl.getBlockLocationAsStatusBean()
 		// (line 252-253), status is unconditionally set to "default" first. When no real-time data exists,
 		// Java file: onebusaway-transit-data-federation/src/main/java/org/onebusaway/transit_data_federation/impl/beans/TripStatusBeanServiceImpl.java
-		return "default", "scheduled"
+		return "default", ""
 	}
 
 	sr := gtfsrt.TripDescriptor_SCHEDULED
