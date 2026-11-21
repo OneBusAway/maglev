@@ -680,7 +680,7 @@ func TestParseInt32Param(t *testing.T) {
 }
 
 func TestParseIntParam_BitSizes(t *testing.T) {
-	// Verify parseIntParam behaves identically across bit sizes (e.g., 32 vs 64).
+	// Verify bitSize bounds the accepted range; whitespace is rejected at any size.
 	params := url.Values{
 		"int32_overflow": []string{"2147483648"},
 		"int32_valid":    []string{"2147483647"},
