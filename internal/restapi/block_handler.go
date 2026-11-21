@@ -187,7 +187,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 	routeIDs := make(map[string]struct{})
 	stopIDs := make(map[string]struct{})
 	tripIDs := make(map[string]struct{})
-
+	
 	for _, row := range block {
 		routeIDs[row.RouteID] = struct{}{}
 		stopIDs[row.StopID] = struct{}{}
@@ -198,10 +198,6 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 	for stopID := range stopIDs {
 		stopIDsArr = append(stopIDsArr, stopID)
 	}
-	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
-	if err != nil {
-		return models.ReferencesModel{}, err
-	}
 
 	routesArr, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, stopIDsArr)
 
@@ -211,7 +207,7 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 	routeSet := make(map[string]struct{})
 	routes := make([]models.Route, 0)
 	for _, route := range routesArr {
-		routeID := utils.FormCombinedID(agencyID, route.ID)
+		routeID := utils.FormCombinedID(route.AgencyID, route.ID)
 		if _, exists := routeSet[routeID]; exists {
 			continue
 		}
@@ -235,9 +231,27 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 	}
 
 	stops := make([]models.Stop, 0)
+
+	agencyRows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, stopIDsArr)
+	if err != nil {
+		return models.ReferencesModel{}, err
+	}
+
+	stopAgencySet := make(map[string]models.AgencyReference)
+	for _, row := range agencyRows {
+		_, exists := stopAgencySet[row.StopID]
+		if !exists || row.ID == agencyID {
+			stopAgencySet[row.StopID] = models.AgencyReference{ID: row.ID, Name: row.Name, URL: row.Url, Timezone: row.Timezone}
+		} 
+	}
+
 	for _, stop := range batchedStops {
+		stopAgency, exists := stopAgencySet[stop.ID]
+		if !exists {
+			// should i return an error here or default to agencyID
+		}
 		stops = append(stops, models.Stop{
-			ID:             utils.FormCombinedID(agencyID, stop.ID),
+			ID:             utils.FormCombinedID(stopAgency.ID, stop.ID),
 			Name:           nulls.StringOrEmpty(stop.Name),
 			Code:           nulls.StringOrEmpty(stop.Code),
 			Lat:            stop.Lat,
@@ -272,8 +286,17 @@ func (api *RestAPI) getReferences(ctx context.Context, agencyID string, block []
 		})
 	}
 
+	agencies := make([]models.AgencyReference, 0)
+	agencySet := make(map[string]models.AgencyReference)
+	for _, agency := range stopAgencySet {
+		agencySet[agency.ID] = agency
+	}
+	for _, agency := range agencySet {
+		agencies = append(agencies, agency)
+	}
+
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{{ID: agency.ID, Name: agency.Name, URL: agency.Url, Timezone: agency.Timezone}}
+	references.Agencies = agencies
 	references.Routes = routes
 	references.Stops = stops
 	references.Trips = trips
