@@ -106,6 +106,7 @@ func (api *RestAPI) SetRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/gtfs_realtime/vehicle-positions-for-agency/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.vehiclePositionsForAgencyHandler)))
 	mux.Handle("GET /api/gtfs_realtime/alerts-for-agency/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.alertsForAgencyHandler)))
 	mux.Handle("GET /api/gtfs_realtime/trip-updates-for-agency/{id}", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.tripUpdatesForAgencyHandler)))
+	mux.Handle("GET /api/gtfs_realtime/alerts.pb", CacheControlMiddleware(models.CacheDurationShort, rateLimitAndValidateAPIKey(api, api.regionalAlertsHandler)))
 
 	// --- Routes with combined ID validation (agency_id_code format) ---
 	mux.Handle("GET /api/where/trip/{id}", CacheControlMiddleware(models.CacheDurationLong, rateLimitAndValidateAPIKey(api, etagStatic(api, api.tripHandler))))

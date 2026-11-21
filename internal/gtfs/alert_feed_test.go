@@ -39,6 +39,15 @@ func decodeAlertFeed(t *testing.T, manager *Manager, agencyID string) *gtfsrt.Fe
 	return feed
 }
 
+func decodeRegionalAlertFeed(t *testing.T, manager *Manager) *gtfsrt.FeedMessage {
+	t.Helper()
+	feed := &gtfsrt.FeedMessage{}
+	body, err := manager.RegionalAlertFeed()
+	require.NoError(t, err)
+	require.NoError(t, proto.Unmarshal(body, feed))
+	return feed
+}
+
 func alertEntityIDs(feed *gtfsrt.FeedMessage) []string {
 	ids := []string{}
 	for _, entity := range feed.GetEntity() {
@@ -359,4 +368,105 @@ func TestAlertFeedForAgency_StableAcrossReparses(t *testing.T) {
 	feed := decodeAlertFeed(t, manager, "1")
 	assert.Equal(t, "1", feed.GetEntity()[0].GetAlert().GetInformedEntity()[0].GetAgencyId(),
 		"the alert's own agency stays the first selector")
+}
+
+func TestRegionalAlertFeed_AttributionAndDeduplication(t *testing.T) {
+	manager := newAlertFeedTestManager(
+		RTFeedConfig{ID: "f1", AgencyIDs: []string{"1"}},
+		RTFeedConfig{ID: "f2", AgencyIDs: []string{"2"}},
+		RTFeedConfig{ID: "f3"},
+	)
+
+	// Feed 1 has alerts "b" and "dup" (attributed to "1")
+	setFeedAlerts(manager, "f1",
+		headedAlert("b", "Alert B from f1"),
+		headedAlert("dup", "Alert dup from f1"),
+	)
+	// Feed 2 has alert "a" (attributed to "2") and duplicate "dup" (attributed to "1")
+	setFeedAlerts(manager, "f2",
+		headedAlert("a", "Alert A from f2"),
+		headedAlert("dup", "Alert dup from f2", agencySelector("1")),
+	)
+	// Feed 3 has agencyless alert "c_systemwide"
+	setFeedAlerts(manager, "f3",
+		headedAlert("c_systemwide", "Agencyless alert"),
+	)
+
+	feed := decodeRegionalAlertFeed(t, manager)
+	entityIDs := alertEntityIDs(feed)
+
+	// Sorted in ascending order: "1_b", "1_dup", "2_a", "c_systemwide"
+	expectedIDs := []string{"1_b", "1_dup", "2_a", "c_systemwide"}
+	assert.Equal(t, expectedIDs, entityIDs)
+
+	// First feed in config order ("f1") won for "1_dup"
+	for _, entity := range feed.GetEntity() {
+		if entity.GetId() == "1_dup" {
+			assert.Equal(t, "Alert dup from f1", entity.GetAlert().GetHeaderText().GetTranslation()[0].GetText())
+		}
+	}
+
+	// Agencyless alert "c_systemwide" was included
+	var foundAgencyless bool
+	for _, entity := range feed.GetEntity() {
+		if entity.GetId() == "c_systemwide" {
+			foundAgencyless = true
+			assert.Equal(t, "Agencyless alert", entity.GetAlert().GetHeaderText().GetTranslation()[0].GetText())
+		}
+	}
+	assert.True(t, foundAgencyless, "agencyless alert must be included in regional feed")
+}
+
+func TestRegionalAlertFeed_ChangeTimeAndStability(t *testing.T) {
+	newManager := func() *Manager {
+		manager := newAlertFeedTestManager(RTFeedConfig{ID: "f1", AgencyIDs: []string{"1"}})
+		setFeedAlerts(manager, "f1", headedAlert("a", "first"))
+		return manager
+	}
+
+	t.Run("an unchanged alert set keeps its regional bytes and change time", func(t *testing.T) {
+		manager := newManager()
+		before := manager.mergedRealtime().regionalAlertFeed
+		setFeedAlerts(manager, "f1", headedAlert("a", "first"))
+		assert.Equal(t, before, manager.mergedRealtime().regionalAlertFeed)
+	})
+
+	t.Run("a vehicle-only rebuild leaves regional alert bytes unchanged", func(t *testing.T) {
+		manager := newManager()
+		before := manager.mergedRealtime().regionalAlertFeed
+		seedAgencyFeed(manager, "vehicles", "1", time.Now(), time.Now(), exportVehicle("V1", time.Now()))
+		rebuild(manager)
+		assert.Equal(t, before, manager.mergedRealtime().regionalAlertFeed)
+	})
+
+	t.Run("a changed alert set gets the new build time", func(t *testing.T) {
+		manager := newManager()
+		setFeedAlerts(manager, "f1", headedAlert("a", "edited"))
+		merged := manager.mergedRealtime()
+		assert.Equal(t, merged.builtAt, merged.regionalAlertFeed.changedAt)
+		assert.Equal(t, uint64(merged.builtAt.Unix()), decodeRegionalAlertFeed(t, manager).GetHeader().GetTimestamp())
+	})
+
+	t.Run("removing all alerts leaves a header-only feed with a new timestamp", func(t *testing.T) {
+		manager := newManager()
+		setFeedAlerts(manager, "f1")
+		merged := manager.mergedRealtime()
+		assert.Equal(t, merged.builtAt, merged.regionalAlertFeed.changedAt)
+		assert.Empty(t, decodeRegionalAlertFeed(t, manager).GetEntity())
+	})
+
+	t.Run("empty manager returns a valid header-only regional feed", func(t *testing.T) {
+		emptyMgr := newTestManager()
+		feed := decodeRegionalAlertFeed(t, emptyMgr)
+		assert.Equal(t, "2.0", feed.GetHeader().GetGtfsRealtimeVersion())
+		assert.NotZero(t, feed.GetHeader().GetTimestamp())
+		assert.Empty(t, feed.GetEntity())
+	})
+
+	t.Run("clone keeps regionalAlertFeed", func(t *testing.T) {
+		manager := newManager()
+		merged := manager.mergedRealtime()
+		cloned := merged.clone()
+		assert.Equal(t, merged.regionalAlertFeed, cloned.regionalAlertFeed)
+	})
 }
