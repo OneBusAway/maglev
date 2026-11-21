@@ -58,9 +58,10 @@ func RedactHeaderValues(headers map[string]string) map[string]string {
 }
 
 // RedactURL hides the secrets a URL can carry, for logs and dumped
-// config: the query string, which holds a signed URL's signature, and a
-// userinfo password. A URL that does not parse is hidden whole, since its
-// secrets cannot be found.
+// config: the query string (holds a signed URL's signature), the userinfo
+// password, and the username when present (some providers pass the credential
+// as a bare username: https://TOKEN@host/ or https://KEY:@host/). A URL that
+// does not parse is hidden whole.
 func RedactURL(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -69,7 +70,10 @@ func RedactURL(raw string) string {
 	if parsed.RawQuery != "" {
 		parsed.RawQuery = RedactedValue
 	}
-	return parsed.Redacted()
+	if parsed.User != nil {
+		parsed.User = url.User("xxxxx")
+	}
+	return parsed.String()
 }
 
 // GtfsRtFeed represents a single GTFS-RT feed configuration

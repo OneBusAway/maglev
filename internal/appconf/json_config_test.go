@@ -748,7 +748,7 @@ func TestGtfsStaticFeedRedacted(t *testing.T) {
 
 	redacted := feed.Redacted()
 
-	assert.Equal(t, "https://user:xxxxx@example.com/metro.zip?"+RedactedValue, redacted.URL)
+	assert.Equal(t, "https://xxxxx@example.com/metro.zip?"+RedactedValue, redacted.URL)
 	assert.Equal(t, RedactedValue, redacted.AuthHeaderValue)
 	assert.Equal(t, map[string]string{"Authorization": RedactedValue}, redacted.Headers)
 	assert.Equal(t, "https://user:static-password@example.com/metro.zip?api_key=STATIC_SECRET", feed.URL,
@@ -774,7 +774,9 @@ func TestRedactURL(t *testing.T) {
 		{name: "empty", raw: "", want: ""},
 		{name: "no query", raw: "https://example.com/bundle-inputs.json", want: "https://example.com/bundle-inputs.json"},
 		{name: "signed query", raw: "https://example.com/b.json?X-Amz-Signature=abc&X-Amz-Expires=60", want: "https://example.com/b.json?" + RedactedValue},
-		{name: "password in userinfo", raw: "https://user:secret@example.com/b.json", want: "https://user:xxxxx@example.com/b.json"},
+		{name: "password in userinfo", raw: "https://user:secret@example.com/b.json", want: "https://xxxxx@example.com/b.json"},
+		{name: "token as username only", raw: "https://TOKEN@example.com/b.json", want: "https://xxxxx@example.com/b.json"},
+		{name: "token with empty password", raw: "https://KEY:@example.com/b.json", want: "https://xxxxx@example.com/b.json"},
 		{name: "local path", raw: "./testdata/bundle-inputs.json", want: "./testdata/bundle-inputs.json"},
 		{name: "unparseable", raw: "https://[::1/b.json?sig=abc", want: RedactedValue},
 	}
