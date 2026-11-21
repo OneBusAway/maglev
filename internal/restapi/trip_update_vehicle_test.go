@@ -182,6 +182,7 @@ func TestPluralArrivals_BeforeBlockStartMeasuresFromFirstStop(t *testing.T) {
 		{
 			name:        "no vehicle",
 			addRealtime: func(*RestAPI, string) {},
+			wantPhase:   "scheduled",
 		},
 		{
 			name: "vehicle reporting a position",
@@ -1925,9 +1926,10 @@ func TestBuildTripStatus_StalePositionRecordControls(t *testing.T) {
 		canceled   bool
 		recordAge  time.Duration
 		wantStatus string
+		wantPhase  string
 	}{
-		{name: "without a record stays default", wantStatus: "default"},
-		{name: "expired record stays default", record: true, recordAge: 10 * time.Minute, wantStatus: "default"},
+		{name: "without a record stays default", wantStatus: "default", wantPhase: "scheduled"},
+		{name: "expired record stays default", record: true, recordAge: 10 * time.Minute, wantStatus: "default", wantPhase: "scheduled"},
 		{name: "fresh cancellation remains canceled", record: true, canceled: true, wantStatus: "CANCELED"},
 	}
 	for _, tt := range tests {
@@ -1950,7 +1952,7 @@ func TestBuildTripStatus_StalePositionRecordControls(t *testing.T) {
 			status, extras, err := api.BuildTripStatus(context.Background(), "dp-agency", tripID, nil, serviceDate, now, nil)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantStatus, status.Status)
-			assert.Empty(t, status.Phase)
+			assert.Equal(t, tt.wantPhase, status.Phase)
 			assert.Equal(t, tt.canceled, extras.record.present)
 			assert.Equal(t, tt.canceled, status.Predicted)
 			assert.Nil(t, status.LastKnownLocation)

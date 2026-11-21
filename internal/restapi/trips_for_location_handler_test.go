@@ -417,7 +417,7 @@ func TestTripsForLocationHandler_StatusInclusion(t *testing.T) {
 			for _, entry := range model.Data.List {
 				if tt.expectedStatus {
 					if assert.NotNil(t, entry.Status, "expected status when includeStatus=true/TRUE") {
-						assert.NotEmpty(t, entry.Status.Status)
+						assert.NotEmpty(t, entry.Status.Phase)
 					}
 				} else {
 					assert.Nil(t, entry.Status, "expected status to be omitted when includeStatus=false/omitted")

@@ -253,7 +253,7 @@ dateStr, parsedTime, fieldErrors, ok := utils.ParseTimeParameter(timeParam, loca
 // Convert GTFS-RT schedule relationship to OneBusAway status and phase
 status, phase := GetVehicleStatusAndPhase(vehicle)
 // Returns: ("SCHEDULED", "in_progress"), ("CANCELED", ""), ("ADDED", "in_progress"), ("DUPLICATED", "in_progress")
-// For nil vehicle: ("default", "")
+// For nil vehicle: ("default", "scheduled")
 ```
 
 ## Database Management
