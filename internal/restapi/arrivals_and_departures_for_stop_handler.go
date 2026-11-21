@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"maglev.onebusaway.org/gtfsdb"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
@@ -74,7 +75,9 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	// in the same shift. Without this each row pays for the full compute
 	// chain (blockTripIDsForServiceDate + loadBlockTripData + emitBlock
 	// Stops), amplifying to thousands of round-trips on wide time windows.
-	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
+	// The read memo does the same for the trip, route and stop-time rows that
+	// rows on different shifts still look up again.
+	ctx := WithSnapshotCache(gtfsdb.WithReadMemo(r.Context()), newSnapshotCache())
 
 	// Capture parsing errors
 	params, fieldErrors := api.parseArrivalsAndDeparturesParams(r)
