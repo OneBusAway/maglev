@@ -505,19 +505,13 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// containing underscores are stripped correctly instead of splitting at the
 	// first underscore.
 	if tripStatus != nil {
-		if nextBareID := extractBareEntityID(tripStatus.NextStop, route.AgencyID); nextBareID != "" {
-			nextCombined := utils.FormCombinedID(route.AgencyID, nextBareID)
-			stopCombinedIDs[nextCombined] = stopRefEntry{nextBareID, route.AgencyID}
-		} else if tripStatus.NextStop != "" {
-			reqLogger.Debug("nextStop agency does not match route agency; stop will be missing from references",
-				"nextStop", tripStatus.NextStop, "routeAgency", route.AgencyID)
-		}
-		if closestBareID := extractBareEntityID(tripStatus.ClosestStop, route.AgencyID); closestBareID != "" {
-			closestCombined := utils.FormCombinedID(route.AgencyID, closestBareID)
-			stopCombinedIDs[closestCombined] = stopRefEntry{closestBareID, route.AgencyID}
-		} else if tripStatus.ClosestStop != "" {
-			reqLogger.Debug("closestStop agency does not match route agency; stop will be missing from references",
-				"closestStop", tripStatus.ClosestStop, "routeAgency", route.AgencyID)
+		for _, statusStop := range []string{tripStatus.NextStop, tripStatus.ClosestStop} {
+			if bareID := extractBareEntityID(statusStop, route.AgencyID); bareID != "" {
+				stopCombinedIDs[utils.FormCombinedID(route.AgencyID, bareID)] = stopRefEntry{bareID, route.AgencyID}
+			} else if statusStop != "" {
+				reqLogger.Debug("status stop agency does not match route agency; stop will be missing from references",
+					"statusStop", statusStop, "routeAgency", route.AgencyID)
+			}
 		}
 	}
 	// Collect unique bare IDs for batch fetch.

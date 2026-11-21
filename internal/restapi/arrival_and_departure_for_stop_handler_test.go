@@ -2281,8 +2281,9 @@ func TestArrivalAndDepartureForStop_UnderscoreAgencyStatusStops(t *testing.T) {
 		utils.FormCombinedID(stopAgency, stopBID))
 	// The status stop reference under the route agency must also resolve.
 	status2 := model2.Data.Entry.TripStatus
-	if status2 != nil && status2.NextStop != "" {
-		_, ok = stopsByID2[status2.NextStop]
-		assert.True(t, ok, "references.stops must contain nextStop %q for the route-agency combined ID", status2.NextStop)
-	}
+	require.NotNil(t, status2, "tripStatus must be present in the response")
+	require.Equal(t, utils.FormCombinedID(routeAgency, stopBID), status2.NextStop,
+		"tripStatus.nextStop must use the route-agency combined ID")
+	_, ok = stopsByID2[status2.NextStop]
+	assert.True(t, ok, "references.stops must contain nextStop %q for the route-agency combined ID", status2.NextStop)
 }
