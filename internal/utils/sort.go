@@ -68,6 +68,15 @@ func SortRoutesForStopsRowsByName(rows []gtfsdb.GetRoutesForStopsRow) {
 	})
 }
 
+// SortActiveRouteIDsForStopsInIntervalRowsByName sorts gtfsdb.GetActiveRouteIDsForStopsInIntervalRow
+// values naturally by ShortName (falling back to LongName), then by AgencyID, then by
+// RouteID. Grouping the result by stop keeps each stop's routes in that order.
+func SortActiveRouteIDsForStopsInIntervalRowsByName(rows []gtfsdb.GetActiveRouteIDsForStopsInIntervalRow) {
+	slices.SortFunc(rows, func(a, b gtfsdb.GetActiveRouteIDsForStopsInIntervalRow) int {
+		return compareRouteSortKeys(activeRouteIDsForStopsInIntervalRowSortKey(a), activeRouteIDsForStopsInIntervalRowSortKey(b))
+	})
+}
+
 // SortActiveRouteIDsForStopsRowsByName sorts gtfsdb.GetActiveRouteIDsForStopsOnDateRow
 // values naturally by ShortName (falling back to LongName), then by AgencyID, then by
 // RouteID. Grouping the result by stop keeps each stop's routes in that order.
@@ -117,6 +126,10 @@ func routeIDsForStopsRowSortKey(r gtfsdb.GetRouteIDsForStopsRow) RouteSortKey {
 
 func routesForStopsRowSortKey(r gtfsdb.GetRoutesForStopsRow) RouteSortKey {
 	return RouteSortKey{nulls.StringOrEmpty(r.ShortName), nulls.StringOrEmpty(r.LongName), r.AgencyID, r.ID}
+}
+
+func activeRouteIDsForStopsInIntervalRowSortKey(r gtfsdb.GetActiveRouteIDsForStopsInIntervalRow) RouteSortKey {
+	return RouteSortKey{nulls.StringOrEmpty(r.ShortName), nulls.StringOrEmpty(r.LongName), r.AgencyID, r.RouteID}
 }
 
 func activeRouteIDsForStopsRowSortKey(r gtfsdb.GetActiveRouteIDsForStopsOnDateRow) RouteSortKey {
