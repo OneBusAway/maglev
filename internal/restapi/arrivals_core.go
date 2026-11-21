@@ -175,12 +175,10 @@ type timezoneGroup struct {
 	agencies map[string]struct{}
 }
 
-// activeStopTimesForWindow collects the stop_times falling inside the request
-// window across yesterday, today and tomorrow, resolving each serving agency
-// in its own timezone so trips from agencies in other timezones are not dropped.
-//
-// Agencies are grouped by distinct timezone: a stop served by five agencies in
-// one timezone costs the same six service/window queries as a single agency.
+// activeStopTimesForWindow collects stop_times across the service days reached
+// by the candidate window, resolving each agency in its own timezone.
+// Agencies sharing a timezone share one scan, with one active-service lookup
+// and at most one stop-time query per scanned service day.
 func (api *RestAPI) activeStopTimesForWindow(ctx context.Context, in stopArrivalsInput) ([]activeStopTime, error) {
 	discovery, err := api.discoverStopAgencies(ctx, in)
 	if err != nil {
@@ -304,15 +302,48 @@ func groupAgenciesByTimezone(locations map[string]*time.Location) (map[string]*t
 	return groups, slices.Sorted(maps.Keys(groups))
 }
 
-// collectGroupWindow gathers the stop_times of yesterday, today and tomorrow for
-// one timezone group that fall inside the request window. A day-0 failure in any
-// group is returned so the request fails loud instead of emitting a 200
-// with the most important day's arrivals missing; window-spillover days are
-// best-effort and only log on error.
+// arrivalDayRange computes the inclusive [minDay, maxDay] service day offsets,
+// relative to the query time's service day, whose stop_times must be scanned to
+// cover [windowStart, windowEnd]. Callers pass the padded candidate window the
+// day queries search, including frequency minutes and the running-late/early
+// buffer, so a window whose candidates reach past midnight is not cut short.
+// Trips can run past midnight (e.g. 25:30), so the earliest day that can
+// contribute is the window start's own service day minus one: a trip like 24:30
+// runs on an earlier service date yet can still fall inside the window. The
+// latest contributing day normally matches the window end's calendar date.
+// GTFS offsets use service-date noon minus twelve hours, not midnight: before
+// a spring-forward day, that next day's offset base can already have started
+// on this calendar date. Include it when its base is within the window.
+func arrivalDayRange(queryTime, windowStart, windowEnd time.Time, loc *time.Location) (int, int) {
+	queryDay := servicedate.Of(queryTime.In(loc))
+	minDay := serviceDayOffset(queryDay, servicedate.Of(windowStart.In(loc))) - 1
+	endDay := servicedate.Of(windowEnd.In(loc))
+	for next := endDay.AddDays(1); !next.Start(loc).After(windowEnd); next = endDay.AddDays(1) {
+		endDay = next
+	}
+	maxDay := serviceDayOffset(queryDay, endDay)
+	return minDay, maxDay
+}
+
+// serviceDayOffset returns n so that reference.AddDays(n) equals d. Both days are
+// compared as UTC calendar days, which stays exact across DST transitions.
+func serviceDayOffset(reference, d servicedate.Date) int {
+	ref := time.Date(reference.Year, reference.Month, reference.Day, 12, 0, 0, 0, time.UTC)
+	day := time.Date(d.Year, d.Month, d.Day, 12, 0, 0, 0, time.UTC)
+	return int(day.Sub(ref) / (24 * time.Hour))
+}
+
+// collectGroupWindow gathers the stop_times across the service days covering the
+// request window for one timezone group. A day-0 failure in any group is returned
+// so the request fails loud instead of emitting a 200 with the most important day's
+// arrivals missing; window-spillover days are best-effort and only log on error.
 func (api *RestAPI) collectGroupWindow(ctx context.Context, in stopArrivalsInput, routeAgencyMap map[string]string, group *timezoneGroup, isPrimaryGroup bool) ([]activeStopTime, error) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	var groupRows []activeStopTime
-	for dayOffset := -1; dayOffset <= 1; dayOffset++ {
+	windowStart, windowEnd := arrivalCandidateWindow(in.QueryTime,
+		max(in.Before, in.FrequencyBefore), max(in.After, in.FrequencyAfter))
+	minDay, maxDay := arrivalDayRange(in.QueryTime, windowStart, windowEnd, group.location)
+	for dayOffset := minDay; dayOffset <= maxDay; dayOffset++ {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -593,13 +624,16 @@ func groupStopsByAgency(stops []gtfsdb.Stop, agencies *stopAgencyIndex, queryTim
 	return groups
 }
 
-// loadBatchedStopTimes collects the active stop_times for every group, keeping
-// first-seen group order, dayOffset -1..1 within a group, and query-row order
-// within a day.
+// loadBatchedStopTimes collects the active stop_times for every group across the
+// service days covering the request window, keeping first-seen group order and
+// query-row order within a day.
 func (api *RestAPI) loadBatchedStopTimes(ctx context.Context, in multiStopArrivalsInput, groups []agencyGroup, activeByDate map[string]map[string]bool) ([]batchedActiveStopTime, error) {
 	var allActive []batchedActiveStopTime
+	windowStart, windowEnd := arrivalCandidateWindow(in.QueryTime,
+		max(in.Before, in.FrequencyBefore), max(in.After, in.FrequencyAfter))
 	for _, group := range groups {
-		for dayOffset := -1; dayOffset <= 1; dayOffset++ {
+		minDay, maxDay := arrivalDayRange(in.QueryTime, windowStart, windowEnd, group.location)
+		for dayOffset := minDay; dayOffset <= maxDay; dayOffset++ {
 			if err := api.appendBatchedStopTimesForDay(ctx, group, dayOffset, in, activeByDate, &allActive); err != nil {
 				return nil, err
 			}

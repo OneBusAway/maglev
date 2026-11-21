@@ -10,7 +10,6 @@ import (
 
 func TestParseMinutesValue(t *testing.T) {
 	fallback := 35 * time.Minute
-	maxWindow := 24 * time.Hour // 1440 minutes
 
 	tests := []struct {
 		name         string
@@ -50,34 +49,40 @@ func TestParseMinutesValue(t *testing.T) {
 			expected: 0,
 		},
 		{
-			name:     "accepts value at maxWindow",
+			name:     "accepts value at 1440 minutes",
 			params:   url.Values{"minutesAfter": {"1440"}},
 			key:      "minutesAfter",
-			expected: maxWindow,
+			expected: 1440 * time.Minute,
 		},
 		{
-			name:     "bounds first value above maxWindow",
-			params:   url.Values{"minutesAfter": {"1441"}},
-			key:      "minutesAfter",
-			expected: maxWindow,
-		},
-		{
-			name:     "bounds value at maxWindow when input exceeds limit",
+			name:     "accepts value above 1440 minutes",
 			params:   url.Values{"minutesAfter": {"2000"}},
 			key:      "minutesAfter",
-			expected: maxWindow,
+			expected: 2000 * time.Minute,
+		},
+		{
+			name:     "accepts value at maxArrivalWindowMinutes (35791)",
+			params:   url.Values{"minutesAfter": {"35791"}},
+			key:      "minutesAfter",
+			expected: 35791 * time.Minute,
+		},
+		{
+			name:     "bounds value above maxArrivalWindowMinutes to 35791",
+			params:   url.Values{"minutesAfter": {"36000"}},
+			key:      "minutesAfter",
+			expected: 35791 * time.Minute,
 		},
 		{
 			name:     "bounds huge integer before time.Duration conversion to prevent overflow",
 			params:   url.Values{"minutesAfter": {"153722868"}},
 			key:      "minutesAfter",
-			expected: maxWindow,
+			expected: 35791 * time.Minute,
 		},
 		{
-			name:     "bounds max int32 at maxWindow",
+			name:     "bounds max int32 at maxArrivalWindowMinutes",
 			params:   url.Values{"minutesAfter": {"2147483647"}},
 			key:      "minutesAfter",
-			expected: maxWindow,
+			expected: 35791 * time.Minute,
 		},
 		{
 			name:         "reports error on int32 overflow 2147483648 and returns fallback",
@@ -131,7 +136,7 @@ func TestParseMinutesValue(t *testing.T) {
 				recordedMsg = msg
 			}
 
-			result := parseMinutesValue(tc.params, tc.key, fallback, maxWindow, addError)
+			result := parseMinutesValue(tc.params, tc.key, fallback, addError)
 			assert.Equal(t, tc.expected, result)
 
 			if tc.expectErrMsg != "" {
