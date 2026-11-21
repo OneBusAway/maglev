@@ -285,7 +285,7 @@ func (api *RestAPI) requestedPositionVehicle(ctx context.Context, requestedID, a
 	if !hasAgencyPrefix {
 		return nil
 	}
-	vehicle, err := api.GtfsManager.GetVehicleByID(rawVehicleID)
+	vehicle, err := api.GtfsManager.GetVehicleByID(agencyID, rawVehicleID)
 	reportsTrip := err == nil && vehicle != nil && !isTripUpdateVehicle(vehicle) &&
 		vehicle.Trip != nil && vehicle.Trip.ID.ID == tripID
 	if !reportsTrip {

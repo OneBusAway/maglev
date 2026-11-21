@@ -65,7 +65,7 @@ func TestTripUpdateVehicleForTrip(t *testing.T) {
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			api.GtfsManager.MockAddFullTripUpdate(tt.tripUpdate)
 			if tt.vehicleInFeed {
-				api.GtfsManager.MockAddVehicle(plannedVehicleID, "another-trip", "another-route")
+				api.GtfsManager.MockAddVehicle(plannedVehicleID, "another-trip", "dp-route")
 			}
 
 			vehicle := api.tripUpdateVehicleForTrip(context.Background(), tripID, serviceDate)
@@ -1105,7 +1105,7 @@ func TestCanceledTripUpdateOutranksRealBus(t *testing.T) {
 			require.NotNil(t, details.Data.Entry.Status)
 			assert.Equal(t, tt.wantStatus, details.Data.Entry.Status.Status)
 			assertNoArrivalForTrip(t, arrivals.Data.Entry.ArrivalsAndDepartures, combinedTripID)
-			original, err := api.GtfsManager.GetVehicleByID("bus")
+			original, err := api.GtfsManager.GetVehicleByID("dp-agency", "bus")
 			require.NoError(t, err)
 			assert.NotEqual(t, gtfsrt.TripDescriptor_CANCELED, original.Trip.ID.ScheduleRelationship, "the shared vehicle stays unchanged")
 		})
@@ -1521,6 +1521,36 @@ func TestTripUpdateVehicleForTrip_PositionVehicleAtAnotherAgency(t *testing.T) {
 
 // An agency ID can contain an underscore, so the explicit vehicle ID is read
 // after the route's agency prefix rather than split at its first underscore.
+func TestTripForVehicleHandler_RawIDWithUnrelatedPositionSuffix(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(7*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, stopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	_, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(t.Context(), gtfsdb.CreateTripParams{
+		ID: "unrelated-suffix-trip", RouteID: "dp-route", ServiceID: "dp-svc", BlockID: nulls.String("other-block"),
+	})
+	require.NoError(t, err)
+	api.GtfsManager.MockAddVehicle("9_schedBasedVehicle", "unrelated-suffix-trip", "dp-route")
+	api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(tripID, now))
+	_, arrivals := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, fmt.Sprintf(
+		"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=5", stopID))
+	foundArrival := false
+	for _, arrival := range arrivals.Data.Entry.ArrivalsAndDepartures {
+		if arrival.TripID == utils.FormCombinedID("dp-agency", tripID) {
+			require.Equal(t, plannedVehicleID, arrival.VehicleID)
+			foundArrival = true
+		}
+	}
+	require.True(t, foundArrival, "the trip-update vehicle's arrival must be returned")
+	response, details := callAPIHandler[TripDetailsResponse](t, api,
+		fmt.Sprintf("/api/where/trip-for-vehicle/%s.json?key=TEST", plannedVehicleID))
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.NotNil(t, details.Data.Entry.Status)
+	assert.Equal(t, plannedVehicleID, details.Data.Entry.Status.VehicleID)
+}
+
 func TestRequestedVehicleForTrip_AgencyIDWithUnderscore(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
@@ -1528,8 +1558,10 @@ func TestRequestedVehicleForTrip_AgencyIDWithUnderscore(t *testing.T) {
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	tripID := "underscore-agency-trip"
-	api.GtfsManager.MockAddVehicleWithOptions("busA", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
-	api.GtfsManager.MockAddVehicleWithOptions("busB", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+	api.GtfsManager.MockAddAgency("AGENCY_ONE", "Underscore agency")
+	api.GtfsManager.MockAddRoute("underscore-agency-route", "AGENCY_ONE", "Underscore route")
+	api.GtfsManager.MockAddVehicleWithOptions("busA", tripID, "underscore-agency-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+	api.GtfsManager.MockAddVehicleWithOptions("busB", tripID, "underscore-agency-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
 
 	ctx := context.Background()
 	otherVehicleID := "busA"

@@ -215,7 +215,7 @@ func (api *RestAPI) statusLookupTripID(ctx context.Context, activeTripRawID, tri
 	if activeTripRawID == tripID {
 		return activeTripRawID
 	}
-	_, lookupErr := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripRawID)
+	_, lookupErr := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, activeTripRawID)
 	if lookupErr == nil {
 		return activeTripRawID
 	}
@@ -259,7 +259,7 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 // statusStopTimes returns the trip's stop times. A failed query logs and returns
 // none, so the status falls back to what it can report without them.
 func (api *RestAPI) statusStopTimes(ctx context.Context, dbTripID string) []gtfsdb.StopTime {
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, dbTripID)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, dbTripID)
 	if err != nil {
 		slog.Warn("buildTripStatusCore: failed to get stop times",
 			slog.String("trip_id", dbTripID),
@@ -270,8 +270,8 @@ func (api *RestAPI) statusStopTimes(ctx context.Context, dbTripID string) []gtfs
 
 // statusShapeRows returns the trip's shape points. A failed query logs and
 // returns none, so the status falls back to what it can report without them.
-func (api *RestAPI) statusShapeRows(ctx context.Context, dbTripID string) []gtfsdb.Shape {
-	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, dbTripID)
+func (api *RestAPI) statusShapeRows(ctx context.Context, dbTripID string) []gtfsdb.GetShapePointsByTripIDRow {
+	shapeRows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetShapePointsByTripID(ctx, dbTripID)
 	if err != nil {
 		slog.Warn("buildTripStatusCore: failed to get shape points",
 			slog.String("trip_id", dbTripID),
@@ -464,7 +464,7 @@ func (api *RestAPI) applyShapeToStatus(
 	status *models.TripStatus,
 	input tripStatusInput,
 	snap *scheduledBlockSnapshot,
-	shapeRows []gtfsdb.Shape,
+	shapeRows []gtfsdb.GetShapePointsByTripIDRow,
 	stopTimes []gtfsdb.StopTime,
 ) {
 	if len(shapeRows) <= 1 {
@@ -537,7 +537,7 @@ func applySnapshotPosition(status *models.TripStatus, snap *scheduledBlockSnapsh
 func (api *RestAPI) frequencyForEntry(ctx context.Context, freqMap map[string][]gtfsdb.Frequency, tripID string, serviceDate, currentTime time.Time) (*models.Frequency, error) {
 	freqs, ok := freqMap[tripID]
 	if !ok {
-		rows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+		rows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetFrequenciesForTrip(ctx, tripID)
 		if err != nil {
 			return nil, err
 		}
@@ -594,12 +594,12 @@ func (api *RestAPI) fetchFrequenciesForTrips(ctx context.Context, tripIDs []stri
 // Frequency offsets are added to servicedate.OffsetBase(serviceDate), the
 // service-day start, not local midnight.
 func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serviceDate time.Time, trip *gtfsdb.Trip, loc *time.Location) (*models.Schedule, error) {
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, trip.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	shapeRows, err := api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, trip.ID)
+	shapeRows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetShapePointsByTripID(ctx, trip.ID)
 	if err != nil {
 		slog.Warn(
 			"BuildTripSchedule: failed to get shape points",
@@ -639,7 +639,7 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 
 	// Populate frequency data for the schedule sub-object.
 	var scheduleFrequency *models.Frequency
-	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, trip.ID)
+	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetFrequenciesForTrip(ctx, trip.ID)
 	if freqErr != nil {
 		return nil, freqErr
 	}
@@ -660,7 +660,7 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 
 func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.Trip, agencyID string, serviceDate time.Time) (nextTripID string, previousTripID string, stopTimes []gtfsdb.StopTime, err error) {
 	if !trip.BlockID.Valid {
-		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, trip.ID)
 		if stopErr != nil {
 			return "", "", nil, stopErr
 		}
@@ -679,7 +679,7 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 		}
 		// ErrNoRows: trip not in block for this service date — no prev/next, but
 		// still fetch stop times so callers get the schedule for the trip itself.
-		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+		stopTimes, stopErr := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, trip.ID)
 		if stopErr != nil {
 			return "", "", nil, stopErr
 		}
@@ -721,7 +721,7 @@ func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.
 			slog.String("trip_id", trip.ID))
 	}
 
-	stopTimes, err = api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	stopTimes, err = api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, trip.ID)
 	if err != nil {
 		return nextTripID, previousTripID, nil, err
 	}
@@ -735,7 +735,7 @@ func (api *RestAPI) fillStopsFromSchedule(ctx context.Context, status *models.Tr
 		stopTimes = preloaded
 	} else {
 		var err error
-		stopTimes, err = api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+		stopTimes, err = api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, tripID)
 		if err != nil {
 			slog.Warn("fillStopsFromSchedule: failed to get stop times",
 				slog.String("trip_id", tripID),
@@ -1016,7 +1016,7 @@ func (api *RestAPI) activeTripBlockSequence(ctx context.Context, tripID string, 
 // ordered sequence for the given service date, and whether it was resolved.
 // Uses GetBlockTripSequence with ROW_NUMBER() window function instead of fetching all trips and looping.
 func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, serviceDate time.Time) (int, bool) {
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Warn("blockTripSequence: failed to get trip",
@@ -1031,7 +1031,7 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 	}
 
 	formattedDate := serviceDate.Format("20060102")
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, formattedDate)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, formattedDate)
 	if err != nil {
 		slog.Warn("blockTripSequence: failed to get active service IDs",
 			slog.String("trip_id", tripID),
@@ -1127,10 +1127,10 @@ func (api *RestAPI) situationRefsForTrip(ctx context.Context, tripID string) []s
 
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	if api.GtfsManager.GtfsDB != nil {
-		trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+		trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 		if err == nil {
 			routeID = trip.RouteID
-			route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
+			route, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetRoute(ctx, routeID)
 			if err == nil {
 				agencyID = route.AgencyID
 			} else if !errors.Is(err, sql.ErrNoRows) {
@@ -1225,7 +1225,7 @@ func (api *RestAPI) calculateBatchStopDistances(
 	}
 	if len(cumulativeDistances) == len(shapePoints) {
 		stopByID := stopByIDFromCoords(timeStops, stopCoords)
-		distances = projectStopsInSequence(timeStops, stopByID, shapePoints, cumulativeDistances)
+		distances = projectStopsInSequence(stopIDsOf(timeStops), stopByID, shapePoints, cumulativeDistances)
 	} else {
 		distances = make([]float64, len(timeStops))
 	}

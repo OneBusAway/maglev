@@ -190,6 +190,23 @@ FROM
     JOIN trips ON stop_times.trip_id = trips.id
     JOIN routes ON trips.route_id = routes.id;
 
+-- name: ClearStopRoutes :exec
+DELETE FROM stop_routes
+WHERE
+    TRUE;
+
+-- name: BuildStopRoutes :exec
+-- Joins routes so a trip whose route_id resolves to nothing contributes no pair.
+INSERT INTO
+    stop_routes (stop_id, route_id)
+SELECT DISTINCT
+    stop_times.stop_id,
+    routes.id
+FROM
+    stop_times
+    JOIN trips ON stop_times.trip_id = trips.id
+    JOIN routes ON trips.route_id = routes.id;
+
 -- name: CreateCalendarDate :one
 INSERT
 OR REPLACE INTO calendar_dates (service_id, date, exception_type)
@@ -388,7 +405,8 @@ FROM
     INNER JOIN stop_times st ON s.id = st.stop_id;
 
 -- name: GetRoutesForStop :many
-SELECT DISTINCT
+-- Reads the routes stop_routes lists for the stop rather than walking its stop_times.
+SELECT
     routes.id,
     routes.agency_id,
     routes.short_name,
@@ -399,11 +417,10 @@ SELECT DISTINCT
     routes.color,
     routes.text_color
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id = ?;
+    stop_routes.stop_id = ?;
 
 -- name: GetShapeByID :many
 SELECT
@@ -629,7 +646,10 @@ DELETE FROM agencies;
 -- Batch queries to solve N+1 problems
 
 -- name: GetRoutesForStops :many
-SELECT DISTINCT
+-- Reads the (stop, route) pairs stop_routes holds rather than walking every stop_time at
+-- these stops, which grows with how many trips serve them. stop_id breaks ties so rows
+-- for one route at several stops come back in a fixed order.
+SELECT
     routes.id,
     routes.agency_id,
     routes.short_name,
@@ -639,33 +659,38 @@ SELECT DISTINCT
     routes.url,
     routes.color,
     routes.text_color,
-    stop_times.stop_id
+    stop_routes.stop_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'))
+    stop_routes.stop_id IN (sqlc.slice('stop_ids'))
 ORDER BY
     routes.agency_id ASC,
-    routes.id ASC;
+    routes.id ASC,
+    stop_routes.stop_id ASC;
 
 -- name: GetRouteIDsForStops :many
-SELECT DISTINCT
+-- Reads the (stop, route) pairs stop_routes holds rather than walking every stop_time at
+-- these stops. Returns the route names too, so callers can order each stop's routes by name.
+SELECT
     routes.id AS route_id,
     routes.agency_id,
-    stop_times.stop_id
+    routes.short_name,
+    routes.long_name,
+    stop_routes.stop_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'));
+    stop_routes.stop_id IN (sqlc.slice('stop_ids'));
 
 -- name: GetActiveRouteIDsForStopsOnDate :many
 SELECT DISTINCT
     routes.id AS route_id,
     routes.agency_id,
+    routes.short_name,
+    routes.long_name,
     stop_times.stop_id
 FROM
     stop_times
@@ -695,7 +720,9 @@ WHERE
     AND trips.service_id IN (sqlc.slice('service_ids'));
 
 -- name: GetAgenciesForStops :many
-SELECT DISTINCT
+-- Reads the (stop, agency) pairs stop_agencies holds rather than walking every
+-- stop_time at these stops, which grows with how many trips serve them.
+SELECT
     a.id,
     a.name,
     a.url,
@@ -704,16 +731,14 @@ SELECT DISTINCT
     a.phone,
     a.fare_url,
     a.email,
-    stop_times.stop_id
+    stop_agencies.stop_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
-    JOIN agencies a ON routes.agency_id = a.id
+    stop_agencies
+    JOIN agencies a ON stop_agencies.agency_id = a.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'))
+    stop_agencies.stop_id IN (sqlc.slice('stop_ids'))
 ORDER BY
-    stop_times.stop_id ASC,
+    stop_agencies.stop_id ASC,
     a.id ASC;
 
 -- name: GetStopTimesForTrip :many
@@ -782,12 +807,8 @@ WHERE
 
 -- name: GetShapePointsByTripID :many
 SELECT
-    s.id,
-    s.shape_id,
     s.lat,
-    s.lon,
-    s.shape_pt_sequence,
-    s.shape_dist_traveled
+    s.lon
 FROM
     shapes s
     JOIN trips t ON t.shape_id = s.shape_id
@@ -819,14 +840,6 @@ FROM trips t
 WHERE t.block_id = ?
   AND t.service_id IN (sqlc.slice('service_ids'))
 ORDER BY t.min_arrival_time;
-
--- name: GetBlockIDByTripID :one
-SELECT
-    block_id
-FROM
-    trips
-WHERE
-    id = ?;
 
 -- name: GetStopsByIDs :many
 SELECT
@@ -887,6 +900,8 @@ ORDER BY
     t.id ASC, st.stop_sequence ASC;
 
 -- name: GetBlockDetails :many
+-- A block is keyed by agency and block_id, as in Java, so trips on another
+-- agency's routes that share the block_id belong to that agency's block.
 SELECT
     t.service_id,
     t.id as trip_id,
@@ -902,23 +917,16 @@ SELECT
 FROM
     trips t
         JOIN
+    routes r ON r.id = t.route_id
+        JOIN
     stop_times st ON t.id = st.trip_id
         JOIN
     stops s ON st.stop_id = s.id
 WHERE
-    t.block_id = ?
+    t.block_id = sqlc.arg(block_id)
+    AND r.agency_id = sqlc.arg(agency_id)
 ORDER BY
     t.id, st.stop_sequence;
-
--- name: BlockHasTripForAgency :one
--- Returns 1 if a trip on one of the agency's routes is in the block, 0 otherwise.
-SELECT CAST(EXISTS (
-    SELECT 1
-    FROM trips t
-    JOIN routes r ON r.id = t.route_id
-    WHERE t.block_id = sqlc.arg(block_id)
-      AND r.agency_id = sqlc.arg(agency_id)
-) AS INTEGER) AS has_trip;
 
 -- name: GetTripIDsForStops :many
 -- GetTripIDsForStops returns the IDs of the trips serving any of these stops.
@@ -1341,6 +1349,11 @@ WHERE id IN (sqlc.slice('trip_ids'));
 SELECT * FROM stop_times
 WHERE trip_id IN (sqlc.slice('trip_ids'))
 ORDER BY trip_id, stop_sequence;
+
+-- name: GetBlockStopTimesForTripIDs :many
+SELECT trip_id, stop_id, stop_sequence, arrival_time, departure_time FROM stop_times
+WHERE trip_id IN (sqlc.slice('trip_ids'))
+ORDER BY trip_id ASC, stop_sequence ASC;
 
 -- name: GetStopIDsForTripIDs :many
 SELECT trip_id, stop_id FROM stop_times

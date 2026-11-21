@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -184,6 +185,10 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	gtfsDB, err := openGtfsDB(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open GTFS database: %w", err)
+	}
+
+	if config.Clock == nil {
+		config.Clock = clock.RealClock{}
 	}
 
 	manager := &Manager{
@@ -712,7 +717,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 
 	reqLogger := logging.ForComponent(ctx, "gtfs_manager")
 
-	requestedTrip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	requestedTrip, err := manager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trip", err,
 			slog.String("trip_id", tripID))
@@ -726,7 +731,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
+	blockTrips, err := manager.GtfsDB.Queries.Memo(ctx).GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trips for block", err,
 			slog.String("block_id", requestedBlockID))
@@ -750,22 +755,21 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 	return nil
 }
 
-func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) {
+// GetVehicleByID returns the vehicle matching the exact agency and vehicle ID.
+// It does not fall back to unattributed vehicles or another agency.
+// The returned struct is a shallow copy. Its Trip, ID and Timestamp pointers
+// still reference the shared snapshot, so callers must not mutate them.
+func (manager *Manager) GetVehicleByID(agencyID, vehicleID string) (*gtfs.Vehicle, error) {
 	merged := manager.mergedRealtime()
-	if index, exists := merged.vehicleLookupByVehicle[vehicleID]; exists {
-		vehicle := merged.vehicles[index]
+	key := agencyVehicleKey{agencyID: agencyID, vehicleID: vehicleID}
+	if idx, ok := merged.vehicleLookupByVehicle[key]; ok {
+		vehicle := merged.vehicles[idx]
 		return &vehicle, nil
 	}
-
+	if agencyID != "" {
+		return nil, fmt.Errorf("vehicle with ID %s not found for agency %s", vehicleID, agencyID)
+	}
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
-}
-
-// VehicleAgencyID returns the agency the vehicle GetVehicleByID finds was
-// attributed to at ingestion. ok is false when the vehicle is unknown or has
-// no attributed agency.
-func (manager *Manager) VehicleAgencyID(vehicleID string) (agencyID string, ok bool) {
-	agencyID, ok = manager.mergedRealtime().vehicleAgencyByVehicle[vehicleID]
-	return agencyID, ok
 }
 
 func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {

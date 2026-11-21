@@ -890,6 +890,8 @@ func TestArrivalAndDepartureForStopHandler_MultiAgency_Regression(t *testing.T) 
 	})
 	require.NoError(t, err)
 
+	rebuildStopRouteIndex(t, api)
+
 	combinedStopID := utils.FormCombinedID(agencyA, stopID)
 	combinedTripID := utils.FormCombinedID(agencyB, tripB_ID)
 	serviceDate := time.Now().UnixMilli()
@@ -2127,4 +2129,40 @@ func TestArrivalAndDepartureForStopHandler_CrossAgencyTimezone(t *testing.T) {
 	expectedMidnightLA := time.Date(2026, 1, 15, 0, 0, 0, 0, locLA)
 	assert.True(t, entry.ServiceDate.In(locLA).Equal(expectedMidnightLA),
 		"service date must be midnight in the trip agency timezone, got %v", entry.ServiceDate)
+}
+
+func TestArrivalAndDepartureForStopHandler_OtherAgencyVehicleId_ReturnsNotFound(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	rawTripID := "0f36bccf-c435-4b31-b001-da345d06a57d"
+	stopID := utils.FormCombinedID("25", "4062")
+	tripID := utils.FormCombinedID("25", rawTripID)
+	vehicleCode := "veh_100"
+	serviceDate := time.Now()
+
+	// Install an attributed vehicle for agency "25" running the requested trip.
+	api.GtfsManager.MockSetAgencyVehicles("_test", "25", []gtfs.Vehicle{{
+		ID:   &gtfs.VehicleID{ID: vehicleCode},
+		Trip: &gtfs.Trip{ID: gtfs.TripID{ID: rawTripID}},
+	}})
+
+	// 1. Positive control: same-agency prefix finds the attributed vehicle.
+	posEndpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&vehicleId=%s",
+		stopID, tripID, serviceDate.UnixMilli(), utils.FormCombinedID("25", vehicleCode))
+	posResp, posModel := callAPIHandler[ArrivalAndDepartureResponse](t, api, posEndpoint)
+
+	require.Equal(t, http.StatusOK, posResp.StatusCode)
+	require.Equal(t, http.StatusOK, posModel.Code)
+	assert.Equal(t, utils.FormCombinedID("25", vehicleCode), posModel.Data.Entry.VehicleID)
+
+	// 2. Negative control: querying the same raw vehicle ID with another agency's prefix
+	// must not match agency 25's vehicle. Explicit vehicle mismatches return 404.
+	negEndpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&vehicleId=%s",
+		stopID, tripID, serviceDate.UnixMilli(), utils.FormCombinedID("99", vehicleCode))
+	negResp, negModel := callAPIHandler[ArrivalAndDepartureResponse](t, api, negEndpoint)
+
+	require.Equal(t, http.StatusNotFound, negResp.StatusCode)
+	require.Equal(t, http.StatusNotFound, negModel.Code)
 }

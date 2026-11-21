@@ -162,17 +162,12 @@ func (api *RestAPI) tripUpdateVehicleHasPosition(ctx context.Context, tripUpdate
 	if tripUpdate.Vehicle == nil || tripUpdate.Vehicle.ID == nil {
 		return false
 	}
-	rawVehicleID := tripUpdate.Vehicle.ID.ID
-	vehicle, err := api.GtfsManager.GetVehicleByID(rawVehicleID)
-	if err != nil || isTripUpdateVehicle(vehicle) {
+	tripAgencyID, known := api.tripAgencyID(ctx, tripID)
+	if !known {
 		return false
 	}
-	vehicleAgencyID, attributed := api.GtfsManager.VehicleAgencyID(rawVehicleID)
-	if !attributed {
-		return true
-	}
-	tripAgencyID, known := api.tripAgencyID(ctx, tripID)
-	return !known || vehicleAgencyID == tripAgencyID
+	vehicle, err := api.GtfsManager.GetVehicleByID(tripAgencyID, tripUpdate.Vehicle.ID.ID)
+	return err == nil && vehicle != nil && !isTripUpdateVehicle(vehicle)
 }
 
 type tripUpdateForTrip struct {

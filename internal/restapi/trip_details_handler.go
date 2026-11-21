@@ -153,9 +153,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A trip-update vehicle positions its block for its service date and again
-	// for its status. They share snapshots.
-	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
+	// Share database reads and block snapshots across service-date and status lookups.
+	ctx := WithSnapshotCache(gtfsdb.WithReadMemo(r.Context()), newSnapshotCache())
 	defaults := TripParamDefaults{IncludeTrip: true, IncludeSchedule: true}
 
 	// Format errors do not need the agency timezone. Catch them before GetTrip so
@@ -168,13 +167,13 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		api.dbErrorResponse(w, r, err)
 		return
 	}
 
-	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
+	route, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetRoute(ctx, trip.RouteID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -240,7 +239,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
-	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	freqRows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -387,7 +386,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 // serviceActiveOn reports whether serviceID runs on serviceDate.
 func (api *RestAPI) serviceActiveOn(ctx context.Context, serviceID string, serviceDate time.Time) (bool, error) {
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
 	if err != nil {
 		return false, err
 	}

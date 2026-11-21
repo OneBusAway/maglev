@@ -71,7 +71,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	serviceDate := date.Midnight(loc)
 	serviceStart := date.Start(loc)
 
-	if api.positionVehicleRecordExpired(ctx, vehicleID, serviceDate) {
+	if api.positionVehicleRecordExpired(ctx, agencyID, vehicleID, serviceDate) {
 		api.sendNotFound(w, r)
 		return
 	}
@@ -275,7 +275,7 @@ func referencedStopIDs(status *models.TripStatus, schedule *models.Schedule) ([]
 // feed serves trip updates at its vehicle positions URL, is found through its
 // block record, so it gets the same record checks as the arrivals reporting it.
 func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request, agencyID, vehicleID string) (string, string, bool) {
-	vehicle, err := api.GtfsManager.GetVehicleByID(vehicleID)
+	vehicle, err := api.GtfsManager.GetVehicleByID(agencyID, vehicleID)
 	if err != nil || isTripUpdateVehicle(vehicle) {
 		tripAgencyID, tripID, found := api.tripUpdateVehicleTrip(r.Context(), agencyID, vehicleID)
 		if !found {
@@ -285,17 +285,6 @@ func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request
 	}
 
 	reqLogger := logging.ForComponent(r.Context(), "http_server")
-	// Like Java, the agency prefix is part of the vehicle's identity. A vehicle
-	// with no attributed agency can't be checked, so it is still found.
-	attributedAgencyID, attributed := api.GtfsManager.VehicleAgencyID(vehicleID)
-	belongsToAnotherAgency := attributed && attributedAgencyID != agencyID
-	if belongsToAnotherAgency {
-		reqLogger.Debug("vehicle belongs to another agency",
-			"vehicleID", vehicleID, "agencyID", agencyID, "vehicleAgencyID", attributedAgencyID)
-		api.sendNotFound(w, r)
-		return "", "", false
-	}
-
 	// Return 404 when vehicle has no associated trip (idle vehicle)
 	// or when the trip ID is empty (avoiding a futile DB lookup)
 	if vehicle == nil || vehicle.Trip == nil || vehicle.Trip.ID.ID == "" {
@@ -310,8 +299,8 @@ func (api *RestAPI) getVehicleTripIDOr404(w http.ResponseWriter, r *http.Request
 // positionVehicleRecordExpired reports whether Java has dropped the record of the
 // position vehicle with this raw ID, so it reports no trip. A trip-update vehicle's
 // lookup has already checked its record.
-func (api *RestAPI) positionVehicleRecordExpired(ctx context.Context, rawVehicleID string, serviceDate time.Time) bool {
-	vehicle, err := api.GtfsManager.GetVehicleByID(rawVehicleID)
+func (api *RestAPI) positionVehicleRecordExpired(ctx context.Context, agencyID, rawVehicleID string, serviceDate time.Time) bool {
+	vehicle, err := api.GtfsManager.GetVehicleByID(agencyID, rawVehicleID)
 	if err != nil || isTripUpdateVehicle(vehicle) {
 		return false
 	}
