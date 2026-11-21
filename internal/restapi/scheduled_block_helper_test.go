@@ -1427,6 +1427,24 @@ func TestBuildSnapshotFromStops_DwellAtStop(t *testing.T) {
 	}
 }
 
+func TestBuildSnapshotFromStops_NonMonotonicDwell(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+		{EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 300, DistanceAlongBlock: 2000},
+		{EffectiveStopSeconds: 120, ArrivalSeconds: 120, DepartureSeconds: 120, DistanceAlongBlock: 3000},
+	}
+	currentTime := serviceDate.Add(150 * time.Second)
+
+	snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+	// The out-of-order final stop makes interpolation clamp to the block's
+	// end. The dwell at index 1 must not override that fallback position.
+	assert.Equal(t, 2, snap.NextStopIndex)
+	assert.Equal(t, float64(3000), snap.DistanceAlongBlock)
+}
+
 func TestApplySnapshotStops_DwellAtStop(t *testing.T) {
 	snap := &scheduledBlockSnapshot{
 		NextStopIndex: 1,

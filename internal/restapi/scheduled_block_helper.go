@@ -284,7 +284,9 @@ func buildSnapshotFromStops(
 
 	nextStopIndex := findNextStopIndex(stops, currentSeconds, monotonic)
 	distanceAlongBlock := interpolateBlockDistance(stops, currentSeconds, monotonic)
-	if dwellingAtPreviousStop(stops, nextStopIndex, currentSeconds) {
+	// Only ordered stop times make the adjacent stop a safe dwell candidate;
+	// otherwise preserve the non-monotonic interpolation fallback.
+	if monotonic && dwellingAtPreviousStop(stops, nextStopIndex, currentSeconds) {
 		nextStopIndex--
 		distanceAlongBlock = stops[nextStopIndex].DistanceAlongBlock
 	}
