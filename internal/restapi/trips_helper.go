@@ -41,15 +41,15 @@ type tripStatusExtras struct {
 	// tripBlockSequence is the queried trip's position in its block. It can
 	// differ from status.BlockTripSequence, which follows the active trip.
 	tripBlockSequence int
-	// hasVehicleRecord reports that the vehicle has the kind of record Java
-	// builds from trip updates, which fixes its position and update time.
-	hasVehicleRecord bool
+	// record is the vehicle's trip-update record, resolved once per status so
+	// every step reads the same expiry decision.
+	record vehicleRecord
 }
 
 // applyVehicleRecordUpdateTime reports the record's time on an arrival. Java's
 // arrival reads it from the same record as its trip status.
 func applyVehicleRecordUpdateTime(arrival *models.ArrivalAndDeparture, status *models.TripStatus, extras *tripStatusExtras) {
-	if status != nil && extras != nil && extras.hasVehicleRecord {
+	if status != nil && extras != nil && extras.record.present {
 		arrival.LastUpdateTime = status.LastUpdateTime
 	}
 }
@@ -143,7 +143,7 @@ func (api *RestAPI) buildTripStatusForVehicle(
 	// and shape calculations, which are meaningless for a trip that is not operating.
 	// Predicted is true because the cancellation itself is real-time information.
 	if status.Status == "CANCELED" {
-		status.Predicted = extras.hasVehicleRecord || (vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime))
+		status.Predicted = extras.record.present || (vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime))
 		status.Scheduled = !status.Predicted
 		return status, extras, nil
 	}
@@ -169,7 +169,7 @@ func (api *RestAPI) buildTripStatusForVehicle(
 	// is a no-op.
 	var snap *scheduledBlockSnapshot
 	if len(stopTimes) > 0 {
-		snap = api.statusBlockSnapshot(ctx, status, input, extras.blockTripIDs, scheduleDeviation)
+		snap = api.statusBlockSnapshot(ctx, status, input, extras.record, scheduleDeviation)
 	}
 	api.applySnapshotToStatus(ctx, status, extras, input, snap)
 	api.applyShapeToStatus(ctx, status, input, snap, shapeRows, stopTimes)
@@ -249,9 +249,9 @@ func (api *RestAPI) statusLookupTripID(ctx context.Context, activeTripRawID, tri
 // timestamps; record freshness must not revive those fields.
 func (api *RestAPI) applyVehicleRecord(ctx context.Context, status *models.TripStatus, extras *tripStatusExtras, input tripStatusInput) {
 	extras.blockTripIDs = api.blockShiftTripIDsSortedByStartTime(ctx, input.dbTripID, input.serviceDate)
-	if recordTime, hasRecord := api.vehicleRecordTime(input.vehicle, extras.blockTripIDs); hasRecord {
-		extras.hasVehicleRecord = true
-		status.LastUpdateTime = models.NewModelTime(recordTime)
+	extras.record = api.resolveVehicleRecord(input.vehicle, extras.blockTripIDs)
+	if extras.record.present {
+		status.LastUpdateTime = models.NewModelTime(extras.record.time)
 		status.Status, status.Phase = GetVehicleStatusAndPhase(input.vehicle)
 	}
 }
@@ -287,7 +287,7 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 	}
 
 	hasVehicleRealtimeData := input.vehicle != nil && !defaultStaleDetector.Check(input.vehicle, input.currentTime)
-	status.SetPredicted(extras.hasVehicleRecord || hasVehicleRealtimeData || hasRealtimeTripUpdate)
+	status.SetPredicted(extras.record.present || hasVehicleRealtimeData || hasRealtimeTripUpdate)
 	return scheduleDeviation
 }
 
@@ -480,7 +480,7 @@ func applySnapshotDistanceAlongTrip(status *models.TripStatus, extras *tripStatu
 	if !sameShift || !arrivalInShift {
 		return
 	}
-	if extras.hasVehicleRecord {
+	if extras.record.present {
 		status.DistanceAlongTrip = snap.ActiveTripScheduledDistance
 		return
 	}

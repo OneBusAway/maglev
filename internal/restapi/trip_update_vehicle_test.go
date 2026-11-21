@@ -222,6 +222,28 @@ func TestPluralArrivals_BeforeBlockStartMeasuresFromFirstStop(t *testing.T) {
 	}
 }
 
+// The trip status resolves the record once; the snapshot must place the block
+// by that record instead of rereading trip updates, which may have expired since.
+func TestStatusBlockSnapshot_UsesSuppliedRecord(t *testing.T) {
+	serviceDate := time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(11 * time.Hour)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	firstStopID, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addDownstreamStop(t, api, tripID)
+	record := vehicleRecord{time: serviceDate.Add(8*time.Hour - 5*time.Minute), present: true}
+
+	status := &models.TripStatus{}
+	snap := api.statusBlockSnapshot(t.Context(), status, tripStatusInput{
+		agencyID: "dp-agency", tripID: tripID, dbTripID: tripID,
+		serviceDate: serviceDate, currentTime: now,
+	}, record, 0)
+
+	require.NotNil(t, snap)
+	assert.Equal(t, utils.FormCombinedID("dp-agency", firstStopID), status.NextStop)
+	assert.Equal(t, 5*60, status.NextStopTimeOffset)
+}
+
 func TestStatusBlockSnapshot_BeforeStartUsesWallClock(t *testing.T) {
 	location, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
@@ -255,7 +277,7 @@ func TestStatusBlockSnapshot_BeforeStartUsesWallClock(t *testing.T) {
 			snap := api.statusBlockSnapshot(t.Context(), status, tripStatusInput{
 				agencyID: "dp-agency", tripID: tripID, dbTripID: tripID,
 				serviceDate: serviceDate, currentTime: now,
-			}, []string{tripID}, 0)
+			}, vehicleRecord{}, 0)
 
 			require.NotNil(t, snap)
 			assert.True(t, snap.InRange, "held snapshot must be at the first stop, not before it")
@@ -1748,7 +1770,7 @@ func TestVehicleRecordOwnership_RetentionAndDeviation(t *testing.T) {
 			}
 			status, extras, err := api.BuildTripStatus(context.Background(), "dp-agency", tripID, nil, serviceDate, now, nil)
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantVehicle, extras.hasVehicleRecord)
+			assert.Equal(t, tt.wantVehicle, extras.record.present)
 			assert.Equal(t, tt.wantVehicle, status.Predicted)
 			_, _, predicted := api.getPredictedTimes(context.Background(), tripID, serviceDate, stopID, 5,
 				serviceDate.Add(9*time.Hour), serviceDate.Add(9*time.Hour+5*time.Minute))
@@ -1929,7 +1951,7 @@ func TestBuildTripStatus_StalePositionRecordControls(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantStatus, status.Status)
 			assert.Empty(t, status.Phase)
-			assert.Equal(t, tt.canceled, extras.hasVehicleRecord)
+			assert.Equal(t, tt.canceled, extras.record.present)
 			assert.Equal(t, tt.canceled, status.Predicted)
 			assert.Nil(t, status.LastKnownLocation)
 			if tt.canceled {

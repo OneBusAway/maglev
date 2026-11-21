@@ -460,7 +460,7 @@ func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID,
 	snap := api.statusBlockSnapshot(ctx, models.NewTripStatus(), tripStatusInput{
 		agencyID: agencyID, tripID: tripID, dbTripID: tripID,
 		vehicle: vehicle, serviceDate: serviceDate, currentTime: now,
-	}, blockTripIDs, deviation)
+	}, api.resolveVehicleRecord(vehicle, blockTripIDs), deviation)
 	if snap == nil || snap.ActiveTripID == "" {
 		return tripID, true
 	}
@@ -537,12 +537,12 @@ func (api *RestAPI) statusBlockSnapshot(
 	ctx context.Context,
 	status *models.TripStatus,
 	input tripStatusInput,
-	blockTripIDs []string,
+	record vehicleRecord,
 	scheduleDeviation int,
 ) *scheduledBlockSnapshot {
-	positionTime, hasRecord := api.vehicleRecordTime(input.vehicle, blockTripIDs)
-	if !hasRecord {
-		positionTime = input.currentTime
+	positionTime := input.currentTime
+	if record.present {
+		positionTime = record.time
 	}
 	effectiveTime := positionTime.Add(-time.Duration(scheduleDeviation) * time.Second)
 
@@ -555,7 +555,7 @@ func (api *RestAPI) statusBlockSnapshot(
 	beforeBlockStart := effectiveTime.Before(blockStart) && !runsOwnSchedule(input.vehicle)
 
 	hasNoPosition := input.vehicle == nil || input.vehicle.Position == nil
-	if hasRecord || (beforeBlockStart && hasNoPosition) {
+	if record.present || (beforeBlockStart && hasNoPosition) {
 		effectiveSeconds := utils.CalculateSecondsSinceServiceDate(effectiveTime, input.serviceDate)
 		applySnapshotStops(status, snap, effectiveSeconds, input.agencyID)
 	}
@@ -563,6 +563,20 @@ func (api *RestAPI) statusBlockSnapshot(
 		return api.computeScheduledBlockSnapshot(ctx, input.dbTripID, blockStart, input.serviceDate)
 	}
 	return snap
+}
+
+// vehicleRecord is the trip-update record Java would hold for a vehicle, which
+// fixes its position and update time.
+type vehicleRecord struct {
+	time    time.Time
+	present bool
+}
+
+// resolveVehicleRecord reads the vehicle's record once, so callers that share it
+// cannot disagree about whether it expired.
+func (api *RestAPI) resolveVehicleRecord(vehicle *gtfs.Vehicle, blockTripIDs []string) vehicleRecord {
+	recordTime, present := api.vehicleRecordTime(vehicle, blockTripIDs)
+	return vehicleRecord{time: recordTime, present: present}
 }
 
 // vehicleRecordTime returns the time of the record Java would hold for a vehicle
