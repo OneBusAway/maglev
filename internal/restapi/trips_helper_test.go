@@ -2482,24 +2482,36 @@ func TestBuildTripStatus_VehicleWithRecordUsesScheduleDistance(t *testing.T) {
 
 	lastShapePoint := shapeRows[len(shapeRows)-1]
 	latitude, longitude := float32(lastShapePoint.Lat), float32(lastShapePoint.Lon)
-	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, routeID, internalgtfs.MockVehicleOptions{
-		Position:  &gtfs.Position{Latitude: &latitude, Longitude: &longitude},
-		Timestamp: &positionTime,
-	})
-	onTime := time.Duration(0)
-	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
-		ID:        gtfs.TripID{ID: tripID},
-		Timestamp: &recordTime,
-		Delay:     &onTime,
-		Vehicle:   &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
-	})
+	tests := []struct {
+		name    string
+		vehicle *gtfs.Vehicle
+	}{
+		{name: "named update", vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}},
+		{name: "anonymous update"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, routeID, internalgtfs.MockVehicleOptions{
+				Position:  &gtfs.Position{Latitude: &latitude, Longitude: &longitude},
+				Timestamp: &positionTime,
+			})
+			onTime := time.Duration(0)
+			api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+				ID:        gtfs.TripID{ID: tripID},
+				Timestamp: &recordTime,
+				Delay:     &onTime,
+				Vehicle:   tt.vehicle,
+			})
 
-	status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, positionTime, nil)
+			status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, positionTime, nil)
 
-	require.NoError(t, err)
-	assert.Positive(t, status.ScheduledDistanceAlongTrip)
-	assert.Equal(t, status.ScheduledDistanceAlongTrip, status.DistanceAlongTrip)
-	assert.Zero(t, status.LastKnownDistanceAlongTrip)
-	assert.Equal(t, recordTime.UnixMilli(), status.LastUpdateTime.UnixMilli())
-	assert.Equal(t, positionTime.UnixMilli(), status.LastLocationUpdateTime.UnixMilli())
+			require.NoError(t, err)
+			assert.Positive(t, status.ScheduledDistanceAlongTrip)
+			assert.Equal(t, status.ScheduledDistanceAlongTrip, status.DistanceAlongTrip)
+			assert.Zero(t, status.LastKnownDistanceAlongTrip)
+			assert.Equal(t, recordTime.UnixMilli(), status.LastUpdateTime.UnixMilli())
+			assert.Equal(t, positionTime.UnixMilli(), status.LastLocationUpdateTime.UnixMilli())
+		})
+	}
 }

@@ -1658,7 +1658,7 @@ func TestVehicleRecordTime_ScopedToVehicle(t *testing.T) {
 	}
 	ownUpdate := update("A", "bus", ownTime)
 	anonymousUpdate := update("A", "", ownTime)
-	positionVehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}, IsEntityInMessage: true}
+	positionVehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}, Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "A"}}, IsEntityInMessage: true}
 	blockVehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "block"}, Trip: &anonymousUpdate, Timestamp: &now}
 	updateVehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}, Trip: &ownUpdate, Timestamp: &now}
 	tests := []struct {
@@ -1669,7 +1669,12 @@ func TestVehicleRecordTime_ScopedToVehicle(t *testing.T) {
 		found   bool
 	}{
 		{name: "another named vehicle", vehicle: positionVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "other", now)}, want: ownTime, found: true},
-		{name: "anonymous update cannot refresh a named vehicle", vehicle: positionVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "", now)}, want: ownTime, found: true},
+		{name: "anonymous update on own trip", vehicle: positionVehicle, updates: []gtfs.Trip{anonymousUpdate}, want: ownTime, found: true},
+		{name: "anonymous update without a vehicle trip", vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}, updates: []gtfs.Trip{anonymousUpdate}},
+		{name: "anonymous update on another trip cannot refresh a named vehicle", vehicle: positionVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "", now)}, want: ownTime, found: true},
+		{name: "only anonymous update on another trip", vehicle: positionVehicle, updates: []gtfs.Trip{update("B", "", now)}},
+		{name: "another named vehicle on own trip", vehicle: positionVehicle, updates: []gtfs.Trip{update("A", "other", now)}},
+		{name: "expired anonymous update on own trip", vehicle: positionVehicle, updates: []gtfs.Trip{update("A", "", expiredTime)}, want: expiredTime},
 		{name: "same vehicle uses last block update", vehicle: positionVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "bus", now)}, want: now, found: true},
 		{name: "block vehicle ignores named updates", vehicle: blockVehicle, updates: []gtfs.Trip{anonymousUpdate, update("B", "other", now)}, want: ownTime, found: true},
 		{name: "block vehicle uses last anonymous update", vehicle: blockVehicle, updates: []gtfs.Trip{anonymousUpdate, update("B", "", now)}, want: now, found: true},
