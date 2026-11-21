@@ -1855,6 +1855,95 @@ func TestArrivals_RecordTimeIgnoresOtherBlockVehicle(t *testing.T) {
 	})
 }
 
+func TestArrivals_StalePositionWithFreshRecord(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addDownstreamStop(t, api, tripID)
+	gpsTime := now.Add(-16 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &gpsTime})
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID: gtfs.TripID{ID: tripID}, Timestamp: &now,
+		Vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
+	})
+	combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+	check := func(t *testing.T, arrival models.ArrivalAndDeparture) {
+		t.Helper()
+		require.NotNil(t, arrival.TripStatus)
+		assert.Equal(t, "SCHEDULED", arrival.TripStatus.Status)
+		assert.Equal(t, "in_progress", arrival.TripStatus.Phase)
+		assert.True(t, arrival.TripStatus.Predicted)
+		assert.Equal(t, now.UnixMilli(), arrival.LastUpdateTime.UnixMilli())
+		assert.Equal(t, now.UnixMilli(), arrival.TripStatus.LastUpdateTime.UnixMilli())
+	}
+	t.Run("singular", func(t *testing.T) {
+		resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, fmt.Sprintf(
+			"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+			combinedStopID, combinedTripID, serviceDate.UnixMilli()))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		check(t, model.Data.Entry)
+	})
+	t.Run("plural", func(t *testing.T) {
+		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, fmt.Sprintf(
+			"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=60&minutesAfter=120", combinedStopID))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		check(t, findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, combinedTripID))
+	})
+}
+
+func TestBuildTripStatus_StalePositionRecordControls(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	tests := []struct {
+		name       string
+		record     bool
+		canceled   bool
+		recordAge  time.Duration
+		wantStatus string
+	}{
+		{name: "without a record stays default", wantStatus: "default"},
+		{name: "expired record stays default", record: true, recordAge: 10 * time.Minute, wantStatus: "default"},
+		{name: "fresh cancellation remains canceled", record: true, canceled: true, wantStatus: "CANCELED"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+			addDownstreamStop(t, api, tripID)
+			gpsTime := now.Add(-16 * time.Minute)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &gpsTime})
+			if tt.record {
+				recordTime := now.Add(-tt.recordAge)
+				update := gtfs.Trip{ID: gtfs.TripID{ID: tripID}, Timestamp: &recordTime, Vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}}
+				if tt.canceled {
+					update.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+				}
+				api.GtfsManager.MockAddFullTripUpdate(update)
+			}
+			status, extras, err := api.BuildTripStatus(context.Background(), "dp-agency", tripID, nil, serviceDate, now, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStatus, status.Status)
+			assert.Empty(t, status.Phase)
+			assert.Equal(t, tt.canceled, extras.hasVehicleRecord)
+			assert.Equal(t, tt.canceled, status.Predicted)
+			assert.Nil(t, status.LastKnownLocation)
+			if tt.canceled {
+				assert.Empty(t, status.NextStop)
+				assert.Empty(t, status.ClosestStop)
+				assert.Zero(t, status.DistanceAlongTrip)
+				assert.Equal(t, now.UnixMilli(), status.LastUpdateTime.UnixMilli())
+			} else {
+				assert.True(t, status.LastUpdateTime.IsZero())
+			}
+		})
+	}
+}
+
 func TestSingularArrival_RealBusReportsRecordTime(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	recordTime := serviceDate.Add(8*time.Hour + 30*time.Minute)

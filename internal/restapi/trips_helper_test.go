@@ -2483,18 +2483,22 @@ func TestBuildTripStatus_VehicleWithRecordUsesScheduleDistance(t *testing.T) {
 	lastShapePoint := shapeRows[len(shapeRows)-1]
 	latitude, longitude := float32(lastShapePoint.Lat), float32(lastShapePoint.Lon)
 	tests := []struct {
-		name    string
-		vehicle *gtfs.Vehicle
+		name        string
+		vehicle     *gtfs.Vehicle
+		positionAge time.Duration
 	}{
 		{name: "named update", vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}},
 		{name: "anonymous update"},
+		{name: "fresh named record with stale GPS", vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}, positionAge: 16 * time.Minute},
+		{name: "fresh anonymous record with stale GPS", positionAge: 16 * time.Minute},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			gpsTime := positionTime.Add(-tt.positionAge)
 			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, routeID, internalgtfs.MockVehicleOptions{
 				Position:  &gtfs.Position{Latitude: &latitude, Longitude: &longitude},
-				Timestamp: &positionTime,
+				Timestamp: &gpsTime,
 			})
 			onTime := time.Duration(0)
 			api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
@@ -2511,7 +2515,16 @@ func TestBuildTripStatus_VehicleWithRecordUsesScheduleDistance(t *testing.T) {
 			assert.Equal(t, status.ScheduledDistanceAlongTrip, status.DistanceAlongTrip)
 			assert.Zero(t, status.LastKnownDistanceAlongTrip)
 			assert.Equal(t, recordTime.UnixMilli(), status.LastUpdateTime.UnixMilli())
-			assert.Equal(t, positionTime.UnixMilli(), status.LastLocationUpdateTime.UnixMilli())
+			assert.Equal(t, "SCHEDULED", status.Status)
+			assert.Equal(t, "in_progress", status.Phase)
+			assert.True(t, status.Predicted)
+			if tt.positionAge > 0 {
+				assert.True(t, status.LastLocationUpdateTime.IsZero())
+				assert.Nil(t, status.LastKnownLocation, "a fresh record must not revive stale GPS")
+				assert.NotZero(t, status.Position.Lat, "use the record's scheduled position")
+			} else {
+				assert.Equal(t, positionTime.UnixMilli(), status.LastLocationUpdateTime.UnixMilli())
+			}
 		})
 	}
 }

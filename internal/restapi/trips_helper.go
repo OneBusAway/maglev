@@ -136,13 +136,14 @@ func (api *RestAPI) buildTripStatusForVehicle(
 		return status, extras, freqErr
 	}
 	status.Frequency = frequency
+	api.applyVehicleRecord(ctx, status, extras, input)
 
 	// CANCELED trips are no longer running there is no active position or schedule
 	// to report. Return immediately with the cancellation status and skip all stop-time
 	// and shape calculations, which are meaningless for a trip that is not operating.
 	// Predicted is true because the cancellation itself is real-time information.
 	if status.Status == "CANCELED" {
-		status.Predicted = vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
+		status.Predicted = extras.hasVehicleRecord || (vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime))
 		status.Scheduled = !status.Predicted
 		return status, extras, nil
 	}
@@ -243,6 +244,18 @@ func (api *RestAPI) statusLookupTripID(ctx context.Context, activeTripRawID, tri
 	return tripID
 }
 
+// applyVehicleRecord treats a fresh trip-update record as live even when its GPS
+// fix is stale. BuildVehicleStatus still excludes stale coordinates and location
+// timestamps; record freshness must not revive those fields.
+func (api *RestAPI) applyVehicleRecord(ctx context.Context, status *models.TripStatus, extras *tripStatusExtras, input tripStatusInput) {
+	extras.blockTripIDs = api.blockShiftTripIDsSortedByStartTime(ctx, input.dbTripID, input.serviceDate)
+	if recordTime, hasRecord := api.vehicleRecordTime(input.vehicle, extras.blockTripIDs); hasRecord {
+		extras.hasVehicleRecord = true
+		status.LastUpdateTime = models.NewModelTime(recordTime)
+		status.Status, status.Phase = GetVehicleStatusAndPhase(input.vehicle)
+	}
+}
+
 // applyBlockDeviation sets the status's deviation and predicted flag from the
 // block's trip updates, and returns the deviation the later steps shift by.
 func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.TripStatus, extras *tripStatusExtras, input tripStatusInput) int {
@@ -257,15 +270,13 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 	// buses under one block) leak the last shift's delay into the first
 	// shift's scheduleDeviation, and status.ScheduleDeviation flows onward
 	// into effectiveTime / stop-offset math for every arrival on this trip.
-	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, input.dbTripID, input.serviceDate)
-	updates := api.statusRecordUpdates(input, blockTripIDs)
+	updates := api.statusRecordUpdates(input, extras.blockTripIDs)
 	scheduleDeviation, hasRealtimeTripUpdate, _ := api.recordDeviation(ctx, updates, input.serviceDate, input.currentTime)
 
 	if hasRealtimeTripUpdate {
 		status.ScheduleDeviation = scheduleDeviation
 	}
 	extras.deviationResolved = hasRealtimeTripUpdate
-	extras.blockTripIDs = blockTripIDs
 	extras.recordUpdates = updates
 	extras.recordKey = deviationRecordKey{agencyID: input.agencyID, tripID: input.dbTripID}
 	if input.vehicle != nil && input.vehicle.ID != nil {
@@ -275,13 +286,8 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 		}
 	}
 
-	if recordTime, hasRecord := api.vehicleRecordTime(input.vehicle, blockTripIDs); hasRecord {
-		extras.hasVehicleRecord = true
-		status.LastUpdateTime = models.NewModelTime(recordTime)
-	}
-
 	hasVehicleRealtimeData := input.vehicle != nil && !defaultStaleDetector.Check(input.vehicle, input.currentTime)
-	status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
+	status.SetPredicted(extras.hasVehicleRecord || hasVehicleRealtimeData || hasRealtimeTripUpdate)
 	return scheduleDeviation
 }
 
@@ -533,7 +539,7 @@ func (api *RestAPI) applyShapeToStatus(
 	}
 
 	switch {
-	case vehicleHasCoordinates(input.vehicle):
+	case vehicleHasCoordinates(input.vehicle) && !defaultStaleDetector.Check(input.vehicle, input.currentTime):
 		applyVehiclePositionOnShape(status, input.vehicle, shapePoints)
 	case snapshotLocatesActiveTrip(snap):
 		applySnapshotPosition(status, snap)
