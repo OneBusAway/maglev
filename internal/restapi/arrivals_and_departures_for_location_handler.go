@@ -80,7 +80,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// farthest stops must sort last.
 	sortStopsByDistance(stops, params.Location)
 
-	acc := newArrivalsAccumulator("")
+	acc := newArrivalsAccumulator()
 	pending, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
 		Stops:           stops,
 		Agencies:        agencies,
@@ -239,7 +239,7 @@ func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combined
 			continue
 		}
 		seen[key] = struct{}{}
-		situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), row.AgencyID)
+		situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), api.GtfsManager.FirstStaticAgencyID())
 	}
 	return nil
 }
@@ -299,7 +299,7 @@ func retainedAccumulator(
 	acc *arrivalsAccumulator,
 	entrySituations *situationCollector,
 ) *arrivalsAccumulator {
-	refAcc := newArrivalsAccumulator("")
+	refAcc := newArrivalsAccumulator()
 	refAcc.situations = newSituationCollector()
 	refAcc.situations.addRefs(entrySituations.refs)
 	refAcc.situations.addRefs(acc.situations.refs)
