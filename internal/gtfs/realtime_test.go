@@ -146,8 +146,8 @@ func TestRebuildRealTimeVehicleLookupByVehicle(t *testing.T) {
 
 	assert.NotNil(t, manager.mergedRealtime().vehicleLookupByVehicle)
 	assert.Len(t, manager.mergedRealtime().vehicleLookupByVehicle, 2)
-	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle["vehicle1"])
-	assert.Equal(t, 1, manager.mergedRealtime().vehicleLookupByVehicle["vehicle2"])
+	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle1"}])
+	assert.Equal(t, 1, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle2"}])
 }
 
 func TestRebuildRealTimeVehicleLookupByVehicle_WithInvalidIDs(t *testing.T) {
@@ -175,8 +175,8 @@ func TestRebuildRealTimeVehicleLookupByVehicle_WithInvalidIDs(t *testing.T) {
 
 	assert.NotNil(t, manager.mergedRealtime().vehicleLookupByVehicle)
 	assert.Len(t, manager.mergedRealtime().vehicleLookupByVehicle, 2)
-	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle["vehicle1"])
-	assert.Equal(t, 3, manager.mergedRealtime().vehicleLookupByVehicle["vehicle3"])
+	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle1"}])
+	assert.Equal(t, 3, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle3"}])
 }
 
 func TestLoadRealtimeData_Non200StatusCode(t *testing.T) {

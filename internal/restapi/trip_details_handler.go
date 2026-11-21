@@ -239,7 +239,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 			api.sendNotFound(w, r)
 			return
 		}
-		v, vErr := api.GtfsManager.GetVehicleByID(rawVehicleID)
+		v, vErr := api.GtfsManager.GetVehicleByID(vehicleAgencyID, rawVehicleID)
 		if vErr != nil || v == nil {
 			api.sendNotFound(w, r)
 			return
