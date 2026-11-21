@@ -73,6 +73,17 @@ func Int64(value int64) sql.NullInt64 {
 	}
 }
 
+// Float64Ptr returns a pointer to the float value when the NullFloat64 is valid,
+// and nil otherwise. Use it for JSON fields where 0 is a valid stored value that
+// must not be omitted: an omitempty *float64 field is only omitted when nil.
+func Float64Ptr(value sql.NullFloat64) *float64 {
+	if !value.Valid {
+		return nil
+	}
+	v := value.Float64
+	return &v
+}
+
 // Float64FromPtr creates a sql.NullFloat64 from an optional float, treating only a
 // nil pointer as null. Use it for a GTFS column where 0 is a meaningful value and
 // has to stay distinguishable from the column being absent, such as

@@ -7,20 +7,20 @@ import (
 
 // ProblemReportTrip represents a trip problem report in API responses.
 type ProblemReportTrip struct {
-	ID                   int64   `json:"id"`
-	TripID               string  `json:"tripId"`
-	ServiceDate          string  `json:"serviceDate,omitempty"`
-	VehicleID            string  `json:"vehicleId,omitempty"`
-	StopID               string  `json:"stopId,omitempty"`
-	Code                 string  `json:"code,omitempty"`
-	UserComment          string  `json:"userComment,omitempty"`
-	UserLat              float64 `json:"userLat,omitempty"`
-	UserLon              float64 `json:"userLon,omitempty"`
-	UserLocationAccuracy float64 `json:"userLocationAccuracy,omitempty"`
-	UserOnVehicle        bool    `json:"userOnVehicle"`
-	UserVehicleNumber    string  `json:"userVehicleNumber,omitempty"`
-	CreatedAt            int64   `json:"createdAt"`
-	SubmittedAt          int64   `json:"submittedAt"`
+	ID                   int64    `json:"id"`
+	TripID               string   `json:"tripId"`
+	ServiceDate          string   `json:"serviceDate,omitempty"`
+	VehicleID            string   `json:"vehicleId,omitempty"`
+	StopID               string   `json:"stopId,omitempty"`
+	Code                 string   `json:"code,omitempty"`
+	UserComment          string   `json:"userComment,omitempty"`
+	UserLat              *float64 `json:"userLat,omitempty"`
+	UserLon              *float64 `json:"userLon,omitempty"`
+	UserLocationAccuracy *float64 `json:"userLocationAccuracy,omitempty"`
+	UserOnVehicle        bool     `json:"userOnVehicle"`
+	UserVehicleNumber    string   `json:"userVehicleNumber,omitempty"`
+	CreatedAt            int64    `json:"createdAt"`
+	SubmittedAt          int64    `json:"submittedAt"`
 }
 
 // NewProblemReportTrip converts a database ProblemReportsTrip to an API response model.
@@ -33,9 +33,9 @@ func NewProblemReportTrip(report gtfsdb.ProblemReportsTrip) ProblemReportTrip {
 		StopID:               nulls.StringOrEmpty(report.StopID),
 		Code:                 nulls.StringOrEmpty(report.Code),
 		UserComment:          nulls.StringOrEmpty(report.UserComment),
-		UserLat:              report.UserLat.Float64,
-		UserLon:              report.UserLon.Float64,
-		UserLocationAccuracy: report.UserLocationAccuracy.Float64,
+		UserLat:              nulls.Float64Ptr(report.UserLat),
+		UserLon:              nulls.Float64Ptr(report.UserLon),
+		UserLocationAccuracy: nulls.Float64Ptr(report.UserLocationAccuracy),
 		UserOnVehicle:        report.UserOnVehicle.Int64 == 1,
 		UserVehicleNumber:    nulls.StringOrEmpty(report.UserVehicleNumber),
 		CreatedAt:            report.CreatedAt,
@@ -45,15 +45,15 @@ func NewProblemReportTrip(report gtfsdb.ProblemReportsTrip) ProblemReportTrip {
 
 // ProblemReportStop represents a stop problem report in API responses.
 type ProblemReportStop struct {
-	ID                   int64   `json:"id"`
-	StopID               string  `json:"stopId"`
-	Code                 string  `json:"code,omitempty"`
-	UserComment          string  `json:"userComment,omitempty"`
-	UserLat              float64 `json:"userLat,omitempty"`
-	UserLon              float64 `json:"userLon,omitempty"`
-	UserLocationAccuracy float64 `json:"userLocationAccuracy,omitempty"`
-	CreatedAt            int64   `json:"createdAt"`
-	SubmittedAt          int64   `json:"submittedAt"`
+	ID                   int64    `json:"id"`
+	StopID               string   `json:"stopId"`
+	Code                 string   `json:"code,omitempty"`
+	UserComment          string   `json:"userComment,omitempty"`
+	UserLat              *float64 `json:"userLat,omitempty"`
+	UserLon              *float64 `json:"userLon,omitempty"`
+	UserLocationAccuracy *float64 `json:"userLocationAccuracy,omitempty"`
+	CreatedAt            int64    `json:"createdAt"`
+	SubmittedAt          int64    `json:"submittedAt"`
 }
 
 // NewProblemReportStop converts a database ProblemReportsStop to an API response model.
@@ -63,9 +63,9 @@ func NewProblemReportStop(report gtfsdb.ProblemReportsStop) ProblemReportStop {
 		StopID:               report.StopID,
 		Code:                 nulls.StringOrEmpty(report.Code),
 		UserComment:          nulls.StringOrEmpty(report.UserComment),
-		UserLat:              report.UserLat.Float64,
-		UserLon:              report.UserLon.Float64,
-		UserLocationAccuracy: report.UserLocationAccuracy.Float64,
+		UserLat:              nulls.Float64Ptr(report.UserLat),
+		UserLon:              nulls.Float64Ptr(report.UserLon),
+		UserLocationAccuracy: nulls.Float64Ptr(report.UserLocationAccuracy),
 		CreatedAt:            report.CreatedAt,
 		SubmittedAt:          report.SubmittedAt,
 	}

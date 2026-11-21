@@ -73,6 +73,36 @@ func TestProblemReportsForStopSubmitThenRetrieve(t *testing.T) {
 	assert.Equal(t, "75403", report.StopID)
 	assert.Equal(t, "stop_name_wrong", report.Code)
 	assert.Equal(t, "Wrong name", report.UserComment)
-	assert.InDelta(t, 38.5678, report.UserLat, 0.001)
-	assert.InDelta(t, -121.4321, report.UserLon, 0.001)
+	require.NotNil(t, report.UserLat)
+	require.NotNil(t, report.UserLon)
+	assert.InDelta(t, 38.5678, *report.UserLat, 0.001)
+	assert.InDelta(t, -121.4321, *report.UserLon, 0.001)
+}
+
+func TestProblemReportsForStopZeroCoordinates(t *testing.T) {
+	api := createTestApi(t)
+	api.Config.ProtectedApiKeys = []string{"PROTECTED-TEST"}
+	defer api.Shutdown()
+
+	submitURL := fmt.Sprintf("/api/where/report-problem-with-stop/%s.json?key=TEST&code=other&userLat=0&userLon=0&userLocationAccuracy=0", testStopForProblemReports)
+	submitResp, _ := callAPIHandler[models.ResponseModel](t, api, submitURL)
+	require.Equal(t, http.StatusOK, submitResp.StatusCode)
+
+	resp, model := callAPIHandler[ProblemReportsForStopResponse](t, api, problemReportsForStopURL(testStopForProblemReports))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Find the zero-coordinate report (others from prior tests may also be present).
+	var zeroReport *models.ProblemReportStop
+	for i := range model.Data.List {
+		r := &model.Data.List[i]
+		if r.UserLat != nil && *r.UserLat == 0.0 && r.UserLon != nil && *r.UserLon == 0.0 {
+			zeroReport = r
+			break
+		}
+	}
+	require.NotNil(t, zeroReport, "should find a report with userLat=0, userLon=0")
+	require.NotNil(t, zeroReport.UserLat, "userLat=0 must be present, not omitted")
+	require.NotNil(t, zeroReport.UserLon, "userLon=0 must be present, not omitted")
+	require.NotNil(t, zeroReport.UserLocationAccuracy, "userLocationAccuracy=0 must be present, not omitted")
+	assert.InDelta(t, 0.0, *zeroReport.UserLocationAccuracy, 0.001)
 }

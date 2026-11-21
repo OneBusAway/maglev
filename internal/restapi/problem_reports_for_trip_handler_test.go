@@ -73,6 +73,8 @@ func TestProblemReportsForTripSubmitThenRetrieve(t *testing.T) {
 	assert.Equal(t, "12345", report.TripID)
 	assert.Equal(t, "vehicle_never_came", report.Code)
 	assert.Equal(t, "Test report", report.UserComment)
-	assert.InDelta(t, 47.6097, report.UserLat, 0.001)
-	assert.InDelta(t, -122.3331, report.UserLon, 0.001)
+	require.NotNil(t, report.UserLat)
+	require.NotNil(t, report.UserLon)
+	assert.InDelta(t, 47.6097, *report.UserLat, 0.001)
+	assert.InDelta(t, -122.3331, *report.UserLon, 0.001)
 }
