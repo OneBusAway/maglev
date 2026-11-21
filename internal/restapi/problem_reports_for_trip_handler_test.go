@@ -78,3 +78,31 @@ func TestProblemReportsForTripSubmitThenRetrieve(t *testing.T) {
 	assert.InDelta(t, 47.6097, *report.UserLat, 0.001)
 	assert.InDelta(t, -122.3331, *report.UserLon, 0.001)
 }
+
+func TestProblemReportsForTripZeroCoordinates(t *testing.T) {
+	api := createTestApi(t)
+	api.Config.ProtectedApiKeys = []string{"PROTECTED-TEST"}
+	defer api.Shutdown()
+
+	submitURL := fmt.Sprintf("/api/where/report-problem-with-trip/%s.json?key=TEST&code=other&userLat=0&userLon=0&userLocationAccuracy=0", testTripForProblemReports)
+	submitResp, _ := callAPIHandler[models.ResponseModel](t, api, submitURL)
+	require.Equal(t, http.StatusOK, submitResp.StatusCode)
+
+	resp, model := callAPIHandler[ProblemReportsForTripResponse](t, api, problemReportsForTripURL(testTripForProblemReports))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Find the zero-coordinate report (others from prior tests may also be present).
+	var zeroReport *models.ProblemReportTrip
+	for i := range model.Data.List {
+		r := &model.Data.List[i]
+		if r.UserLat != nil && *r.UserLat == 0.0 && r.UserLon != nil && *r.UserLon == 0.0 {
+			zeroReport = r
+			break
+		}
+	}
+	require.NotNil(t, zeroReport, "should find a report with userLat=0, userLon=0")
+	require.NotNil(t, zeroReport.UserLat, "userLat=0 must be present, not omitted")
+	require.NotNil(t, zeroReport.UserLon, "userLon=0 must be present, not omitted")
+	require.NotNil(t, zeroReport.UserLocationAccuracy, "userLocationAccuracy=0 must be present, not omitted")
+	assert.InDelta(t, 0.0, *zeroReport.UserLocationAccuracy, 0.001)
+}
