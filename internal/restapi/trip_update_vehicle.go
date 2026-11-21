@@ -542,18 +542,11 @@ func (api *RestAPI) vehicleRecordTime(vehicle *gtfs.Vehicle, blockTripIDs []stri
 	if vehicle == nil || vehicle.ID == nil || runsOwnSchedule(vehicle) {
 		return time.Time{}, false
 	}
-	isBlockVehicle := isTripUpdateVehicle(vehicle) && !namesVehicle(*vehicle.Trip)
 	var vehicleUpdates []tripUpdateForTrip
 	for _, update := range api.blockTripUpdates(blockTripIDs) {
-		isOwnTrip := vehicle.Trip != nil && update.tripID == vehicle.Trip.ID.ID
-		if namesVehicle(update.tu) {
-			if isBlockVehicle || update.tu.Vehicle.ID.ID != vehicle.ID.ID {
-				continue
-			}
-		} else if !isBlockVehicle && !isOwnTrip {
-			continue
+		if updateBelongsToVehicleRecord(update, vehicle) {
+			vehicleUpdates = append(vehicleUpdates, update)
 		}
-		vehicleUpdates = append(vehicleUpdates, update)
 	}
 	if recordTime, ok := blockRecordTime(vehicleUpdates); ok {
 		return recordTime, !api.recordTimeExpired(recordTime)
@@ -564,6 +557,18 @@ func (api *RestAPI) vehicleRecordTime(vehicle *gtfs.Vehicle, blockTripIDs []stri
 		return *vehicle.Trip.Timestamp, !api.tripUpdateExpired(*vehicle.Trip)
 	}
 	return time.Time{}, false
+}
+
+// updateBelongsToVehicleRecord matches named updates by vehicle ID and anonymous
+// updates by trip, except that a block stand-in owns all anonymous block updates.
+// The caller must supply a non-nil vehicle with an ID.
+func updateBelongsToVehicleRecord(update tripUpdateForTrip, vehicle *gtfs.Vehicle) bool {
+	isBlockVehicle := isTripUpdateVehicle(vehicle) && !namesVehicle(*vehicle.Trip)
+	if namesVehicle(update.tu) {
+		return !isBlockVehicle && update.tu.Vehicle.ID.ID == vehicle.ID.ID
+	}
+	isOwnTrip := vehicle.Trip != nil && update.tripID == vehicle.Trip.ID.ID
+	return isBlockVehicle || isOwnTrip
 }
 
 // runsOwnSchedule reports whether a vehicle's trip departs from the static block
