@@ -3264,6 +3264,7 @@ func (q *Queries) GetScheduleForStop(ctx context.Context, stopID string) ([]GetS
 const getScheduleForStopOnDate = `-- name: GetScheduleForStopOnDate :many
 SELECT
     st.trip_id,
+    st.stop_sequence,
     st.arrival_time,
     st.departure_time,
     st.stop_headsign,
@@ -3274,7 +3275,9 @@ SELECT
     t.max_departure_time,
     t.direction_id,
     r.id as route_id,
-    r.agency_id
+    r.agency_id,
+    CAST((SELECT MIN(first_st.stop_sequence) FROM stop_times first_st WHERE first_st.trip_id = st.trip_id) AS INTEGER) AS min_stop_sequence,
+    CAST((SELECT MAX(last_st.stop_sequence) FROM stop_times last_st WHERE last_st.trip_id = st.trip_id) AS INTEGER) AS max_stop_sequence
 FROM
     stop_times st
     JOIN trips t ON st.trip_id = t.id
@@ -3325,6 +3328,7 @@ type GetScheduleForStopOnDateParams struct {
 
 type GetScheduleForStopOnDateRow struct {
 	TripID           string
+	StopSequence     int64
 	ArrivalTime      int64
 	DepartureTime    int64
 	StopHeadsign     sql.NullString
@@ -3336,6 +3340,8 @@ type GetScheduleForStopOnDateRow struct {
 	DirectionID      sql.NullInt64
 	RouteID          string
 	AgencyID         string
+	MinStopSequence  int64
+	MaxStopSequence  int64
 }
 
 func (q *Queries) GetScheduleForStopOnDate(ctx context.Context, arg GetScheduleForStopOnDateParams) ([]GetScheduleForStopOnDateRow, error) {
@@ -3362,6 +3368,7 @@ func (q *Queries) GetScheduleForStopOnDate(ctx context.Context, arg GetScheduleF
 		var i GetScheduleForStopOnDateRow
 		if err := rows.Scan(
 			&i.TripID,
+			&i.StopSequence,
 			&i.ArrivalTime,
 			&i.DepartureTime,
 			&i.StopHeadsign,
@@ -3373,6 +3380,8 @@ func (q *Queries) GetScheduleForStopOnDate(ctx context.Context, arg GetScheduleF
 			&i.DirectionID,
 			&i.RouteID,
 			&i.AgencyID,
+			&i.MinStopSequence,
+			&i.MaxStopSequence,
 		); err != nil {
 			return nil, err
 		}
