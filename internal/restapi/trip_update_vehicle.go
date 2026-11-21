@@ -535,16 +535,31 @@ func (api *RestAPI) statusBlockSnapshot(
 // vehicleRecordTime returns the time of the record Java would hold for a vehicle
 // on this block. A position-only vehicle has none, since Java builds records
 // from trip updates (see #1915), and neither does one on an ADDED or DUPLICATED
-// trip, which leaves the static block schedule.
+// trip, which leaves the static block schedule. Only updates naming this vehicle
+// contribute; anonymous updates belong to the block standing in as a vehicle.
 func (api *RestAPI) vehicleRecordTime(vehicle *gtfs.Vehicle, blockTripIDs []string) (time.Time, bool) {
-	if vehicle == nil || runsOwnSchedule(vehicle) {
+	if vehicle == nil || vehicle.ID == nil || runsOwnSchedule(vehicle) {
 		return time.Time{}, false
 	}
-	if recordTime, ok := blockRecordTime(api.collectBlockTripUpdates(blockTripIDs)); ok {
-		return recordTime, true
+	isBlockVehicle := isTripUpdateVehicle(vehicle) && !namesVehicle(*vehicle.Trip)
+	var vehicleUpdates []tripUpdateForTrip
+	for _, update := range api.blockTripUpdates(blockTripIDs) {
+		if namesVehicle(update.tu) {
+			if isBlockVehicle || update.tu.Vehicle.ID.ID != vehicle.ID.ID {
+				continue
+			}
+		} else if !isBlockVehicle {
+			continue
+		}
+		vehicleUpdates = append(vehicleUpdates, update)
 	}
-	if isTripUpdateVehicle(vehicle) && vehicle.Timestamp != nil {
-		return *vehicle.Timestamp, true
+	if recordTime, ok := blockRecordTime(vehicleUpdates); ok {
+		return recordTime, !api.recordTimeExpired(recordTime)
+	}
+	// A synthesized vehicle's Timestamp may already contain another vehicle's
+	// block update time. Only its own trip update is a safe fallback.
+	if isTripUpdateVehicle(vehicle) && vehicle.Trip.Timestamp != nil {
+		return *vehicle.Trip.Timestamp, !api.tripUpdateExpired(*vehicle.Trip)
 	}
 	return time.Time{}, false
 }
