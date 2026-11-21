@@ -375,7 +375,7 @@ func (manager *Manager) Alerts() []FeedAlert {
 
 // GetAlertsByIDs returns indexed alerts matching the given trip, route or
 // agency ID, in feed-id order. Each returned value carries the publishing
-// feed's first configured agency as FeedAgencyID.
+// feed's first configured agency and the creation time of its current content.
 func (manager *Manager) GetAlertsByIDs(tripID, routeID, agencyID string) []FeedAlert {
 	idx := manager.mergedRealtime().alerts
 
@@ -508,6 +508,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	var wg sync.WaitGroup
 	var tripData, vehicleData, alertData *gtfs.Realtime
 	var tripErr, vehicleErr, alertErr error
+	var alertReceivedAt time.Time
 
 	// Fetch trip updates, vehicle positions, and alerts in parallel
 	if feedCfg.TripUpdatesURL != "" {
@@ -541,6 +542,9 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		go func() {
 			defer wg.Done()
 			alertData, alertErr = loadRealtimeData(ctx, feedCfg.ServiceAlertsURL, feedCfg.Headers)
+			if alertErr == nil {
+				alertReceivedAt = time.Now()
+			}
 			if alertErr != nil {
 				logging.LogError(logger, "Error loading GTFS-RT service alerts data", alertErr,
 					slog.String("feed", feedID),
@@ -737,7 +741,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	}
 
 	if alertData != nil && alertErr == nil {
-		manager.feedAlerts[feedID] = alertData.Alerts
+		manager.storeFeedAlerts(feedID, alertData.Alerts, alertReceivedAt)
 	}
 
 	tripsUpdated := tripData != nil && tripErr == nil
@@ -1492,7 +1496,11 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 			if alert.InformedEntities == nil || alert.ID == "" {
 				continue
 			}
-			feedAlert := FeedAlert{Alert: alert, FeedAgencyID: manager.config.firstAgencyForFeed(id)}
+			feedAlert := FeedAlert{
+				Alert:        alert,
+				FeedAgencyID: manager.config.firstAgencyForFeed(id),
+				CreatedAt:    manager.feedAlertCreatedAt[id][alert.ID],
+			}
 			idx.all = append(idx.all, feedAlert)
 			// Per-alert per-bucket dedup: prevents the same alert from being appended
 			// to the same bucket more than once when it has multiple InformedEntities

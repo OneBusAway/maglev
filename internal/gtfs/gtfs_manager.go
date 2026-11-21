@@ -61,6 +61,8 @@ type Manager struct {
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
 	feedAlerts   map[string][]gtfs.Alert
+	// Creation time of each alert's current content, keyed by feed and alert ID.
+	feedAlertCreatedAt map[string]map[string]time.Time
 	// Per-feed trips the agency filter dropped because their route couldn't
 	// be resolved to any agency. Kept out of the merged view, but the metrics
 	// endpoint reports them as that feed's unmatched records.
@@ -119,6 +121,7 @@ func (manager *Manager) clearFeedData(feedID string) {
 	delete(manager.feedTripUpdateSeen, feedID)
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
+	delete(manager.feedAlertCreatedAt, feedID)
 
 	// Keep the last applied vehicle timestamp. Dropping it lets the next poll
 	// of the same frozen payload look new and reset the circuit breaker.
@@ -198,6 +201,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedTrips:            make(map[string][]gtfs.Trip),
 		feedVehicles:         make(map[string][]gtfs.Vehicle),
 		feedAlerts:           make(map[string][]gtfs.Alert),
+		feedAlertCreatedAt:   make(map[string]map[string]time.Time),
 		feedLastUpdate:       make(map[string]time.Time),
 		feedAgencyFilter:     config.feedAgencyFilters(),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
