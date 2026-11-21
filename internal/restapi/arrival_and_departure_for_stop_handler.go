@@ -618,9 +618,8 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 // Returns (predictedArrivalMs, predictedDepartureMs, isPredicted).
 // Returns (time.Time{}, time.Time{}, false) if no prediction can be made.
 //
-// The update expires with its block's record, timed by the block's latest update
-// (GtfsRealtimeTripLibrary.java:948-950), as the trip's vehicle and deviation do,
-// so a stale update still predicts while a later one keeps the record fresh.
+// The update expires with its vehicle's record. A later update from the same
+// vehicle can refresh it, but another vehicle's update cannot.
 func (api *RestAPI) getPredictedTimes(
 	ctx context.Context,
 	tripID string,
@@ -633,7 +632,7 @@ func (api *RestAPI) getPredictedTimes(
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
 		return time.Time{}, time.Time{}, false
 	}
-	if api.vehicleRecordExpired(api.tripBlockUpdates(ctx, tripID, serviceDate)) {
+	if api.vehicleRecordExpired(api.predictionRecordUpdates(ctx, *realTimeTrip, tripID, serviceDate)) {
 		return time.Time{}, time.Time{}, false
 	}
 

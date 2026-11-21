@@ -51,7 +51,11 @@ func (api *RestAPI) blockRecordDeviation(ctx context.Context, tripIDs []string, 
 	if len(tripIDs) == 0 {
 		return 0, false, false
 	}
-	tripUpdates := api.collectBlockTripUpdates(tripIDs)
+	return api.recordDeviation(ctx, api.collectBlockTripUpdates(tripIDs), serviceDate, currentTime)
+}
+
+// recordDeviation resolves a deviation from one record's already scoped, fresh updates.
+func (api *RestAPI) recordDeviation(ctx context.Context, tripUpdates []tripUpdateForTrip, serviceDate, currentTime time.Time) (deviation int, ok, discarded bool) {
 	if len(tripUpdates) == 0 {
 		return 0, false, false
 	}
@@ -215,7 +219,11 @@ type deviationSample struct {
 // A departure prediction is preferred over an arrival one, and a later
 // update for the same key replaces an earlier one. Sorted by key.
 func (api *RestAPI) blockDeviationSamples(ctx context.Context, tripIDs []string, serviceDate, currentTime time.Time) []deviationSample {
-	tripUpdates := api.collectBlockTripUpdates(tripIDs)
+	return api.recordDeviationSamples(ctx, api.collectBlockTripUpdates(tripIDs), serviceDate, currentTime)
+}
+
+// recordDeviationSamples builds stop-level samples from one record's updates.
+func (api *RestAPI) recordDeviationSamples(ctx context.Context, tripUpdates []tripUpdateForTrip, serviceDate, currentTime time.Time) []deviationSample {
 	if !slices.ContainsFunc(tripUpdates, func(t tripUpdateForTrip) bool { return len(t.tu.StopTimeUpdates) > 0 }) {
 		return nil
 	}
@@ -280,15 +288,24 @@ type deviationSampleCache map[deviationSampleKey][]deviationSample
 type deviationSampleKey struct {
 	firstTripID     string
 	serviceMidnight int64
+	record          deviationRecordKey
+}
+
+// deviationRecordKey separates records that share a block, including the own-trip
+// anonymous updates a named vehicle can consume.
+type deviationRecordKey struct {
+	agencyID  string
+	vehicleID string
+	tripID    string
 }
 
 // samplesFor returns the cached samples for the block, calling compute and
 // caching its result on the first lookup.
-func (c deviationSampleCache) samplesFor(blockTripIDs []string, serviceMidnight time.Time, compute func() []deviationSample) []deviationSample {
+func (c deviationSampleCache) samplesFor(blockTripIDs []string, serviceMidnight time.Time, record deviationRecordKey, compute func() []deviationSample) []deviationSample {
 	if c == nil || len(blockTripIDs) == 0 {
 		return compute()
 	}
-	key := deviationSampleKey{firstTripID: blockTripIDs[0], serviceMidnight: serviceMidnight.Unix()}
+	key := deviationSampleKey{firstTripID: blockTripIDs[0], serviceMidnight: serviceMidnight.Unix(), record: record}
 	if samples, ok := c[key]; ok {
 		return samples
 	}

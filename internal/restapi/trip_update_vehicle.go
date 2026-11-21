@@ -26,12 +26,29 @@ const tripUpdateVehicleBlockWindow = time.Hour
 // a position-less vehicle for each update naming one. That vehicle is skipped
 // here so the trip-update path builds it with Java's record checks.
 func (api *RestAPI) vehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
-	if vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID); vehicle != nil && !isTripUpdateVehicle(vehicle) {
+	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID)
+	if vehicle != nil && !isTripUpdateVehicle(vehicle) &&
+		api.vehicleMatchesTripRecord(vehicle, tripID) {
 		if checked := api.positionVehicleWithRecord(ctx, vehicle, serviceDate); checked != nil {
 			return checked
 		}
 	}
 	return api.tripUpdateVehicleForTrip(ctx, tripID, serviceDate)
+}
+
+// vehicleMatchesTripRecord prevents a block-mate from replacing the vehicle
+// identified by this trip's updates, including when that vehicle has expired.
+func (api *RestAPI) vehicleMatchesTripRecord(vehicle *gtfs.Vehicle, tripID string) bool {
+	if vehicle.ID == nil {
+		return false
+	}
+	if !isTripUpdateVehicle(vehicle) && vehicle.Trip != nil && vehicle.Trip.ID.ID == tripID {
+		return true
+	}
+	updates := api.GtfsManager.GetTripUpdatesForTrip(tripID)
+	return len(updates) == 0 || slices.ContainsFunc(updates, func(update gtfs.Trip) bool {
+		return updateBelongsToVehicleRecord(tripUpdateForTrip{tripID: tripID, tu: update}, vehicle)
+	})
 }
 
 // positionVehicleWithRecord applies a position vehicle's record to it, or returns
@@ -50,13 +67,13 @@ func (api *RestAPI) vehicleBlockTripUpdates(ctx context.Context, vehicle *gtfs.V
 	if vehicle.Trip == nil {
 		return nil
 	}
-	return api.tripBlockUpdates(ctx, vehicle.Trip.ID.ID, serviceDate)
+	return vehicleRecordUpdates(api.tripBlockUpdates(ctx, vehicle.Trip.ID.ID, serviceDate), vehicle)
 }
 
-// tripBlockUpdates returns the trip updates of a trip's block, or none when the
-// trip itself has no update.
+// tripBlockUpdates returns a trip's block updates in block order. The trip need
+// not have its own update: a named vehicle can have a record on a block-mate.
 func (api *RestAPI) tripBlockUpdates(ctx context.Context, tripID string, serviceDate time.Time) []tripUpdateForTrip {
-	if len(api.GtfsManager.GetTripUpdatesForTrip(tripID)) == 0 {
+	if len(api.GtfsManager.GetAllTripUpdates()) == 0 {
 		return nil
 	}
 	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
@@ -64,6 +81,20 @@ func (api *RestAPI) tripBlockUpdates(ctx context.Context, tripID string, service
 		blockTripIDs = []string{tripID}
 	}
 	return api.blockTripUpdates(blockTripIDs)
+}
+
+// predictionRecordUpdates pairs anonymous updates with a position vehicle on
+// their trip, or otherwise selects the named vehicle/block stand-in's record.
+func (api *RestAPI) predictionRecordUpdates(ctx context.Context, update gtfs.Trip, tripID string, serviceDate time.Time) []tripUpdateForTrip {
+	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID)
+	reportsTrip := vehicle != nil && vehicle.Trip != nil && vehicle.Trip.ID.ID == tripID
+	if !reportsTrip || namesAnotherVehicle(update, vehicle) {
+		vehicle = &gtfs.Vehicle{ID: api.tripUpdateVehicleID(ctx, update, tripID), Trip: &update}
+	}
+	if vehicle.ID == nil {
+		return []tripUpdateForTrip{{tripID: tripID, tu: update}}
+	}
+	return vehicleRecordUpdates(api.tripBlockUpdates(ctx, tripID, serviceDate), vehicle)
 }
 
 // vehicleRecordExpired reports whether Java has dropped a vehicle's record because
@@ -109,23 +140,20 @@ func (api *RestAPI) tripUpdateVehicleForTrip(ctx context.Context, tripID string,
 		return nil
 	}
 	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
-	blockUpdates := api.collectBlockTripUpdates(blockTripIDs)
-	recordTime, hasTime := blockRecordTime(blockUpdates)
-	if !hasTime {
-		recordTime = api.Clock.Now()
-	}
+	blockUpdates := api.blockTripUpdates(blockTripIDs)
 	for _, blockUpdate := range blockUpdates {
-		vehicle := api.vehicleFromTripUpdate(ctx, blockUpdate.tu, blockUpdate.tripID, recordTime, serviceDate)
-		if vehicle == nil {
+		vehicle, recordUpdates := api.vehicleFromTripUpdate(ctx, blockUpdate.tu, blockUpdate.tripID, blockUpdates, serviceDate)
+		if vehicle == nil || !api.vehicleMatchesTripRecord(vehicle, tripID) {
 			continue
 		}
-		return api.recordVehicleInService(ctx, vehicle, tripRecord{
+		if checked := api.recordVehicleInService(ctx, vehicle, tripRecord{
 			tripID:       blockUpdate.tripID,
-			blockTripIDs: blockTripIDs,
-			blockUpdates: blockUpdates,
-			recordTime:   recordTime,
+			blockUpdates: recordUpdates,
+			recordTime:   *vehicle.Timestamp,
 			serviceDate:  serviceDate,
-		})
+		}); checked != nil {
+			return checked
+		}
 	}
 	return nil
 }
@@ -133,7 +161,6 @@ func (api *RestAPI) tripUpdateVehicleForTrip(ctx context.Context, tripID string,
 // tripRecord is the block record a trip-update vehicle is built from.
 type tripRecord struct {
 	tripID       string
-	blockTripIDs []string
 	blockUpdates []tripUpdateForTrip
 	recordTime   time.Time
 	serviceDate  time.Time
@@ -149,7 +176,7 @@ func (api *RestAPI) recordVehicleInService(ctx context.Context, vehicle *gtfs.Ve
 	if runsOwnSchedule(vehicle) {
 		return vehicle
 	}
-	deviation, _, discarded := api.blockRecordDeviation(ctx, record.blockTripIDs, record.serviceDate, record.recordTime)
+	deviation, _, discarded := api.recordDeviation(ctx, record.blockUpdates, record.serviceDate, record.recordTime)
 	if discarded {
 		return nil
 	}
@@ -294,23 +321,28 @@ func (api *RestAPI) requestedPositionVehicle(ctx context.Context, requestedID, a
 	return api.positionVehicleWithRecord(ctx, vehicle, serviceDate)
 }
 
-func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.Trip, tripID string, recordTime, serviceDate time.Time) *gtfs.Vehicle {
-	if !tripUpdateOnServiceDate(tripUpdate, serviceDate) {
-		return nil
+func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.Trip, tripID string, blockUpdates []tripUpdateForTrip, serviceDate time.Time) (*gtfs.Vehicle, []tripUpdateForTrip) {
+	if !tripUpdateOnServiceDate(tripUpdate, serviceDate) || api.tripUpdateVehicleHasPosition(ctx, tripUpdate, tripID) {
+		return nil, nil
 	}
 	vehicleID := api.tripUpdateVehicleID(ctx, tripUpdate, tripID)
 	if vehicleID == nil {
-		return nil
+		return nil, nil
 	}
-	if api.tripUpdateVehicleHasPosition(ctx, tripUpdate, tripID) {
-		return nil
+	vehicle := &gtfs.Vehicle{ID: vehicleID, Trip: &tripUpdate}
+	recordUpdates := vehicleRecordUpdates(blockUpdates, vehicle)
+	if api.vehicleRecordExpired(recordUpdates) {
+		return nil, nil
 	}
-
+	recordTime, hasTime := blockRecordTime(recordUpdates)
+	if !hasTime {
+		recordTime = api.Clock.Now()
+	}
 	if !api.blockRunsNear(ctx, tripID, recordTime, serviceDate) {
-		return nil
+		return nil, nil
 	}
-
-	return &gtfs.Vehicle{ID: vehicleID, Trip: &tripUpdate, Timestamp: &recordTime}
+	vehicle.Timestamp = &recordTime
+	return vehicle, recordUpdates
 }
 
 // tripUpdateVehicleID returns the vehicle a trip update names. Java's record uses
@@ -423,7 +455,8 @@ func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID,
 	}
 	serviceDate := date.Midnight(location)
 	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
-	deviation, _ := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceDate, now)
+	updates := vehicleRecordUpdates(api.blockTripUpdates(blockTripIDs), vehicle)
+	deviation, _, _ := api.recordDeviation(ctx, updates, serviceDate, now)
 	snap := api.statusBlockSnapshot(ctx, models.NewTripStatus(), tripStatusInput{
 		agencyID: agencyID, tripID: tripID, dbTripID: tripID,
 		vehicle: vehicle, serviceDate: serviceDate, currentTime: now,
@@ -539,22 +572,14 @@ func (api *RestAPI) statusBlockSnapshot(
 // contribute, as do anonymous updates on its own trip. A block standing in as
 // the vehicle uses anonymous updates from across the block.
 //
-// This scopes record time, not the entire record: vehicle retention/expiry,
-// deviation and cancellation still use block-wide updates with their existing
-// guards. Another vehicle's fresh update can retain a bus whose own record has
-// expired, leaving block-derived predictions alongside request-time/GPS placement
-// (see #2105).
+// Retention and deviation use the same update ownership rules. Other block-wide
+// prediction and vehicle-selection behavior is tracked in #2105.
 func (api *RestAPI) vehicleRecordTime(vehicle *gtfs.Vehicle, blockTripIDs []string) (time.Time, bool) {
 	if vehicle == nil || vehicle.ID == nil || runsOwnSchedule(vehicle) {
 		return time.Time{}, false
 	}
-	var vehicleUpdates []tripUpdateForTrip
-	for _, update := range api.blockTripUpdates(blockTripIDs) {
-		if updateBelongsToVehicleRecord(update, vehicle) {
-			vehicleUpdates = append(vehicleUpdates, update)
-		}
-	}
-	if recordTime, ok := blockRecordTime(vehicleUpdates); ok {
+	updates := vehicleRecordUpdates(api.blockTripUpdates(blockTripIDs), vehicle)
+	if recordTime, ok := blockRecordTime(updates); ok {
 		return recordTime, !api.recordTimeExpired(recordTime)
 	}
 	// A synthesized vehicle's Timestamp may already contain another vehicle's
@@ -563,6 +588,21 @@ func (api *RestAPI) vehicleRecordTime(vehicle *gtfs.Vehicle, blockTripIDs []stri
 		return *vehicle.Trip.Timestamp, !api.tripUpdateExpired(*vehicle.Trip)
 	}
 	return time.Time{}, false
+}
+
+// vehicleRecordUpdates selects one vehicle's updates without discarding expired
+// records, so retention can distinguish an expired record from no record.
+func vehicleRecordUpdates(updates []tripUpdateForTrip, vehicle *gtfs.Vehicle) []tripUpdateForTrip {
+	if vehicle == nil || vehicle.ID == nil {
+		return nil
+	}
+	var matching []tripUpdateForTrip
+	for _, update := range updates {
+		if updateBelongsToVehicleRecord(update, vehicle) {
+			matching = append(matching, update)
+		}
+	}
+	return matching
 }
 
 // updateBelongsToVehicleRecord matches named updates by vehicle ID and anonymous

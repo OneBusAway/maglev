@@ -35,7 +35,9 @@ type tripStatusExtras struct {
 	deviationResolved bool
 	// blockTripIDs are the block's trips in start order, from which Java
 	// builds its per-stop deviation samples.
-	blockTripIDs []string
+	blockTripIDs  []string
+	recordUpdates []tripUpdateForTrip
+	recordKey     deviationRecordKey
 	// tripBlockSequence is the queried trip's position in its block. It can
 	// differ from status.BlockTripSequence, which follows the active trip.
 	tripBlockSequence int
@@ -92,6 +94,8 @@ func (api *RestAPI) BuildTripStatus(
 ) (*models.TripStatus, *tripStatusExtras, error) {
 	if vehicle == nil {
 		vehicle = api.vehicleForTrip(ctx, tripID, serviceDate)
+	} else {
+		vehicle = api.positionVehicleWithRecord(ctx, vehicle, serviceDate)
 	}
 	return api.buildTripStatusForVehicle(ctx, agencyID, tripID, vehicle, serviceDate, currentTime, freqMap)
 }
@@ -254,13 +258,22 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 	// shift's scheduleDeviation, and status.ScheduleDeviation flows onward
 	// into effectiveTime / stop-offset math for every arrival on this trip.
 	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, input.dbTripID, input.serviceDate)
-	scheduleDeviation, hasRealtimeTripUpdate := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, input.serviceDate, input.currentTime)
+	updates := api.statusRecordUpdates(input, blockTripIDs)
+	scheduleDeviation, hasRealtimeTripUpdate, _ := api.recordDeviation(ctx, updates, input.serviceDate, input.currentTime)
 
 	if hasRealtimeTripUpdate {
 		status.ScheduleDeviation = scheduleDeviation
 	}
 	extras.deviationResolved = hasRealtimeTripUpdate
 	extras.blockTripIDs = blockTripIDs
+	extras.recordUpdates = updates
+	extras.recordKey = deviationRecordKey{agencyID: input.agencyID, tripID: input.dbTripID}
+	if input.vehicle != nil && input.vehicle.ID != nil {
+		extras.recordKey.vehicleID = input.vehicle.ID.ID
+		if input.vehicle.Trip != nil {
+			extras.recordKey.tripID = input.vehicle.Trip.ID.ID
+		}
+	}
 
 	if recordTime, hasRecord := api.vehicleRecordTime(input.vehicle, blockTripIDs); hasRecord {
 		extras.hasVehicleRecord = true
@@ -270,6 +283,21 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 	hasVehicleRealtimeData := input.vehicle != nil && !defaultStaleDetector.Check(input.vehicle, input.currentTime)
 	status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
 	return scheduleDeviation
+}
+
+// statusRecordUpdates uses one vehicle's fresh record. Without a vehicle there
+// is no identity connecting other block trips' updates to this trip.
+func (api *RestAPI) statusRecordUpdates(input tripStatusInput, blockTripIDs []string) []tripUpdateForTrip {
+	var updates []tripUpdateForTrip
+	if input.vehicle == nil {
+		updates = api.blockTripUpdates([]string{input.dbTripID})
+	} else {
+		updates = vehicleRecordUpdates(api.blockTripUpdates(blockTripIDs), input.vehicle)
+	}
+	if api.vehicleRecordExpired(updates) {
+		return nil
+	}
+	return updates
 }
 
 // statusStopTimes returns the trip's stop times. A failed query logs and returns
@@ -868,8 +896,8 @@ func (api *RestAPI) predictedTimesFromScheduleDeviation(ctx context.Context, in 
 // stop. It reports false when the stop is upstream of every deviation
 // sample.
 func (api *RestAPI) deviationForStop(ctx context.Context, in scheduleDeviationFallback) (int, bool) {
-	samples := in.sampleCache.samplesFor(in.extras.blockTripIDs, in.serviceMidnight, func() []deviationSample {
-		return api.blockDeviationSamples(ctx, in.extras.blockTripIDs, in.serviceMidnight, in.currentTime)
+	samples := in.sampleCache.samplesFor(in.extras.blockTripIDs, in.serviceMidnight, in.extras.recordKey, func() []deviationSample {
+		return api.recordDeviationSamples(ctx, in.extras.recordUpdates, in.serviceMidnight, in.currentTime)
 	})
 	if len(samples) == 0 {
 		return in.status.ScheduleDeviation, true
