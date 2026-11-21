@@ -53,7 +53,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// here would silently drop arrivals that belong in the response.
 	stops, err := api.GtfsManager.GetStopsInBounds(ctx, params.Location, 0, true)
 	if err != nil {
-		api.sendArrivalsForLocationError(w, r, ctx, err)
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 	if len(stops) == 0 {
@@ -92,7 +92,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 		RouteTypes:      params.RouteTypes,
 	}, acc)
 	if err != nil {
-		api.sendArrivalsForLocationError(w, r, ctx, err)
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 
@@ -107,7 +107,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	nearby, err := api.nearbyStopsForLocation(ctx, stops, agencies, params)
 	if err != nil {
-		api.sendArrivalsForLocationError(w, r, ctx, err)
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 
@@ -124,7 +124,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	entrySituations := newSituationCollector()
 
 	if err := api.finishRetainedLocationArrivals(ctx, lists, pending, stops, agencies, acc, entrySituations); err != nil {
-		api.sendArrivalsForLocationError(w, r, ctx, err)
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 
@@ -134,8 +134,8 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// A route can serve a retained stop and still have every arrival fall
 	// outside the window. Those route alerts belong on the entry anyway.
-	if err := api.addRouteAlertsForRetainedStops(ctx, lists.stopIDs, entrySituations); err != nil {
-		api.sendArrivalsForLocationError(w, r, ctx, err)
+	if err := api.addRouteAlertsForStops(ctx, retainedStopCodes(lists.stopIDs), entrySituations); err != nil {
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 
@@ -155,7 +155,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	references, err := api.locationReferences(ctx, params.IncludeReferences, agencies, refAcc)
 	if err != nil {
-		api.sendArrivalsForLocationError(w, r, ctx, err)
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 
@@ -189,16 +189,6 @@ func (api *RestAPI) finishRetainedLocationArrivals(
 	return api.addStopLevelArrivalAlerts(ctx, stops, agencies, entrySituations)
 }
 
-// sendArrivalsForLocationError distinguishes the client hanging up from a
-// genuine server-side failure, so a cancelled request is not reported as a 500.
-func (api *RestAPI) sendArrivalsForLocationError(w http.ResponseWriter, r *http.Request, ctx context.Context, err error) {
-	if ctx.Err() != nil {
-		api.clientCanceledResponse(w, r, ctx.Err())
-		return
-	}
-	api.serverErrorResponse(w, r, err)
-}
-
 // locationLists are the three response lists that share a single maxCount.
 type locationLists struct {
 	stopIDs       []string
@@ -215,33 +205,6 @@ func truncateLocationLists(lists locationLists, maxCount int) locationLists {
 	lists.arrivals, lists.limitExceeded = truncateSlice(lists.arrivals, maxCount, lists.limitExceeded)
 	lists.nearby, lists.limitExceeded = truncateSlice(lists.nearby, maxCount, lists.limitExceeded)
 	return lists
-}
-
-// addRouteAlertsForRetainedStops records alerts for every route that serves a
-// retained stop. Agency and route ids stay in separate columns: an agency id
-// can contain an underscore, so the combined agency_code form is not split
-// back apart. Alerts are indexed by the bare route id.
-func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combinedStopIDs []string, situations *situationCollector) error {
-	stopIDs := retainedStopCodes(combinedStopIDs)
-	if len(stopIDs) == 0 {
-		return nil
-	}
-
-	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesForStops)
-	if err != nil {
-		return err
-	}
-
-	seen := make(map[routeAlertKey]struct{})
-	for _, row := range rows {
-		key := routeAlertKey{agencyID: row.AgencyID, routeID: row.ID}
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), row.AgencyID)
-	}
-	return nil
 }
 
 // retainedStopCodes returns each bare stop id in combinedIDs once, in order.
@@ -261,13 +224,6 @@ func retainedStopCodes(combinedIDs []string) []string {
 		codes = append(codes, code)
 	}
 	return codes
-}
-
-// routeAlertKey is one route serving a retained stop. The same route is
-// returned once per stop it serves, and only the first copy is recorded.
-type routeAlertKey struct {
-	agencyID string
-	routeID  string
 }
 
 // combinedStopIDs renders the searched stops as {agency}_{code} IDs.
