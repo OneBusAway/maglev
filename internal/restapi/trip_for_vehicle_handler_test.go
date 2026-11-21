@@ -50,6 +50,24 @@ func setupTestApiWithMockVehicle(t *testing.T) (api *RestAPI, vehicleCombinedID 
 	return api, utils.FormCombinedID(testdata.Raba.ID, mockVehicleID)
 }
 
+func TestTripForVehicleHandler_UnattributedVehicleNotFound(t *testing.T) {
+	api, combinedID := setupTestApiWithMockVehicle(t)
+	agencyID, vehicleID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+	require.NoError(t, err)
+	vehicle, err := api.GtfsManager.GetVehicleByID(agencyID, vehicleID)
+	require.NoError(t, err)
+
+	// Replace the attributed fixture with the same vehicle without an agency.
+	api.GtfsManager.MockResetRealTimeData()
+	api.GtfsManager.MockSetAgencyVehicles("_test", "", []gtfs.Vehicle{*vehicle})
+	_, err = api.GtfsManager.GetVehicleByID("", vehicleID)
+	require.NoError(t, err, "the unattributed vehicle must exist")
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(combinedID))
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
+}
+
 func TestTripForVehicleHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -369,7 +387,11 @@ func TestTripForVehicleHandler_MissingRoute(t *testing.T) {
 	)
 
 	insertStubTrip(t, api, orphanTripID, missingRouteID)
-	api.GtfsManager.MockAddVehicle(orphanVehicleID, orphanTripID, missingRouteID)
+	// Keep the vehicle attributed even though its route cannot be resolved.
+	api.GtfsManager.MockSetAgencyVehicles("_test", testdata.Raba.ID, []gtfs.Vehicle{{
+		ID:   &gtfs.VehicleID{ID: orphanVehicleID},
+		Trip: &gtfs.Trip{ID: gtfs.TripID{ID: orphanTripID, RouteID: missingRouteID}},
+	}})
 
 	// The trip row lands in the package-shared fixture database, so take it back
 	// out rather than leaving a routeless trip behind for later tests.
@@ -413,7 +435,12 @@ func TestTripForVehicleHandler_RouteFromAnotherAgency(t *testing.T) {
 	api.GtfsManager.MockAddAgency(otherAgencyID, "Other Agency")
 	api.GtfsManager.MockAddRoute(otherRouteID, otherAgencyID, "Cross-agency route")
 	insertStubTrip(t, api, crossAgencyTrip, otherRouteID)
-	api.GtfsManager.MockAddVehicle(crossAgencyVehID, crossAgencyTrip, otherRouteID)
+	// Explicitly model a vehicle namespace distinct from its route's agency;
+	// do not rely on an unattributed record matching an arbitrary prefix.
+	api.GtfsManager.MockSetAgencyVehicles("_test", testdata.Raba.ID, []gtfs.Vehicle{{
+		ID:   &gtfs.VehicleID{ID: crossAgencyVehID},
+		Trip: &gtfs.Trip{ID: gtfs.TripID{ID: crossAgencyTrip, RouteID: otherRouteID}},
+	}})
 
 	// These rows land in the package-shared fixture database, so take them back
 	// out rather than leaving them behind for later tests.

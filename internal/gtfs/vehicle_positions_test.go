@@ -246,7 +246,7 @@ func TestRecordVehicleDataTime_KeepsRealHeaderTime(t *testing.T) {
 	assert.True(t, manager.feedVehicleDataTime["feed-a"].Equal(headerTime))
 }
 
-func TestGetVehicleByID_AgencyLookupAndFallback(t *testing.T) {
+func TestGetVehicleByID_ExactAgencyLookup(t *testing.T) {
 	vehicleWithTrip := func(id, tripID string) gtfs.Vehicle {
 		return gtfs.Vehicle{
 			ID:   &gtfs.VehicleID{ID: id},
@@ -278,7 +278,7 @@ func TestGetVehicleByID_AgencyLookupAndFallback(t *testing.T) {
 			newVehicleKey(&gtfs.VehicleID{ID: "only-b"}): "B",
 		},
 	}
-	manager.rebuildMergedRealtimeLocked()
+	rebuild(manager)
 
 	tests := []struct {
 		name       string
@@ -290,10 +290,12 @@ func TestGetVehicleByID_AgencyLookupAndFallback(t *testing.T) {
 		{"exact match agency A", "A", "shared", "trip-a", false},
 		{"exact match agency B", "B", "shared", "trip-b", false},
 		{"wrong agency returns not found", "B", "only-a", "", true},
-		{"unattributed fallback when requesting agency A", "A", "unattributed-early", "trip-unattr-early", false},
-		{"unattributed fallback when requesting agency B", "B", "unattributed-late", "trip-unattr-late", false},
+		{"unattributed vehicle does not match agency A", "A", "unattributed-early", "", true},
+		{"unattributed vehicle does not match agency B", "B", "unattributed-late", "", true},
 		{"exact match takes precedence over later unattributed report", "A", "later-unattributed", "trip-attr-early", false},
-		{"unattributed fallback when requesting agency without exact match", "B", "later-unattributed", "trip-unattr-late", false},
+		{"no exact match despite unattributed report", "B", "later-unattributed", "", true},
+		{"empty agency matches only an unattributed key", "", "unattributed-early", "trip-unattr-early", false},
+		{"empty agency does not match an attributed key", "", "only-a", "", true},
 		{"completely missing vehicle", "A", "missing", "", true},
 	}
 
