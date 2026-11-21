@@ -161,6 +161,17 @@ func main() {
 			TLSKeyPath:  cfg.TLSKeyPath,
 		}
 
+		// Apply GTFS_API_KEYS and feed-auth env vars (same as -f). Skip API
+		// keys only when -api-keys was explicitly set; the default "test" is
+		// not Visited, so GTFS_API_KEYS can replace it.
+		if err := cliConfig.ApplyEnvironmentOverrides(appconf.EnvOverrideOptions{
+			SkipAPIKeys: apiKeysFlagExplicit(),
+		}); err != nil {
+			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+			logger.Error("invalid command-line configuration", "error", err)
+			os.Exit(1)
+		}
+
 		// Run the shared validation logic
 		if err := cliConfig.Validate(); err != nil {
 			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))

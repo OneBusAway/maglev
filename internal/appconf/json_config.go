@@ -651,6 +651,59 @@ func (j *JSONConfig) applyStaticAuthEnvOverrides() error {
 	return nil
 }
 
+// applyRealtimeAuthEnvOverrides sets the first realtime feed's legacy auth
+// header pair from GTFS_REALTIME_AUTH_NAME and GTFS_REALTIME_AUTH_VALUE.
+func (j *JSONConfig) applyRealtimeAuthEnvOverrides() {
+	rtName := os.Getenv("GTFS_REALTIME_AUTH_NAME")
+	rtValue := os.Getenv("GTFS_REALTIME_AUTH_VALUE")
+	if rtName == "" && rtValue == "" {
+		return
+	}
+	if len(j.GtfsRtFeeds) > 0 {
+		if rtName != "" {
+			j.GtfsRtFeeds[0].RealTimeAuthHeaderName = rtName
+		}
+		if rtValue != "" {
+			j.GtfsRtFeeds[0].RealTimeAuthHeaderValue = rtValue
+		}
+		return
+	}
+	slog.Warn("GTFS_REALTIME_AUTH env vars set but no Realtime feeds configured",
+		"component", "config_loader")
+}
+
+// EnvOverrideOptions controls which environment overrides ApplyEnvironmentOverrides applies.
+type EnvOverrideOptions struct {
+	// SkipAPIKeys leaves ApiKeys unchanged even when GTFS_API_KEYS is set.
+	// Used on the flag path when -api-keys was explicitly visited.
+	SkipAPIKeys bool
+}
+
+// ApplyEnvironmentOverrides applies GTFS_API_KEYS and static/realtime feed-auth
+// environment variables. It does not touch protected API keys or MAGLEV_LOG_*.
+func (j *JSONConfig) ApplyEnvironmentOverrides(opts EnvOverrideOptions) error {
+	if !opts.SkipAPIKeys {
+		if envKeys := os.Getenv("GTFS_API_KEYS"); envKeys != "" {
+			rawKeys := strings.Split(envKeys, ",")
+			var cleanKeys []string
+			for _, k := range rawKeys {
+				if trimmed := strings.TrimSpace(k); trimmed != "" {
+					cleanKeys = append(cleanKeys, trimmed)
+				}
+			}
+			if len(cleanKeys) > 0 {
+				j.ApiKeys = cleanKeys
+			}
+		}
+	}
+
+	if err := j.applyStaticAuthEnvOverrides(); err != nil {
+		return err
+	}
+	j.applyRealtimeAuthEnvOverrides()
+	return nil
+}
+
 // rejectNullLegacyStaticFeed reports an error when the config sets
 // gtfs-static-feed to null. Decoding turns null into a nil pointer, which
 // would read as an absent key and load the default feed, so the raw
@@ -709,20 +762,6 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 	// Apply defaults
 	config.setDefaults()
 
-	// Override API Keys (Split by comma, trim spaces, ignore empty)
-	if envKeys := os.Getenv("GTFS_API_KEYS"); envKeys != "" {
-		rawKeys := strings.Split(envKeys, ",")
-		var cleanKeys []string
-		for _, k := range rawKeys {
-			if trimmed := strings.TrimSpace(k); trimmed != "" {
-				cleanKeys = append(cleanKeys, trimmed)
-			}
-		}
-		if len(cleanKeys) > 0 {
-			config.ApiKeys = cleanKeys
-		}
-	}
-
 	// Override logging level and format
 	if logLevel := strings.TrimSpace(os.Getenv("MAGLEV_LOG_LEVEL")); logLevel != "" {
 		config.LogLevel = strings.ToLower(logLevel)
@@ -736,27 +775,8 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 		config.ProtectedApiKeys = envProtectedKeys
 	}
 
-	if err := config.applyStaticAuthEnvOverrides(); err != nil {
+	if err := config.ApplyEnvironmentOverrides(EnvOverrideOptions{}); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
-	}
-
-	// Override Realtime Feed Auth (Name + Value)
-	// Note: Currently only overrides the first configured realtime feed explicitly
-	rtName := os.Getenv("GTFS_REALTIME_AUTH_NAME")
-	rtValue := os.Getenv("GTFS_REALTIME_AUTH_VALUE")
-
-	if rtName != "" || rtValue != "" {
-		if len(config.GtfsRtFeeds) > 0 {
-			if rtName != "" {
-				config.GtfsRtFeeds[0].RealTimeAuthHeaderName = rtName
-			}
-			if rtValue != "" {
-				config.GtfsRtFeeds[0].RealTimeAuthHeaderValue = rtValue
-			}
-		} else {
-			slog.Warn("GTFS_REALTIME_AUTH env vars set but no Realtime feeds configured",
-				"component", "config_loader")
-		}
 	}
 
 	// Validate
