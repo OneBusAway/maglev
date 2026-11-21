@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/models"
@@ -819,7 +820,7 @@ func (manager *Manager) PrintStatistics() {
 	}
 
 	logging.LogOperation(logger, "gtfs_statistics",
-		slog.String("source", manager.config.GtfsURL),
+		slog.String("source", appconf.RedactURL(manager.config.GtfsURL)),
 		slog.Time("last_updated", manager.GetStaticLastUpdated(ctx)),
 		slog.Int64("stops", countOrZero(manager.GtfsDB.Queries.CountStops(ctx))),
 		slog.Int64("routes", countOrZero(manager.GtfsDB.Queries.CountRoutes(ctx))),
