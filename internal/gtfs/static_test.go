@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/models"
 )
@@ -168,10 +169,12 @@ func TestReloadStaticSkipIfImportedError(t *testing.T) {
 // fractional number of days away is not counted into an earlier window.
 func TestLogFeedExpiryClassifiesFractionalDayExpiry(t *testing.T) {
 	counter := countLogMessages(t)
+	testClock := clock.NewMockClock(time.Date(2025, time.June, 15, 0, 0, 0, 0, time.UTC))
 	manager, err := InitGTFSManager(context.Background(), Config{
 		GtfsURL:      models.GetFixturePath(t, "raba.zip"),
 		GTFSDataPath: filepath.Join(t.TempDir(), "gtfs.db"),
 		Env:          appconf.Development,
+		Clock:        testClock,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
@@ -207,7 +210,7 @@ func TestLogFeedExpiryClassifiesFractionalDayExpiry(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			before := snapshot()
 			require.NoError(t, manager.GtfsDB.Queries.UpdateFeedExpiresAt(context.Background(),
-				sql.NullInt64{Int64: time.Now().Add(tt.offset).Unix(), Valid: true}))
+				sql.NullInt64{Int64: testClock.Now().Add(tt.offset).Unix(), Valid: true}))
 			manager.logFeedExpiry(context.Background(), slog.Default())
 			after := snapshot()
 			for _, message := range messages {
