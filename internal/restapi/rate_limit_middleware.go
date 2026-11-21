@@ -105,21 +105,11 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 	w.Header().Set("X-RateLimit-Remaining", "0")
 	w.WriteHeader(http.StatusTooManyRequests)
 
-	errorResponse := map[string]any{
-		"code": http.StatusTooManyRequests,
-		"text": "Rate limit exceeded. Please try again later.",
-		"data": map[string]any{
-			"entry": nil,
-			"references": map[string]any{
-				"agencies":  []any{},
-				"routes":    []any{},
-				"stops":     []any{},
-				"trips":     []any{},
-				"stopTimes": []any{},
-			},
-		},
-		"currentTime": time.Now().UnixMilli(),
-		"version":     models.APIVersion,
+	errorResponse := models.ResponseModel{
+		Code:        http.StatusTooManyRequests,
+		CurrentTime: time.Now().UnixMilli(),
+		Text:        "rate limit exceeded",
+		Version:     models.APIVersion,
 	}
 
 	if err := json.NewEncoder(w).Encode(errorResponse); err != nil {
