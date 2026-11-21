@@ -97,7 +97,7 @@ func TestNegativeEpochsReturnFieldErrors(t *testing.T) {
 	agencyID := mustGetAgencies(t, api)[0].ID
 	vehicleID := utils.FormCombinedID(agencyID, mockVehicleID)
 	routeID := utils.FormCombinedID(agencyID, trip.RouteID)
-	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil, api.Clock)
 	for _, endpoint := range []struct {
 		path   string
 		fields []string

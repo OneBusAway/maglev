@@ -393,7 +393,7 @@ func TestArrivalAndDepartureForStopHandlerWithMinutesParameters(t *testing.T) {
 func TestArrivalAndDepartureForStopHandlerValidatesIntegerParamsRange(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(100, time.Second, nil)
+	api.rateLimiter = NewRateLimitMiddleware(100, time.Second, nil, api.Clock)
 
 	stopID := utils.FormCombinedID("25", "3028")
 	tripID := utils.FormCombinedID("25", "03969589-98dc-4fcd-a1c2-ce084b4ca5d2")
