@@ -91,7 +91,8 @@ type Manager struct {
 
 	// Per-feed last successfully applied vehicle feed timestamp
 	feedVehicleTimestamp map[string]uint64 // feedID -> timestamp
-
+	// Per-feed last successfully applied trip updates feed timestamp
+	feedTripTimestamp map[string]uint64 // feedID -> timestamp
 	// Exported metrics client dependency
 	Metrics *metrics.Metrics
 
@@ -205,6 +206,7 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedVehicleDataTime:  make(map[string]time.Time),
 		feedRetainedVehicles: make(map[string]map[vehicleKey]struct{}),
 		feedVehicleTimestamp: make(map[string]uint64),
+		feedTripTimestamp:    make(map[string]uint64),
 		feedTripAgency:       make(map[string]map[string]string),
 		feedTripDataTime:     make(map[string]time.Time),
 		Metrics:              config.Metrics,

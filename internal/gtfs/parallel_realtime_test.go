@@ -206,5 +206,6 @@ func newTestManager() *Manager {
 		feedAgencyFilter:     make(map[string]map[string]bool),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 		feedVehicleTimestamp: make(map[string]uint64),
+		feedTripTimestamp:    make(map[string]uint64),
 	}
 }
