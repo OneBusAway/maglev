@@ -2462,7 +2462,7 @@ func TestBuildTripStatus_VehicleWithRecordUsesScheduleDistance(t *testing.T) {
 
 	var tripID, routeID string
 	var stopTimes []gtfsdb.StopTime
-	var shapeRows []gtfsdb.Shape
+	var shapeRows []gtfsdb.GetShapePointsByTripIDRow
 	for _, trip := range trips {
 		shapeRows, err = api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, trip.ID)
 		require.NoError(t, err)
