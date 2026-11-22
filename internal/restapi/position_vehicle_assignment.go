@@ -23,7 +23,8 @@ func (api *RestAPI) positionVehicleForTrip(ctx context.Context, tripID string) *
 }
 
 // preferredPositionVehicle mirrors Java's preferredVehicleByBlockId: the last
-// position entity for a block assigns its anonymous updates to one vehicle.
+// live position entity for a block assigns its anonymous updates to one vehicle.
+// A retained vehicle is not in the feed and cannot take that assignment.
 // Cache the assignment for the request so status, lookup and predictions agree.
 func (api *RestAPI) preferredPositionVehicle(ctx context.Context, tripID string) *gtfs.Vehicle {
 	key := api.positionVehicleBlockKey(ctx, tripID)
@@ -42,7 +43,7 @@ func (api *RestAPI) preferredPositionVehicle(ctx context.Context, tripID string)
 
 func (api *RestAPI) positionVehiclesByBlock(ctx context.Context) map[string]*gtfs.Vehicle {
 	vehicles := make(map[string]*gtfs.Vehicle)
-	positions := api.GtfsManager.GetRealTimeVehicles()
+	positions := api.GtfsManager.GetLiveRealTimeVehicles()
 	tripIDs := make([]string, 0, len(positions))
 	for _, vehicle := range positions {
 		if vehicle.Trip != nil {
