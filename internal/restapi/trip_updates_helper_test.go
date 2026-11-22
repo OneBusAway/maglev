@@ -770,7 +770,7 @@ func TestDeviationSampleCache(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := 0
 			for i, blockTripIDs := range tt.lookups {
-				samples := tt.cache.samplesFor(blockTripIDs, tt.midnights[i], countingCompute(&calls))
+				samples := tt.cache.samplesFor(blockTripIDs, tt.midnights[i], deviationRecordKey{}, countingCompute(&calls))
 				assert.Equal(t, []deviationSample{{scheduledArrival: 100, deviation: 60}}, samples)
 			}
 			assert.Equal(t, tt.wantCalls, calls)

@@ -71,6 +71,7 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 		},
 	}
 	merged.vehicles = append(merged.vehicles, v)
+	merged.liveVehicles = append(merged.liveVehicles, v)
 
 	idx := len(merged.vehicles) - 1
 	merged.vehicleLookupByVehicle[m.mockVehicleLookupKey(vehicleID, routeID)] = idx
@@ -144,6 +145,7 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 	}
 	merged := m.mergedRealtime().clone()
 	merged.vehicles = append(merged.vehicles, v)
+	merged.liveVehicles = append(merged.liveVehicles, v)
 
 	idx := len(merged.vehicles) - 1
 	if vehicleID != "" && !opts.NoID {
@@ -199,6 +201,7 @@ func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, op
 		},
 	}
 	merged.vehicles = append(merged.vehicles, v)
+	merged.liveVehicles = append(merged.liveVehicles, v)
 	idx := len(merged.vehicles) - 1
 	if vehicleID != "" {
 		merged.vehicleLookupByVehicle[m.mockVehicleLookupKey(vehicleID, routeID)] = idx
