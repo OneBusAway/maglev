@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -160,13 +161,17 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		references = api.BuildReference(w, r, ctx, ReferenceParams{
+		references, err = api.BuildReference(ctx, ReferenceParams{
 			IncludeTrip:     parsedReq.IncludeTrip,
 			Stops:           referencedStops,
 			StopIDsByBareID: stopIDsByBareID,
 			Trips:           result,
 			Situations:      situations,
 		})
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 	}
 
 	// The search clamped its bounds, so outOfRange has to be reported against
@@ -1100,7 +1105,7 @@ type ReferenceParams struct {
 	Situations      []situationRef
 }
 
-func (api *RestAPI) BuildReference(w http.ResponseWriter, r *http.Request, ctx context.Context, params ReferenceParams) models.ReferencesModel {
+func (api *RestAPI) BuildReference(ctx context.Context, params ReferenceParams) (models.ReferencesModel, error) {
 	refs := &referenceBuilder{
 		api:           api,
 		ctx:           ctx,
@@ -1109,11 +1114,10 @@ func (api *RestAPI) BuildReference(w http.ResponseWriter, r *http.Request, ctx c
 	}
 
 	if err := refs.build(params); err != nil {
-		api.serverErrorResponse(w, r, err)
-		return models.ReferencesModel{}
+		return models.ReferencesModel{}, err
 	}
 
-	return refs.toReferencesModel(r.Context())
+	return refs.toReferencesModel(ctx), nil
 }
 
 type referenceBuilder struct {
@@ -1132,7 +1136,9 @@ func (rb *referenceBuilder) build(params ReferenceParams) error {
 	rb.collectTripIDs(params.Trips)
 	rb.buildStopList(params.Stops, params.StopIDsByBareID)
 
-	rb.enrichTripsData()
+	if err := rb.enrichTripsData(); err != nil {
+		return err
+	}
 
 	if err := rb.collectAgenciesAndRoutes(); err != nil {
 		return err
@@ -1187,21 +1193,19 @@ func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID m
 	}
 }
 
-func (rb *referenceBuilder) enrichTripsData() {
+func (rb *referenceBuilder) enrichTripsData() error {
 	var tripIDs []string
 	for id := range rb.presentTrips {
 		tripIDs = append(tripIDs, id)
 	}
 
 	if len(tripIDs) == 0 {
-		return
+		return nil
 	}
 
-	reqLogger := logging.ForComponent(rb.ctx, "http_server")
 	trips, err := rb.api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(rb.ctx, tripIDs)
 	if err != nil {
-		reqLogger.Error("failed to batch fetch trips for references", "error", err)
-		return
+		return fmt.Errorf("failed to batch fetch trips for references: %w", err)
 	}
 
 	for _, trip := range trips {
@@ -1210,6 +1214,7 @@ func (rb *referenceBuilder) enrichTripsData() {
 			rb.presentRoutes[trip.RouteID] = models.Route{}
 		}
 	}
+	return nil
 }
 
 func (rb *referenceBuilder) createTrip(trip gtfsdb.Trip) models.Trip {
