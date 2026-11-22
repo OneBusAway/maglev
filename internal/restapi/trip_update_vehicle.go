@@ -455,12 +455,18 @@ func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID,
 	}
 	serviceDate := date.Midnight(location)
 	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
+	record := api.resolveVehicleRecord(vehicle, blockTripIDs)
 	updates := vehicleRecordUpdates(api.blockTripUpdates(blockTripIDs), vehicle)
+	// Dynamic trips have no static-block record, but may still have fresh delays.
+	hasFreshDynamicUpdates := runsOwnSchedule(vehicle) && !api.vehicleRecordExpired(updates)
+	if !record.present && !hasFreshDynamicUpdates {
+		updates = nil
+	}
 	deviation, _, _ := api.recordDeviation(ctx, updates, serviceDate, now)
 	snap := api.statusBlockSnapshot(ctx, models.NewTripStatus(), tripStatusInput{
 		agencyID: agencyID, tripID: tripID, dbTripID: tripID,
 		vehicle: vehicle, serviceDate: serviceDate, currentTime: now,
-	}, api.resolveVehicleRecord(vehicle, blockTripIDs), deviation)
+	}, record, deviation)
 	if snap == nil || snap.ActiveTripID == "" {
 		return tripID, true
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -824,6 +825,85 @@ func TestTripForVehicleHandler_NamedVehicleReportsActiveTrip(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, utils.FormCombinedID("dp-agency", laterTripID), model.Data.Entry.TripID)
+}
+
+type recordExpiryBoundaryClock struct {
+	now        time.Time
+	freshReads int64
+	reads      atomic.Int64
+}
+
+// Now crosses the record's expiry boundary after the configured reads.
+func (c *recordExpiryBoundaryClock) Now() time.Time {
+	if c.reads.Add(1) > c.freshReads {
+		return c.now.Add(time.Nanosecond)
+	}
+	return c.now
+}
+
+func TestActiveTripOfTripUpdateVehicle_RecordExpiry(t *testing.T) {
+	now := time.Date(2010, 1, 1, 10, 1, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		recordAge    time.Duration
+		anonymous    bool
+		boundary     bool
+		relationship gtfs.TripScheduleRelationship
+		wantFound    bool
+		wantLater    bool
+	}{
+		{name: "fresh named record keeps its delay", recordAge: 2 * time.Minute, wantFound: true},
+		{name: "fresh anonymous record keeps its delay", recordAge: 2 * time.Minute, anonymous: true, wantFound: true},
+		{name: "already expired record is rejected", recordAge: 6 * time.Minute},
+		{name: "named record expires during lookup", recordAge: 5 * time.Minute, boundary: true, wantFound: true, wantLater: true},
+		{name: "anonymous record expires during lookup", recordAge: 5 * time.Minute, anonymous: true, boundary: true, wantFound: true, wantLater: true},
+		{name: "fresh added trip keeps its delay", relationship: gtfsrt.TripDescriptor_ADDED, wantFound: true},
+		{name: "fresh duplicated trip keeps its delay", relationship: gtfsrt.TripDescriptor_DUPLICATED, wantFound: true},
+		{name: "added trip expires during lookup", relationship: gtfsrt.TripDescriptor_ADDED, recordAge: 5 * time.Minute, boundary: true, wantFound: true, wantLater: true},
+		{name: "duplicated trip expires during lookup", relationship: gtfsrt.TripDescriptor_DUPLICATED, recordAge: 5 * time.Minute, boundary: true, wantFound: true, wantLater: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, _, firstTripID, _ := setupDelayPropTestData(t, api, 1)
+			lastStopID := addDownstreamStop(t, api, firstTripID)
+			_, err := api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(), "UPDATE stops SET lat = ? WHERE id = ?", 47.01, lastStopID)
+			require.NoError(t, err)
+			_, err = api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(),
+				"UPDATE stop_times SET arrival_time = ?, departure_time = ? WHERE trip_id = ? AND stop_id = ?",
+				int64(10*time.Hour), int64(10*time.Hour), firstTripID, lastStopID)
+			require.NoError(t, err)
+			laterTripID := addLaterBlockTrip(t, api, lastStopID, firstTripID)
+			update := plannedVehicleTripUpdate(firstTripID, now.Add(-tt.recordAge))
+			delay := 15 * time.Minute
+			update.Delay = &delay
+			update.ID.ScheduleRelationship = tt.relationship
+			vehicleID := plannedVehicleID
+			if tt.anonymous {
+				update.Vehicle = nil
+				vehicleID = delayPropBlockID(t)
+			}
+			api.GtfsManager.MockAddFullTripUpdate(update)
+			if tt.boundary {
+				// The entry-time read and construction's expiry check accept the
+				// record; the next freshness decision sees it past expiry.
+				api.Clock = &recordExpiryBoundaryClock{now: now, freshReads: 2}
+			}
+
+			tripID, found := api.activeTripOfTripUpdateVehicle(t.Context(), "dp-agency", firstTripID, vehicleID)
+
+			require.Equal(t, tt.wantFound, found)
+			if found {
+				wantTripID := firstTripID
+				if tt.wantLater {
+					wantTripID = laterTripID
+				}
+				assert.Equal(t, wantTripID, tripID)
+			}
+		})
+	}
 }
 
 func TestTripForVehicleHandler_ActiveTripUsesRecordScheduleTime(t *testing.T) {
