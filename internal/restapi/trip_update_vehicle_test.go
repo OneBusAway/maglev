@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -223,6 +224,28 @@ func TestPluralArrivals_BeforeBlockStartMeasuresFromFirstStop(t *testing.T) {
 	}
 }
 
+// The trip status resolves the record once; the snapshot must place the block
+// by that record instead of rereading trip updates, which may have expired since.
+func TestStatusBlockSnapshot_UsesSuppliedRecord(t *testing.T) {
+	serviceDate := time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(11 * time.Hour)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	firstStopID, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addDownstreamStop(t, api, tripID)
+	record := vehicleRecord{time: serviceDate.Add(8*time.Hour - 5*time.Minute), present: true}
+
+	status := &models.TripStatus{}
+	snap := api.statusBlockSnapshot(t.Context(), status, tripStatusInput{
+		agencyID: "dp-agency", tripID: tripID, dbTripID: tripID,
+		serviceDate: serviceDate, currentTime: now,
+	}, record, 0)
+
+	require.NotNil(t, snap)
+	assert.Equal(t, utils.FormCombinedID("dp-agency", firstStopID), status.NextStop)
+	assert.Equal(t, 5*60, status.NextStopTimeOffset)
+}
+
 func TestStatusBlockSnapshot_BeforeStartUsesWallClock(t *testing.T) {
 	location, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
@@ -256,7 +279,7 @@ func TestStatusBlockSnapshot_BeforeStartUsesWallClock(t *testing.T) {
 			snap := api.statusBlockSnapshot(t.Context(), status, tripStatusInput{
 				agencyID: "dp-agency", tripID: tripID, dbTripID: tripID,
 				serviceDate: serviceDate, currentTime: now,
-			}, []string{tripID}, 0)
+			}, vehicleRecord{}, 0)
 
 			require.NotNil(t, snap)
 			assert.True(t, snap.InRange, "held snapshot must be at the first stop, not before it")
@@ -460,9 +483,10 @@ func TestPluralArrivals_RealBusStaysAtRecordPosition(t *testing.T) {
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 	downstreamStopID := addDownstreamStop(t, api, tripID)
 	latitude, longitude := float32(47.0), float32(-122.0)
+	positionTime := recordTime.Add(-20 * time.Second)
 	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{
 		Position:  &gtfs.Position{Latitude: &latitude, Longitude: &longitude},
-		Timestamp: &recordTime,
+		Timestamp: &positionTime,
 	})
 	predictedTenMinutesLate := serviceDate.Add(9*time.Hour + 10*time.Minute)
 	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
@@ -478,7 +502,9 @@ func TestPluralArrivals_RealBusStaysAtRecordPosition(t *testing.T) {
 		mockClock.Set(recordTime.Add(minutesAfterRecord * time.Minute))
 		_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
 
-		status := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID)).TripStatus
+		arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
+		assert.Equal(t, recordTime.UnixMilli(), arrival.LastUpdateTime.UnixMilli())
+		status := arrival.TripStatus
 		require.NotNil(t, status)
 		assert.Equal(t, 600, status.ScheduleDeviation)
 		assert.Equal(t, utils.FormCombinedID("dp-agency", downstreamStopID), status.NextStop)
@@ -799,6 +825,85 @@ func TestTripForVehicleHandler_NamedVehicleReportsActiveTrip(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, utils.FormCombinedID("dp-agency", laterTripID), model.Data.Entry.TripID)
+}
+
+type recordExpiryBoundaryClock struct {
+	now        time.Time
+	freshReads int64
+	reads      atomic.Int64
+}
+
+// Now crosses the record's expiry boundary after the configured reads.
+func (c *recordExpiryBoundaryClock) Now() time.Time {
+	if c.reads.Add(1) > c.freshReads {
+		return c.now.Add(time.Nanosecond)
+	}
+	return c.now
+}
+
+func TestActiveTripOfTripUpdateVehicle_RecordExpiry(t *testing.T) {
+	now := time.Date(2010, 1, 1, 10, 1, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		recordAge    time.Duration
+		anonymous    bool
+		boundary     bool
+		relationship gtfs.TripScheduleRelationship
+		wantFound    bool
+		wantLater    bool
+	}{
+		{name: "fresh named record keeps its delay", recordAge: 2 * time.Minute, wantFound: true},
+		{name: "fresh anonymous record keeps its delay", recordAge: 2 * time.Minute, anonymous: true, wantFound: true},
+		{name: "already expired record is rejected", recordAge: 6 * time.Minute},
+		{name: "named record expires during lookup", recordAge: 5 * time.Minute, boundary: true, wantFound: true, wantLater: true},
+		{name: "anonymous record expires during lookup", recordAge: 5 * time.Minute, anonymous: true, boundary: true, wantFound: true, wantLater: true},
+		{name: "fresh added trip keeps its delay", relationship: gtfsrt.TripDescriptor_ADDED, wantFound: true},
+		{name: "fresh duplicated trip keeps its delay", relationship: gtfsrt.TripDescriptor_DUPLICATED, wantFound: true},
+		{name: "added trip expires during lookup", relationship: gtfsrt.TripDescriptor_ADDED, recordAge: 5 * time.Minute, boundary: true, wantFound: true, wantLater: true},
+		{name: "duplicated trip expires during lookup", relationship: gtfsrt.TripDescriptor_DUPLICATED, recordAge: 5 * time.Minute, boundary: true, wantFound: true, wantLater: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, _, firstTripID, _ := setupDelayPropTestData(t, api, 1)
+			lastStopID := addDownstreamStop(t, api, firstTripID)
+			_, err := api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(), "UPDATE stops SET lat = ? WHERE id = ?", 47.01, lastStopID)
+			require.NoError(t, err)
+			_, err = api.GtfsManager.GtfsDB.DB.ExecContext(t.Context(),
+				"UPDATE stop_times SET arrival_time = ?, departure_time = ? WHERE trip_id = ? AND stop_id = ?",
+				int64(10*time.Hour), int64(10*time.Hour), firstTripID, lastStopID)
+			require.NoError(t, err)
+			laterTripID := addLaterBlockTrip(t, api, lastStopID, firstTripID)
+			update := plannedVehicleTripUpdate(firstTripID, now.Add(-tt.recordAge))
+			delay := 15 * time.Minute
+			update.Delay = &delay
+			update.ID.ScheduleRelationship = tt.relationship
+			vehicleID := plannedVehicleID
+			if tt.anonymous {
+				update.Vehicle = nil
+				vehicleID = delayPropBlockID(t)
+			}
+			api.GtfsManager.MockAddFullTripUpdate(update)
+			if tt.boundary {
+				// The entry-time read and construction's expiry check accept the
+				// record; the next freshness decision sees it past expiry.
+				api.Clock = &recordExpiryBoundaryClock{now: now, freshReads: 2}
+			}
+
+			tripID, found := api.activeTripOfTripUpdateVehicle(t.Context(), "dp-agency", firstTripID, vehicleID)
+
+			require.Equal(t, tt.wantFound, found)
+			if found {
+				wantTripID := firstTripID
+				if tt.wantLater {
+					wantTripID = laterTripID
+				}
+				assert.Equal(t, wantTripID, tripID)
+			}
+		})
+	}
 }
 
 func TestTripForVehicleHandler_ActiveTripUsesRecordScheduleTime(t *testing.T) {
@@ -1219,10 +1324,9 @@ func TestArrivals_CancellationScopedToTrip(t *testing.T) {
 	}
 }
 
-// A block's trip updates expire together as one record, so trip-for-vehicle
-// finds a vehicle whose own update is stale while a later update keeps the
-// record fresh, just as arrivals report it.
-func TestTripForVehicleHandler_StaleUpdateInFreshRecord(t *testing.T) {
+// Only the same vehicle's later update may refresh its record. An anonymous
+// update on another trip belongs to the block stand-in, not the named vehicle.
+func TestTripForVehicleHandler_RecordRefreshOwnership(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
 	api := createTestApiWithClock(t, clock.NewMockClock(now))
@@ -1231,17 +1335,34 @@ func TestTripForVehicleHandler_StaleUpdateInFreshRecord(t *testing.T) {
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 	stopID := addDownstreamStop(t, api, tripID)
 	laterTripID := addLaterBlockTrip(t, api, stopID, tripID)
-	api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(tripID, now.Add(-20*time.Minute)))
-	anonymous := plannedVehicleTripUpdate(laterTripID, now)
-	anonymous.Vehicle = nil
-	api.GtfsManager.MockAddFullTripUpdate(anonymous)
+	tests := []struct {
+		name      string
+		anonymous bool
+		wantCode  int
+	}{
+		{name: "same vehicle refreshes the record", wantCode: http.StatusOK},
+		{name: "anonymous block update does not refresh it", anonymous: true, wantCode: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(tripID, now.Add(-20*time.Minute)))
+			refresh := plannedVehicleTripUpdate(laterTripID, now)
+			if tt.anonymous {
+				refresh.Vehicle = nil
+			}
+			api.GtfsManager.MockAddFullTripUpdate(refresh)
 
-	resp, model := callAPIHandler[TripDetailsResponse](t, api,
-		fmt.Sprintf("/api/where/trip-for-vehicle/%s.json?key=TEST", plannedVehicleID))
+			resp, model := callAPIHandler[TripDetailsResponse](t, api,
+				fmt.Sprintf("/api/where/trip-for-vehicle/%s.json?key=TEST", plannedVehicleID))
 
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.NotNil(t, model.Data.Entry.Status)
-	assert.Equal(t, plannedVehicleID, model.Data.Entry.Status.VehicleID)
+			require.Equal(t, tt.wantCode, resp.StatusCode)
+			if tt.wantCode == http.StatusOK {
+				require.NotNil(t, model.Data.Entry.Status)
+				assert.Equal(t, plannedVehicleID, model.Data.Entry.Status.VehicleID)
+			}
+		})
+	}
 }
 
 // An update canceling another day's run of the trip leaves today's run alone.
@@ -1367,10 +1488,12 @@ func TestExplicitVehicleIDForSecondVehicleOnTrip(t *testing.T) {
 	tests := []struct {
 		name      string
 		recordAge time.Duration
+		named     bool
 		wantCode  int
 	}{
-		{name: "fresh record", wantCode: http.StatusOK},
-		{name: "expired record", recordAge: 20 * time.Minute, wantCode: http.StatusNotFound},
+		{name: "fresh anonymous record belongs to busB", wantCode: http.StatusOK},
+		{name: "expired anonymous record does not expire busA", recordAge: 20 * time.Minute, wantCode: http.StatusOK},
+		{name: "expired named record expires busA", recordAge: 20 * time.Minute, named: true, wantCode: http.StatusNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1381,6 +1504,9 @@ func TestExplicitVehicleIDForSecondVehicleOnTrip(t *testing.T) {
 			api.GtfsManager.MockAddVehicleWithOptions("busB", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
 			update := plannedVehicleTripUpdate(tripID, now.Add(-tt.recordAge))
 			update.Vehicle = nil
+			if tt.named {
+				update.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "busA"}}
+			}
 			api.GtfsManager.MockAddFullTripUpdate(update)
 			query := fmt.Sprintf("key=TEST&serviceDate=%d&vehicleId=dp-agency_busA", serviceDate.UnixMilli())
 
@@ -1639,4 +1765,641 @@ func TestTripForVehicleHandler_RecordChecks(t *testing.T) {
 			assert.Equal(t, tt.wantCode, resp.StatusCode)
 		})
 	}
+}
+
+func TestBuildTripStatus_PassedVehicleWithExpiredRecord(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	tests := []struct {
+		name         string
+		relationship gtfs.TripScheduleRelationship
+		canceled     bool
+		recordAge    time.Duration
+		wantStatus   string
+		wantRecord   bool
+	}{
+		{name: "scheduled vehicle survives expired record", recordAge: 6 * time.Minute, wantStatus: "SCHEDULED"},
+		{name: "duplicated vehicle survives expired record", relationship: gtfsrt.TripDescriptor_DUPLICATED, recordAge: 6 * time.Minute, wantStatus: "DUPLICATED"},
+		{name: "expired cancellation does not change the vehicle", canceled: true, recordAge: 6 * time.Minute, wantStatus: "SCHEDULED"},
+		{name: "live cancellation still applies", canceled: true, recordAge: time.Minute, wantStatus: "CANCELED", wantRecord: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+			addDownstreamStop(t, api, tripID)
+			lat, lon := float32(47), float32(-122)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+				Timestamp: &now, Position: &gtfs.Position{Latitude: &lat, Longitude: &lon}, ScheduleRelationship: tt.relationship,
+			})
+			vehicle := api.GtfsManager.GetVehicleForTrip(context.Background(), tripID)
+			require.NotNil(t, vehicle)
+			recordTime, delay := now.Add(-tt.recordAge), 10*time.Minute
+			update := gtfs.Trip{
+				ID: gtfs.TripID{ID: tripID, ScheduleRelationship: tt.relationship}, Timestamp: &recordTime, Delay: &delay,
+				Vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
+			}
+			if tt.canceled {
+				update.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+			}
+			api.GtfsManager.MockAddFullTripUpdate(update)
+
+			status, extras, err := api.BuildTripStatus(context.Background(), "dp-agency", tripID, vehicle, serviceDate, now, nil)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStatus, status.Status)
+			assert.True(t, status.Predicted, "fresh GPS remains real-time data after its record expires")
+			assert.Equal(t, "dp-agency_bus", status.VehicleID)
+			assert.Equal(t, tt.wantRecord, extras.record.present)
+			assert.Zero(t, status.ScheduleDeviation, "expired/canceled record delay must not leak into the position-only status")
+			if tt.wantRecord {
+				assert.Equal(t, recordTime.UnixMilli(), status.LastUpdateTime.UnixMilli())
+				assert.Empty(t, status.Phase)
+				assert.Zero(t, status.DistanceAlongTrip)
+			} else {
+				assert.Equal(t, now.UnixMilli(), status.LastUpdateTime.UnixMilli())
+				assert.Equal(t, "in_progress", status.Phase)
+				require.NotNil(t, status.LastKnownLocation)
+				assert.Equal(t, float64(lat), status.LastKnownLocation.Lat)
+				assert.Nil(t, api.vehicleForTrip(context.Background(), tripID, serviceDate), "automatic lookup must still reject the expired record")
+			}
+			assert.Equal(t, tt.relationship, vehicle.Trip.ID.ScheduleRelationship, "do not mutate the shared vehicle")
+		})
+	}
+}
+
+func TestBuildTripStatus_PassedTripUpdateVehicleRequiresFreshRecord(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	for _, anonymous := range []bool{false, true} {
+		t.Run(fmt.Sprintf("anonymous=%t", anonymous), func(t *testing.T) {
+			mockClock := clock.NewMockClock(now)
+			api := createTestApiWithClock(t, mockClock)
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+			addDownstreamStop(t, api, tripID)
+			update := plannedVehicleTripUpdate(tripID, now.Add(-time.Minute))
+			if anonymous {
+				update.Vehicle = nil
+			}
+			api.GtfsManager.MockAddFullTripUpdate(update)
+			vehicle := api.tripUpdateVehicleForTrip(t.Context(), tripID, serviceDate)
+			require.NotNil(t, vehicle)
+			require.True(t, isTripUpdateVehicle(vehicle))
+			require.Nil(t, vehicle.Position)
+			status, extras, err := api.BuildTripStatus(t.Context(), "dp-agency", tripID, vehicle, serviceDate, now, nil)
+			require.NoError(t, err)
+			require.True(t, status.Predicted)
+			require.True(t, extras.record.present)
+
+			// The record is expired but its timestamp is still inside the
+			// position vehicle's longer stale window.
+			mockClock.Advance(6 * time.Minute)
+			status, extras, err = api.BuildTripStatus(t.Context(), "dp-agency", tripID, vehicle, serviceDate, mockClock.Now(), nil)
+
+			require.NoError(t, err)
+			assert.False(t, extras.record.present)
+			assert.False(t, status.Predicted)
+			assert.True(t, status.Scheduled)
+			assert.Equal(t, "default", status.Status)
+			assert.Equal(t, "scheduled", status.Phase)
+			assert.Empty(t, status.VehicleID)
+			assert.True(t, status.LastUpdateTime.IsZero())
+		})
+	}
+}
+
+func TestVehiclesForAgency_ExpiredRecordKeepsLiveVehicleStatus(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addDownstreamStop(t, api, tripID)
+	lat, lon := float32(47), float32(-122)
+	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+		Timestamp: &now, Position: &gtfs.Position{Latitude: &lat, Longitude: &lon},
+	})
+	expired, delay := now.Add(-6*time.Minute), 10*time.Minute
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID: gtfs.TripID{ID: tripID}, Timestamp: &expired, Delay: &delay,
+		Vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
+	})
+
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, "/api/where/vehicles-for-agency/dp-agency.json?key=TEST")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	entry := findVehicleStatusByID(model.Data.List, "bus")
+	require.NotNil(t, entry)
+	require.NotNil(t, entry.Location)
+	require.NotNil(t, entry.TripStatus)
+	assert.True(t, entry.TripStatus.Predicted)
+	assert.False(t, entry.TripStatus.Scheduled)
+	assert.Equal(t, "SCHEDULED", entry.TripStatus.Status)
+	assert.Equal(t, "in_progress", entry.TripStatus.Phase)
+	assert.Equal(t, now.UnixMilli(), entry.TripStatus.LastUpdateTime.UnixMilli())
+	assert.Zero(t, entry.TripStatus.ScheduleDeviation)
+}
+
+func TestVehicleRecordOwnership_DeviationSamples(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	stopID, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addDownstreamStop(t, api, tripID)
+	laterID := addLaterBlockTrip(t, api, stopID, tripID)
+	cache := deviationSampleCache{}
+	for i, id := range []string{tripID, laterID} {
+		delay := time.Duration(i*9+1) * time.Minute
+		sequence := uint32(0)
+		api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+			ID: gtfs.TripID{ID: id}, Timestamp: &now,
+			Vehicle:         &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: id}},
+			StopTimeUpdates: []gtfs.StopTimeUpdate{{StopID: &stopID, StopSequence: &sequence, Departure: &gtfs.StopTimeEvent{Delay: &delay}}},
+		})
+	}
+	for _, id := range []string{tripID, laterID, tripID} {
+		vehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: id}, Trip: &gtfs.Trip{ID: gtfs.TripID{ID: id}}, Timestamp: &now}
+		status, extras, err := api.BuildTripStatus(context.Background(), "dp-agency", id, vehicle, serviceDate, now, nil)
+		require.NoError(t, err)
+		deviation, propagates := api.deviationForStop(context.Background(), scheduleDeviationFallback{
+			status: status, extras: extras, sampleCache: cache, serviceMidnight: serviceDate,
+			currentTime: now, stopArrivalSeconds: 11 * 60 * 60,
+		})
+		require.True(t, propagates)
+		want := 60
+		if id == laterID {
+			want = 600
+		}
+		assert.Equal(t, want, status.ScheduleDeviation)
+		assert.Equal(t, want, deviation)
+	}
+}
+
+func TestVehicleRecordOwnership_RetentionAndDeviation(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	tests := []struct {
+		name        string
+		age         time.Duration
+		anonymous   bool
+		position    bool
+		wantVehicle bool
+	}{
+		{name: "fresh position record", age: time.Minute, position: true, wantVehicle: true},
+		{name: "expired position record", age: 10 * time.Minute, position: true},
+		{name: "anonymous position record", age: time.Minute, anonymous: true, position: true, wantVehicle: true},
+		{name: "expired anonymous position record", age: 10 * time.Minute, anonymous: true, position: true},
+		{name: "fresh trip-update record", age: time.Minute, wantVehicle: true},
+		{name: "expired trip-update record", age: 10 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+			stopID := addDownstreamStop(t, api, tripID)
+			laterID := addLaterBlockTrip(t, api, stopID, tripID)
+			ownTime := now.Add(-tt.age)
+			ownDelay, otherDelay := time.Minute, 10*time.Minute
+			ownUpdate := gtfs.Trip{ID: gtfs.TripID{ID: tripID}, Timestamp: &ownTime, Delay: &ownDelay}
+			if !tt.anonymous {
+				ownUpdate.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}
+			}
+			api.GtfsManager.MockAddFullTripUpdate(ownUpdate)
+			api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+				ID: gtfs.TripID{ID: laterID}, Timestamp: &now, Delay: &otherDelay,
+				Vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "other"}},
+			})
+			// Keep the tested bus last so it owns anonymous updates. The other
+			// bus has a position and must not be synthesized for an expired record.
+			api.GtfsManager.MockAddVehicleWithOptions("other", laterID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+			if tt.position {
+				api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+			}
+
+			vehicle := api.vehicleForTrip(context.Background(), tripID, serviceDate)
+			if !tt.wantVehicle {
+				require.Nil(t, vehicle)
+			} else {
+				require.NotNil(t, vehicle)
+				require.Equal(t, "bus", vehicle.ID.ID)
+			}
+			status, extras, err := api.BuildTripStatus(context.Background(), "dp-agency", tripID, nil, serviceDate, now, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantVehicle, extras.record.present)
+			assert.Equal(t, tt.wantVehicle, status.Predicted)
+			_, _, predicted := api.getPredictedTimes(context.Background(), tripID, serviceDate, stopID, 5,
+				serviceDate.Add(9*time.Hour), serviceDate.Add(9*time.Hour+5*time.Minute))
+			assert.Equal(t, tt.wantVehicle, predicted, "arrival predictions must use the same record expiry")
+			if tt.wantVehicle {
+				assert.Equal(t, 60, status.ScheduleDeviation)
+				assert.Equal(t, ownTime.UnixMilli(), status.LastUpdateTime.UnixMilli())
+			} else {
+				assert.Zero(t, status.ScheduleDeviation)
+			}
+		})
+	}
+}
+
+func TestVehicleRecordOwnership_OnePositionVehiclePerBlock(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	for _, anonymousFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("anonymousFirst=%t", anonymousFirst), func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			stopID, _, firstID, _ := setupDelayPropTestData(t, api, 1)
+			addDownstreamStop(t, api, firstID)
+			nextID := addLaterBlockTrip(t, api, stopID, firstID)
+			firstTime, gpsTime := now.Add(-time.Minute), now.Add(-30*time.Second)
+			firstDelay, nextDelay := time.Minute, 10*time.Minute
+			first := gtfs.Trip{ID: gtfs.TripID{ID: firstID}, Timestamp: &firstTime, Delay: &firstDelay}
+			if !anonymousFirst {
+				first.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "first-bus"}}
+			}
+			next := gtfs.Trip{ID: gtfs.TripID{ID: nextID}, Timestamp: &now, Delay: &nextDelay}
+			api.GtfsManager.MockAddFullTripUpdate(first)
+			api.GtfsManager.MockAddFullTripUpdate(next)
+			// Java's last position entity for the block wins the anonymous assignment.
+			api.GtfsManager.MockAddVehicleWithOptions("first-bus", firstID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &gpsTime})
+			api.GtfsManager.MockAddVehicleWithOptions("next-bus", nextID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &gpsTime})
+			ctx := WithSnapshotCache(t.Context(), newSnapshotCache())
+			for _, vehicle := range api.GtfsManager.GetRealTimeVehicles() {
+				status, extras, err := api.BuildTripStatus(ctx, "dp-agency", vehicle.Trip.ID.ID, &vehicle, serviceDate, now, nil)
+				require.NoError(t, err)
+				if vehicle.ID.ID == "next-bus" {
+					assert.True(t, extras.record.present)
+					assert.Equal(t, now.UnixMilli(), status.LastUpdateTime.UnixMilli())
+					assert.Equal(t, 600, status.ScheduleDeviation)
+				} else if anonymousFirst {
+					assert.False(t, extras.record.present, "the unassigned bus must stay position-only")
+					assert.Equal(t, gpsTime.UnixMilli(), status.LastUpdateTime.UnixMilli())
+					assert.Zero(t, status.ScheduleDeviation)
+				} else {
+					assert.True(t, extras.record.present)
+					assert.Equal(t, firstTime.UnixMilli(), status.LastUpdateTime.UnixMilli())
+					assert.Equal(t, 60, status.ScheduleDeviation)
+				}
+			}
+			for _, id := range []string{firstID, nextID} {
+				vehicle := api.vehicleForTrip(ctx, id, serviceDate)
+				require.NotNil(t, vehicle)
+				wantID := "next-bus"
+				if id == firstID && !anonymousFirst {
+					wantID = "first-bus"
+				}
+				assert.Equal(t, wantID, vehicle.ID.ID, "lookup must follow the anonymous assignment even with a direct position on that trip")
+			}
+			assert.Nil(t, api.tripUpdateVehicleForTrip(ctx, nextID, serviceDate), "assigned anonymous updates must not also create a stand-in")
+			updates := api.predictionRecordUpdates(ctx, next, nextID, serviceDate)
+			wantCount := 1
+			if anonymousFirst {
+				wantCount = 2
+			}
+			assert.Len(t, updates, wantCount)
+			if anonymousFirst {
+				updateOnly := first
+				updateOnly.IsEntityInMessage = true
+				updateOnly.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "first-bus"}}
+				vehicle := &gtfs.Vehicle{ID: updateOnly.Vehicle.ID, Trip: &updateOnly}
+				assert.Empty(t, api.vehicleRecordUpdates(ctx, api.tripBlockUpdates(ctx, firstID, serviceDate), vehicle, serviceDate),
+					"an update-only vehicle must not also consume assigned anonymous updates")
+			}
+		})
+	}
+}
+
+func TestVehicleRecordTime_ScopedToVehicle(t *testing.T) {
+	now := time.Date(2010, 1, 1, 8, 30, 0, 0, time.UTC)
+	ownTime := now.Add(-time.Minute)
+	expiredTime := now.Add(-10 * time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	stopID, _, firstID, _ := setupDelayPropTestData(t, api, 1)
+	nextID := addLaterBlockTrip(t, api, stopID, firstID)
+	update := func(tripID, vehicleID string, timestamp time.Time) gtfs.Trip {
+		if tripID == "A" {
+			tripID = firstID
+		} else {
+			tripID = nextID
+		}
+		trip := gtfs.Trip{ID: gtfs.TripID{ID: tripID}, Timestamp: &timestamp, IsEntityInMessage: true}
+		if vehicleID != "" {
+			trip.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: vehicleID}}
+		}
+		return trip
+	}
+	ownUpdate := update("A", "bus", ownTime)
+	anonymousUpdate := update("A", "", ownTime)
+	positionVehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}, Trip: &gtfs.Trip{ID: ownUpdate.ID}, IsEntityInMessage: true}
+	blockVehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "block"}, Trip: &anonymousUpdate, Timestamp: &now}
+	updateVehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}, Trip: &ownUpdate, Timestamp: &now}
+	tests := []struct {
+		name    string
+		vehicle *gtfs.Vehicle
+		updates []gtfs.Trip
+		want    time.Time
+		found   bool
+	}{
+		{name: "another named vehicle", vehicle: positionVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "other", now)}, want: ownTime, found: true},
+		{name: "anonymous update on own trip", vehicle: positionVehicle, updates: []gtfs.Trip{anonymousUpdate}, want: ownTime, found: true},
+		{name: "anonymous update without a vehicle trip", vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}, updates: []gtfs.Trip{anonymousUpdate}},
+		{name: "anonymous block update refreshes a position vehicle", vehicle: positionVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "", now)}, want: now, found: true},
+		{name: "only anonymous update on another trip", vehicle: positionVehicle, updates: []gtfs.Trip{update("B", "", now)}, want: now, found: true},
+		{name: "anonymous block update does not refresh an update-only vehicle", vehicle: updateVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "", now)}, want: ownTime, found: true},
+		{name: "another named vehicle on own trip", vehicle: positionVehicle, updates: []gtfs.Trip{update("A", "other", now)}},
+		{name: "expired anonymous update on own trip", vehicle: positionVehicle, updates: []gtfs.Trip{update("A", "", expiredTime)}, want: expiredTime},
+		{name: "same vehicle uses last block update", vehicle: positionVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "bus", now)}, want: now, found: true},
+		{name: "block vehicle ignores named updates", vehicle: blockVehicle, updates: []gtfs.Trip{anonymousUpdate, update("B", "other", now)}, want: ownTime, found: true},
+		{name: "block vehicle uses last anonymous update", vehicle: blockVehicle, updates: []gtfs.Trip{anonymousUpdate, update("B", "", now)}, want: now, found: true},
+		{name: "another vehicle cannot refresh an expired record", vehicle: positionVehicle, updates: []gtfs.Trip{update("A", "bus", expiredTime), update("B", "other", now)}, want: expiredTime},
+		{name: "no matching record", vehicle: positionVehicle, updates: []gtfs.Trip{update("B", "other", now)}},
+		{name: "fallback uses own trip timestamp", vehicle: updateVehicle, updates: []gtfs.Trip{update("B", "other", now)}, want: ownTime, found: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			for _, trip := range tt.updates {
+				api.GtfsManager.MockAddFullTripUpdate(trip)
+			}
+
+			if tt.vehicle == positionVehicle || tt.vehicle.Trip == nil {
+				api.GtfsManager.MockAddVehicleWithOptions("bus", firstID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+			}
+			got, found := api.vehicleRecordTime(t.Context(), tt.vehicle, []string{firstID, nextID}, now.Truncate(24*time.Hour))
+
+			assert.Equal(t, tt.found, found)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestArrivals_AnonymousBlockUpdatesKeepPositionVehicle(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	tests := []struct {
+		name      string
+		firstAge  time.Duration
+		nextAge   time.Duration
+		omitFirst bool
+		nameFirst bool
+		emptyID   bool
+		nameNext  bool
+		wantID    string
+	}{
+		{name: "anonymous block updates", firstAge: time.Minute, nextAge: 2 * time.Minute, wantID: "bus"},
+		{name: "next trip refreshes expired first update", firstAge: 10 * time.Minute, nextAge: time.Minute, wantID: "bus"},
+		{name: "only next trip has an update", omitFirst: true, nextAge: time.Minute, wantID: "bus"},
+		{name: "empty vehicle IDs", firstAge: time.Minute, nextAge: 2 * time.Minute, emptyID: true, wantID: "bus"},
+		{name: "named first update and anonymous next trip", firstAge: time.Minute, nextAge: 2 * time.Minute, nameFirst: true, wantID: "bus"},
+		{name: "expired next update expires the combined record", firstAge: time.Minute, nextAge: 10 * time.Minute, nameFirst: true},
+		{name: "all block updates expired", firstAge: 10 * time.Minute, nextAge: 9 * time.Minute},
+		{name: "next trip names another bus", firstAge: time.Minute, nextAge: 2 * time.Minute, nameNext: true, wantID: "other"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			stopID, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+			addDownstreamStop(t, api, tripID)
+			nextID := addLaterBlockTrip(t, api, stopID, tripID)
+			firstTime, nextTime := now.Add(-tt.firstAge), now.Add(-tt.nextAge)
+			first := gtfs.Trip{ID: gtfs.TripID{ID: tripID}, Timestamp: &firstTime}
+			next := gtfs.Trip{ID: gtfs.TripID{ID: nextID}, Timestamp: &nextTime}
+			if tt.nameFirst {
+				first.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}
+			}
+			if tt.nameNext {
+				next.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "other"}}
+			}
+			if tt.emptyID {
+				first.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{}}
+				next.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{}}
+			}
+			if !tt.omitFirst {
+				api.GtfsManager.MockAddFullTripUpdate(first)
+			}
+			api.GtfsManager.MockAddFullTripUpdate(next)
+			gpsTime := now.Add(-30 * time.Second)
+			lat, lon := float32(47), float32(-122)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+				Timestamp: &gpsTime, Position: &gtfs.Position{Latitude: &lat, Longitude: &lon},
+			})
+
+			vehicle := api.vehicleForTrip(t.Context(), nextID, serviceDate)
+			if tt.wantID == "" {
+				require.Nil(t, vehicle)
+			} else {
+				require.NotNil(t, vehicle)
+				assert.Equal(t, tt.wantID, vehicle.ID.ID)
+			}
+			combinedTripID := utils.FormCombinedID("dp-agency", nextID)
+			if tt.wantID == "bus" {
+				updates := api.predictionRecordUpdates(t.Context(), next, nextID, serviceDate)
+				wantCount := 2
+				if tt.omitFirst {
+					wantCount = 1
+				}
+				assert.Len(t, updates, wantCount, "prediction expiry and deviation must use the same combined record")
+			}
+			// Java overwrites record time in block order, not timestamp order.
+			wantRecordTime := nextTime
+			check := func(t *testing.T, arrival models.ArrivalAndDeparture) {
+				t.Helper()
+				require.NotNil(t, arrival.TripStatus)
+				assert.Equal(t, tt.wantID != "", arrival.Predicted)
+				if tt.wantID == "" {
+					assert.Empty(t, arrival.VehicleID)
+					assert.Empty(t, arrival.TripStatus.VehicleID)
+					return
+				}
+				wantVehicleID := utils.FormCombinedID("dp-agency", tt.wantID)
+				assert.Equal(t, wantVehicleID, arrival.VehicleID)
+				assert.Equal(t, wantVehicleID, arrival.TripStatus.VehicleID)
+				assert.Equal(t, wantRecordTime.UnixMilli(), arrival.LastUpdateTime.UnixMilli())
+				assert.Equal(t, wantRecordTime.UnixMilli(), arrival.TripStatus.LastUpdateTime.UnixMilli())
+				if tt.wantID == "bus" {
+					require.NotNil(t, arrival.TripStatus.LastKnownLocation)
+					assert.Equal(t, float64(lat), arrival.TripStatus.LastKnownLocation.Lat)
+					assert.Equal(t, float64(lon), arrival.TripStatus.LastKnownLocation.Lon)
+					assert.Equal(t, gpsTime.UnixMilli(), arrival.TripStatus.LastLocationUpdateTime.UnixMilli())
+				}
+			}
+			t.Run("singular", func(t *testing.T) {
+				resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, fmt.Sprintf(
+					"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+					combinedStopID, combinedTripID, serviceDate.UnixMilli()))
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				check(t, model.Data.Entry)
+			})
+			t.Run("plural", func(t *testing.T) {
+				resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, fmt.Sprintf(
+					"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=60&minutesAfter=180", combinedStopID))
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				check(t, findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, combinedTripID))
+			})
+		})
+	}
+}
+
+func TestArrivals_RecordTimeIgnoresOtherBlockVehicle(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	recordTime := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	otherRecordTime := recordTime.Add(4 * time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(otherRecordTime))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	laterTripID := addLaterBlockTrip(t, api, "dp-stop", tripID)
+	positionTime := recordTime.Add(-20 * time.Second)
+	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &positionTime})
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:        gtfs.TripID{ID: tripID},
+		Timestamp: &recordTime,
+		Vehicle:   &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
+	})
+	api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(laterTripID, otherRecordTime))
+	combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+
+	t.Run("singular", func(t *testing.T) {
+		resp, body := serveApiAndRetrieveEndpoint(t, api, fmt.Sprintf(
+			"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+			combinedStopID, combinedTripID, serviceDate.UnixMilli()))
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		entry := body.Data.(map[string]any)["entry"].(map[string]any)
+		assert.EqualValues(t, recordTime.UnixMilli(), entry["lastUpdateTime"])
+	})
+	t.Run("plural", func(t *testing.T) {
+		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, fmt.Sprintf(
+			"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=60&minutesAfter=120", combinedStopID))
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, combinedTripID)
+		assert.Equal(t, recordTime.UnixMilli(), arrival.LastUpdateTime.UnixMilli())
+	})
+}
+
+func TestArrivals_StalePositionWithFreshRecord(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addDownstreamStop(t, api, tripID)
+	gpsTime := now.Add(-16 * time.Minute)
+	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &gpsTime})
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID: gtfs.TripID{ID: tripID}, Timestamp: &now,
+		Vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
+	})
+	combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+	check := func(t *testing.T, arrival models.ArrivalAndDeparture) {
+		t.Helper()
+		require.NotNil(t, arrival.TripStatus)
+		assert.Equal(t, "SCHEDULED", arrival.TripStatus.Status)
+		assert.Equal(t, "in_progress", arrival.TripStatus.Phase)
+		assert.True(t, arrival.TripStatus.Predicted)
+		assert.Equal(t, now.UnixMilli(), arrival.LastUpdateTime.UnixMilli())
+		assert.Equal(t, now.UnixMilli(), arrival.TripStatus.LastUpdateTime.UnixMilli())
+	}
+	t.Run("singular", func(t *testing.T) {
+		resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, fmt.Sprintf(
+			"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+			combinedStopID, combinedTripID, serviceDate.UnixMilli()))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		check(t, model.Data.Entry)
+	})
+	t.Run("plural", func(t *testing.T) {
+		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, fmt.Sprintf(
+			"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=60&minutesAfter=120", combinedStopID))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		check(t, findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, combinedTripID))
+	})
+}
+
+func TestBuildTripStatus_StalePositionRecordControls(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	tests := []struct {
+		name       string
+		record     bool
+		canceled   bool
+		recordAge  time.Duration
+		wantStatus string
+		wantPhase  string
+	}{
+		{name: "without a record stays default", wantStatus: "default", wantPhase: "scheduled"},
+		{name: "expired record stays default", record: true, recordAge: 10 * time.Minute, wantStatus: "default", wantPhase: "scheduled"},
+		{name: "fresh cancellation remains canceled", record: true, canceled: true, wantStatus: "CANCELED"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+			addDownstreamStop(t, api, tripID)
+			gpsTime := now.Add(-16 * time.Minute)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &gpsTime})
+			if tt.record {
+				recordTime := now.Add(-tt.recordAge)
+				update := gtfs.Trip{ID: gtfs.TripID{ID: tripID}, Timestamp: &recordTime, Vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}}
+				if tt.canceled {
+					update.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+				}
+				api.GtfsManager.MockAddFullTripUpdate(update)
+			}
+			status, extras, err := api.BuildTripStatus(context.Background(), "dp-agency", tripID, nil, serviceDate, now, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStatus, status.Status)
+			assert.Equal(t, tt.wantPhase, status.Phase)
+			assert.Equal(t, tt.canceled, extras.record.present)
+			assert.Equal(t, tt.canceled, status.Predicted)
+			assert.Nil(t, status.LastKnownLocation)
+			if tt.canceled {
+				assert.Empty(t, status.NextStop)
+				assert.Empty(t, status.ClosestStop)
+				assert.Zero(t, status.DistanceAlongTrip)
+				assert.Equal(t, now.UnixMilli(), status.LastUpdateTime.UnixMilli())
+			} else {
+				assert.True(t, status.LastUpdateTime.IsZero())
+			}
+		})
+	}
+}
+
+func TestSingularArrival_RealBusReportsRecordTime(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	recordTime := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	positionTime := recordTime.Add(-20 * time.Second)
+	api := createTestApiWithClock(t, clock.NewMockClock(recordTime))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &positionTime})
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:        gtfs.TripID{ID: tripID},
+		Timestamp: &recordTime,
+		Vehicle:   &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
+	})
+
+	resp, body := serveApiAndRetrieveEndpoint(t, api, fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID, utils.FormCombinedID("dp-agency", tripID), serviceDate.UnixMilli()))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	entry := body.Data.(map[string]any)["entry"].(map[string]any)
+	assert.EqualValues(t, recordTime.UnixMilli(), entry["lastUpdateTime"])
 }

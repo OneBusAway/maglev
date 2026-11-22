@@ -48,6 +48,7 @@ type agencyVehicleKey struct {
 type mergedRealtime struct {
 	trips                    []gtfs.Trip
 	vehicles                 []gtfs.Vehicle
+	liveVehicles             []gtfs.Vehicle
 	tripLookup               map[string]int
 	tripUpdateSeenAt         map[string]time.Time
 	vehicleLookupByTrip      map[string]int
@@ -100,6 +101,7 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 	out := &mergedRealtime{
 		trips:                    slices.Clone(m.trips),
 		vehicles:                 slices.Clone(m.vehicles),
+		liveVehicles:             slices.Clone(m.liveVehicles),
 		tripLookup:               maps.Clone(m.tripLookup),
 		tripUpdateSeenAt:         maps.Clone(m.tripUpdateSeenAt),
 		vehicleLookupByTrip:      maps.Clone(m.vehicleLookupByTrip),
@@ -359,6 +361,13 @@ func (manager *Manager) cleanupExpiredVehicles(feedID string) {
 // change.
 func (manager *Manager) GetRealTimeTrips() []gtfs.Trip {
 	return manager.mergedRealtime().trips
+}
+
+// GetLiveRealTimeVehicles returns only vehicles in their feed's latest update,
+// excluding retained vehicles. The result shares GetRealTimeVehicles' read-only
+// contract and is published in the same immutable snapshot.
+func (manager *Manager) GetLiveRealTimeVehicles() []gtfs.Vehicle {
+	return manager.mergedRealtime().liveVehicles
 }
 
 // GetRealTimeVehicles returns the current snapshot's vehicles under the same
@@ -1537,6 +1546,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	manager.merged.Store(&mergedRealtime{
 		trips:                    allTrips,
 		vehicles:                 vehicleIndex.allVehicles,
+		liveVehicles:             manager.liveVehicles(vehicleFeedIDs),
 		tripLookup:               tripLookup,
 		tripUpdateSeenAt:         tripUpdateSeenAt,
 		vehicleLookupByTrip:      vehicleIndex.vehicleLookupByTrip,

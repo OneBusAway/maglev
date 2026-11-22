@@ -35,10 +35,23 @@ type tripStatusExtras struct {
 	deviationResolved bool
 	// blockTripIDs are the block's trips in start order, from which Java
 	// builds its per-stop deviation samples.
-	blockTripIDs []string
+	blockTripIDs  []string
+	recordUpdates []tripUpdateForTrip
+	recordKey     deviationRecordKey
 	// tripBlockSequence is the queried trip's position in its block. It can
 	// differ from status.BlockTripSequence, which follows the active trip.
 	tripBlockSequence int
+	// record is the vehicle's trip-update record, resolved once per status so
+	// every step reads the same expiry decision.
+	record vehicleRecord
+}
+
+// applyVehicleRecordUpdateTime reports the record's time on an arrival. Java's
+// arrival reads it from the same record as its trip status.
+func applyVehicleRecordUpdateTime(arrival *models.ArrivalAndDeparture, status *models.TripStatus, extras *tripStatusExtras) {
+	if status != nil && extras != nil && extras.record.present {
+		arrival.LastUpdateTime = status.LastUpdateTime
+	}
 }
 
 // tripStatusInput holds what the steps of building one trip status read.
@@ -57,8 +70,10 @@ type tripStatusInput struct {
 // BuildTripStatus builds a TripStatus for the given trip.
 //
 // Pass a non-nil vehicle when it is already known (e.g. DUPLICATED trips, or when
-// the caller has already looked up the vehicle). Pass nil to have the function look
-// up the vehicle automatically via vehicleForTrip.
+// the caller has already looked up the vehicle). A supplied position-reporting
+// vehicle remains usable after its trip-update record expires; a trip-update-only
+// vehicle still requires a live record. Pass nil to apply automatic record-based
+// retention via vehicleForTrip.
 //
 // tripID is used for DB lookups (stop times, shapes, block sequence). For DUPLICATED
 // trips whose synthetic ActiveTripID has no DB entry, set tripID to the base/static
@@ -81,6 +96,11 @@ func (api *RestAPI) BuildTripStatus(
 ) (*models.TripStatus, *tripStatusExtras, error) {
 	if vehicle == nil {
 		vehicle = api.vehicleForTrip(ctx, tripID, serviceDate)
+	} else {
+		checked := api.positionVehicleWithRecord(ctx, vehicle, serviceDate)
+		if checked != nil || isTripUpdateVehicle(vehicle) {
+			vehicle = checked
+		}
 	}
 	return api.buildTripStatusForVehicle(ctx, agencyID, tripID, vehicle, serviceDate, currentTime, freqMap)
 }
@@ -121,13 +141,14 @@ func (api *RestAPI) buildTripStatusForVehicle(
 		return status, extras, freqErr
 	}
 	status.Frequency = frequency
+	api.applyVehicleRecord(ctx, status, extras, input)
 
 	// CANCELED trips are no longer running there is no active position or schedule
 	// to report. Return immediately with the cancellation status and skip all stop-time
 	// and shape calculations, which are meaningless for a trip that is not operating.
 	// Predicted is true because the cancellation itself is real-time information.
 	if status.Status == "CANCELED" {
-		status.Predicted = vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime)
+		status.Predicted = extras.record.present || (vehicle != nil && !defaultStaleDetector.Check(vehicle, currentTime))
 		status.Scheduled = !status.Predicted
 		return status, extras, nil
 	}
@@ -153,9 +174,9 @@ func (api *RestAPI) buildTripStatusForVehicle(
 	// is a no-op.
 	var snap *scheduledBlockSnapshot
 	if len(stopTimes) > 0 {
-		snap = api.statusBlockSnapshot(ctx, status, input, extras.blockTripIDs, scheduleDeviation)
+		snap = api.statusBlockSnapshot(ctx, status, input, extras.record, scheduleDeviation)
 	}
-	api.applySnapshotToStatus(ctx, status, input, snap)
+	api.applySnapshotToStatus(ctx, status, extras, input, snap)
 	api.applyShapeToStatus(ctx, status, input, snap, shapeRows, stopTimes)
 
 	extras.snapshot = snap
@@ -228,6 +249,18 @@ func (api *RestAPI) statusLookupTripID(ctx context.Context, activeTripRawID, tri
 	return tripID
 }
 
+// applyVehicleRecord treats a fresh trip-update record as live even when its GPS
+// fix is stale. BuildVehicleStatus still excludes stale coordinates and location
+// timestamps; record freshness must not revive those fields.
+func (api *RestAPI) applyVehicleRecord(ctx context.Context, status *models.TripStatus, extras *tripStatusExtras, input tripStatusInput) {
+	extras.blockTripIDs = api.blockShiftTripIDsSortedByStartTime(ctx, input.dbTripID, input.serviceDate)
+	extras.record = api.resolveVehicleRecord(ctx, input.vehicle, extras.blockTripIDs, input.serviceDate)
+	if extras.record.present {
+		status.LastUpdateTime = models.NewModelTime(extras.record.time)
+		status.Status, status.Phase = GetVehicleStatusAndPhase(input.vehicle)
+	}
+}
+
 // applyBlockDeviation sets the status's deviation and predicted flag from the
 // block's trip updates, and returns the deviation the later steps shift by.
 func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.TripStatus, extras *tripStatusExtras, input tripStatusInput) int {
@@ -242,18 +275,40 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 	// buses under one block) leak the last shift's delay into the first
 	// shift's scheduleDeviation, and status.ScheduleDeviation flows onward
 	// into effectiveTime / stop-offset math for every arrival on this trip.
-	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, input.dbTripID, input.serviceDate)
-	scheduleDeviation, hasRealtimeTripUpdate := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, input.serviceDate, input.currentTime)
+	updates := api.statusRecordUpdates(ctx, input, extras.blockTripIDs)
+	scheduleDeviation, hasRealtimeTripUpdate, _ := api.recordDeviation(ctx, updates, input.serviceDate, input.currentTime)
 
 	if hasRealtimeTripUpdate {
 		status.ScheduleDeviation = scheduleDeviation
 	}
 	extras.deviationResolved = hasRealtimeTripUpdate
-	extras.blockTripIDs = blockTripIDs
+	extras.recordUpdates = updates
+	extras.recordKey = deviationRecordKey{agencyID: input.agencyID, tripID: input.dbTripID}
+	if input.vehicle != nil && input.vehicle.ID != nil {
+		extras.recordKey.vehicleID = input.vehicle.ID.ID
+		if input.vehicle.Trip != nil {
+			extras.recordKey.tripID = input.vehicle.Trip.ID.ID
+		}
+	}
 
 	hasVehicleRealtimeData := input.vehicle != nil && !defaultStaleDetector.Check(input.vehicle, input.currentTime)
-	status.SetPredicted(hasVehicleRealtimeData || hasRealtimeTripUpdate)
+	status.SetPredicted(extras.record.present || hasVehicleRealtimeData || hasRealtimeTripUpdate)
 	return scheduleDeviation
+}
+
+// statusRecordUpdates uses one vehicle's fresh record. Without a vehicle there
+// is no identity connecting other block trips' updates to this trip.
+func (api *RestAPI) statusRecordUpdates(ctx context.Context, input tripStatusInput, blockTripIDs []string) []tripUpdateForTrip {
+	var updates []tripUpdateForTrip
+	if input.vehicle == nil {
+		updates = api.blockTripUpdates([]string{input.dbTripID})
+	} else {
+		updates = api.vehicleRecordUpdates(ctx, api.blockTripUpdates(blockTripIDs), input.vehicle, input.serviceDate)
+	}
+	if api.vehicleRecordExpired(updates) {
+		return nil
+	}
+	return updates
 }
 
 // statusStopTimes returns the trip's stop times. A failed query logs and returns
@@ -371,7 +426,13 @@ func snapshotLocatesActiveTrip(snap *scheduledBlockSnapshot) bool {
 
 // applySnapshotToStatus sets the snapshot-derived status fields, which don't
 // depend on the target trip's shape.
-func (api *RestAPI) applySnapshotToStatus(ctx context.Context, status *models.TripStatus, input tripStatusInput, snap *scheduledBlockSnapshot) {
+func (api *RestAPI) applySnapshotToStatus(
+	ctx context.Context,
+	status *models.TripStatus,
+	extras *tripStatusExtras,
+	input tripStatusInput,
+	snap *scheduledBlockSnapshot,
+) {
 	if !snapshotLocatesActiveTrip(snap) {
 		return
 	}
@@ -384,7 +445,7 @@ func (api *RestAPI) applySnapshotToStatus(ctx context.Context, status *models.Tr
 	if snap.ActiveTripTotalDistance > 0 {
 		status.TotalDistanceAlongTrip = snap.ActiveTripTotalDistance
 	}
-	applySnapshotDistanceAlongTrip(status, input, snap)
+	applySnapshotDistanceAlongTrip(status, extras, input, snap)
 }
 
 // applySnapshotDistanceAlongTrip sets distanceAlongTrip, a distinct field from
@@ -399,7 +460,9 @@ func (api *RestAPI) applySnapshotToStatus(ctx context.Context, status *models.Tr
 // subtract active-trip block offset). See
 // summary/distance-along-shape-library-port.md, the tracked followup.
 //
-// Until then, we produce a best-effort value in two tiers:
+// A vehicle with a trip-update record always reports the scheduled distance,
+// since Java's record fixes its position, and leaves LastKnownDistanceAlongTrip
+// unset. Without a record, we produce a best-effort value in two tiers:
 //
 //  1. When snap's distance-picked active trip matches the vehicle's RT-declared
 //     trip, snap.ActiveTripShape IS the vehicle's shape, so projecting the
@@ -414,7 +477,7 @@ func (api *RestAPI) applySnapshotToStatus(ctx context.Context, status *models.Tr
 //     but is never wildly wrong.
 //
 // Both are gated on the shift check to match Java's per-BlockInstance semantics.
-func applySnapshotDistanceAlongTrip(status *models.TripStatus, input tripStatusInput, snap *scheduledBlockSnapshot) {
+func applySnapshotDistanceAlongTrip(status *models.TripStatus, extras *tripStatusExtras, input tripStatusInput, snap *scheduledBlockSnapshot) {
 	vehicle := input.vehicle
 	if vehicle == nil || vehicle.Trip == nil || snap.ShiftTripIDs == nil {
 		return
@@ -422,6 +485,10 @@ func applySnapshotDistanceAlongTrip(status *models.TripStatus, input tripStatusI
 	_, sameShift := snap.ShiftTripIDs[vehicle.Trip.ID.ID]
 	_, arrivalInShift := snap.ShiftTripIDs[input.tripID]
 	if !sameShift || !arrivalInShift {
+		return
+	}
+	if extras.record.present {
+		status.DistanceAlongTrip = snap.ActiveTripScheduledDistance
 		return
 	}
 	if distance, ok := liveVehicleDistanceOnSnapshot(input, snap); ok {
@@ -479,7 +546,7 @@ func (api *RestAPI) applyShapeToStatus(
 	}
 
 	switch {
-	case vehicleHasCoordinates(input.vehicle):
+	case vehicleHasCoordinates(input.vehicle) && !defaultStaleDetector.Check(input.vehicle, input.currentTime):
 		applyVehiclePositionOnShape(status, input.vehicle, shapePoints)
 	case snapshotLocatesActiveTrip(snap):
 		applySnapshotPosition(status, snap)
@@ -842,8 +909,8 @@ func (api *RestAPI) predictedTimesFromScheduleDeviation(ctx context.Context, in 
 // stop. It reports false when the stop is upstream of every deviation
 // sample.
 func (api *RestAPI) deviationForStop(ctx context.Context, in scheduleDeviationFallback) (int, bool) {
-	samples := in.sampleCache.samplesFor(in.extras.blockTripIDs, in.serviceMidnight, func() []deviationSample {
-		return api.blockDeviationSamples(ctx, in.extras.blockTripIDs, in.serviceMidnight, in.currentTime)
+	samples := in.sampleCache.samplesFor(in.extras.blockTripIDs, in.serviceMidnight, in.extras.recordKey, func() []deviationSample {
+		return api.recordDeviationSamples(ctx, in.extras.recordUpdates, in.serviceMidnight, in.currentTime)
 	})
 	if len(samples) == 0 {
 		return in.status.ScheduleDeviation, true

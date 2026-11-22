@@ -917,12 +917,18 @@ func (manager *Manager) SetRealTimeTripsForTest(trips []gtfs.Trip) {
 }
 
 // SetRealTimeVehiclesForTest injects real-time vehicles under the synthetic
-// feed ID "_test" so real feed updates do not discard them.
-func (manager *Manager) SetRealTimeVehiclesForTest(vehicles []gtfs.Vehicle) {
+// feed ID "_test" so real feed updates do not discard them. Optional retained IDs
+// simulate vehicles kept after dropping out of that feed's latest update.
+func (manager *Manager) SetRealTimeVehiclesForTest(vehicles []gtfs.Vehicle, retainedIDs ...string) {
 	manager.realTimeMutex.Lock()
 	defer manager.realTimeMutex.Unlock()
 
 	manager.feedVehicles["_test"] = vehicles
+	retained := make(map[vehicleKey]struct{}, len(retainedIDs))
+	for _, id := range retainedIDs {
+		retained[vehicleKey{id: id}] = struct{}{}
+	}
+	manager.feedRetainedVehicles["_test"] = retained
 	manager.rebuildMergedRealtimeLocked()
 }
 
