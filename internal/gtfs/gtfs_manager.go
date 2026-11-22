@@ -105,6 +105,10 @@ type Manager struct {
 	// trip-updates sub-feed ages out on its own clock even while sibling
 	// sub-feeds keep resetting the feed-wide staleness timer.
 	feedTripLastSuccess map[string]time.Time
+
+	// Tracks the last stored vehicle-positions payload per feed, so vehicles
+	// age out on their own clock while sibling sub-feeds keep succeeding.
+	feedVehicleLastSuccess map[string]time.Time
 }
 
 // clearFeedData removes stale data for a specific feed when the staleness threshold is crossed
@@ -151,6 +155,31 @@ func (manager *Manager) clearStaleTripUpdates(feedID string) bool {
 	delete(manager.feedUnattributedTrips, feedID)
 	delete(manager.feedTripAgency, feedID)
 	delete(manager.feedTripDataTime, feedID)
+	manager.rebuildMergedRealtimeLocked()
+	return true
+}
+
+// clearStaleVehicles clears a feed's stored vehicles when no vehicle-positions
+// payload has been stored for longer than staleFeedThreshold while a sibling
+// sub-feed keeps succeeding. A partial success resets the feed-wide staleness
+// timer, so without this the last vehicle snapshot would be served as live
+// forever. Returns true when vehicle data was cleared.
+func (manager *Manager) clearStaleVehicles(feedID string) bool {
+	manager.realTimeMutex.Lock()
+	defer manager.realTimeMutex.Unlock()
+
+	last, ok := manager.feedVehicleLastSuccess[feedID]
+	if !ok || time.Since(last) <= staleFeedThreshold || len(manager.feedVehicles[feedID]) == 0 {
+		return false
+	}
+
+	// Same vehicle state as clearFeedData. The last applied vehicle timestamp
+	// is kept for the same reason.
+	manager.feedVehicles[feedID] = nil
+	delete(manager.feedVehicleLastSeen, feedID)
+	delete(manager.feedVehicleAgency, feedID)
+	delete(manager.feedVehicleDataTime, feedID)
+	delete(manager.feedRetainedVehicles, feedID)
 	manager.rebuildMergedRealtimeLocked()
 	return true
 }

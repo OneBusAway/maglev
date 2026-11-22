@@ -848,6 +848,16 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		manager.feedTripLastSuccess[feedID] = time.Now()
 	}
 
+	// Stamp vehicle-positions success only when a payload was stored. A failed
+	// fetch or a stale header leaves the stamp alone, so clearStaleVehicles
+	// ages the vehicles out.
+	if vehiclesUpdated {
+		if manager.feedVehicleLastSuccess == nil {
+			manager.feedVehicleLastSuccess = make(map[string]time.Time)
+		}
+		manager.feedVehicleLastSuccess[feedID] = time.Now()
+	}
+
 	return hasNewData
 }
 
@@ -1635,6 +1645,10 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 
 				if hasNewData && manager.clearStaleTripUpdates(feedCfg.ID) {
 					logger.Warn("trip updates stale beyond threshold while sibling sub-feeds succeed, clearing trip data",
+						slog.String("feed", feedCfg.ID))
+				}
+				if hasNewData && manager.clearStaleVehicles(feedCfg.ID) {
+					logger.Warn("vehicle positions stale beyond threshold while sibling sub-feeds succeed, clearing vehicle data",
 						slog.String("feed", feedCfg.ID))
 				}
 
