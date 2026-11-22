@@ -137,6 +137,12 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 		slog.String("db_path", manager.config.GTFSDataPath),
 		slog.Bool("changed", changed))
 
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(ctx)
+	if err != nil {
+		return false, err
+	}
+	manager.setCachedAgencies(agencies)
+
 	manager.PrintStatistics()
 	manager.logFeedExpiry(ctx, logger)
 

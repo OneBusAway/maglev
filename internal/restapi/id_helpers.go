@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"net/http"
+	"strings"
 
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -53,10 +54,24 @@ func (api *RestAPI) extractAgencyCodeID(w http.ResponseWriter, r *http.Request, 
 		return "", "", false
 	}
 
-	agencyID, codeID, err := utils.ExtractAgencyIDAndCodeID(id)
+	agencies, err := api.GtfsManager.GetCachedAgencies(r.Context())
 	if err != nil {
-		api.validationErrorResponse(w, r, map[string][]string{field: {err.Error()}})
+		api.serverErrorResponse(w, r, err)
 		return "", "", false
+	}
+	var agencyID, codeID string
+	for _, agency := range agencies {
+		if len(id) > len(agency.ID)+1 && strings.HasPrefix(id, agency.ID) && id[len(agency.ID)] == '_' {
+			agencyID = agency.ID
+			codeID = id[len(agency.ID)+1:]
+		}
+	}
+	if agencyID == "" || codeID == "" {
+		agencyID, codeID, err = utils.ExtractAgencyIDAndCodeID(id)
+		if err != nil {
+			api.validationErrorResponse(w, r, map[string][]string{field: {err.Error()}})
+			return "", "", false
+		}
 	}
 
 	return agencyID, codeID, true

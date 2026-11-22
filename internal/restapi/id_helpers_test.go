@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/clock"
 )
@@ -78,7 +79,8 @@ func TestExtractAndValidateID(t *testing.T) {
 func TestExtractAndValidateAgencyCodeID(t *testing.T) {
 	api := &RestAPI{
 		Application: &app.Application{
-			Clock: &clock.RealClock{},
+			Clock:       &clock.RealClock{},
+			GtfsManager: newTestManagerNoData(t),
 		},
 	}
 
@@ -146,6 +148,58 @@ func TestExtractAndValidateAgencyCodeID(t *testing.T) {
 				assert.Equal(t, tt.expectedStatus, errorResp.Code)
 				assert.True(t, strings.Contains(rr.Body.String(), "id") || strings.Contains(rr.Body.String(), "invalid format"))
 			}
+		})
+	}
+}
+
+func TestExtractAgencyCodeIDOnAgencyWithUnderscore(t *testing.T) {
+	api := &RestAPI{
+		Application: &app.Application{
+			Clock:       &clock.RealClock{},
+			GtfsManager: newTestManagerNoData(t),
+		},
+	}
+
+	_, err := api.GtfsManager.GtfsDB.Queries.CreateAgency(context.Background(), gtfsdb.CreateAgencyParams{ID: "agency_one"})
+	require.NoError(t, err)
+	_, err = api.GtfsManager.GtfsDB.Queries.CreateAgency(context.Background(), gtfsdb.CreateAgencyParams{ID: "agency"})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		url      string
+		agencyID string
+		codeID   string
+		idParam  string
+	}{
+		{
+			name:     "Combined ID agency_one_123",
+			url:      "/api/where/route/agency_one_123.json",
+			agencyID: "agency_one",
+			codeID:   "123",
+			idParam:  "agency_one_123",
+		},
+		{
+			name:     "Combined ID agency_123",
+			url:      "/api/where/route/agency_123json",
+			agencyID: "agency",
+			codeID:   "123",
+			idParam:  "agency_123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequestWithContext(context.Background(), "GET", tt.url, nil)
+			require.NoError(t, err)
+			req.SetPathValue("id", tt.idParam)
+
+			rr := httptest.NewRecorder()
+			agencyID, codeID, ok := api.extractAndValidateAgencyCodeID(rr, req)
+
+			require.True(t, ok)
+			require.Equal(t, tt.agencyID, agencyID)
+			require.Equal(t, tt.codeID, codeID)
 		})
 	}
 }
