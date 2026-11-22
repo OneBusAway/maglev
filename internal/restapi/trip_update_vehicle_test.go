@@ -2071,7 +2071,7 @@ func TestVehicleRecordOwnership_OnePositionVehiclePerBlock(t *testing.T) {
 				updateOnly.IsEntityInMessage = true
 				updateOnly.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "first-bus"}}
 				vehicle := &gtfs.Vehicle{ID: updateOnly.Vehicle.ID, Trip: &updateOnly}
-				assert.Empty(t, api.vehicleRecordUpdates(ctx, api.tripBlockUpdates(ctx, firstID, serviceDate), vehicle),
+				assert.Empty(t, api.vehicleRecordUpdates(ctx, api.tripBlockUpdates(ctx, firstID, serviceDate), vehicle, serviceDate),
 					"an update-only vehicle must not also consume assigned anonymous updates")
 			}
 		})
@@ -2135,7 +2135,7 @@ func TestVehicleRecordTime_ScopedToVehicle(t *testing.T) {
 			if tt.vehicle == positionVehicle || tt.vehicle.Trip == nil {
 				api.GtfsManager.MockAddVehicleWithOptions("bus", firstID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
 			}
-			got, found := api.vehicleRecordTime(t.Context(), tt.vehicle, []string{firstID, nextID})
+			got, found := api.vehicleRecordTime(t.Context(), tt.vehicle, []string{firstID, nextID}, now.Truncate(24*time.Hour))
 
 			assert.Equal(t, tt.found, found)
 			assert.Equal(t, tt.want, got)

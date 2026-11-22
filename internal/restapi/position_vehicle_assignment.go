@@ -2,19 +2,18 @@ package restapi
 
 import (
 	"context"
+	"slices"
+	"time"
 
 	"github.com/OneBusAway/go-gtfs"
-	"maglev.onebusaway.org/gtfsdb"
-	"maglev.onebusaway.org/internal/nulls"
-	"maglev.onebusaway.org/internal/utils"
 )
 
-// positionVehicleForTrip follows the block assignment for anonymous updates,
+// positionVehicleForTrip follows the shift assignment for anonymous updates,
 // rather than letting a direct trip lookup select a second bus for that record.
-func (api *RestAPI) positionVehicleForTrip(ctx context.Context, tripID string) *gtfs.Vehicle {
+func (api *RestAPI) positionVehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
 	for _, update := range api.GtfsManager.GetTripUpdatesForTrip(tripID) {
 		if !namesVehicle(update) {
-			if vehicle := api.preferredPositionVehicle(ctx, tripID); vehicle != nil {
+			if vehicle := api.preferredPositionVehicle(ctx, tripID, serviceDate); vehicle != nil {
 				return vehicle
 			}
 		}
@@ -22,45 +21,47 @@ func (api *RestAPI) positionVehicleForTrip(ctx context.Context, tripID string) *
 	return api.GtfsManager.GetVehicleForTrip(ctx, tripID)
 }
 
-// preferredPositionVehicle mirrors Java's preferredVehicleByBlockId: the last
-// live position entity for a block assigns its anonymous updates to one vehicle.
-// A retained vehicle is not in the feed and cannot take that assignment.
-// Cache the assignment for the request so status, lookup and predictions agree.
-func (api *RestAPI) preferredPositionVehicle(ctx context.Context, tripID string) *gtfs.Vehicle {
-	key := api.positionVehicleBlockKey(ctx, tripID)
-	if key == "" {
+// preferredPositionVehicle assigns anonymous updates to one live vehicle in the
+// same service-date shift used by record and snapshot placement. A reused static
+// block_id must not connect overlapping shifts or different service dates.
+func (api *RestAPI) preferredPositionVehicle(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+	if _, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID); err != nil {
+		warnIfRealDBError(err, "preferredPositionVehicle: GetTrip failed")
 		return nil
 	}
+	tripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
+	if !slices.Contains(tripIDs, tripID) {
+		return nil
+	}
+	key := blockShiftKey{tripID: tripIDs[0], serviceDateUnix: serviceDate.UnixNano()}
 	cache := snapshotCacheFrom(ctx)
 	if cache == nil {
-		return api.positionVehiclesByBlock(ctx)[key]
+		return api.preferredLivePositionVehicle(tripIDs, serviceDate)
 	}
-	if cache.positionVehiclesByBlock == nil {
-		cache.positionVehiclesByBlock = api.positionVehiclesByBlock(ctx)
+	// Sibling trips share both the assignment and the resolved shift, avoiding
+	// another block/calendar/bounds query for each trip's anonymous update.
+	for _, id := range tripIDs {
+		cache.blockShiftTripIDs[blockShiftKey{tripID: id, serviceDateUnix: key.serviceDateUnix}] = tripIDs
 	}
-	return cache.positionVehiclesByBlock[key]
+	if cache.positionVehiclesByShift == nil {
+		cache.positionVehiclesByShift = make(map[blockShiftKey]*gtfs.Vehicle)
+	}
+	vehicle, found := cache.positionVehiclesByShift[key]
+	if !found {
+		vehicle = api.preferredLivePositionVehicle(tripIDs, serviceDate)
+		cache.positionVehiclesByShift[key] = vehicle
+	}
+	return vehicle
 }
 
-func (api *RestAPI) positionVehiclesByBlock(ctx context.Context) map[string]*gtfs.Vehicle {
-	vehicles := make(map[string]*gtfs.Vehicle)
-	positions := api.GtfsManager.GetLiveRealTimeVehicles()
-	tripIDs := make([]string, 0, len(positions))
-	for _, vehicle := range positions {
-		if vehicle.Trip != nil {
-			tripIDs = append(tripIDs, vehicle.Trip.ID.ID)
-		}
-	}
-	trips, err := utils.QueryInBatches(ctx, tripIDs, api.GtfsManager.GtfsDB.Queries.GetTripsByIDs)
-	if err != nil {
-		warnIfRealDBError(err, "positionVehiclesByBlock: GetTripsByIDs failed")
-		return vehicles
-	}
-	blockKeys := make(map[string]string, len(trips))
-	for _, trip := range trips {
-		blockKeys[trip.ID] = positionBlockKey(trip)
+func (api *RestAPI) preferredLivePositionVehicle(tripIDs []string, serviceDate time.Time) *gtfs.Vehicle {
+	trips := make(map[string]bool, len(tripIDs))
+	for _, id := range tripIDs {
+		trips[id] = true
 	}
 	seen := make(map[string]bool)
-	for _, vehicle := range positions {
+	var preferred *gtfs.Vehicle
+	for _, vehicle := range api.GtfsManager.GetLiveRealTimeVehicles() {
 		if vehicle.ID == nil || vehicle.ID.ID == "" || vehicle.Trip == nil || isTripUpdateVehicle(&vehicle) {
 			continue
 		}
@@ -70,25 +71,9 @@ func (api *RestAPI) positionVehiclesByBlock(ctx context.Context) map[string]*gtf
 			continue
 		}
 		seen[vehicle.ID.ID] = true
-		if key := blockKeys[vehicle.Trip.ID.ID]; key != "" {
-			vehicles[key] = &vehicle
+		if trips[vehicle.Trip.ID.ID] && tripUpdateOnServiceDate(*vehicle.Trip, serviceDate) {
+			preferred = &vehicle
 		}
 	}
-	return vehicles
-}
-
-func (api *RestAPI) positionVehicleBlockKey(ctx context.Context, tripID string) string {
-	trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
-	if err != nil {
-		warnIfRealDBError(err, "positionVehicleBlockKey: GetTrip failed")
-		return ""
-	}
-	return positionBlockKey(trip)
-}
-
-func positionBlockKey(trip gtfsdb.Trip) string {
-	if blockID := nulls.StringOrEmpty(trip.BlockID); blockID != "" {
-		return "block:" + blockID
-	}
-	return "trip:" + trip.ID
+	return preferred
 }

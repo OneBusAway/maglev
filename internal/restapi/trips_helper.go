@@ -254,7 +254,7 @@ func (api *RestAPI) statusLookupTripID(ctx context.Context, activeTripRawID, tri
 // timestamps; record freshness must not revive those fields.
 func (api *RestAPI) applyVehicleRecord(ctx context.Context, status *models.TripStatus, extras *tripStatusExtras, input tripStatusInput) {
 	extras.blockTripIDs = api.blockShiftTripIDsSortedByStartTime(ctx, input.dbTripID, input.serviceDate)
-	extras.record = api.resolveVehicleRecord(ctx, input.vehicle, extras.blockTripIDs)
+	extras.record = api.resolveVehicleRecord(ctx, input.vehicle, extras.blockTripIDs, input.serviceDate)
 	if extras.record.present {
 		status.LastUpdateTime = models.NewModelTime(extras.record.time)
 		status.Status, status.Phase = GetVehicleStatusAndPhase(input.vehicle)
@@ -303,7 +303,7 @@ func (api *RestAPI) statusRecordUpdates(ctx context.Context, input tripStatusInp
 	if input.vehicle == nil {
 		updates = api.blockTripUpdates([]string{input.dbTripID})
 	} else {
-		updates = api.vehicleRecordUpdates(ctx, api.blockTripUpdates(blockTripIDs), input.vehicle)
+		updates = api.vehicleRecordUpdates(ctx, api.blockTripUpdates(blockTripIDs), input.vehicle, input.serviceDate)
 	}
 	if api.vehicleRecordExpired(updates) {
 		return nil

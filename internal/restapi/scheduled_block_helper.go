@@ -124,8 +124,9 @@ type snapshotCache struct {
 	// tripAgencies memoizes tripAgencyID, which building a trip-update vehicle
 	// makes for each named update on the block.
 	tripAgencies map[string]tripAgency
-	// positionVehiclesByBlock assigns anonymous updates to one position vehicle.
-	positionVehiclesByBlock map[string]*gtfs.Vehicle
+	// positionVehiclesByShift assigns anonymous updates to one live vehicle per
+	// service-date shift, including cached nil assignments.
+	positionVehiclesByShift map[blockShiftKey]*gtfs.Vehicle
 }
 
 type tripAgency struct {

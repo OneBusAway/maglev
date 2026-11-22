@@ -162,9 +162,9 @@ func (api *RestAPI) recordTimeExpired(recordTime time.Time) bool {
 // vehicle reports positions, so it is found as a position vehicle instead. Vehicle IDs
 // are only unique within an agency, so a position vehicle attributed to another
 // agency than tripID's is a different vehicle.
-func (api *RestAPI) tripUpdateVehicleHasPosition(ctx context.Context, tripUpdate gtfs.Trip, tripID string) bool {
+func (api *RestAPI) tripUpdateVehicleHasPosition(ctx context.Context, tripUpdate gtfs.Trip, tripID string, serviceDate time.Time) bool {
 	if !namesVehicle(tripUpdate) {
-		return api.preferredPositionVehicle(ctx, tripID) != nil
+		return api.preferredPositionVehicle(ctx, tripID, serviceDate) != nil
 	}
 	tripAgencyID, known := api.tripAgencyID(ctx, tripID)
 	if !known {
