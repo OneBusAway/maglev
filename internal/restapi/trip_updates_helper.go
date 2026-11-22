@@ -158,13 +158,13 @@ func (api *RestAPI) recordTimeExpired(recordTime time.Time) bool {
 	return age < -tripUpdateMaxAge || age > tripUpdateMaxAge
 }
 
-// tripUpdateVehicleHasPosition reports whether the vehicle a trip update names
-// reports positions, so it is found as a position vehicle instead. Vehicle IDs
+// tripUpdateVehicleHasPosition reports whether a trip update's named or assigned
+// vehicle reports positions, so it is found as a position vehicle instead. Vehicle IDs
 // are only unique within an agency, so a position vehicle attributed to another
 // agency than tripID's is a different vehicle.
 func (api *RestAPI) tripUpdateVehicleHasPosition(ctx context.Context, tripUpdate gtfs.Trip, tripID string) bool {
-	if tripUpdate.Vehicle == nil || tripUpdate.Vehicle.ID == nil {
-		return false
+	if !namesVehicle(tripUpdate) {
+		return api.preferredPositionVehicle(ctx, tripID) != nil
 	}
 	tripAgencyID, known := api.tripAgencyID(ctx, tripID)
 	if !known {

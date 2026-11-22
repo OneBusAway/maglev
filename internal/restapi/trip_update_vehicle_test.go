@@ -1488,10 +1488,12 @@ func TestExplicitVehicleIDForSecondVehicleOnTrip(t *testing.T) {
 	tests := []struct {
 		name      string
 		recordAge time.Duration
+		named     bool
 		wantCode  int
 	}{
-		{name: "fresh record", wantCode: http.StatusOK},
-		{name: "expired record", recordAge: 20 * time.Minute, wantCode: http.StatusNotFound},
+		{name: "fresh anonymous record belongs to busB", wantCode: http.StatusOK},
+		{name: "expired anonymous record does not expire busA", recordAge: 20 * time.Minute, wantCode: http.StatusOK},
+		{name: "expired named record expires busA", recordAge: 20 * time.Minute, named: true, wantCode: http.StatusNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1502,6 +1504,9 @@ func TestExplicitVehicleIDForSecondVehicleOnTrip(t *testing.T) {
 			api.GtfsManager.MockAddVehicleWithOptions("busB", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
 			update := plannedVehicleTripUpdate(tripID, now.Add(-tt.recordAge))
 			update.Vehicle = nil
+			if tt.named {
+				update.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "busA"}}
+			}
 			api.GtfsManager.MockAddFullTripUpdate(update)
 			query := fmt.Sprintf("key=TEST&serviceDate=%d&vehicleId=dp-agency_busA", serviceDate.UnixMilli())
 
@@ -1973,12 +1978,12 @@ func TestVehicleRecordOwnership_RetentionAndDeviation(t *testing.T) {
 				ID: gtfs.TripID{ID: laterID}, Timestamp: &now, Delay: &otherDelay,
 				Vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "other"}},
 			})
+			// Keep the tested bus last so it owns anonymous updates. The other
+			// bus has a position and must not be synthesized for an expired record.
+			api.GtfsManager.MockAddVehicleWithOptions("other", laterID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
 			if tt.position {
 				api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
 			}
-			// Both buses have positions when testing position records. The later
-			// bus must not be synthesized as a stand-in for the expired one.
-			api.GtfsManager.MockAddVehicleWithOptions("other", laterID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
 
 			vehicle := api.vehicleForTrip(context.Background(), tripID, serviceDate)
 			if !tt.wantVehicle {
@@ -2004,13 +2009,89 @@ func TestVehicleRecordOwnership_RetentionAndDeviation(t *testing.T) {
 	}
 }
 
+func TestVehicleRecordOwnership_OnePositionVehiclePerBlock(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	for _, anonymousFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("anonymousFirst=%t", anonymousFirst), func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			stopID, _, firstID, _ := setupDelayPropTestData(t, api, 1)
+			addDownstreamStop(t, api, firstID)
+			nextID := addLaterBlockTrip(t, api, stopID, firstID)
+			firstTime, gpsTime := now.Add(-time.Minute), now.Add(-30*time.Second)
+			firstDelay, nextDelay := time.Minute, 10*time.Minute
+			first := gtfs.Trip{ID: gtfs.TripID{ID: firstID}, Timestamp: &firstTime, Delay: &firstDelay}
+			if !anonymousFirst {
+				first.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "first-bus"}}
+			}
+			next := gtfs.Trip{ID: gtfs.TripID{ID: nextID}, Timestamp: &now, Delay: &nextDelay}
+			api.GtfsManager.MockAddFullTripUpdate(first)
+			api.GtfsManager.MockAddFullTripUpdate(next)
+			// Java's last position entity for the block wins the anonymous assignment.
+			api.GtfsManager.MockAddVehicleWithOptions("first-bus", firstID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &gpsTime})
+			api.GtfsManager.MockAddVehicleWithOptions("next-bus", nextID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &gpsTime})
+			ctx := WithSnapshotCache(t.Context(), newSnapshotCache())
+			for _, vehicle := range api.GtfsManager.GetRealTimeVehicles() {
+				status, extras, err := api.BuildTripStatus(ctx, "dp-agency", vehicle.Trip.ID.ID, &vehicle, serviceDate, now, nil)
+				require.NoError(t, err)
+				if vehicle.ID.ID == "next-bus" {
+					assert.True(t, extras.record.present)
+					assert.Equal(t, now.UnixMilli(), status.LastUpdateTime.UnixMilli())
+					assert.Equal(t, 600, status.ScheduleDeviation)
+				} else if anonymousFirst {
+					assert.False(t, extras.record.present, "the unassigned bus must stay position-only")
+					assert.Equal(t, gpsTime.UnixMilli(), status.LastUpdateTime.UnixMilli())
+					assert.Zero(t, status.ScheduleDeviation)
+				} else {
+					assert.True(t, extras.record.present)
+					assert.Equal(t, firstTime.UnixMilli(), status.LastUpdateTime.UnixMilli())
+					assert.Equal(t, 60, status.ScheduleDeviation)
+				}
+			}
+			for _, id := range []string{firstID, nextID} {
+				vehicle := api.vehicleForTrip(ctx, id, serviceDate)
+				require.NotNil(t, vehicle)
+				wantID := "next-bus"
+				if id == firstID && !anonymousFirst {
+					wantID = "first-bus"
+				}
+				assert.Equal(t, wantID, vehicle.ID.ID, "lookup must follow the anonymous assignment even with a direct position on that trip")
+			}
+			assert.Nil(t, api.tripUpdateVehicleForTrip(ctx, nextID, serviceDate), "assigned anonymous updates must not also create a stand-in")
+			updates := api.predictionRecordUpdates(ctx, next, nextID, serviceDate)
+			wantCount := 1
+			if anonymousFirst {
+				wantCount = 2
+			}
+			assert.Len(t, updates, wantCount)
+			if anonymousFirst {
+				updateOnly := first
+				updateOnly.IsEntityInMessage = true
+				updateOnly.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "first-bus"}}
+				vehicle := &gtfs.Vehicle{ID: updateOnly.Vehicle.ID, Trip: &updateOnly}
+				assert.Empty(t, api.vehicleRecordUpdates(ctx, api.tripBlockUpdates(ctx, firstID, serviceDate), vehicle),
+					"an update-only vehicle must not also consume assigned anonymous updates")
+			}
+		})
+	}
+}
+
 func TestVehicleRecordTime_ScopedToVehicle(t *testing.T) {
 	now := time.Date(2010, 1, 1, 8, 30, 0, 0, time.UTC)
 	ownTime := now.Add(-time.Minute)
 	expiredTime := now.Add(-10 * time.Minute)
 	api := createTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
+	stopID, _, firstID, _ := setupDelayPropTestData(t, api, 1)
+	nextID := addLaterBlockTrip(t, api, stopID, firstID)
 	update := func(tripID, vehicleID string, timestamp time.Time) gtfs.Trip {
+		if tripID == "A" {
+			tripID = firstID
+		} else {
+			tripID = nextID
+		}
 		trip := gtfs.Trip{ID: gtfs.TripID{ID: tripID}, Timestamp: &timestamp, IsEntityInMessage: true}
 		if vehicleID != "" {
 			trip.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: vehicleID}}
@@ -2019,7 +2100,7 @@ func TestVehicleRecordTime_ScopedToVehicle(t *testing.T) {
 	}
 	ownUpdate := update("A", "bus", ownTime)
 	anonymousUpdate := update("A", "", ownTime)
-	positionVehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}, Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "A"}}, IsEntityInMessage: true}
+	positionVehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}, Trip: &gtfs.Trip{ID: ownUpdate.ID}, IsEntityInMessage: true}
 	blockVehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "block"}, Trip: &anonymousUpdate, Timestamp: &now}
 	updateVehicle := &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}, Trip: &ownUpdate, Timestamp: &now}
 	tests := []struct {
@@ -2051,7 +2132,10 @@ func TestVehicleRecordTime_ScopedToVehicle(t *testing.T) {
 				api.GtfsManager.MockAddFullTripUpdate(trip)
 			}
 
-			got, found := api.vehicleRecordTime(tt.vehicle, []string{"A", "B"})
+			if tt.vehicle == positionVehicle || tt.vehicle.Trip == nil {
+				api.GtfsManager.MockAddVehicleWithOptions("bus", firstID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
+			}
+			got, found := api.vehicleRecordTime(t.Context(), tt.vehicle, []string{firstID, nextID})
 
 			assert.Equal(t, tt.found, found)
 			assert.Equal(t, tt.want, got)

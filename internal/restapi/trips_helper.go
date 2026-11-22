@@ -254,7 +254,7 @@ func (api *RestAPI) statusLookupTripID(ctx context.Context, activeTripRawID, tri
 // timestamps; record freshness must not revive those fields.
 func (api *RestAPI) applyVehicleRecord(ctx context.Context, status *models.TripStatus, extras *tripStatusExtras, input tripStatusInput) {
 	extras.blockTripIDs = api.blockShiftTripIDsSortedByStartTime(ctx, input.dbTripID, input.serviceDate)
-	extras.record = api.resolveVehicleRecord(input.vehicle, extras.blockTripIDs)
+	extras.record = api.resolveVehicleRecord(ctx, input.vehicle, extras.blockTripIDs)
 	if extras.record.present {
 		status.LastUpdateTime = models.NewModelTime(extras.record.time)
 		status.Status, status.Phase = GetVehicleStatusAndPhase(input.vehicle)
@@ -275,7 +275,7 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 	// buses under one block) leak the last shift's delay into the first
 	// shift's scheduleDeviation, and status.ScheduleDeviation flows onward
 	// into effectiveTime / stop-offset math for every arrival on this trip.
-	updates := api.statusRecordUpdates(input, extras.blockTripIDs)
+	updates := api.statusRecordUpdates(ctx, input, extras.blockTripIDs)
 	scheduleDeviation, hasRealtimeTripUpdate, _ := api.recordDeviation(ctx, updates, input.serviceDate, input.currentTime)
 
 	if hasRealtimeTripUpdate {
@@ -298,12 +298,12 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 
 // statusRecordUpdates uses one vehicle's fresh record. Without a vehicle there
 // is no identity connecting other block trips' updates to this trip.
-func (api *RestAPI) statusRecordUpdates(input tripStatusInput, blockTripIDs []string) []tripUpdateForTrip {
+func (api *RestAPI) statusRecordUpdates(ctx context.Context, input tripStatusInput, blockTripIDs []string) []tripUpdateForTrip {
 	var updates []tripUpdateForTrip
 	if input.vehicle == nil {
 		updates = api.blockTripUpdates([]string{input.dbTripID})
 	} else {
-		updates = vehicleRecordUpdates(api.blockTripUpdates(blockTripIDs), input.vehicle)
+		updates = api.vehicleRecordUpdates(ctx, api.blockTripUpdates(blockTripIDs), input.vehicle)
 	}
 	if api.vehicleRecordExpired(updates) {
 		return nil
