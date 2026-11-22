@@ -1825,6 +1825,48 @@ func TestBuildTripStatus_PassedVehicleWithExpiredRecord(t *testing.T) {
 	}
 }
 
+func TestBuildTripStatus_PassedTripUpdateVehicleRequiresFreshRecord(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	for _, anonymous := range []bool{false, true} {
+		t.Run(fmt.Sprintf("anonymous=%t", anonymous), func(t *testing.T) {
+			mockClock := clock.NewMockClock(now)
+			api := createTestApiWithClock(t, mockClock)
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+			addDownstreamStop(t, api, tripID)
+			update := plannedVehicleTripUpdate(tripID, now.Add(-time.Minute))
+			if anonymous {
+				update.Vehicle = nil
+			}
+			api.GtfsManager.MockAddFullTripUpdate(update)
+			vehicle := api.tripUpdateVehicleForTrip(t.Context(), tripID, serviceDate)
+			require.NotNil(t, vehicle)
+			require.True(t, isTripUpdateVehicle(vehicle))
+			require.Nil(t, vehicle.Position)
+			status, extras, err := api.BuildTripStatus(t.Context(), "dp-agency", tripID, vehicle, serviceDate, now, nil)
+			require.NoError(t, err)
+			require.True(t, status.Predicted)
+			require.True(t, extras.record.present)
+
+			// The record is expired but its timestamp is still inside the
+			// position vehicle's longer stale window.
+			mockClock.Advance(6 * time.Minute)
+			status, extras, err = api.BuildTripStatus(t.Context(), "dp-agency", tripID, vehicle, serviceDate, mockClock.Now(), nil)
+
+			require.NoError(t, err)
+			assert.False(t, extras.record.present)
+			assert.False(t, status.Predicted)
+			assert.True(t, status.Scheduled)
+			assert.Equal(t, "default", status.Status)
+			assert.Equal(t, "scheduled", status.Phase)
+			assert.Empty(t, status.VehicleID)
+			assert.True(t, status.LastUpdateTime.IsZero())
+		})
+	}
+}
+
 func TestVehiclesForAgency_ExpiredRecordKeepsLiveVehicleStatus(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)

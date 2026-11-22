@@ -70,9 +70,10 @@ type tripStatusInput struct {
 // BuildTripStatus builds a TripStatus for the given trip.
 //
 // Pass a non-nil vehicle when it is already known (e.g. DUPLICATED trips, or when
-// the caller has already looked up the vehicle). A supplied vehicle remains usable
-// as position-only after its record expires. Pass nil to apply automatic
-// record-based retention via vehicleForTrip.
+// the caller has already looked up the vehicle). A supplied position-reporting
+// vehicle remains usable after its trip-update record expires; a trip-update-only
+// vehicle still requires a live record. Pass nil to apply automatic record-based
+// retention via vehicleForTrip.
 //
 // tripID is used for DB lookups (stop times, shapes, block sequence). For DUPLICATED
 // trips whose synthetic ActiveTripID has no DB entry, set tripID to the base/static
@@ -95,8 +96,11 @@ func (api *RestAPI) BuildTripStatus(
 ) (*models.TripStatus, *tripStatusExtras, error) {
 	if vehicle == nil {
 		vehicle = api.vehicleForTrip(ctx, tripID, serviceDate)
-	} else if checked := api.positionVehicleWithRecord(ctx, vehicle, serviceDate); checked != nil {
-		vehicle = checked
+	} else {
+		checked := api.positionVehicleWithRecord(ctx, vehicle, serviceDate)
+		if checked != nil || isTripUpdateVehicle(vehicle) {
+			vehicle = checked
+		}
 	}
 	return api.buildTripStatusForVehicle(ctx, agencyID, tripID, vehicle, serviceDate, currentTime, freqMap)
 }
