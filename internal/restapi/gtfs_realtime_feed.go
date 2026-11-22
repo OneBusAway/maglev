@@ -24,9 +24,11 @@ func newVehiclePositionsFeed(positions internalgtfs.AgencyVehiclePositions) *gtf
 	feed := &gtfsrt.FeedMessage{
 		Header: &gtfsrt.FeedHeader{
 			GtfsRealtimeVersion: proto.String(internalgtfs.GtfsRealtimeVersion),
-			Timestamp:           proto.Uint64(uint64(positions.Timestamp.Unix())),
 		},
 		Entity: make([]*gtfsrt.FeedEntity, 0, len(positions.Vehicles)),
+	}
+	if !positions.Timestamp.IsZero() {
+		feed.Header.Timestamp = proto.Uint64(uint64(positions.Timestamp.Unix()))
 	}
 	for _, vehicle := range positions.Vehicles {
 		feed.Entity = append(feed.Entity, &gtfsrt.FeedEntity{
@@ -114,9 +116,11 @@ func newTripUpdatesFeed(updates internalgtfs.AgencyTripUpdates) *gtfsrt.FeedMess
 	feed := &gtfsrt.FeedMessage{
 		Header: &gtfsrt.FeedHeader{
 			GtfsRealtimeVersion: proto.String(internalgtfs.GtfsRealtimeVersion),
-			Timestamp:           proto.Uint64(uint64(updates.Timestamp.Unix())),
 		},
 		Entity: make([]*gtfsrt.FeedEntity, 0, len(updates.TripUpdates)),
+	}
+	if !updates.Timestamp.IsZero() {
+		feed.Header.Timestamp = proto.Uint64(uint64(updates.Timestamp.Unix()))
 	}
 	for _, update := range updates.TripUpdates {
 		feed.Entity = append(feed.Entity, &gtfsrt.FeedEntity{

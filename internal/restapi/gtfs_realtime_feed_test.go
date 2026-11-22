@@ -60,6 +60,12 @@ func TestNewVehiclePositionsFeed_Header(t *testing.T) {
 	assert.Empty(t, feed.GetEntity())
 }
 
+func TestNewVehiclePositionsFeed_NoTimestamp(t *testing.T) {
+	feed := newVehiclePositionsFeed(internalgtfs.AgencyVehiclePositions{})
+
+	assert.Nil(t, feed.GetHeader().Timestamp)
+}
+
 func TestNewVehiclePositionsFeed_AllFields(t *testing.T) {
 	reportedAt := time.Unix(1792287600, 0)
 	feed := newVehiclePositionsFeed(internalgtfs.AgencyVehiclePositions{
@@ -196,6 +202,12 @@ func TestNewTripUpdatesFeed_Header(t *testing.T) {
 	assert.Equal(t, uint64(1792287624), feed.GetHeader().GetTimestamp())
 	assert.Nil(t, feed.GetHeader().Incrementality, "unset means FULL_DATASET")
 	assert.Empty(t, feed.GetEntity())
+}
+
+func TestNewTripUpdatesFeed_NoTimestamp(t *testing.T) {
+	feed := newTripUpdatesFeed(internalgtfs.AgencyTripUpdates{})
+
+	assert.Nil(t, feed.GetHeader().Timestamp)
 }
 
 func TestNewTripUpdatesFeed_AllFields(t *testing.T) {

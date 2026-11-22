@@ -55,6 +55,7 @@ func (api *RestAPI) gtfsRealtimeAgencyID(w http.ResponseWriter, r *http.Request)
 // the client already has it.
 func writeGtfsRealtimeFeed(w http.ResponseWriter, r *http.Request, body []byte) {
 	etag := weakETag(body)
+	addVaryAcceptEncoding(w.Header())
 	w.Header().Set("ETag", etag)
 	if ifNoneMatchHits(r, etag) {
 		w.WriteHeader(http.StatusNotModified)
@@ -67,4 +68,16 @@ func writeGtfsRealtimeFeed(w http.ResponseWriter, r *http.Request, body []byte) 
 		logging.LogError(logging.ForComponent(r.Context(), "http_server"), "write GTFS-RT feed", err,
 			slog.String("path", r.URL.Path))
 	}
+}
+
+func addVaryAcceptEncoding(header http.Header) {
+	for _, value := range header.Values("Vary") {
+		for _, field := range strings.Split(value, ",") {
+			field = strings.TrimSpace(field)
+			if field == "*" || strings.EqualFold(field, "Accept-Encoding") {
+				return
+			}
+		}
+	}
+	header.Add("Vary", "Accept-Encoding")
 }

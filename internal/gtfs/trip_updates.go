@@ -19,7 +19,7 @@ type AgencyTripUpdates struct {
 	// TripUpdates have a trip_id, one per entity ID, sorted by entity ID.
 	TripUpdates []TripUpdate
 	// Timestamp is the newest data time of the feeds that contributed a trip
-	// update, or the snapshot's build time when none did.
+	// update. It is zero if none of those feeds has a data time.
 	Timestamp time.Time
 	encoded   *encodedTripUpdates
 }
@@ -48,12 +48,7 @@ func (manager *Manager) TripUpdatesForAgency(agencyID string) AgencyTripUpdates 
 	if updates, ok := merged.tripUpdatesByAgency[agencyID]; ok {
 		return updates
 	}
-	builtAt := merged.builtAt
-	// No snapshot is built on a server without realtime feeds.
-	if builtAt.IsZero() {
-		builtAt = time.Now()
-	}
-	return AgencyTripUpdates{Timestamp: builtAt}
+	return AgencyTripUpdates{}
 }
 
 // Encoded returns encode's serialization of these trip updates. Copies read
@@ -113,7 +108,7 @@ func FormatServiceTime(sinceServiceDayStart time.Duration) string {
 // configuration order, so when two feeds publish the same trip identity for an
 // agency the one listed first wins, as does the first copy within one feed.
 // feedIDs must be sorted. Caller must hold realTimeMutex.
-func (manager *Manager) buildTripUpdatesByAgency(feedIDs []string, builtAt time.Time) map[string]AgencyTripUpdates {
+func (manager *Manager) buildTripUpdatesByAgency(feedIDs []string) map[string]AgencyTripUpdates {
 	collector := tripUpdateCollector{
 		updatesByAgency: make(map[string][]TripUpdate),
 		seen:            make(map[agencyTripUpdateKey]bool),
@@ -128,7 +123,7 @@ func (manager *Manager) buildTripUpdatesByAgency(feedIDs []string, builtAt time.
 
 	updatesByAgency := make(map[string]AgencyTripUpdates, len(collector.updatesByAgency))
 	for agencyID, updates := range collector.updatesByAgency {
-		updatesByAgency[agencyID] = assembleAgencyTripUpdates(updates, builtAt)
+		updatesByAgency[agencyID] = assembleAgencyTripUpdates(updates)
 	}
 	return updatesByAgency
 }
@@ -164,7 +159,7 @@ func (collector *tripUpdateCollector) add(trip gtfs.Trip, agencyID string, dataT
 	})
 }
 
-func assembleAgencyTripUpdates(updates []TripUpdate, builtAt time.Time) AgencyTripUpdates {
+func assembleAgencyTripUpdates(updates []TripUpdate) AgencyTripUpdates {
 	slices.SortFunc(updates, func(a, b TripUpdate) int {
 		return strings.Compare(a.EntityID, b.EntityID)
 	})
@@ -173,9 +168,6 @@ func assembleAgencyTripUpdates(updates []TripUpdate, builtAt time.Time) AgencyTr
 		if update.Timestamp.After(agencyUpdates.Timestamp) {
 			agencyUpdates.Timestamp = update.Timestamp
 		}
-	}
-	if agencyUpdates.Timestamp.IsZero() {
-		agencyUpdates.Timestamp = builtAt
 	}
 	return agencyUpdates
 }

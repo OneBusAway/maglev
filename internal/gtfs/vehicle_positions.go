@@ -19,7 +19,7 @@ type AgencyVehiclePositions struct {
 	// vehiclePositionsMaxAge of the snapshot, one per vehicle ID, sorted by ID.
 	Vehicles []gtfs.Vehicle
 	// Timestamp is the newest data time of the feeds that contributed a
-	// vehicle, or the snapshot's build time when none did.
+	// vehicle. It is zero if none of those feeds has a data time.
 	Timestamp time.Time
 }
 
@@ -31,12 +31,7 @@ func (manager *Manager) VehiclePositionsForAgency(agencyID string) AgencyVehicle
 	if positions, ok := merged.vehiclePositionsByAgency[agencyID]; ok {
 		return positions
 	}
-	builtAt := merged.builtAt
-	// No snapshot is built on a server without realtime feeds.
-	if builtAt.IsZero() {
-		builtAt = time.Now()
-	}
-	return AgencyVehiclePositions{Timestamp: builtAt}
+	return AgencyVehiclePositions{}
 }
 
 // exportCandidate is a vehicle with what the export needs to choose between
@@ -77,7 +72,7 @@ func (manager *Manager) buildVehiclePositionsByAgency(feedIDs []string, builtAt 
 
 	positionsByAgency := make(map[string]AgencyVehiclePositions, len(newestByAgency))
 	for agencyID, candidates := range newestByAgency {
-		positionsByAgency[agencyID] = assembleAgencyVehiclePositions(candidates, builtAt)
+		positionsByAgency[agencyID] = assembleAgencyVehiclePositions(candidates)
 	}
 	return positionsByAgency
 }
@@ -149,7 +144,7 @@ func keepNewestCandidate(newestByAgency map[string]map[string]exportCandidate, a
 	}
 }
 
-func assembleAgencyVehiclePositions(candidates map[string]exportCandidate, builtAt time.Time) AgencyVehiclePositions {
+func assembleAgencyVehiclePositions(candidates map[string]exportCandidate) AgencyVehiclePositions {
 	positions := AgencyVehiclePositions{Vehicles: make([]gtfs.Vehicle, 0, len(candidates))}
 	for _, candidate := range candidates {
 		positions.Vehicles = append(positions.Vehicles, candidate.vehicle)
@@ -160,8 +155,5 @@ func assembleAgencyVehiclePositions(candidates map[string]exportCandidate, built
 	slices.SortFunc(positions.Vehicles, func(a, b gtfs.Vehicle) int {
 		return strings.Compare(a.ID.ID, b.ID.ID)
 	})
-	if positions.Timestamp.IsZero() {
-		positions.Timestamp = builtAt
-	}
 	return positions
 }

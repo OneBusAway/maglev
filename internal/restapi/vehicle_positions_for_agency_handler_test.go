@@ -152,6 +152,7 @@ func TestVehiclePositionsForAgencyHandler_UnknownAgency(t *testing.T) {
 	feed := decodeFeed(t, body)
 	assert.Equal(t, "2.0", feed.GetHeader().GetGtfsRealtimeVersion())
 	assert.Empty(t, feed.GetEntity())
+	assert.Nil(t, feed.GetHeader().Timestamp)
 }
 
 func TestVehiclePositionsForAgencyHandler_ResetClearsAttribution(t *testing.T) {

@@ -169,28 +169,26 @@ func TestVehiclePositionsForAgency_Timestamp(t *testing.T) {
 		assert.Equal(t, now.Add(-time.Minute), manager.VehiclePositionsForAgency("agency-A").Timestamp)
 	})
 
-	t.Run("no fresh vehicles uses the build time", func(t *testing.T) {
+	t.Run("no fresh vehicles has no data timestamp", func(t *testing.T) {
 		manager := newTestManager()
 		seedAgencyFeed(manager, "feed-a", "agency-A", now.Add(-time.Hour), now, exportVehicle("V1", now.Add(-time.Hour)))
-		before := time.Now()
 		rebuild(manager)
 
 		positions := manager.VehiclePositionsForAgency("agency-A")
 		assert.Empty(t, positions.Vehicles)
-		assert.False(t, positions.Timestamp.Before(before))
+		assert.True(t, positions.Timestamp.IsZero())
 		assert.Equal(t, positions.Timestamp, manager.VehiclePositionsForAgency("nope").Timestamp)
 	})
 
 	t.Run("before the first snapshot", func(t *testing.T) {
 		manager := newTestManager()
-		before := time.Now()
 
 		positions := manager.VehiclePositionsForAgency("agency-A")
 		assert.Empty(t, positions.Vehicles)
-		assert.False(t, positions.Timestamp.Before(before), "a server without realtime feeds still sends a current header time")
+		assert.True(t, positions.Timestamp.IsZero())
 	})
 
-	t.Run("a cloned snapshot keeps its build time", func(t *testing.T) {
+	t.Run("a cloned snapshot keeps an absent data timestamp", func(t *testing.T) {
 		manager := newTestManager()
 		rebuild(manager)
 		builtAt := manager.VehiclePositionsForAgency("agency-A").Timestamp
@@ -199,13 +197,12 @@ func TestVehiclePositionsForAgency_Timestamp(t *testing.T) {
 		assert.Equal(t, builtAt, manager.VehiclePositionsForAgency("agency-A").Timestamp)
 	})
 
-	t.Run("a feed without a data time uses the build time", func(t *testing.T) {
+	t.Run("a feed without a data time does not use the build time", func(t *testing.T) {
 		manager := newTestManager()
 		seedAgencyFeed(manager, "feed-a", "agency-A", time.Time{}, now, exportVehicle("V1", now))
-		before := time.Now()
 		rebuild(manager)
 
-		assert.False(t, manager.VehiclePositionsForAgency("agency-A").Timestamp.Before(before))
+		assert.True(t, manager.VehiclePositionsForAgency("agency-A").Timestamp.IsZero())
 	})
 }
 
