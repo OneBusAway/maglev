@@ -1682,6 +1682,102 @@ func TestTripForVehicleHandler_RecordChecks(t *testing.T) {
 	}
 }
 
+func TestBuildTripStatus_PassedVehicleWithExpiredRecord(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	tests := []struct {
+		name         string
+		relationship gtfs.TripScheduleRelationship
+		canceled     bool
+		recordAge    time.Duration
+		wantStatus   string
+		wantRecord   bool
+	}{
+		{name: "scheduled vehicle survives expired record", recordAge: 6 * time.Minute, wantStatus: "SCHEDULED"},
+		{name: "duplicated vehicle survives expired record", relationship: gtfsrt.TripDescriptor_DUPLICATED, recordAge: 6 * time.Minute, wantStatus: "DUPLICATED"},
+		{name: "expired cancellation does not change the vehicle", canceled: true, recordAge: 6 * time.Minute, wantStatus: "SCHEDULED"},
+		{name: "live cancellation still applies", canceled: true, recordAge: time.Minute, wantStatus: "CANCELED", wantRecord: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+			addDownstreamStop(t, api, tripID)
+			lat, lon := float32(47), float32(-122)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+				Timestamp: &now, Position: &gtfs.Position{Latitude: &lat, Longitude: &lon}, ScheduleRelationship: tt.relationship,
+			})
+			vehicle := api.GtfsManager.GetVehicleForTrip(context.Background(), tripID)
+			require.NotNil(t, vehicle)
+			recordTime, delay := now.Add(-tt.recordAge), 10*time.Minute
+			update := gtfs.Trip{
+				ID: gtfs.TripID{ID: tripID, ScheduleRelationship: tt.relationship}, Timestamp: &recordTime, Delay: &delay,
+				Vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
+			}
+			if tt.canceled {
+				update.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+			}
+			api.GtfsManager.MockAddFullTripUpdate(update)
+
+			status, extras, err := api.BuildTripStatus(context.Background(), "dp-agency", tripID, vehicle, serviceDate, now, nil)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantStatus, status.Status)
+			assert.True(t, status.Predicted, "fresh GPS remains real-time data after its record expires")
+			assert.Equal(t, "dp-agency_bus", status.VehicleID)
+			assert.Equal(t, tt.wantRecord, extras.record.present)
+			assert.Zero(t, status.ScheduleDeviation, "expired/canceled record delay must not leak into the position-only status")
+			if tt.wantRecord {
+				assert.Equal(t, recordTime.UnixMilli(), status.LastUpdateTime.UnixMilli())
+				assert.Empty(t, status.Phase)
+				assert.Zero(t, status.DistanceAlongTrip)
+			} else {
+				assert.Equal(t, now.UnixMilli(), status.LastUpdateTime.UnixMilli())
+				assert.Equal(t, "in_progress", status.Phase)
+				require.NotNil(t, status.LastKnownLocation)
+				assert.Equal(t, float64(lat), status.LastKnownLocation.Lat)
+				assert.Nil(t, api.vehicleForTrip(context.Background(), tripID, serviceDate), "automatic lookup must still reject the expired record")
+			}
+			assert.Equal(t, tt.relationship, vehicle.Trip.ID.ScheduleRelationship, "do not mutate the shared vehicle")
+		})
+	}
+}
+
+func TestVehiclesForAgency_ExpiredRecordKeepsLiveVehicleStatus(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	addDownstreamStop(t, api, tripID)
+	lat, lon := float32(47), float32(-122)
+	api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+		Timestamp: &now, Position: &gtfs.Position{Latitude: &lat, Longitude: &lon},
+	})
+	expired, delay := now.Add(-6*time.Minute), 10*time.Minute
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID: gtfs.TripID{ID: tripID}, Timestamp: &expired, Delay: &delay,
+		Vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}},
+	})
+
+	resp, model := callAPIHandler[VehiclesForAgencyResponse](t, api, "/api/where/vehicles-for-agency/dp-agency.json?key=TEST")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	entry := findVehicleStatusByID(model.Data.List, "bus")
+	require.NotNil(t, entry)
+	require.NotNil(t, entry.Location)
+	require.NotNil(t, entry.TripStatus)
+	assert.True(t, entry.TripStatus.Predicted)
+	assert.False(t, entry.TripStatus.Scheduled)
+	assert.Equal(t, "SCHEDULED", entry.TripStatus.Status)
+	assert.Equal(t, "in_progress", entry.TripStatus.Phase)
+	assert.Equal(t, now.UnixMilli(), entry.TripStatus.LastUpdateTime.UnixMilli())
+	assert.Zero(t, entry.TripStatus.ScheduleDeviation)
+}
+
 func TestVehicleRecordOwnership_DeviationSamples(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
