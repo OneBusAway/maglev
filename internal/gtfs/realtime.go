@@ -1647,8 +1647,10 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 					logger.Warn("trip updates stale beyond threshold while sibling sub-feeds succeed, clearing trip data",
 						slog.String("feed", feedCfg.ID))
 				}
-				if hasNewData && manager.clearStaleVehicles(feedCfg.ID) {
-					logger.Warn("vehicle positions stale beyond threshold while sibling sub-feeds succeed, clearing vehicle data",
+				// Unguarded: when every sub-feed fails, the feed-wide clear can
+				// trail the vehicles' own clock by up to staleFeedThreshold.
+				if manager.clearStaleVehicles(feedCfg.ID) {
+					logger.Warn("vehicle positions stale beyond threshold, clearing vehicle data",
 						slog.String("feed", feedCfg.ID))
 				}
 
