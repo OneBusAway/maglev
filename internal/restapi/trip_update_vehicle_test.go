@@ -2032,8 +2032,9 @@ func TestVehicleRecordTime_ScopedToVehicle(t *testing.T) {
 		{name: "another named vehicle", vehicle: positionVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "other", now)}, want: ownTime, found: true},
 		{name: "anonymous update on own trip", vehicle: positionVehicle, updates: []gtfs.Trip{anonymousUpdate}, want: ownTime, found: true},
 		{name: "anonymous update without a vehicle trip", vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}, updates: []gtfs.Trip{anonymousUpdate}},
-		{name: "anonymous update on another trip cannot refresh a named vehicle", vehicle: positionVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "", now)}, want: ownTime, found: true},
-		{name: "only anonymous update on another trip", vehicle: positionVehicle, updates: []gtfs.Trip{update("B", "", now)}},
+		{name: "anonymous block update refreshes a position vehicle", vehicle: positionVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "", now)}, want: now, found: true},
+		{name: "only anonymous update on another trip", vehicle: positionVehicle, updates: []gtfs.Trip{update("B", "", now)}, want: now, found: true},
+		{name: "anonymous block update does not refresh an update-only vehicle", vehicle: updateVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "", now)}, want: ownTime, found: true},
 		{name: "another named vehicle on own trip", vehicle: positionVehicle, updates: []gtfs.Trip{update("A", "other", now)}},
 		{name: "expired anonymous update on own trip", vehicle: positionVehicle, updates: []gtfs.Trip{update("A", "", expiredTime)}, want: expiredTime},
 		{name: "same vehicle uses last block update", vehicle: positionVehicle, updates: []gtfs.Trip{ownUpdate, update("B", "bus", now)}, want: now, found: true},
@@ -2054,6 +2055,115 @@ func TestVehicleRecordTime_ScopedToVehicle(t *testing.T) {
 
 			assert.Equal(t, tt.found, found)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestArrivals_AnonymousBlockUpdatesKeepPositionVehicle(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
+	tests := []struct {
+		name      string
+		firstAge  time.Duration
+		nextAge   time.Duration
+		omitFirst bool
+		nameFirst bool
+		emptyID   bool
+		nameNext  bool
+		wantID    string
+	}{
+		{name: "anonymous block updates", firstAge: time.Minute, nextAge: 2 * time.Minute, wantID: "bus"},
+		{name: "next trip refreshes expired first update", firstAge: 10 * time.Minute, nextAge: time.Minute, wantID: "bus"},
+		{name: "only next trip has an update", omitFirst: true, nextAge: time.Minute, wantID: "bus"},
+		{name: "empty vehicle IDs", firstAge: time.Minute, nextAge: 2 * time.Minute, emptyID: true, wantID: "bus"},
+		{name: "named first update and anonymous next trip", firstAge: time.Minute, nextAge: 2 * time.Minute, nameFirst: true, wantID: "bus"},
+		{name: "expired next update expires the combined record", firstAge: time.Minute, nextAge: 10 * time.Minute, nameFirst: true},
+		{name: "all block updates expired", firstAge: 10 * time.Minute, nextAge: 9 * time.Minute},
+		{name: "next trip names another bus", firstAge: time.Minute, nextAge: 2 * time.Minute, nameNext: true, wantID: "other"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			stopID, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+			addDownstreamStop(t, api, tripID)
+			nextID := addLaterBlockTrip(t, api, stopID, tripID)
+			firstTime, nextTime := now.Add(-tt.firstAge), now.Add(-tt.nextAge)
+			first := gtfs.Trip{ID: gtfs.TripID{ID: tripID}, Timestamp: &firstTime}
+			next := gtfs.Trip{ID: gtfs.TripID{ID: nextID}, Timestamp: &nextTime}
+			if tt.nameFirst {
+				first.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}
+			}
+			if tt.nameNext {
+				next.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "other"}}
+			}
+			if tt.emptyID {
+				first.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{}}
+				next.Vehicle = &gtfs.Vehicle{ID: &gtfs.VehicleID{}}
+			}
+			if !tt.omitFirst {
+				api.GtfsManager.MockAddFullTripUpdate(first)
+			}
+			api.GtfsManager.MockAddFullTripUpdate(next)
+			gpsTime := now.Add(-30 * time.Second)
+			lat, lon := float32(47), float32(-122)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+				Timestamp: &gpsTime, Position: &gtfs.Position{Latitude: &lat, Longitude: &lon},
+			})
+
+			vehicle := api.vehicleForTrip(t.Context(), nextID, serviceDate)
+			if tt.wantID == "" {
+				require.Nil(t, vehicle)
+			} else {
+				require.NotNil(t, vehicle)
+				assert.Equal(t, tt.wantID, vehicle.ID.ID)
+			}
+			combinedTripID := utils.FormCombinedID("dp-agency", nextID)
+			if tt.wantID == "bus" {
+				updates := api.predictionRecordUpdates(t.Context(), next, nextID, serviceDate)
+				wantCount := 2
+				if tt.omitFirst {
+					wantCount = 1
+				}
+				assert.Len(t, updates, wantCount, "prediction expiry and deviation must use the same combined record")
+			}
+			// Java overwrites record time in block order, not timestamp order.
+			wantRecordTime := nextTime
+			check := func(t *testing.T, arrival models.ArrivalAndDeparture) {
+				t.Helper()
+				require.NotNil(t, arrival.TripStatus)
+				assert.Equal(t, tt.wantID != "", arrival.Predicted)
+				if tt.wantID == "" {
+					assert.Empty(t, arrival.VehicleID)
+					assert.Empty(t, arrival.TripStatus.VehicleID)
+					return
+				}
+				wantVehicleID := utils.FormCombinedID("dp-agency", tt.wantID)
+				assert.Equal(t, wantVehicleID, arrival.VehicleID)
+				assert.Equal(t, wantVehicleID, arrival.TripStatus.VehicleID)
+				assert.Equal(t, wantRecordTime.UnixMilli(), arrival.LastUpdateTime.UnixMilli())
+				assert.Equal(t, wantRecordTime.UnixMilli(), arrival.TripStatus.LastUpdateTime.UnixMilli())
+				if tt.wantID == "bus" {
+					require.NotNil(t, arrival.TripStatus.LastKnownLocation)
+					assert.Equal(t, float64(lat), arrival.TripStatus.LastKnownLocation.Lat)
+					assert.Equal(t, float64(lon), arrival.TripStatus.LastKnownLocation.Lon)
+					assert.Equal(t, gpsTime.UnixMilli(), arrival.TripStatus.LastLocationUpdateTime.UnixMilli())
+				}
+			}
+			t.Run("singular", func(t *testing.T) {
+				resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, fmt.Sprintf(
+					"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+					combinedStopID, combinedTripID, serviceDate.UnixMilli()))
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				check(t, model.Data.Entry)
+			})
+			t.Run("plural", func(t *testing.T) {
+				resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, fmt.Sprintf(
+					"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=60&minutesAfter=180", combinedStopID))
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				check(t, findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, combinedTripID))
+			})
 		})
 	}
 }

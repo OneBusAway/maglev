@@ -84,11 +84,11 @@ func (api *RestAPI) tripBlockUpdates(ctx context.Context, tripID string, service
 }
 
 // predictionRecordUpdates pairs anonymous updates with a position vehicle on
-// their trip, or otherwise selects the named vehicle/block stand-in's record.
+// their block, or otherwise selects the named vehicle/block stand-in's record.
 func (api *RestAPI) predictionRecordUpdates(ctx context.Context, update gtfs.Trip, tripID string, serviceDate time.Time) []tripUpdateForTrip {
 	vehicle := api.GtfsManager.GetVehicleForTrip(ctx, tripID)
-	reportsTrip := vehicle != nil && vehicle.Trip != nil && vehicle.Trip.ID.ID == tripID
-	if !reportsTrip || namesAnotherVehicle(update, vehicle) {
+	reportsBlock := vehicle != nil && !isTripUpdateVehicle(vehicle) && api.vehicleMatchesTripRecord(vehicle, tripID)
+	if !reportsBlock || namesAnotherVehicle(update, vehicle) {
 		vehicle = &gtfs.Vehicle{ID: api.tripUpdateVehicleID(ctx, update, tripID), Trip: &update}
 	}
 	if vehicle.ID == nil {
@@ -589,8 +589,8 @@ func (api *RestAPI) resolveVehicleRecord(vehicle *gtfs.Vehicle, blockTripIDs []s
 // on this block. A position-only vehicle has none, since Java builds records
 // from trip updates (see #1915), and neither does one on an ADDED or DUPLICATED
 // trip, which leaves the static block schedule. Updates naming this vehicle
-// contribute, as do anonymous updates on its own trip. A block standing in as
-// the vehicle uses anonymous updates from across the block.
+// contribute. Position vehicles and block stand-ins also consume anonymous
+// updates across their block, as Java's preferredVehicleByBlockId does.
 //
 // Retention and deviation use the same update ownership rules. Other block-wide
 // prediction and vehicle-selection behavior is tracked in #2105.
@@ -625,9 +625,10 @@ func vehicleRecordUpdates(updates []tripUpdateForTrip, vehicle *gtfs.Vehicle) []
 	return matching
 }
 
-// updateBelongsToVehicleRecord matches named updates by vehicle ID and anonymous
-// updates by trip, except that a block stand-in owns all anonymous block updates.
-// The caller must supply a non-nil vehicle with an ID.
+// updateBelongsToVehicleRecord matches named updates by vehicle ID. Position
+// vehicles and block stand-ins own anonymous updates across their block; named
+// trip-update-only vehicles own anonymous updates only on their own trip.
+// The caller must supply a non-nil vehicle with an ID and an update from its block.
 //
 // Named updates match by raw vehicle ID, not agency. A block's trips come from
 // one static feed, so a mismatch needs two of its agencies to share a block_id
@@ -638,7 +639,8 @@ func updateBelongsToVehicleRecord(update tripUpdateForTrip, vehicle *gtfs.Vehicl
 		return !isBlockVehicle && update.tu.Vehicle.ID.ID == vehicle.ID.ID
 	}
 	isOwnTrip := vehicle.Trip != nil && update.tripID == vehicle.Trip.ID.ID
-	return isBlockVehicle || isOwnTrip
+	isPositionVehicle := vehicle.Trip != nil && !isTripUpdateVehicle(vehicle)
+	return isBlockVehicle || isOwnTrip || isPositionVehicle
 }
 
 // runsOwnSchedule reports whether a vehicle's trip departs from the static block
