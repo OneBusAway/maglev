@@ -122,12 +122,12 @@ func (q *Queries) GetStopIDsWithinBounds(ctx context.Context, arg GetStopIDsWith
 	return ids, nil
 }
 
-// getActiveRoutesWithinBoundsTemplate has three substitution points filled in by
-// GetActiveRoutesWithinBounds: %[1]s is the optional "AND trips.route_id IN (...)"
-// route-ID filter (empty string when no candidate list is supplied), and %[2]d
-// is the positional index of the MaxCount bind parameter, which shifts based on
-// how many route-ID placeholders were inserted ahead of it. %[3]s joins stop_times,
-// using a trip-first indexed lookup for filtered searches.
+// getActiveRoutesWithinBoundsTemplate has two substitution points filled in by
+// GetActiveRoutesWithinBounds: %[1]s is the optional
+// "WHERE stop_routes.route_id IN (...)" route-ID filter (empty string when no
+// candidate list is supplied), and %[2]d is the positional index of the MaxCount
+// bind parameter, which shifts based on how many route-ID placeholders were
+// inserted ahead of it. Routes come from the precomputed stop_routes table.
 const getActiveRoutesWithinBoundsTemplate = `
 -- Calculate stop distance once per stop (not once per stop_time).
 WITH nearby_stops AS (
@@ -150,13 +150,6 @@ WITH nearby_stops AS (
       AND r.max_lon >= ?5 AND r.min_lon <= ?6
       AND stops.lat BETWEEN ?3 AND ?4
       AND stops.lon BETWEEN ?5 AND ?6
-),
-stop_routes AS (
-    SELECT DISTINCT stop_times.stop_id, trips.route_id
-    FROM trips
-    %[3]s ON stop_times.trip_id = trips.id
-    WHERE stop_times.stop_id IN (SELECT stop_id FROM nearby_stops)
-    %[1]s
 )
 SELECT
     routes.id,
@@ -172,9 +165,10 @@ SELECT
     routes.continuous_drop_off,
     -- This column is not read from the response.
     MIN(ns.distance) AS min_distance
-FROM stop_routes sr
-JOIN nearby_stops ns ON ns.stop_id = sr.stop_id
-JOIN routes ON routes.id = sr.route_id
+FROM nearby_stops ns
+JOIN stop_routes ON stop_routes.stop_id = ns.stop_id
+JOIN routes ON routes.id = stop_routes.route_id
+%[1]s
 GROUP BY routes.id
 ORDER BY min_distance ASC
 LIMIT ?%[2]d
@@ -199,11 +193,7 @@ func (q *Queries) GetActiveRoutesWithinBounds(ctx context.Context, arg GetActive
 	args := []any{arg.Lat, arg.Lon, arg.MinLat, arg.MaxLat, arg.MinLon, arg.MaxLon}
 
 	routeFilter := ""
-	stopTimesJoin := "JOIN stop_times"
 	if len(arg.RouteIDs) > 0 {
-		// Avoid scanning nearby stops for every matching trip: visit matching
-		// trips first, then look up only their stop times by trip_id.
-		stopTimesJoin = "CROSS JOIN stop_times INDEXED BY idx_stop_times_trip_id"
 		// Only generated "?N" placeholder strings go into the SQL text; the
 		// route IDs themselves are passed as bind values, so this is not a
 		// SQL-injection vector.
@@ -212,11 +202,11 @@ func (q *Queries) GetActiveRoutesWithinBounds(ctx context.Context, arg GetActive
 			placeholders[i] = fmt.Sprintf("?%d", len(args)+1)
 			args = append(args, routeID)
 		}
-		routeFilter = "AND trips.route_id IN (" + strings.Join(placeholders, ",") + ")"
+		routeFilter = "WHERE stop_routes.route_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
 	args = append(args, arg.MaxCount)
 
-	query := fmt.Sprintf(getActiveRoutesWithinBoundsTemplate, routeFilter, len(args), stopTimesJoin)
+	query := fmt.Sprintf(getActiveRoutesWithinBoundsTemplate, routeFilter, len(args))
 
 	rows, err := q.db.QueryContext(ctx, query, args...)
 	if err != nil {

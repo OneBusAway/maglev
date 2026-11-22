@@ -84,12 +84,21 @@ type scheduledStopKey struct {
 // the DB once per trip during snapshot construction.
 type blockTripData struct {
 	id           string
-	stopTimes    []gtfsdb.StopTime
+	stopTimes    []gtfsdb.GetBlockStopTimesForTripIDsRow
 	shapePoints  []gtfs.ShapePoint
 	cumDistances []float64
 	totalDist    float64
 	firstSeconds int64
 	lastSeconds  int64
+}
+
+// stopIDs returns the trip's stop IDs in stop_sequence order.
+func (t blockTripData) stopIDs() []string {
+	stopIDs := make([]string, len(t.stopTimes))
+	for i, stopTime := range t.stopTimes {
+		stopIDs[i] = stopTime.StopID
+	}
+	return stopIDs
 }
 
 // snapshotCache memoizes computeScheduledBlockSnapshot results for the
@@ -108,6 +117,26 @@ type snapshotCache struct {
 	// activeTripSequences memoizes a block-trip sequence lookup, which rows on
 	// one block all make for the same active trip.
 	activeTripSequences map[activeTripSequenceKey]int
+	// blockShiftTripIDs memoizes blockShiftTripIDsSortedByStartTime, which the
+	// vehicle lookup, the cancellation check and the deviation each make for
+	// every arrival row.
+	blockShiftTripIDs map[blockShiftKey][]string
+	// tripAgencies memoizes tripAgencyID, which building a trip-update vehicle
+	// makes for each named update on the block.
+	tripAgencies map[string]tripAgency
+	// positionVehiclesByShift assigns anonymous updates to one live vehicle per
+	// service-date shift, including cached nil assignments.
+	positionVehiclesByShift map[blockShiftKey]*gtfs.Vehicle
+}
+
+type tripAgency struct {
+	agencyID string
+	known    bool
+}
+
+type blockShiftKey struct {
+	tripID          string
+	serviceDateUnix int64
 }
 
 type activeTripSequenceKey struct {
@@ -125,6 +154,8 @@ func newSnapshotCache() *snapshotCache {
 	return &snapshotCache{
 		m:                   make(map[snapshotCacheEntryKey]*scheduledBlockSnapshot),
 		activeTripSequences: make(map[activeTripSequenceKey]int),
+		blockShiftTripIDs:   make(map[blockShiftKey][]string),
+		tripAgencies:        make(map[string]tripAgency),
 	}
 }
 
@@ -214,11 +245,11 @@ func lookupCachedSnapshot(
 // mirrors Java's per-shift BlockConfigurationEntry split for feeds that
 // reuse one block_id across every bus in a day.
 func (api *RestAPI) loadShiftTrips(ctx context.Context, targetTripID string, serviceDate time.Time) []blockTripData {
-	tripIDs := api.blockTripIDsForServiceDate(ctx, targetTripID, serviceDate)
-	if len(tripIDs) == 0 {
+	blockTrips := api.blockTripsForServiceDate(ctx, targetTripID, serviceDate)
+	if len(blockTrips) == 0 {
 		return nil
 	}
-	trips := api.loadBlockTripData(ctx, tripIDs)
+	trips := api.loadBlockTripData(ctx, blockTrips)
 	if len(trips) == 0 {
 		return nil
 	}
@@ -254,13 +285,22 @@ func buildSnapshotFromStops(
 		shiftTripIDs[t.id] = struct{}{}
 	}
 
+	nextStopIndex := findNextStopIndex(stops, currentSeconds, monotonic)
+	distanceAlongBlock := interpolateBlockDistance(stops, currentSeconds, monotonic)
+	// Only ordered stop times make the adjacent stop a safe dwell candidate;
+	// otherwise preserve the non-monotonic interpolation fallback.
+	if monotonic && dwellingAtPreviousStop(stops, nextStopIndex, currentSeconds) {
+		nextStopIndex--
+		distanceAlongBlock = stops[nextStopIndex].DistanceAlongBlock
+	}
+
 	firstStopSec := stops[0].EffectiveStopSeconds
 	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
 	return &scheduledBlockSnapshot{
 		Stops:              stops,
 		StopIndex:          stopIndex,
-		NextStopIndex:      findNextStopIndex(stops, currentSeconds, monotonic),
-		DistanceAlongBlock: interpolateBlockDistance(stops, currentSeconds, monotonic),
+		NextStopIndex:      nextStopIndex,
+		DistanceAlongBlock: distanceAlongBlock,
 		InRange:            currentSeconds >= firstStopSec && currentSeconds <= lastStopSec,
 		ShiftTripIDs:       shiftTripIDs,
 	}
@@ -326,13 +366,15 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 	tripOffsets := make([]float64, len(trips))
 
 	// One DB call for the union of every block-trip's stops.
-	unionStopTimes := make([]gtfsdb.StopTime, 0, len(trips)*40)
-	for _, t := range trips {
-		unionStopTimes = append(unionStopTimes, t.stopTimes...)
+	stopIDsByTrip := make([][]string, len(trips))
+	unionStopIDs := make([]string, 0, len(trips)*40)
+	for i, t := range trips {
+		stopIDsByTrip[i] = t.stopIDs()
+		unionStopIDs = append(unionStopIDs, stopIDsByTrip[i]...)
 	}
 	// Block metrics degrade to zero distances rather than failing the
 	// snapshot; the helper logs the cause.
-	stopByID, _ := api.fetchStopCoordsForStopTimes(ctx, unionStopTimes)
+	stopByID, _ := api.fetchStopCoords(ctx, unionStopIDs)
 
 	var cumulativeBlockDist float64
 	var blockSeq int
@@ -341,7 +383,7 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 		var tripStopDistances []float64
 		var tripLength float64
 		if len(t.shapePoints) >= 2 {
-			tripStopDistances = projectStopsInSequence(t.stopTimes, stopByID, t.shapePoints, t.cumDistances)
+			tripStopDistances = projectStopsInSequence(stopIDsByTrip[i], stopByID, t.shapePoints, t.cumDistances)
 			tripLength = t.totalDist
 		} else {
 			// Shapeless trip (missing shape_id, unresolvable shape, or shape
@@ -352,7 +394,7 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 			// stop gets a distinct DistanceAlongBlock. Without this the
 			// trip collapses to zero and every later trip in the block is
 			// short by this trip's length.
-			tripStopDistances, tripLength = haversineStopDistances(t.stopTimes, stopByID)
+			tripStopDistances, tripLength = haversineStopDistances(stopIDsByTrip[i], stopByID)
 		}
 		for k, st := range t.stopTimes {
 			stops = append(stops, blockStopMetric{
@@ -454,13 +496,9 @@ func shapeGapDistance(from, to blockTripData) float64 {
 //     short-circuits applyBlockLocationToBean; without this guard our
 //     snapshot clamps to the last stop's distance, producing "bus is 7 km
 //     past your stop" for trips that ended hours ago), or
-//   - !InRange (currentTime is before or after the block's schedule
-//     window). BuildTripStatus deliberately leaves the tripStatus distance
-//     fields at their defaults when InRange is false; callers of this
-//     method must apply the same gate or the arrival's distanceFromStop /
-//     numberOfStopsAway will report a clamped-to-block-start position for
-//     a bus that hasn't left the depot yet — e.g. "14 stops away" on an
-//     08:00 request for a trip departing 23:00 the same service day.
+//   - !InRange (currentTime is outside the block's schedule window). Callers
+//     wanting Java's position before the block starts pass the block's start
+//     time: see statusBlockSnapshot.
 func (s *scheduledBlockSnapshot) metricsForStop(
 	tripID string,
 	stopSequenceInTrip int,
@@ -500,7 +538,7 @@ func (api *RestAPI) applyScheduledTripPositionToStatus(
 	}
 	// Block metrics degrade to zero distances rather than failing the
 	// snapshot; the helper logs the cause.
-	stopByID, _ := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	stopByID, _ := api.fetchStopCoords(ctx, stopIDsOf(stopTimes))
 	pos, orient, dist := scheduledTripPosition(
 		stopTimes, stopByID, shapePoints, cumulativeDistances, currentTime, serviceDate)
 	status.ScheduledDistanceAlongTrip = dist
@@ -526,7 +564,7 @@ func scheduledTripPosition(
 	currentTime time.Time,
 	serviceDate time.Time,
 ) (position *models.Location, orientation float64, distanceAlongTrip float64) {
-	stopDistances := projectStopsInSequence(stopTimes, stopByID, shapePoints, cumulativeDistances)
+	stopDistances := projectStopsInSequence(stopIDsOf(stopTimes), stopByID, shapePoints, cumulativeDistances)
 
 	currentSeconds := utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate)
 	distanceAlongTrip = interpolateDistanceAtScheduledTime(currentSeconds, stopTimes, stopDistances)
@@ -573,6 +611,13 @@ func keepShiftContainingTrip(trips []blockTripData, targetTripID string) []block
 	return trips[start:end]
 }
 
+// blockTripRef names one block trip and the shape it runs, which is all the
+// block snapshot needs before loading stop times and shapes.
+type blockTripRef struct {
+	id      string
+	shapeID string
+}
+
 // blockTripIDsForServiceDate returns the IDs of trips that share targetTripID's
 // block and are active on serviceDate. Falls back to [targetTripID] when the
 // trip has no block or block lookup fails.
@@ -581,25 +626,41 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 	targetTripID string,
 	serviceDate time.Time,
 ) []string {
+	blockTrips := api.blockTripsForServiceDate(ctx, targetTripID, serviceDate)
+	ids := make([]string, len(blockTrips))
+	for i, blockTrip := range blockTrips {
+		ids[i] = blockTrip.id
+	}
+	return ids
+}
+
+// blockTripsForServiceDate is blockTripIDsForServiceDate with each trip's
+// shape ID, read from the same rows, so loading the block's shapes needs no
+// further trip lookup.
+func (api *RestAPI) blockTripsForServiceDate(
+	ctx context.Context,
+	targetTripID string,
+	serviceDate time.Time,
+) []blockTripRef {
 	// Distinguish "this trip legitimately has no block" (sql.ErrNoRows + invalid
 	// nullable) from "DB blip" so that infrastructure problems don't silently
 	// degrade the snapshot to single-trip mode. The single-trip fallback IS
 	// the right behaviour for the not-found cases — it just shouldn't be
 	// reached on real DB errors without a warning.
-	fallback := []string{targetTripID}
-	q := api.GtfsManager.GtfsDB.Queries
+	q := api.GtfsManager.GtfsDB.Queries.Memo(ctx)
 
-	blockID, err := q.GetBlockIDByTripID(ctx, targetTripID)
+	trip, err := q.GetTrip(ctx, targetTripID)
 	if err != nil {
-		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetBlockIDByTripID failed, degrading to single-trip mode",
+		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetTrip failed, degrading to single-trip mode",
 			slog.String("trip_id", targetTripID))
-		return fallback
+		return []blockTripRef{{id: targetTripID}}
 	}
-	blockIDStr := nulls.StringOrEmpty(blockID)
+	fallback := []blockTripRef{{id: targetTripID, shapeID: nulls.StringOrEmpty(trip.ShapeID)}}
+	blockIDStr := nulls.StringOrEmpty(trip.BlockID)
 	if blockIDStr == "" {
 		return fallback
 	}
-	blockTrips, err := q.GetTripsByBlockID(ctx, blockID)
+	blockTrips, err := q.GetTripsByBlockID(ctx, trip.BlockID)
 	if err != nil {
 		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetTripsByBlockID failed, degrading to single-trip mode",
 			slog.String("trip_id", targetTripID), slog.String("block_id", blockIDStr))
@@ -618,20 +679,21 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 	for _, id := range activeServiceIDs {
 		activeSet[id] = struct{}{}
 	}
-	ids := make([]string, 0, len(blockTrips))
+	active := make([]blockTripRef, 0, len(blockTrips))
 	for _, bt := range blockTrips {
 		if _, ok := activeSet[bt.ServiceID]; ok {
-			ids = append(ids, bt.ID)
+			active = append(active, blockTripRef{id: bt.ID, shapeID: nulls.StringOrEmpty(bt.ShapeID)})
 		}
 	}
-	if len(ids) == 0 {
+	if len(active) == 0 {
 		return fallback
 	}
-	return ids
+	return active
 }
 
 // loadBlockTripData fetches stop_times and shape for every tripID in batched
-// queries (GetStopTimesForTripIDs and loadBlockShapes) instead of per trip.
+// queries (GetBlockStopTimesForTripIDs and loadBlockShapes) instead of per trip.
+// It reads only the stop-time columns the snapshot uses.
 // For a block with N trips the round-trip count no longer grows with N,
 // a real handle on the plural arrivals handler's amplification.
 //
@@ -640,22 +702,26 @@ func (api *RestAPI) blockTripIDsForServiceDate(
 // haversine (haversineStopDistances) so shapeless trips still contribute
 // a real length to the block cursor. Trip is still appended so
 // block_sequence stays consistent.
-func (api *RestAPI) loadBlockTripData(ctx context.Context, tripIDs []string) []blockTripData {
-	if len(tripIDs) == 0 {
+func (api *RestAPI) loadBlockTripData(ctx context.Context, blockTrips []blockTripRef) []blockTripData {
+	if len(blockTrips) == 0 {
 		return nil
 	}
 	q := api.GtfsManager.GtfsDB.Queries
+	tripIDs := make([]string, len(blockTrips))
+	for i, blockTrip := range blockTrips {
+		tripIDs[i] = blockTrip.id
+	}
 
-	stopTimeRows, err := q.GetStopTimesForTripIDs(ctx, tripIDs)
+	stopTimeRows, err := q.GetBlockStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
 		return nil
 	}
-	stopTimesByTrip := make(map[string][]gtfsdb.StopTime, len(tripIDs))
+	stopTimesByTrip := make(map[string][]gtfsdb.GetBlockStopTimesForTripIDsRow, len(tripIDs))
 	for _, st := range stopTimeRows {
 		stopTimesByTrip[st.TripID] = append(stopTimesByTrip[st.TripID], st)
 	}
 
-	shapesByTrip := api.loadBlockShapes(ctx, tripIDs)
+	shapesByTrip := api.loadBlockShapes(ctx, blockTrips)
 
 	out := make([]blockTripData, 0, len(tripIDs))
 	for _, id := range tripIDs {
@@ -696,15 +762,17 @@ type blockShape struct {
 // Shape errors are non-fatal: emitBlockStops falls back to haversine, still
 // correct just less precise. Real DB errors are logged so an operator sees
 // the degradation instead of silently losing shape-based precision.
-func (api *RestAPI) loadBlockShapes(ctx context.Context, tripIDs []string) map[string]blockShape {
-	trips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, tripIDs)
-	var pointsByShapeID map[string][]gtfs.ShapePoint
-	if err == nil {
-		pointsByShapeID, err = api.shapePointsForTrips(ctx, trips)
+func (api *RestAPI) loadBlockShapes(ctx context.Context, blockTrips []blockTripRef) map[string]blockShape {
+	shapeIDs := make([]string, 0, len(blockTrips))
+	for _, blockTrip := range blockTrips {
+		if blockTrip.shapeID != "" && !slices.Contains(shapeIDs, blockTrip.shapeID) {
+			shapeIDs = append(shapeIDs, blockTrip.shapeID)
+		}
 	}
+	pointsByShapeID, err := api.shapePointsByShapeIDs(ctx, shapeIDs)
 	if err != nil {
 		warnIfRealDBError(err, "loadBlockShapes: shape lookup failed, degrading every trip to haversine fallback",
-			slog.Int("trip_count", len(tripIDs)))
+			slog.Int("trip_count", len(blockTrips)))
 		return nil
 	}
 
@@ -718,40 +786,40 @@ func (api *RestAPI) loadBlockShapes(ctx context.Context, tripIDs []string) map[s
 		shapesByID[shapeID] = shape
 	}
 
-	shapesByTrip := make(map[string]blockShape, len(trips))
-	for _, trip := range trips {
-		if shape, ok := shapesByID[nulls.StringOrEmpty(trip.ShapeID)]; ok {
-			shapesByTrip[trip.ID] = shape
+	shapesByTrip := make(map[string]blockShape, len(blockTrips))
+	for _, blockTrip := range blockTrips {
+		if shape, ok := shapesByID[blockTrip.shapeID]; ok {
+			shapesByTrip[blockTrip.id] = shape
 		}
 	}
 	return shapesByTrip
 }
 
-// fetchStopCoordsForStopTimes fetches the unique stops in stopTimes, batching
+// fetchStopCoords fetches the unique stops in stopIDs, batching
 // the lookup so an unbounded caller — the scheduled-position candidate set
 // among them — cannot overflow the bind variable limit. Returns the error on
 // failure; a request-path caller should propagate it rather than degrade
 // silently. Block-snapshot callers that intentionally tolerate a degraded
 // result discard the error explicitly at the call site.
-func (api *RestAPI) fetchStopCoordsForStopTimes(
+func (api *RestAPI) fetchStopCoords(
 	ctx context.Context,
-	stopTimes []gtfsdb.StopTime,
+	stopIDs []string,
 ) (map[string]gtfsdb.Stop, error) {
-	seen := make(map[string]struct{}, len(stopTimes))
-	ids := make([]string, 0, len(stopTimes))
-	for _, st := range stopTimes {
-		if _, ok := seen[st.StopID]; ok {
+	seen := make(map[string]struct{}, len(stopIDs))
+	ids := make([]string, 0, len(stopIDs))
+	for _, stopID := range stopIDs {
+		if _, ok := seen[stopID]; ok {
 			continue
 		}
-		seen[st.StopID] = struct{}{}
-		ids = append(ids, st.StopID)
+		seen[stopID] = struct{}{}
+		ids = append(ids, stopID)
 	}
 	if len(ids) == 0 {
 		return nil, nil
 	}
 	stops, err := utils.QueryInBatches(ctx, ids, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
 	if err != nil {
-		slog.Warn("fetchStopCoordsForStopTimes: GetStopsByIDs failed",
+		slog.Warn("fetchStopCoords: GetStopsByIDs failed",
 			slog.Int("stop_count", len(ids)), slog.String("error", err.Error()))
 		return nil, err
 	}
@@ -760,6 +828,15 @@ func (api *RestAPI) fetchStopCoordsForStopTimes(
 		byID[s.ID] = s
 	}
 	return byID, nil
+}
+
+// stopIDsOf returns each stop time's stop ID, in order.
+func stopIDsOf(stopTimes []gtfsdb.StopTime) []string {
+	stopIDs := make([]string, len(stopTimes))
+	for i, stopTime := range stopTimes {
+		stopIDs[i] = stopTime.StopID
+	}
+	return stopIDs
 }
 
 // projectStopsInSequence returns each stop's distance-along-trip in metres,
@@ -780,19 +857,19 @@ func (api *RestAPI) fetchStopCoordsForStopTimes(
 // would require porting that library; our simpler projection produces
 // values within ~90-250m of Java's, which is acceptable drift for our use.
 func projectStopsInSequence(
-	stopTimes []gtfsdb.StopTime,
+	stopIDs []string,
 	stopByID map[string]gtfsdb.Stop,
 	shapePoints []gtfs.ShapePoint,
 	cumulativeDistances []float64,
 ) []float64 {
-	distances := make([]float64, len(stopTimes))
+	distances := make([]float64, len(stopIDs))
 	if len(shapePoints) < 2 || len(cumulativeDistances) != len(shapePoints) {
 		return distances
 	}
 
 	lastMatchedIndex := 0
-	for i, st := range stopTimes {
-		stop, ok := stopByID[st.StopID]
+	for i, stopID := range stopIDs {
+		stop, ok := stopByID[stopID]
 		if !ok {
 			distances[i] = 0
 			continue
@@ -818,16 +895,16 @@ func projectStopsInSequence(
 // Returns a zero-filled slice and length 0 only when a stop's static
 // coordinates cannot be resolved (unknown stop_id in stopByID); at that
 // point we can't do any better than the pre-fix behaviour.
-func haversineStopDistances(stopTimes []gtfsdb.StopTime, stopByID map[string]gtfsdb.Stop) ([]float64, float64) {
-	distances := make([]float64, len(stopTimes))
-	if len(stopTimes) == 0 {
+func haversineStopDistances(stopIDs []string, stopByID map[string]gtfsdb.Stop) ([]float64, float64) {
+	distances := make([]float64, len(stopIDs))
+	if len(stopIDs) == 0 {
 		return distances, 0
 	}
 	var cumulative float64
-	prev, prevOK := stopByID[stopTimes[0].StopID]
+	prev, prevOK := stopByID[stopIDs[0]]
 	distances[0] = 0
-	for i := 1; i < len(stopTimes); i++ {
-		curr, currOK := stopByID[stopTimes[i].StopID]
+	for i := 1; i < len(stopIDs); i++ {
+		curr, currOK := stopByID[stopIDs[i]]
 		if prevOK && currOK {
 			cumulative += utils.Distance(prev.Lat, prev.Lon, curr.Lat, curr.Lon)
 		}
@@ -922,6 +999,18 @@ func findNextStopIndex(stops []blockStopMetric, currentSeconds int64, monotonic 
 	return -1
 }
 
+// dwellingAtPreviousStop reports whether currentSeconds falls between the arrival
+// and departure of the stop before nextStopIndex. Java treats that as being at
+// the stop (ScheduledBlockLocationServiceImpl.java:218), so it is still the next
+// stop, and its distance is the vehicle's.
+func dwellingAtPreviousStop(stops []blockStopMetric, nextStopIndex int, currentSeconds int64) bool {
+	if nextStopIndex <= 0 {
+		return false
+	}
+	previous := stops[nextStopIndex-1]
+	return previous.ArrivalSeconds <= currentSeconds && currentSeconds <= previous.DepartureSeconds
+}
+
 // interpolateBlockDistance linearly interpolates the block's distance-along-block
 // at currentSeconds between the two surrounding stops. Clamped to the first /
 // last stop when currentSeconds is outside the block's scheduled span.
@@ -967,11 +1056,14 @@ func interpolateBlockDistance(stops []blockStopMetric, currentSeconds int64, mon
 		from = stops[idx-1]
 		to = stops[idx]
 	}
-	span := to.EffectiveStopSeconds - from.EffectiveStopSeconds
-	if span == 0 {
+	// Java moves the vehicle only from the departure of one stop to the arrival
+	// of the next, so during the from-stop's dwell it stays at that stop.
+	fromSeconds := max(from.EffectiveStopSeconds, from.DepartureSeconds)
+	span := to.EffectiveStopSeconds - fromSeconds
+	if span <= 0 {
 		return from.DistanceAlongBlock
 	}
-	ratio := float64(currentSeconds-from.EffectiveStopSeconds) / float64(span)
+	ratio := float64(max(currentSeconds-fromSeconds, 0)) / float64(span)
 	return from.DistanceAlongBlock + ratio*(to.DistanceAlongBlock-from.DistanceAlongBlock)
 }
 
