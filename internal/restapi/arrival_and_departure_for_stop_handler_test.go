@@ -1547,9 +1547,11 @@ func TestDwellSlack_StopIDOnlyUpdatesUseUniqueSequence(t *testing.T) {
 		wantDeparture     time.Duration
 		wantScheduleReads int64
 	}{
-		{name: "unique earlier stops absorb", withTripDelay: true, wantPredicted: true, wantDeparture: 4 * time.Minute, wantScheduleReads: 1},
-		{name: "a repeated stop stays unresolved", repeated: true, withTripDelay: true, wantPredicted: true, wantDeparture: 9 * time.Minute, wantScheduleReads: 1},
-		{name: "no trip delay skips the schedule read", wantScheduleReads: 0},
+		// 14 queries are the vehicle-record lookup. Resolving a stop id adds
+		// one GetStopTimesForTrip, and a trip with no delay does not.
+		{name: "unique earlier stops absorb", withTripDelay: true, wantPredicted: true, wantDeparture: 4 * time.Minute, wantScheduleReads: 15},
+		{name: "a repeated stop stays unresolved", repeated: true, withTripDelay: true, wantPredicted: true, wantDeparture: 9 * time.Minute, wantScheduleReads: 15},
+		{name: "no trip delay skips the schedule read", wantScheduleReads: 14},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1669,6 +1671,88 @@ func TestDwellSlack_StopIDOnlyPriorDelayBeatsTripDelay(t *testing.T) {
 	require.True(t, predicted)
 	assert.Equal(t, scheduledArrival.Add(9*time.Minute), arrival)
 	assert.Equal(t, scheduledDeparture.Add(4*time.Minute), departure)
+}
+
+// TestDwellSlack_StopIDOnlyPriorTimeBeatsTripDelay covers a prior update that
+// names its stop but sends a predicted time instead of a delay. The delay is
+// that time minus the stop's scheduled time. An update with neither leaves
+// the trip delay in place.
+func TestDwellSlack_StopIDOnlyPriorTimeBeatsTripDelay(t *testing.T) {
+	tests := []struct {
+		name          string
+		kind          string
+		wantArrival   time.Duration
+		wantDeparture time.Duration
+	}{
+		{name: "departure time", kind: "departure-time", wantArrival: 9 * time.Minute, wantDeparture: 4 * time.Minute},
+		{name: "arrival time", kind: "arrival-time", wantArrival: 9 * time.Minute, wantDeparture: 4 * time.Minute},
+		{name: "no time", kind: "no-time", wantArrival: 4 * time.Minute, wantDeparture: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 4)
+			ctx := context.Background()
+			q := api.GtfsManager.GtfsDB.Queries
+			addStop := func(id string, seq int64) {
+				t.Helper()
+				_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+					ID: id, Name: nulls.String(id), Lat: 47.0, Lon: -122.0,
+				})
+				require.NoError(t, err)
+				_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+					TripID: tripID, StopID: id, StopSequence: seq,
+					ArrivalTime:   int64(6 * time.Hour),
+					DepartureTime: int64(6*time.Hour + time.Minute),
+				})
+				require.NoError(t, err)
+			}
+			far, near := "dp-far", "dp-near"
+			addStop(far, 1)
+			addStop(near, 2)
+
+			var updates []gtfs.StopTimeUpdate
+			switch tc.kind {
+			case "departure-time":
+				late := time.Date(2010, 1, 1, 6, 10, 0, 0, time.UTC)
+				updates = []gtfs.StopTimeUpdate{
+					{StopID: &far, Departure: &gtfs.StopTimeEvent{Time: &late}},
+					{StopID: &near, Departure: &gtfs.StopTimeEvent{Time: &late}},
+				}
+			case "arrival-time":
+				late := time.Date(2010, 1, 1, 6, 9, 0, 0, time.UTC)
+				updates = []gtfs.StopTimeUpdate{
+					{StopID: &far, Arrival: &gtfs.StopTimeEvent{Time: &late}},
+					{StopID: &near, Arrival: &gtfs.StopTimeEvent{Time: &late}},
+				}
+			default:
+				updates = []gtfs.StopTimeUpdate{
+					{StopID: &far, Departure: &gtfs.StopTimeEvent{}},
+					{StopID: &near, Departure: &gtfs.StopTimeEvent{}},
+				}
+			}
+			tripDelay := 4 * time.Minute
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+				ID:              gtfs.TripID{ID: tripID},
+				Delay:           &tripDelay,
+				StopTimeUpdates: updates,
+			}})
+
+			counter := swapInQueryCounter(t, api)
+			scheduledArrival := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+			scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
+			query := time.Date(2010, 1, 1, 7, 50, 0, 0, time.UTC)
+			arrival, departure, predicted := api.getPredictedTimes(
+				ctx, tripID, predictionServiceDate, "dp-stop", 4, scheduledArrival, scheduledDeparture, query,
+			)
+			assert.Equal(t, int64(15), counter.count.Load())
+			require.True(t, predicted)
+			assert.Equal(t, scheduledArrival.Add(tc.wantArrival), arrival)
+			assert.Equal(t, scheduledDeparture.Add(tc.wantDeparture), departure)
+		})
+	}
 }
 
 // An absolute Arrival.Time and Departure.Time pair goes down the same path as

@@ -666,6 +666,74 @@ func dwellAbsorbsLateness(foundTarget bool, stuCount int, hasTripDelay, targetPa
 	return stuCount >= 2
 }
 
+// priorStopSelection is the closest-earlier-stop state for one prediction.
+// The pointers are the caller's variables. Grouped so notePriorStop does not
+// take a long run of same-typed arguments.
+type priorStopSelection struct {
+	target      int64
+	earliest    *int64
+	closest     *int64
+	propagated  *time.Duration
+	serviceDate time.Time
+	schedule    **staticSchedule
+}
+
+// notePriorStop records the earliest update and the closest earlier one that
+// carries a delay. A Delay field is used as sent. A predicted Time with no
+// Delay is that time minus the stop's scheduled time, which is how Java
+// builds the deviation sample. An update with neither does not take the
+// slot, so a trip delay is kept.
+func (api *RestAPI) notePriorStop(ctx context.Context, tripID string, stu *gtfs.StopTimeUpdate, trackedSeq int64, sel *priorStopSelection) {
+	if trackedSeq == -1 {
+		return
+	}
+	if *sel.earliest == -1 || trackedSeq < *sel.earliest {
+		*sel.earliest = trackedSeq
+	}
+	if trackedSeq >= sel.target || trackedSeq <= *sel.closest {
+		return
+	}
+	delay, ok := api.propagatedStopDelay(ctx, tripID, stu, trackedSeq, sel.serviceDate, sel.schedule)
+	if !ok {
+		return
+	}
+	*sel.closest = trackedSeq
+	*sel.propagated = delay
+}
+
+// propagatedStopDelay is the delay an earlier stop-time update passes on.
+// It reports false when the update names a stop but carries no delay and no
+// predicted time.
+func (api *RestAPI) propagatedStopDelay(ctx context.Context, tripID string, stu *gtfs.StopTimeUpdate, seq int64, serviceDate time.Time, schedule **staticSchedule) (time.Duration, bool) {
+	if stu.Departure != nil && stu.Departure.Delay != nil {
+		return *stu.Departure.Delay, true
+	}
+	if stu.Arrival != nil && stu.Arrival.Delay != nil {
+		return *stu.Arrival.Delay, true
+	}
+	if delay, ok := api.delayFromPredictedTime(ctx, tripID, stu.Departure, seq, serviceDate, schedule, false); ok {
+		return delay, true
+	}
+	return api.delayFromPredictedTime(ctx, tripID, stu.Arrival, seq, serviceDate, schedule, true)
+}
+
+// delayFromPredictedTime derives a delay from a predicted Time and the static
+// stop time. arrival selects the scheduled arrival; otherwise the departure.
+func (api *RestAPI) delayFromPredictedTime(ctx context.Context, tripID string, event *gtfs.StopTimeEvent, seq int64, serviceDate time.Time, schedule **staticSchedule, arrival bool) (time.Duration, bool) {
+	if event == nil || event.Time == nil {
+		return 0, false
+	}
+	visit, ok := api.loadStaticSchedule(ctx, tripID, schedule).bySequence[seq]
+	if !ok {
+		return 0, false
+	}
+	nanos := visit.departure
+	if arrival {
+		nanos = visit.arrival
+	}
+	return event.Time.Sub(serviceDate.Add(time.Duration(nanos))), true
+}
+
 // getPredictedTimes computes predicted arrival/departure times from GTFS-RT TripUpdate data.
 // It implements a 3-tier fallback strategy matching the plural handler's behavior:
 //  1. Exact stop match — uses per-stop arrival/departure time or delay directly
@@ -704,7 +772,7 @@ func (api *RestAPI) getPredictedTimes(
 	// the update whose stop_sequence matches the requested one, and fall back
 	// to stop_id for updates whose sequence doesn't name a visit to this stop.
 	var target, stopIDFallback *gtfs.StopTimeUpdate
-	var staticStops map[int64]string
+	var schedule *staticSchedule
 	// earliestSTUSequence matters only for a trip delay with two or more
 	// updates. Stop-id-only updates resolve a sequence in that case alone,
 	// so other feeds do not load the trip's stop times.
@@ -724,32 +792,29 @@ func (api *RestAPI) getPredictedTimes(
 				target = stu
 			}
 		case matchesStop && stopIDFallback == nil:
-			if seq != -1 && staticStops == nil {
-				staticStops = api.staticStopsForTrip(ctx, tripID)
+			var stopIDs map[int64]string
+			if seq != -1 {
+				stopIDs = api.loadStaticSchedule(ctx, tripID, &schedule).stopIDs
 			}
-			if !sequenceIdentifiesVisit(*stu, staticStops) {
+			if !sequenceIdentifiesVisit(*stu, stopIDs) {
 				stopIDFallback = stu
 			}
 		}
 
 		trackedSeq := seq
 		if trackedSeq == -1 && resolveUniqueStop && stu.StopID != nil {
-			if resolved, ok := api.uniqueStopSequence(ctx, tripID, *stu.StopID, &staticStops); ok {
+			if resolved, ok := api.uniqueStopSequence(ctx, tripID, *stu.StopID, &schedule); ok {
 				trackedSeq = resolved
 			}
 		}
-		if trackedSeq != -1 && (earliestSTUSequence == -1 || trackedSeq < earliestSTUSequence) {
-			earliestSTUSequence = trackedSeq
-		}
-		if trackedSeq != -1 && trackedSeq < targetStopSequence && trackedSeq > closestPriorSequence {
-			closestPriorSequence = trackedSeq
-			propagatedDelay = 0
-			if stu.Departure != nil && stu.Departure.Delay != nil {
-				propagatedDelay = *stu.Departure.Delay
-			} else if stu.Arrival != nil && stu.Arrival.Delay != nil {
-				propagatedDelay = *stu.Arrival.Delay
-			}
-		}
+		api.notePriorStop(ctx, tripID, stu, trackedSeq, &priorStopSelection{
+			target:      targetStopSequence,
+			earliest:    &earliestSTUSequence,
+			closest:     &closestPriorSequence,
+			propagated:  &propagatedDelay,
+			serviceDate: serviceDate,
+			schedule:    &schedule,
+		})
 	}
 
 	if target == nil {
