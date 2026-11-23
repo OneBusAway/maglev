@@ -514,7 +514,9 @@ func TestOpenAPIConformance_RealTimeEndpoints(t *testing.T) {
 		GtfsConfig:          gtfsConfig,
 		GtfsManager:         gtfsManager,
 		DirectionCalculator: dirCalc,
-		Clock:               clock.RealClock{},
+		// At the fixture's feed time, so trip-for-vehicle still holds the vehicle's
+		// record: the trip updates are from 2025 and expire under the real clock.
+		Clock: clock.NewMockClock(vehiclesRealTimeDataClock),
 	}
 
 	api := NewRestAPI(application)

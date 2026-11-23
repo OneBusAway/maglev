@@ -123,7 +123,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	// Sort after buildArrival so predicted times are already filled in.
+	// Sort after the arrivals are built so predicted times are already filled in.
 	sortArrivalsByBestTime(result.Arrivals)
 
 	// A route can serve this stop and still have every arrival fall outside

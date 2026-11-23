@@ -146,8 +146,8 @@ func TestRebuildRealTimeVehicleLookupByVehicle(t *testing.T) {
 
 	assert.NotNil(t, manager.mergedRealtime().vehicleLookupByVehicle)
 	assert.Len(t, manager.mergedRealtime().vehicleLookupByVehicle, 2)
-	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle["vehicle1"])
-	assert.Equal(t, 1, manager.mergedRealtime().vehicleLookupByVehicle["vehicle2"])
+	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle1"}])
+	assert.Equal(t, 1, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle2"}])
 }
 
 func TestRebuildRealTimeVehicleLookupByVehicle_WithInvalidIDs(t *testing.T) {
@@ -175,8 +175,8 @@ func TestRebuildRealTimeVehicleLookupByVehicle_WithInvalidIDs(t *testing.T) {
 
 	assert.NotNil(t, manager.mergedRealtime().vehicleLookupByVehicle)
 	assert.Len(t, manager.mergedRealtime().vehicleLookupByVehicle, 2)
-	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle["vehicle1"])
-	assert.Equal(t, 3, manager.mergedRealtime().vehicleLookupByVehicle["vehicle3"])
+	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle1"}])
+	assert.Equal(t, 3, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle3"}])
 }
 
 func TestLoadRealtimeData_Non200StatusCode(t *testing.T) {
@@ -1237,6 +1237,7 @@ func TestVehicleMerge_RetainedVehicleKeepsUntakenTrip(t *testing.T) {
 	manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now.Add(-30*time.Second), []*gtfsrt.VehiclePosition{
 		positionOnTrip("V1", "trip-x", 47.1, nil),
 	}))
+	previousLive := manager.GetLiveRealTimeVehicles()
 	manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now, []*gtfsrt.VehiclePosition{
 		positionOnTrip("V2", "trip-y", 47.4, nil),
 	}))
@@ -1244,6 +1245,12 @@ func TestVehicleMerge_RetainedVehicleKeepsUntakenTrip(t *testing.T) {
 	vehicle := manager.GetVehicleForTrip(context.Background(), "trip-x")
 	require.NotNil(t, vehicle)
 	assert.Equal(t, "V1", vehicle.ID.ID)
+	require.Len(t, manager.GetRealTimeVehicles(), 2, "retention must remain unchanged")
+	live := manager.GetLiveRealTimeVehicles()
+	require.Len(t, live, 1)
+	assert.Equal(t, "V2", live[0].ID.ID)
+	require.Len(t, previousLive, 1)
+	assert.Equal(t, "V1", previousLive[0].ID.ID, "publishing a feed must not mutate an earlier snapshot")
 }
 
 // TestVehicleMerge_RetainedVehicleReleasesTripTakenInAnotherFeed checks that a

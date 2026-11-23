@@ -1044,6 +1044,7 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 		reqLogger.Error("failed to fetch routes for stop references", "error", err)
 		return routeIDsByStop
 	}
+	utils.SortRouteIDsForStopsRowsByName(rows)
 	for _, row := range rows {
 		routeIDsByStop[row.StopID] = append(routeIDsByStop[row.StopID], stopRoute{
 			agencyID: row.AgencyID,

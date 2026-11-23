@@ -112,6 +112,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	}
 
 	lists := truncateLocationLists(locationLists{
+		stops:    stops,
 		stopIDs:  combinedStopIDs(stops, agencies),
 		arrivals: arrivals,
 		nearby:   nearby,
@@ -134,7 +135,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// A route can serve a retained stop and still have every arrival fall
 	// outside the window. Those route alerts belong on the entry anyway.
-	if err := api.addRouteAlertsForStops(ctx, retainedStopCodes(lists.stopIDs), entrySituations); err != nil {
+	if err := api.addRouteAlertsForStops(ctx, bareStopIDs(lists.stops), entrySituations); err != nil {
 		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
@@ -189,8 +190,10 @@ func (api *RestAPI) finishRetainedLocationArrivals(
 	return api.addStopLevelArrivalAlerts(ctx, stops, agencies, entrySituations)
 }
 
-// locationLists are the three response lists that share a single maxCount.
+// locationLists holds the response lists and matched stop rows retained under
+// the endpoint's shared maxCount.
 type locationLists struct {
+	stops         []gtfsdb.Stop
 	stopIDs       []string
 	arrivals      []models.ArrivalAndDeparture
 	nearby        []models.StopWithDistance
@@ -198,32 +201,24 @@ type locationLists struct {
 }
 
 // truncateLocationLists trims each list to maxCount independently, reporting a
-// single flag if any of them was shortened — matching how Java caps this
-// endpoint.
+// single flag if any of them was shortened — matching how Java caps this endpoint.
 func truncateLocationLists(lists locationLists, maxCount int) locationLists {
+	lists.stops, lists.limitExceeded = truncateSlice(lists.stops, maxCount, lists.limitExceeded)
 	lists.stopIDs, lists.limitExceeded = truncateSlice(lists.stopIDs, maxCount, lists.limitExceeded)
 	lists.arrivals, lists.limitExceeded = truncateSlice(lists.arrivals, maxCount, lists.limitExceeded)
 	lists.nearby, lists.limitExceeded = truncateSlice(lists.nearby, maxCount, lists.limitExceeded)
 	return lists
 }
 
-// retainedStopCodes returns each bare stop id in combinedIDs once, in order.
-// A value that is not an agency_code id is skipped.
-func retainedStopCodes(combinedIDs []string) []string {
-	codes := make([]string, 0, len(combinedIDs))
-	seen := make(map[string]struct{}, len(combinedIDs))
-	for _, id := range combinedIDs {
-		_, code, err := utils.ExtractAgencyIDAndCodeID(id)
-		if err != nil || code == "" {
-			continue
-		}
-		if _, ok := seen[code]; ok {
-			continue
-		}
-		seen[code] = struct{}{}
-		codes = append(codes, code)
+// bareStopIDs returns the bare GTFS id of each stop row. It reads the id from
+// the row instead of splitting a combined agency_code id, which would take an
+// underscore in the agency id as the separator.
+func bareStopIDs(stops []gtfsdb.Stop) []string {
+	ids := make([]string, len(stops))
+	for i, stop := range stops {
+		ids[i] = stop.ID
 	}
-	return codes
+	return ids
 }
 
 // combinedStopIDs renders the searched stops as {agency}_{code} IDs.
