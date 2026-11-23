@@ -64,7 +64,7 @@ func TestMalformedAgencyIdForRouteIds(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[RouteIDsForAgencyResponse](t, api, "/api/where/route-ids-for-agency/bad@agency.json?key=TEST")
+	resp, model := callAPIHandler[RouteIDsForAgencyResponse](t, api, "/api/where/route-ids-for-agency/bad%09agency.json?key=TEST")
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)

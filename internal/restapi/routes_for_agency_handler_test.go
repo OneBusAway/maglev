@@ -40,7 +40,7 @@ func TestRoutesForAgencyHandlerInvalidID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	malformedID := "11@10"
+	malformedID := "11%0910"
 	endpoint := "/api/where/routes-for-agency/" + malformedID + ".json?key=TEST"
 
 	resp, model := callAPIHandler[RoutesResponse](t, api, endpoint)

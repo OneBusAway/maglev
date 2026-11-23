@@ -118,6 +118,15 @@ func TestExtractAndValidateAgencyCodeID(t *testing.T) {
 			expectedOk:       false,
 			expectedStatus:   http.StatusBadRequest,
 		},
+		{
+			name:             "Valid combined ID with punctuation",
+			url:              "/api/where/trip-details/ALH_0700%20-%20Copy%20(10).json",
+			idParam:          "ALH_0700 - Copy (10).json",
+			expectedAgencyID: "ALH",
+			expectedCodeID:   "0700 - Copy (10)",
+			expectedOk:       true,
+			expectedStatus:   http.StatusOK,
+		},
 	}
 
 	for _, tt := range tests {

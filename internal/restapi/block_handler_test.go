@@ -143,7 +143,7 @@ func TestBlockHandlerInvalidBlockID(t *testing.T) {
 	}{
 		{"Empty block ID", blockURL(""), http.StatusBadRequest},
 		{"Missing agency separator", blockURL("invalidblock"), http.StatusBadRequest},
-		{"Disallowed characters in code ID", blockURL("25_@%23$"), http.StatusBadRequest},
+		{"Control character in code ID", blockURL("25_%09"), http.StatusBadRequest},
 		{"Only underscore", blockURL("_"), http.StatusBadRequest},
 	}
 
