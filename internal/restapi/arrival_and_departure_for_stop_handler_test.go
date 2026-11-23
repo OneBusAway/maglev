@@ -1806,7 +1806,8 @@ func TestDwellSlack_TimeOnlyDelayUsesOffsetBaseOnDST(t *testing.T) {
 			scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
 			query := time.Date(2010, 1, 1, 7, 50, 0, 0, time.UTC)
 			arrival, departure, predicted := api.getPredictedTimes(
-				ctx, tripID, serviceDate, "dp-stop", 4, scheduledArrival, scheduledDeparture, query,
+				ctx, tripID, "dp-stop", 4, scheduledArrival, scheduledDeparture,
+				predictionClock{queryTime: query, serviceDate: serviceDate, dwellOnly: true},
 			)
 			require.True(t, predicted)
 			assert.Equal(t, scheduledArrival.Add(9*time.Minute), arrival)

@@ -717,9 +717,15 @@ func dwellAbsorbsLateness(foundTarget bool, stuCount int, hasTripDelay, targetPa
 // predictionClock is the query instant and the service-date midnight used to
 // place that instant on the block. Grouped so getPredictedTimes stays within
 // SonarCloud's parameter limit.
+//
+// dwellOnly skips accumulated slack. The window check uses it so a block
+// snapshot is built only when the scheduled-to-predicted span can meet the
+// window. The service date is still set, so a predicted Time is measured
+// from the offset base.
 type predictionClock struct {
 	queryTime   time.Time
 	serviceDate time.Time
+	dwellOnly   bool
 }
 
 // priorStopSelection is the closest-earlier-stop state for one prediction.
@@ -946,7 +952,12 @@ func (api *RestAPI) getPredictedTimes(
 	// A feed departure is only recorded on the target stop, and
 	// dwellAbsorbsLateness already returns false when that stop was found.
 	if dwellAbsorbsLateness(foundTarget, len(realTimeTrip.StopTimeUpdates), realTimeTrip.Delay != nil, targetPastEarliestSTU) {
-		if arrivalDeviation, departureDeviation, ok := api.deviationsAfterAccumulatedSlack(ctx, tripID, targetStopSequence, *arrivalOffset, clock.queryTime, clock.serviceDate); ok {
+		var arrivalDeviation, departureDeviation time.Duration
+		ok := false
+		if !clock.dwellOnly {
+			arrivalDeviation, departureDeviation, ok = api.deviationsAfterAccumulatedSlack(ctx, tripID, targetStopSequence, *arrivalOffset, clock.queryTime, clock.serviceDate)
+		}
+		if ok {
 			arrivalOffset = &arrivalDeviation
 			departureOffset = &departureDeviation
 		} else {

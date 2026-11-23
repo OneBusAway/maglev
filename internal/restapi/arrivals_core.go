@@ -801,12 +801,17 @@ func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopT
 	}
 	// Slack only shrinks a positive deviation, so an adjusted time stays
 	// between the scheduled time and the dwell-only prediction. The block
-	// snapshot is needed only when that span overlaps the window.
-	rawArrival, rawDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure, predictionClock{queryTime: queryTime})
+	// snapshot is needed only when that span overlaps the window. The
+	// dwell-only call still carries the service date, so a predicted Time
+	// is measured from the offset base instead of a zero clock.
+	serviceMidnight := ast.ServiceDate.Midnight(location)
+	rawClock := predictionClock{queryTime: queryTime, serviceDate: serviceMidnight, dwellOnly: true}
+	rawArrival, rawDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure, rawClock)
 	if !predicted || (!spanOverlapsWindow(arrival, rawArrival, start, end) && !spanOverlapsWindow(departure, rawDeparture, start, end)) {
 		return false
 	}
-	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure, predictionClock{queryTime: queryTime, serviceDate: ast.ServiceDate.Midnight(location)})
+	fullClock := predictionClock{queryTime: queryTime, serviceDate: serviceMidnight}
+	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure, fullClock)
 	return predicted && (inRange(predictedArrival) || inRange(predictedDeparture))
 }
 

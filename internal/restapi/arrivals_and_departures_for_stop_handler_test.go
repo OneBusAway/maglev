@@ -1573,7 +1573,7 @@ func TestSlackAdjustedArrivalEntersTheWindow(t *testing.T) {
 	schedArr := serviceMidnight.Add(7*time.Hour + 50*time.Minute)
 	schedDep := serviceMidnight.Add(7*time.Hour + 52*time.Minute)
 	slackArr, _, slackOK := api.getPredictedTimes(ctx, tripID, targetStop, 3, schedArr, schedDep, predictionClock{queryTime: when, serviceDate: serviceMidnight})
-	rawArr, _, rawOK := api.getPredictedTimes(ctx, tripID, targetStop, 3, schedArr, schedDep, predictionClock{queryTime: when})
+	rawArr, _, rawOK := api.getPredictedTimes(ctx, tripID, targetStop, 3, schedArr, schedDep, predictionClock{queryTime: when, serviceDate: serviceMidnight, dwellOnly: true})
 	require.True(t, slackOK)
 	require.True(t, rawOK)
 	windowEnd := when.Add(12 * time.Minute)
@@ -1649,6 +1649,76 @@ func TestStopTimeInArrivalWindow_DropsALateRowWithoutASnapshot(t *testing.T) {
 	})
 	require.True(t, predicted)
 	assert.Less(t, droppedQueries, counter.count.Load()-before)
+}
+
+// A predicted Time is measured on the dwell-only pass. A zero service date
+// would turn an early time into a huge delay and drop the row.
+func TestStopTimeInArrivalWindow_KeepsAnEarlyPredictedTime(t *testing.T) {
+	when := time.Date(2010, 1, 1, 8, 10, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(when))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, _, _, _ = setupDelayPropTestData(t, api, 1)
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+	tripID := "early-trip-" + t.Name()
+	_, err := q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: "dp-route", ServiceID: "dp-svc",
+		BlockID: nulls.String("early-block-" + t.Name()),
+	})
+	require.NoError(t, err)
+
+	addStop := func(id string, seq int64, arrival, departure time.Duration) {
+		t.Helper()
+		_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+			ID: id, Name: nulls.String(id), Lat: 47.0, Lon: -122.0,
+		})
+		require.NoError(t, err)
+		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: tripID, StopID: id, StopSequence: seq,
+			ArrivalTime: int64(arrival), DepartureTime: int64(departure),
+		})
+		require.NoError(t, err)
+	}
+	far := "early-far-" + t.Name()
+	near := "early-near-" + t.Name()
+	target := "early-stop-" + t.Name()
+	addStop(far, 1, 6*time.Hour, 6*time.Hour+time.Minute)
+	addStop(near, 2, 6*time.Hour, 6*time.Hour+time.Minute)
+	addStop(target, 3, 8*time.Hour+20*time.Minute, 8*time.Hour+22*time.Minute)
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	early := serviceMidnight.Add(6*time.Hour + time.Minute - 5*time.Minute)
+	farSeq, nearSeq := uint32(1), uint32(2)
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{
+		{StopID: &far, StopSequence: &farSeq, Departure: &gtfs.StopTimeEvent{Time: &early}},
+		{StopID: &near, StopSequence: &nearSeq, Departure: &gtfs.StopTimeEvent{Time: &early}},
+	})
+
+	scheduledArrival := serviceMidnight.Add(8*time.Hour + 20*time.Minute)
+	scheduledDeparture := serviceMidnight.Add(8*time.Hour + 22*time.Minute)
+	dwellArrival, _, dwellOK := api.getPredictedTimes(ctx, tripID, target, 3, scheduledArrival, scheduledDeparture, predictionClock{
+		queryTime: when, serviceDate: serviceMidnight, dwellOnly: true,
+	})
+	require.True(t, dwellOK)
+	assert.Equal(t, scheduledArrival.Add(-5*time.Minute), dwellArrival)
+
+	saturated, _, saturatedOK := api.getPredictedTimes(ctx, tripID, target, 3, scheduledArrival, scheduledDeparture, predictionClock{
+		queryTime: when, dwellOnly: true,
+	})
+	require.True(t, saturatedOK)
+	assert.False(t, saturated.Equal(dwellArrival))
+
+	ast := activeStopTime{
+		GetStopTimesForStopInWindowRow: gtfsdb.GetStopTimesForStopInWindowRow{
+			TripID: tripID, StopID: target, StopSequence: 3,
+			ArrivalTime: int64(8*time.Hour + 20*time.Minute), DepartureTime: int64(8*time.Hour + 22*time.Minute),
+		},
+		ServiceDate: servicedate.New(2010, time.January, 1),
+		Location:    time.UTC,
+	}
+	assert.True(t, api.stopTimeInArrivalWindow(ctx, ast, time.UTC, when, 0, 6*time.Minute))
 }
 
 // addEarlierBlockTrip adds a trip that runs earlier in the same block as the
