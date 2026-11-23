@@ -446,14 +446,15 @@ func selectFrequencyFromStart(freqs []gtfsdb.Frequency, serviceStart, effectiveT
 				return &freqs[i]
 			}
 		}
-	}
-	best, minDist := &freqs[0], min(absInt64(q-freqs[0].StartTime), absInt64(q-freqs[0].EndTime))
-	for i := 1; i < len(freqs); i++ {
-		if d := min(absInt64(q-freqs[i].StartTime), absInt64(q-freqs[i].EndTime)); d < minDist {
-			best, minDist = &freqs[i], d
+		best, minDist := &freqs[0], min(absInt64(q-freqs[0].StartTime), absInt64(q-freqs[0].EndTime))
+		for i := 1; i < len(freqs); i++ {
+			if d := min(absInt64(q-freqs[i].StartTime), absInt64(q-freqs[i].EndTime)); d < minDist {
+				best, minDist = &freqs[i], d
+			}
 		}
+		return best
 	}
-	return best
+	return &freqs[0]
 }
 
 // fetchFrequenciesForTrips batch-fetches frequency rows for tripIDs, batching
