@@ -194,7 +194,6 @@ func (api *RestAPI) newTripStatus(ctx context.Context, agencyID, tripID string, 
 	status.ServiceDate = models.NewModelTime(sdMidnight)
 	extras := &tripStatusExtras{situations: api.situationRefsForTrip(ctx, tripID)}
 	status.SituationIDs = situationIDsFromRefs(extras.situations)
-	// OccupancyCapacity and OccupancyCount default to 0 when no data is available.
 
 	// Computed up front (independent of vehicle/stop-time/shape data) so it is
 	// still set when a CANCELED trip skips the rest of the status.
