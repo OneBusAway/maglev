@@ -1202,7 +1202,6 @@ func frequencyScheduledTimes(st gtfsdb.GetStopTimesForStopInWindowRow, freq *gtf
 	fStart := serviceStart.Add(time.Duration(freq.StartTime) + offset)
 	fEnd := serviceStart.Add(time.Duration(freq.EndTime) + offset)
 
-	var dep time.Time
 	if freq.ExactTimes != 0 {
 		headway := time.Duration(freq.HeadwaySecs) * time.Second
 		if headway <= 0 {
@@ -1213,14 +1212,19 @@ func frequencyScheduledTimes(st gtfsdb.GetStopTimesForStopInWindowRow, freq *gtf
 		if len(window) > 0 && window[0] > 0 {
 			wStart = queryTime.Add(-window[0])
 		}
-		dep = fStart
+		slot := fStart
 		if wStart.After(fStart) {
 			k := (wStart.Sub(fStart) + headway - 1) / headway
-			dep = fStart.Add(k * headway)
+			slot = fStart.Add(k * headway)
 		}
-	} else {
-		dep = queryTime.Add(time.Duration(freq.HeadwaySecs) * time.Second / 2)
+		if slot.Before(fStart) {
+			slot = fStart
+		} else if slot.After(fEnd) {
+			slot = fEnd
+		}
+		return slot, slot.Add(dwell)
 	}
+	dep := queryTime.Add(time.Duration(freq.HeadwaySecs) * time.Second / 2)
 	if dep.Before(fStart) {
 		dep = fStart
 	} else if dep.After(fEnd) {

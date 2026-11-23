@@ -208,8 +208,46 @@ func TestArrivalFrequencyWindowScheduledDeparture(t *testing.T) {
 			})
 			assertFrequencyWindowTrips(t, arrivals, []string{freqTripID, freqExactTripID})
 			for _, arrival := range arrivals {
-				assert.Equal(t, time.Date(2025, 6, 12, 8, 59, 0, 0, time.UTC).UnixMilli(), arrival.ScheduledArrivalTime.UnixMilli())
-				assert.Equal(t, time.Date(2025, 6, 12, 9, 0, 0, 0, time.UTC).UnixMilli(), arrival.ScheduledDepartureTime.UnixMilli())
+				_, id, err := utils.ExtractAgencyIDAndCodeID(arrival.TripID)
+				require.NoError(t, err)
+				if id == freqTripID {
+					assert.Equal(t, time.Date(2025, 6, 12, 8, 59, 0, 0, time.UTC).UnixMilli(), arrival.ScheduledArrivalTime.UnixMilli())
+					assert.Equal(t, time.Date(2025, 6, 12, 9, 0, 0, 0, time.UTC).UnixMilli(), arrival.ScheduledDepartureTime.UnixMilli())
+				} else {
+					assert.Equal(t, time.Date(2025, 6, 12, 9, 0, 0, 0, time.UTC).UnixMilli(), arrival.ScheduledArrivalTime.UnixMilli())
+					assert.Equal(t, time.Date(2025, 6, 12, 9, 1, 0, 0, time.UTC).UnixMilli(), arrival.ScheduledDepartureTime.UnixMilli())
+				}
+			}
+		})
+	}
+}
+
+// TestArrivalExactTimesFrequencyDwell pins exact_times=1 arrival and departure
+// times with non-zero stop dwell.
+func TestArrivalExactTimesFrequencyDwell(t *testing.T) {
+	files := frequencyFixtureFiles()
+	files["stop_times.txt"] = strings.ReplaceAll(files["stop_times.txt"], "06:00:00,06:00:00,"+freqStopAID, "06:00:00,06:02:00,"+freqStopAID)
+	// Query at 06:30 for exact-times trip with 30m headway and 2m dwell.
+	// Slot is 06:30 arrival, 06:32 departure.
+	queryTime := time.Date(2025, 6, 12, 6, 30, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(queryTime), "frequency-exact-dwell.zip", files)
+	defer api.Shutdown()
+	for _, endpoint := range []string{"stop", "location"} {
+		t.Run(endpoint, func(t *testing.T) {
+			arrivals := frequencyWindowArrivals(t, api, endpoint, url.Values{
+				"time":                   {fmt.Sprint(queryTime.UnixMilli())},
+				"minutesBefore":          {"0"},
+				"minutesAfter":           {"0"},
+				"frequencyMinutesBefore": {"0"},
+				"frequencyMinutesAfter":  {"0"},
+			})
+			for _, arrival := range arrivals {
+				_, id, err := utils.ExtractAgencyIDAndCodeID(arrival.TripID)
+				require.NoError(t, err)
+				if id == freqExactTripID {
+					assert.Equal(t, time.Date(2025, 6, 12, 6, 30, 0, 0, time.UTC).UnixMilli(), arrival.ScheduledArrivalTime.UnixMilli())
+					assert.Equal(t, time.Date(2025, 6, 12, 6, 32, 0, 0, time.UTC).UnixMilli(), arrival.ScheduledDepartureTime.UnixMilli())
+				}
 			}
 		})
 	}
