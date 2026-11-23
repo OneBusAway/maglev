@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
-	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -21,6 +20,11 @@ import (
 	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
 )
+
+// predictionServiceDate is the service date passed to getPredictedTimes for
+// trips the test database has no block for, so only the trip's own update makes
+// up its record.
+var predictionServiceDate = time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 
 func TestArrivalAndDepartureForStopHandlerRequiresValidApiKey(t *testing.T) {
 	api := createTestApi(t)
@@ -1541,9 +1545,11 @@ func TestDwellSlack_StopIDOnlyUpdatesUseUniqueSequence(t *testing.T) {
 		wantDeparture     time.Duration
 		wantScheduleReads int64
 	}{
-		{name: "unique earlier stops absorb", withTripDelay: true, wantPredicted: true, wantDeparture: 4 * time.Minute, wantScheduleReads: 1},
-		{name: "a repeated stop stays unresolved", repeated: true, withTripDelay: true, wantPredicted: true, wantDeparture: 9 * time.Minute, wantScheduleReads: 1},
-		{name: "no trip delay skips the schedule read", wantScheduleReads: 0},
+		// 14 queries are the vehicle-record lookup. Resolving a stop id adds
+		// one GetStopTimesForTrip, and a trip with no delay does not.
+		{name: "unique earlier stops absorb", withTripDelay: true, wantPredicted: true, wantDeparture: 4 * time.Minute, wantScheduleReads: 15},
+		{name: "a repeated stop stays unresolved", repeated: true, withTripDelay: true, wantPredicted: true, wantDeparture: 9 * time.Minute, wantScheduleReads: 15},
+		{name: "no trip delay skips the schedule read", wantScheduleReads: 14},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1663,6 +1669,87 @@ func TestDwellSlack_StopIDOnlyPriorDelayBeatsTripDelay(t *testing.T) {
 	require.True(t, predicted)
 	assert.Equal(t, scheduledArrival.Add(9*time.Minute), arrival)
 	assert.Equal(t, scheduledDeparture.Add(4*time.Minute), departure)
+}
+
+// TestDwellSlack_StopIDOnlyPriorTimeBeatsTripDelay covers a prior update that
+// names its stop but sends a predicted time instead of a delay. The delay is
+// that time minus the stop's scheduled time. An update with neither leaves
+// the trip delay in place.
+func TestDwellSlack_StopIDOnlyPriorTimeBeatsTripDelay(t *testing.T) {
+	tests := []struct {
+		name          string
+		kind          string
+		wantArrival   time.Duration
+		wantDeparture time.Duration
+	}{
+		{name: "departure time", kind: "departure-time", wantArrival: 9 * time.Minute, wantDeparture: 4 * time.Minute},
+		{name: "arrival time", kind: "arrival-time", wantArrival: 9 * time.Minute, wantDeparture: 4 * time.Minute},
+		{name: "no time", kind: "no-time", wantArrival: 4 * time.Minute, wantDeparture: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 4)
+			ctx := context.Background()
+			q := api.GtfsManager.GtfsDB.Queries
+			addStop := func(id string, seq int64) {
+				t.Helper()
+				_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+					ID: id, Name: nulls.String(id), Lat: 47.0, Lon: -122.0,
+				})
+				require.NoError(t, err)
+				_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+					TripID: tripID, StopID: id, StopSequence: seq,
+					ArrivalTime:   int64(6 * time.Hour),
+					DepartureTime: int64(6*time.Hour + time.Minute),
+				})
+				require.NoError(t, err)
+			}
+			far, near := "dp-far", "dp-near"
+			addStop(far, 1)
+			addStop(near, 2)
+
+			var updates []gtfs.StopTimeUpdate
+			switch tc.kind {
+			case "departure-time":
+				late := time.Date(2010, 1, 1, 6, 10, 0, 0, time.UTC)
+				updates = []gtfs.StopTimeUpdate{
+					{StopID: &far, Departure: &gtfs.StopTimeEvent{Time: &late}},
+					{StopID: &near, Departure: &gtfs.StopTimeEvent{Time: &late}},
+				}
+			case "arrival-time":
+				late := time.Date(2010, 1, 1, 6, 9, 0, 0, time.UTC)
+				updates = []gtfs.StopTimeUpdate{
+					{StopID: &far, Arrival: &gtfs.StopTimeEvent{Time: &late}},
+					{StopID: &near, Arrival: &gtfs.StopTimeEvent{Time: &late}},
+				}
+			default:
+				updates = []gtfs.StopTimeUpdate{
+					{StopID: &far, Departure: &gtfs.StopTimeEvent{}},
+					{StopID: &near, Departure: &gtfs.StopTimeEvent{}},
+				}
+			}
+			tripDelay := 4 * time.Minute
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+				ID:              gtfs.TripID{ID: tripID},
+				Delay:           &tripDelay,
+				StopTimeUpdates: updates,
+			}})
+
+			scheduledArrival := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+			scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
+			query := time.Date(2010, 1, 1, 7, 50, 0, 0, time.UTC)
+			arrival, departure, predicted := api.getPredictedTimes(
+				ctx, tripID, "dp-stop", 4, scheduledArrival, scheduledDeparture,
+				predictionClock{queryTime: query, serviceDate: predictionServiceDate},
+			)
+			require.True(t, predicted)
+			assert.Equal(t, scheduledArrival.Add(tc.wantArrival), arrival)
+			assert.Equal(t, scheduledDeparture.Add(tc.wantDeparture), departure)
+		})
+	}
 }
 
 // An absolute Arrival.Time and Departure.Time pair goes down the same path as
@@ -2131,51 +2218,6 @@ func TestArrivalAndDepartureForStop_VehicleWithNilID(t *testing.T) {
 	assert.Equal(t, "", model.Data.Entry.VehicleID, "vehicleId should be empty for vehicle with nil ID")
 }
 
-// TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway pins the
-// OBA-spec behavior for numberOfStopsAway when BuildTripStatus cannot produce
-// a schedule snapshot for the trip -- which is always the case for CANCELED
-// trips. Per arrivals-and-departures-for-stop §11a, 0 is the correct
-// unknown-data value in that situation; -1 is a legitimate real reading
-// meaning "one stop behind" and must not double as a sentinel. This test
-// guards the response emitting 0 for a CANCELED trip.
-func TestArrivalAndDepartureForStop_CanceledTrip_NumberOfStopsAway(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-
-	tripID := "36957461-b451-4390-af3a-bc42c51fd473"
-	stopID := "5007"
-	stopSequence := 6
-	combinedStopID := utils.FormCombinedID("25", stopID)
-	combinedTripID := utils.FormCombinedID("25", tripID)
-	serviceDateMs := time.Now().UnixMilli()
-
-	api.GtfsManager.MockAddVehicleWithOptions("canceled-vehicle", tripID, "", internalgtfs.MockVehicleOptions{
-		ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
-	})
-
-	endpoint := fmt.Sprintf(
-		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=%d",
-		combinedStopID,
-		combinedTripID,
-		serviceDateMs,
-		stopSequence,
-	)
-
-	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
-
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, 200, model.Code)
-	// Per the OBA spec (arrivals-and-departures-for-stop §11a), when no
-	// block location is available -- as with a CANCELED trip -- the
-	// unknown-data value for numberOfStopsAway is 0 (absent/zero), not -1.
-	// -1 is a legitimate real value meaning "one stop behind" and must not
-	// double as a sentinel. Both handlers agree on 0 for the no-data case.
-	assert.Equal(t, 0, model.Data.Entry.NumberOfStopsAway,
-		"CANCELED trips report numberOfStopsAway=0 (no block location); "+
-			"-1 is reserved for the real 'one stop behind' signal")
-}
-
 // TestArrivalAndDepartureForStop_ScheduleOnlyBlock_SnapshotMetrics guards the
 // handler's schedule-only fallback for numberOfStopsAway and distanceFromStop
 // (arrival_and_departure_for_stop_handler.go around the snapshot.metricsForStop
@@ -2621,4 +2663,40 @@ func TestArrivalAndDepartureForStopHandler_CrossAgencyTimezone(t *testing.T) {
 	expectedMidnightLA := time.Date(2026, 1, 15, 0, 0, 0, 0, locLA)
 	assert.True(t, entry.ServiceDate.In(locLA).Equal(expectedMidnightLA),
 		"service date must be midnight in the trip agency timezone, got %v", entry.ServiceDate)
+}
+
+func TestArrivalAndDepartureForStopHandler_OtherAgencyVehicleId_ReturnsNotFound(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	rawTripID := "0f36bccf-c435-4b31-b001-da345d06a57d"
+	stopID := utils.FormCombinedID("25", "4062")
+	tripID := utils.FormCombinedID("25", rawTripID)
+	vehicleCode := "veh_100"
+	serviceDate := time.Now()
+
+	// Install an attributed vehicle for agency "25" running the requested trip.
+	api.GtfsManager.MockSetAgencyVehicles("_test", "25", []gtfs.Vehicle{{
+		ID:   &gtfs.VehicleID{ID: vehicleCode},
+		Trip: &gtfs.Trip{ID: gtfs.TripID{ID: rawTripID}},
+	}})
+
+	// 1. Positive control: same-agency prefix finds the attributed vehicle.
+	posEndpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&vehicleId=%s",
+		stopID, tripID, serviceDate.UnixMilli(), utils.FormCombinedID("25", vehicleCode))
+	posResp, posModel := callAPIHandler[ArrivalAndDepartureResponse](t, api, posEndpoint)
+
+	require.Equal(t, http.StatusOK, posResp.StatusCode)
+	require.Equal(t, http.StatusOK, posModel.Code)
+	assert.Equal(t, utils.FormCombinedID("25", vehicleCode), posModel.Data.Entry.VehicleID)
+
+	// 2. Negative control: querying the same raw vehicle ID with another agency's prefix
+	// must not match agency 25's vehicle. Explicit vehicle mismatches return 404.
+	negEndpoint := fmt.Sprintf("/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&vehicleId=%s",
+		stopID, tripID, serviceDate.UnixMilli(), utils.FormCombinedID("99", vehicleCode))
+	negResp, negModel := callAPIHandler[ArrivalAndDepartureResponse](t, api, negEndpoint)
+
+	require.Equal(t, http.StatusNotFound, negResp.StatusCode)
+	require.Equal(t, http.StatusNotFound, negModel.Code)
 }

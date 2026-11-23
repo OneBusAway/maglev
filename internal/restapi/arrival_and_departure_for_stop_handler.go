@@ -146,7 +146,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 	stopID := utils.FormCombinedID(stopAgencyID, stopCode)
 
-	ctx := r.Context()
+	// The vehicle lookup, cancellation check, predictions and status each build
+	// the same block trip list and snapshot, so they share one request cache.
+	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
 	reqLogger := logging.ForComponent(ctx, "http_server")
 
 	// Capture parsing errors (syntax validation only — localization happens below
@@ -305,34 +307,27 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// If vehicleId is provided, validate it matches the trip
 	var vehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
-		_, providedVehicleID, err := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
-		if err == nil {
-			v, err := api.GtfsManager.GetVehicleByID(providedVehicleID)
-			// If vehicle is found, validate it matches the trip
-			if err == nil && v != nil && v.Trip != nil && v.Trip.ID.ID == tripID {
-				vehicle = v
-			}
-		} else {
-			reqLogger.Warn("malformed vehicleId provided",
-				"vehicleId", params.VehicleID,
-				"error", err)
+		vehicle = api.requestedVehicleForTrip(ctx, params.VehicleID, route.AgencyID, tripID, serviceMidnight)
+		if vehicle == nil {
+			api.sendNotFound(w, r)
+			return
 		}
 	} else {
 		// If vehicleId is not provided, get the vehicle for the trip
-		vehicle = api.GtfsManager.GetVehicleForTrip(ctx, tripID)
+		vehicle = api.vehicleForTrip(ctx, tripID, serviceMidnight)
+	}
+
+	// Java returns no arrival for a canceled trip by default (hideCanceledTrips,
+	// ArrivalsAndDeparturesBeanServiceImpl.java:267), as the wiki's SD-03 adopts.
+	if api.arrivalCanceled(ctx, tripID, vehicle, serviceMidnight) {
+		api.sendNotFound(w, r)
+		return
 	}
 
 	if vehicle != nil && vehicle.Trip != nil {
-		if vehicle.ID != nil {
-			// Combined {agencyId}_{vehicleId} form per spec; matches
-			// tripStatus.vehicleId (set by BuildTripStatus below) and lets
-			// clients round-trip this value into /trip-for-vehicle/{id} and
-			// /trip-details/{id}?vehicleId=... which both extract the agency
-			// prefix before doing GetVehicleByID on the raw id.
-			vehicleID = utils.FormCombinedID(route.AgencyID, vehicle.ID.ID)
-		} else {
-			reqLogger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
-		}
+		// Matches tripStatus.vehicleId (set by BuildTripStatus below), and clients
+		// round-trip it into /trip-for-vehicle/{id} and /trip-details/{id}?vehicleId=...
+		vehicleID = api.combinedVehicleID(ctx, vehicle, route.AgencyID, tripID)
 		predicted = true
 	}
 
@@ -348,7 +343,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// carry a wall-clock time portion) for all schedule math — matches Java's
 	// BlockInstance contract ("midnight time relative to stop times"; see
 	// BlockInstance.java:69-72) and the plural handler's convention.
-	status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime, freqMap)
+	status, statusExtras, statusErr := api.buildTripStatusForVehicle(ctx, route.AgencyID, tripID, vehicle, serviceMidnight, currentTime, freqMap)
 	if statusErr != nil {
 		reqLogger.Warn("BuildTripStatus failed",
 			"tripID", tripID, "error", statusErr)
@@ -428,6 +423,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		tripStatus,                                     // tripStatus
 		situationIDs,                                   // situationIds
 	)
+	applyVehicleRecordUpdateTime(arrival, status, statusExtras)
 
 	// The arrival's frequency uses the window-matched row fetched above.
 	if len(freqRows) > 0 {
@@ -651,8 +647,8 @@ func departureDeviationAtQuery(deviation time.Duration, queryTime, scheduledArri
 // and calculateDepartureDeviation when the block snapshot can be built.
 // Slack accumulated at earlier stops, including layovers, comes off both the
 // arrival and the departure. The stop's own dwell comes off the departure.
-// ok is false when that snapshot is unavailable, and the caller then uses
-// this stop's dwell alone.
+// ok is false when that snapshot is unavailable or the block record was
+// discarded, and the caller then uses this stop's dwell alone.
 func (api *RestAPI) deviationsAfterAccumulatedSlack(
 	ctx context.Context,
 	tripID string,
@@ -681,7 +677,10 @@ func (api *RestAPI) deviationsAfterAccumulatedSlack(
 	currentSeconds := utils.CalculateSecondsSinceServiceDate(queryTime, serviceDate)
 	effectiveSeconds := currentSeconds - int64(deviationSeconds)
 	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
-	blockDeviation, _ := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceDate, queryTime)
+	blockDeviation, blockOK := api.GetScheduleDeviationForBlock(ctx, blockTripIDs, serviceDate, queryTime)
+	if !blockOK {
+		return 0, 0, false
+	}
 	blockSeconds := currentSeconds - int64(blockDeviation)
 	arrivalSeconds, departureSeconds := absorbSlack(snap, slackPosition{
 		target:                   target,
@@ -723,6 +722,74 @@ type predictionClock struct {
 	serviceDate time.Time
 }
 
+// priorStopSelection is the closest-earlier-stop state for one prediction.
+// The pointers are the caller's variables. Grouped so notePriorStop does not
+// take a long run of same-typed arguments.
+type priorStopSelection struct {
+	target      int64
+	earliest    *int64
+	closest     *int64
+	propagated  *time.Duration
+	serviceDate time.Time
+	schedule    **staticSchedule
+}
+
+// notePriorStop records the earliest update and the closest earlier one that
+// carries a delay. A Delay field is used as sent. A predicted Time with no
+// Delay is that time minus the stop's scheduled time, which is how Java
+// builds the deviation sample. An update with neither does not take the
+// slot, so a trip delay is kept.
+func (api *RestAPI) notePriorStop(ctx context.Context, tripID string, stu *gtfs.StopTimeUpdate, trackedSeq int64, sel *priorStopSelection) {
+	if trackedSeq == -1 {
+		return
+	}
+	if *sel.earliest == -1 || trackedSeq < *sel.earliest {
+		*sel.earliest = trackedSeq
+	}
+	if trackedSeq >= sel.target || trackedSeq <= *sel.closest {
+		return
+	}
+	delay, ok := api.propagatedStopDelay(ctx, tripID, stu, trackedSeq, sel.serviceDate, sel.schedule)
+	if !ok {
+		return
+	}
+	*sel.closest = trackedSeq
+	*sel.propagated = delay
+}
+
+// propagatedStopDelay is the delay an earlier stop-time update passes on.
+// It reports false when the update names a stop but carries no delay and no
+// predicted time.
+func (api *RestAPI) propagatedStopDelay(ctx context.Context, tripID string, stu *gtfs.StopTimeUpdate, seq int64, serviceDate time.Time, schedule **staticSchedule) (time.Duration, bool) {
+	if stu.Departure != nil && stu.Departure.Delay != nil {
+		return *stu.Departure.Delay, true
+	}
+	if stu.Arrival != nil && stu.Arrival.Delay != nil {
+		return *stu.Arrival.Delay, true
+	}
+	if delay, ok := api.delayFromPredictedTime(ctx, tripID, stu.Departure, seq, serviceDate, schedule, false); ok {
+		return delay, true
+	}
+	return api.delayFromPredictedTime(ctx, tripID, stu.Arrival, seq, serviceDate, schedule, true)
+}
+
+// delayFromPredictedTime derives a delay from a predicted Time and the static
+// stop time. arrival selects the scheduled arrival; otherwise the departure.
+func (api *RestAPI) delayFromPredictedTime(ctx context.Context, tripID string, event *gtfs.StopTimeEvent, seq int64, serviceDate time.Time, schedule **staticSchedule, arrival bool) (time.Duration, bool) {
+	if event == nil || event.Time == nil {
+		return 0, false
+	}
+	visit, ok := api.loadStaticSchedule(ctx, tripID, schedule).bySequence[seq]
+	if !ok {
+		return 0, false
+	}
+	nanos := visit.departure
+	if arrival {
+		nanos = visit.arrival
+	}
+	return event.Time.Sub(serviceDate.Add(time.Duration(nanos))), true
+}
+
 // getPredictedTimes computes predicted arrival/departure times from GTFS-RT TripUpdate data.
 // It implements a 3-tier fallback strategy matching the plural handler's behavior:
 //  1. Exact stop match — uses per-stop arrival/departure time or delay directly
@@ -731,6 +798,9 @@ type predictionClock struct {
 //
 // Returns (predictedArrivalMs, predictedDepartureMs, isPredicted).
 // Returns (time.Time{}, time.Time{}, false) if no prediction can be made.
+//
+// The update expires with its vehicle's record. A later update from the same
+// vehicle can refresh it, but another vehicle's update cannot.
 func (api *RestAPI) getPredictedTimes(
 	ctx context.Context,
 	tripID string,
@@ -743,7 +813,7 @@ func (api *RestAPI) getPredictedTimes(
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
 		return time.Time{}, time.Time{}, false
 	}
-	if api.tripUpdateExpired(*realTimeTrip) {
+	if api.vehicleRecordExpired(api.predictionRecordUpdates(ctx, *realTimeTrip, tripID, clock.serviceDate)) {
 		return time.Time{}, time.Time{}, false
 	}
 
@@ -758,7 +828,7 @@ func (api *RestAPI) getPredictedTimes(
 	// the update whose stop_sequence matches the requested one, and fall back
 	// to stop_id for updates whose sequence doesn't name a visit to this stop.
 	var target, stopIDFallback *gtfs.StopTimeUpdate
-	var staticStops map[int64]string
+	var schedule *staticSchedule
 	// earliestSTUSequence matters only for a trip delay with two or more
 	// updates. Stop-id-only updates resolve a sequence in that case alone,
 	// so other feeds do not load the trip's stop times.
@@ -778,32 +848,29 @@ func (api *RestAPI) getPredictedTimes(
 				target = stu
 			}
 		case matchesStop && stopIDFallback == nil:
-			if seq != -1 && staticStops == nil {
-				staticStops = api.staticStopsForTrip(ctx, tripID)
+			var stopIDs map[int64]string
+			if seq != -1 {
+				stopIDs = api.loadStaticSchedule(ctx, tripID, &schedule).stopIDs
 			}
-			if !sequenceIdentifiesVisit(*stu, staticStops) {
+			if !sequenceIdentifiesVisit(*stu, stopIDs) {
 				stopIDFallback = stu
 			}
 		}
 
 		trackedSeq := seq
 		if trackedSeq == -1 && resolveUniqueStop && stu.StopID != nil {
-			if resolved, ok := api.uniqueStopSequence(ctx, tripID, *stu.StopID, &staticStops); ok {
+			if resolved, ok := api.uniqueStopSequence(ctx, tripID, *stu.StopID, &schedule); ok {
 				trackedSeq = resolved
 			}
 		}
-		if trackedSeq != -1 && (earliestSTUSequence == -1 || trackedSeq < earliestSTUSequence) {
-			earliestSTUSequence = trackedSeq
-		}
-		if trackedSeq != -1 && trackedSeq < targetStopSequence && trackedSeq > closestPriorSequence {
-			closestPriorSequence = trackedSeq
-			propagatedDelay = 0
-			if stu.Departure != nil && stu.Departure.Delay != nil {
-				propagatedDelay = *stu.Departure.Delay
-			} else if stu.Arrival != nil && stu.Arrival.Delay != nil {
-				propagatedDelay = *stu.Arrival.Delay
-			}
-		}
+		api.notePriorStop(ctx, tripID, stu, trackedSeq, &priorStopSelection{
+			target:      targetStopSequence,
+			earliest:    &earliestSTUSequence,
+			closest:     &closestPriorSequence,
+			propagated:  &propagatedDelay,
+			serviceDate: clock.serviceDate,
+			schedule:    &schedule,
+		})
 	}
 
 	if target == nil {

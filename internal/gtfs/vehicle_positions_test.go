@@ -245,3 +245,75 @@ func TestRecordVehicleDataTime_KeepsRealHeaderTime(t *testing.T) {
 
 	assert.True(t, manager.feedVehicleDataTime["feed-a"].Equal(headerTime))
 }
+
+func TestGetVehicleByID_ExactAgencyLookup(t *testing.T) {
+	vehicleWithTrip := func(id, tripID string) gtfs.Vehicle {
+		return gtfs.Vehicle{
+			ID:   &gtfs.VehicleID{ID: id},
+			Trip: &gtfs.Trip{ID: gtfs.TripID{ID: tripID}},
+		}
+	}
+	manager := newTestManager()
+	// feed-a is earlier, feed-b is later (sorted feed IDs: feed-a, feed-b)
+	manager.feedVehicles["feed-a"] = []gtfs.Vehicle{
+		vehicleWithTrip("shared", "trip-a"),
+		vehicleWithTrip("only-a", "trip-only-a"),
+		vehicleWithTrip("unattributed-early", "trip-unattr-early"),
+		vehicleWithTrip("later-unattributed", "trip-attr-early"),
+	}
+	manager.feedVehicles["feed-b"] = []gtfs.Vehicle{
+		vehicleWithTrip("shared", "trip-b"),
+		vehicleWithTrip("only-b", "trip-only-b"),
+		vehicleWithTrip("unattributed-late", "trip-unattr-late"),
+		vehicleWithTrip("later-unattributed", "trip-unattr-late"),
+	}
+	manager.feedVehicleAgency = map[string]map[vehicleKey]string{
+		"feed-a": {
+			newVehicleKey(&gtfs.VehicleID{ID: "shared"}):             "A",
+			newVehicleKey(&gtfs.VehicleID{ID: "only-a"}):             "A",
+			newVehicleKey(&gtfs.VehicleID{ID: "later-unattributed"}): "A",
+		},
+		"feed-b": {
+			newVehicleKey(&gtfs.VehicleID{ID: "shared"}): "B",
+			newVehicleKey(&gtfs.VehicleID{ID: "only-b"}): "B",
+		},
+	}
+	rebuild(manager)
+
+	tests := []struct {
+		name       string
+		agencyID   string
+		vehicleID  string
+		wantTripID string
+		wantErr    bool
+	}{
+		{"exact match agency A", "A", "shared", "trip-a", false},
+		{"exact match agency B", "B", "shared", "trip-b", false},
+		{"wrong agency returns not found", "B", "only-a", "", true},
+		{"unattributed vehicle does not match agency A", "A", "unattributed-early", "", true},
+		{"unattributed vehicle does not match agency B", "B", "unattributed-late", "", true},
+		{"exact match takes precedence over later unattributed report", "A", "later-unattributed", "trip-attr-early", false},
+		{"no exact match despite unattributed report", "B", "later-unattributed", "", true},
+		{"empty agency matches only an unattributed key", "", "unattributed-early", "trip-unattr-early", false},
+		{"empty agency does not match an attributed key", "", "only-a", "", true},
+		{"completely missing vehicle", "A", "missing", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			veh, err := manager.GetVehicleByID(tt.agencyID, tt.vehicleID)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.vehicleID)
+				if tt.agencyID != "" {
+					assert.Contains(t, err.Error(), tt.agencyID)
+				}
+				assert.Nil(t, veh)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, veh)
+			assert.Equal(t, tt.wantTripID, veh.Trip.ID.ID)
+		})
+	}
+}

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
-	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -21,6 +20,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -1290,16 +1290,6 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 		wantDepartureOffset time.Duration
 	}{
 		{
-			name: "canceled trip with fresh vehicle is not predicted",
-			setup: func(t *testing.T, api *RestAPI, now time.Time, tripID string) {
-				api.GtfsManager.MockAddVehicleWithOptions("v1", tripID, "dp-route", internalgtfs.MockVehicleOptions{
-					Timestamp:            &now,
-					ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
-				})
-			},
-			wantPredicted: false,
-		},
-		{
 			name: "deviation beyond blockNotActive window is not predicted",
 			setup: func(t *testing.T, api *RestAPI, now time.Time, tripID string) {
 				api.GtfsManager.MockAddVehicleWithOptions("v1", tripID, "dp-route", internalgtfs.MockVehicleOptions{
@@ -1422,6 +1412,12 @@ func TestPluralArrivals_UpstreamDwellAbsorbedOnArrival(t *testing.T) {
 	assert.False(t, ok)
 	_, _, ok = api.deviationsAfterAccumulatedSlack(ctx, tripID, 2, -time.Minute, mockClock.Now(), serviceMidnight)
 	assert.False(t, ok)
+
+	tooLate := 2 * time.Hour
+	api.GtfsManager.MockAddTripUpdate(tripID, &tooLate, nil)
+	_, _, ok = api.deviationsAfterAccumulatedSlack(ctx, tripID, 2, delay, mockClock.Now(), serviceMidnight)
+	assert.False(t, ok, "a trip delay past one hour discards the block record, so this stop's dwell is used")
+	api.GtfsManager.MockResetRealTimeData()
 
 	api.GtfsManager.MockAddTripUpdate(tripID, &delay, nil)
 
@@ -1595,6 +1591,64 @@ func TestSlackAdjustedArrivalEntersTheWindow(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	arrival := findArrivalForTrip(t, plural.Data.Entry.ArrivalsAndDepartures, combinedTripID)
 	assert.Equal(t, slackArr.UnixMilli(), arrival.PredictedArrivalTime.UnixMilli())
+}
+
+// TestStopTimeInArrivalWindow_DropsALateRowWithoutASnapshot covers a candidate
+// whose scheduled time and dwell-only prediction are both after the window.
+// Slack cannot pull that arrival back in, so the check must not build a block
+// snapshot.
+func TestStopTimeInArrivalWindow_DropsALateRowWithoutASnapshot(t *testing.T) {
+	when := time.Date(2010, 1, 1, 8, 1, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(when))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, _, _, _ = setupDelayPropTestData(t, api, 1)
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+	tripID := "late-trip-" + t.Name()
+	stopID := "late-stop-" + t.Name()
+	_, err := q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID: tripID, RouteID: "dp-route", ServiceID: "dp-svc",
+		BlockID: nulls.String("late-block-" + t.Name()),
+	})
+	require.NoError(t, err)
+	_, err = q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID: stopID, Name: nulls.String(stopID), Lat: 47.0, Lon: -122.0,
+	})
+	require.NoError(t, err)
+	arrivalOffset := int64(8*time.Hour + 20*time.Minute)
+	departureOffset := int64(8*time.Hour + 22*time.Minute)
+	_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+		TripID: tripID, StopID: stopID, StopSequence: 1,
+		ArrivalTime: arrivalOffset, DepartureTime: departureOffset,
+	})
+	require.NoError(t, err)
+	delay := 20 * time.Minute
+	api.GtfsManager.MockAddTripUpdate(tripID, &delay, nil)
+
+	serviceDate := servicedate.New(2010, time.January, 1)
+	ast := activeStopTime{
+		GetStopTimesForStopInWindowRow: gtfsdb.GetStopTimesForStopInWindowRow{
+			TripID: tripID, StopID: stopID, StopSequence: 1,
+			ArrivalTime: arrivalOffset, DepartureTime: departureOffset,
+		},
+		ServiceDate: serviceDate,
+		Location:    time.UTC,
+	}
+	counter := swapInQueryCounter(t, api)
+	kept := api.stopTimeInArrivalWindow(ctx, ast, time.UTC, when, 0, 12*time.Minute)
+	droppedQueries := counter.count.Load()
+	assert.False(t, kept)
+
+	scheduledArrival := serviceDate.Midnight(time.UTC).Add(time.Duration(arrivalOffset))
+	scheduledDeparture := serviceDate.Midnight(time.UTC).Add(time.Duration(departureOffset))
+	before := counter.count.Load()
+	_, _, predicted := api.getPredictedTimes(ctx, tripID, stopID, 1, scheduledArrival, scheduledDeparture, predictionClock{
+		queryTime: when, serviceDate: serviceDate.Midnight(time.UTC),
+	})
+	require.True(t, predicted)
+	assert.Less(t, droppedQueries, counter.count.Load()-before)
 }
 
 // addEarlierBlockTrip adds a trip that runs earlier in the same block as the

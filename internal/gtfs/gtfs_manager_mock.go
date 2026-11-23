@@ -36,6 +36,19 @@ func (m *Manager) MockAddRoute(id, agencyID, name string) {
 		ShortName: nulls.String(name),
 	})
 }
+
+// mockVehicleLookupKey attributes mock vehicles to a known route's agency,
+// matching ingestion rather than relying on an unattributed lookup fallback.
+func (m *Manager) mockVehicleLookupKey(vehicleID, routeID string) agencyVehicleKey {
+	key := agencyVehicleKey{vehicleID: vehicleID}
+	if m.GtfsDB != nil {
+		if route, err := m.GtfsDB.Queries.GetRoute(context.Background(), routeID); err == nil {
+			key.agencyID = route.AgencyID
+		}
+	}
+	return key
+}
+
 func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
@@ -58,9 +71,10 @@ func (m *Manager) MockAddVehicle(vehicleID, tripID, routeID string) {
 		},
 	}
 	merged.vehicles = append(merged.vehicles, v)
+	merged.liveVehicles = append(merged.liveVehicles, v)
 
 	idx := len(merged.vehicles) - 1
-	merged.vehicleLookupByVehicle[vehicleID] = idx
+	merged.vehicleLookupByVehicle[m.mockVehicleLookupKey(vehicleID, routeID)] = idx
 	if tripID != "" {
 		merged.vehicleLookupByTrip[tripID] = idx
 	}
@@ -131,10 +145,11 @@ func (m *Manager) MockAddVehicleWithOptions(vehicleID, tripID, routeID string, o
 	}
 	merged := m.mergedRealtime().clone()
 	merged.vehicles = append(merged.vehicles, v)
+	merged.liveVehicles = append(merged.liveVehicles, v)
 
 	idx := len(merged.vehicles) - 1
 	if vehicleID != "" && !opts.NoID {
-		merged.vehicleLookupByVehicle[vehicleID] = idx
+		merged.vehicleLookupByVehicle[m.mockVehicleLookupKey(vehicleID, routeID)] = idx
 	}
 	if tripID != "" && !opts.NoTrip {
 		merged.vehicleLookupByTrip[tripID] = idx
@@ -186,9 +201,10 @@ func (m *Manager) MockAddDuplicatedVehicle(vehicleID, tripID, routeID string, op
 		},
 	}
 	merged.vehicles = append(merged.vehicles, v)
+	merged.liveVehicles = append(merged.liveVehicles, v)
 	idx := len(merged.vehicles) - 1
 	if vehicleID != "" {
-		merged.vehicleLookupByVehicle[vehicleID] = idx
+		merged.vehicleLookupByVehicle[m.mockVehicleLookupKey(vehicleID, routeID)] = idx
 	}
 	if tripID != "" {
 		merged.vehicleLookupByTrip[tripID] = idx
@@ -205,9 +221,10 @@ func (m *Manager) MockAddTripUpdate(tripID string, delay *time.Duration, stopTim
 	defer m.realTimeMutex.Unlock()
 
 	trip := gtfs.Trip{
-		ID:              gtfs.TripID{ID: tripID},
-		Delay:           delay,
-		StopTimeUpdates: stopTimeUpdates,
+		ID:                gtfs.TripID{ID: tripID},
+		Delay:             delay,
+		StopTimeUpdates:   stopTimeUpdates,
+		IsEntityInMessage: true,
 	}
 	merged := m.mergedRealtime().clone()
 	merged.trips = append(merged.trips, trip)
@@ -216,10 +233,13 @@ func (m *Manager) MockAddTripUpdate(tripID string, delay *time.Duration, stopTim
 }
 
 // MockAddFullTripUpdate adds a trip update carrying fields MockAddTripUpdate
-// cannot set, such as its timestamp and vehicle descriptor.
+// cannot set, such as its timestamp and vehicle descriptor. Like ingestion, it
+// keeps the trip only as a trip update entity.
 func (m *Manager) MockAddFullTripUpdate(trip gtfs.Trip) {
 	m.realTimeMutex.Lock()
 	defer m.realTimeMutex.Unlock()
+
+	trip.IsEntityInMessage = true
 
 	merged := m.mergedRealtime().clone()
 	merged.trips = append(merged.trips, trip)
