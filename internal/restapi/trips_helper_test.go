@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
@@ -2407,7 +2408,7 @@ func slackTestSnapshot(trips ...slackTestTrip) *scheduledBlockSnapshot {
 	snap := &scheduledBlockSnapshot{StopIndex: map[scheduledStopKey]int{}}
 	blockTrips := make([]blockTripData, len(trips))
 	for i, trip := range trips {
-		blockTrips[i] = blockTripData{id: trip.id, stopTimes: make([]gtfsdb.StopTime, len(trip.stops))}
+		blockTrips[i] = blockTripData{id: trip.id, stopTimes: make([]gtfsdb.GetBlockStopTimesForTripIDsRow, len(trip.stops))}
 		for k, times := range trip.stops {
 			snap.StopIndex[scheduledStopKey{TripID: trip.id, StopSequenceInTrip: k + 1}] = len(snap.Stops)
 			snap.Stops = append(snap.Stops, blockStopMetric{
@@ -2441,6 +2442,89 @@ func TestSegmentOrientation_MatchesJava(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.InDelta(t, tt.want, segmentOrientation(from, tt.to), 1e-6)
+		})
+	}
+}
+
+// Java's distanceAlongTrip comes from the location its record fixes, not from
+// GPS, and its lastUpdateTime is the record's time rather than the position's.
+func TestBuildTripStatus_VehicleWithRecordUsesScheduleDistance(t *testing.T) {
+	serviceDate := time.Date(2025, 6, 2, 0, 0, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(serviceDate)
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+
+	agencyID := mustGetAgencies(t, api)[0].ID
+	trips, err := api.GtfsManager.GetTrips(ctx, 100)
+	require.NoError(t, err)
+
+	var tripID, routeID string
+	var stopTimes []gtfsdb.StopTime
+	var shapeRows []gtfsdb.GetShapePointsByTripIDRow
+	for _, trip := range trips {
+		shapeRows, err = api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, trip.ID)
+		require.NoError(t, err)
+		stopTimes, err = api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+		require.NoError(t, err)
+		if len(shapeRows) > 1 && len(stopTimes) >= 3 {
+			tripID, routeID = trip.ID, trip.RouteID
+			break
+		}
+	}
+	require.NotEmpty(t, tripID, "need a trip with shape data and stop times")
+
+	midStop := stopTimes[len(stopTimes)/2]
+	recordTime := serviceDate.Add(time.Duration(midStop.ArrivalTime))
+	positionTime := recordTime.Add(20 * time.Second)
+	mockClock.Set(positionTime)
+
+	lastShapePoint := shapeRows[len(shapeRows)-1]
+	latitude, longitude := float32(lastShapePoint.Lat), float32(lastShapePoint.Lon)
+	tests := []struct {
+		name        string
+		vehicle     *gtfs.Vehicle
+		positionAge time.Duration
+	}{
+		{name: "named update", vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}},
+		{name: "anonymous update"},
+		{name: "fresh named record with stale GPS", vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}, positionAge: 16 * time.Minute},
+		{name: "fresh anonymous record with stale GPS", positionAge: 16 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			gpsTime := positionTime.Add(-tt.positionAge)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, routeID, internalgtfs.MockVehicleOptions{
+				Position:  &gtfs.Position{Latitude: &latitude, Longitude: &longitude},
+				Timestamp: &gpsTime,
+			})
+			onTime := time.Duration(0)
+			api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+				ID:        gtfs.TripID{ID: tripID},
+				Timestamp: &recordTime,
+				Delay:     &onTime,
+				Vehicle:   tt.vehicle,
+			})
+
+			status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, positionTime, nil)
+
+			require.NoError(t, err)
+			assert.Positive(t, status.ScheduledDistanceAlongTrip)
+			assert.Equal(t, status.ScheduledDistanceAlongTrip, status.DistanceAlongTrip)
+			assert.Zero(t, status.LastKnownDistanceAlongTrip)
+			assert.Equal(t, recordTime.UnixMilli(), status.LastUpdateTime.UnixMilli())
+			assert.Equal(t, "SCHEDULED", status.Status)
+			assert.Equal(t, "in_progress", status.Phase)
+			assert.True(t, status.Predicted)
+			if tt.positionAge > 0 {
+				assert.True(t, status.LastLocationUpdateTime.IsZero())
+				assert.Nil(t, status.LastKnownLocation, "a fresh record must not revive stale GPS")
+				assert.NotZero(t, status.Position.Lat, "use the record's scheduled position")
+			} else {
+				assert.Equal(t, positionTime.UnixMilli(), status.LastLocationUpdateTime.UnixMilli())
+			}
 		})
 	}
 }

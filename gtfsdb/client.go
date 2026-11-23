@@ -53,6 +53,13 @@ func NewClient(config Config) (*Client, error) {
 		return nil, fmt.Errorf("unable to backfill stop agency index: %w", err)
 	}
 
+	// Route lookups for stops read this index with no fallback, so an empty one would
+	// drop route references from every response that lists them.
+	if err := client.backfillStopRouteIndex(context.Background()); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("unable to backfill stop route index: %w", err)
+	}
+
 	return client, nil
 }
 
@@ -102,6 +109,36 @@ func (c *Client) backfillStopAgencyIndex(ctx context.Context) error {
 			}
 		}
 		return buildStopAgencyIndex(ctx, c.Queries.WithTx(tx))
+	})
+}
+
+// backfillStopRouteIndex builds stop_routes for a database imported before the table
+// existed. An import is skipped when the feed hash is unchanged, so such a database would
+// otherwise keep an empty index for as long as its feed stays the same. Like
+// backfillStopAgencyIndex, it rebuilds only when some stop_time joins to a route, so a
+// feed whose stop_times resolve to nothing doesn't rebuild on every start.
+func (c *Client) backfillStopRouteIndex(ctx context.Context) error {
+	var indexed, joinable int
+	err := c.DB.QueryRowContext(ctx, `
+		SELECT
+			(SELECT EXISTS (SELECT 1 FROM stop_routes)),
+			(SELECT EXISTS (
+				SELECT 1
+				FROM stop_times
+				JOIN trips ON stop_times.trip_id = trips.id
+				JOIN routes ON trips.route_id = routes.id
+			))
+	`).Scan(&indexed, &joinable)
+	if err != nil {
+		return fmt.Errorf("failed to check stop route index: %w", err)
+	}
+	if indexed > 0 || joinable == 0 {
+		return nil
+	}
+
+	slog.Default().Info("rebuilding stop route index")
+	return c.withTransaction(ctx, nil, "backfill_stop_route_index", func(tx *sql.Tx) error {
+		return buildStopRouteIndex(ctx, c.Queries.WithTx(tx))
 	})
 }
 
