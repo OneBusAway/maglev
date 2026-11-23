@@ -18,6 +18,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -1751,6 +1752,68 @@ func TestDwellSlack_StopIDOnlyPriorTimeBeatsTripDelay(t *testing.T) {
 			require.True(t, predicted)
 			assert.Equal(t, scheduledArrival.Add(tc.wantArrival), arrival)
 			assert.Equal(t, scheduledDeparture.Add(tc.wantDeparture), departure)
+		})
+	}
+}
+
+// A predicted Time is measured from the offset base, which is an hour away
+// from local midnight on a daylight-saving transition.
+func TestDwellSlack_TimeOnlyDelayUsesOffsetBaseOnDST(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name string
+		date servicedate.Date
+	}{
+		{name: "spring forward", date: servicedate.New(2026, time.March, 8)},
+		{name: "fall back", date: servicedate.New(2026, time.November, 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 4)
+			ctx := context.Background()
+			q := api.GtfsManager.GtfsDB.Queries
+			addStop := func(id string, seq int64) {
+				t.Helper()
+				_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+					ID: id, Name: nulls.String(id), Lat: 47.0, Lon: -122.0,
+				})
+				require.NoError(t, err)
+				_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+					TripID: tripID, StopID: id, StopSequence: seq,
+					ArrivalTime:   int64(6 * time.Hour),
+					DepartureTime: int64(6*time.Hour + time.Minute),
+				})
+				require.NoError(t, err)
+			}
+			far, near := "dp-far", "dp-near"
+			addStop(far, 1)
+			addStop(near, 2)
+
+			serviceDate := tc.date.Midnight(losAngeles)
+			late := servicedate.OffsetBase(serviceDate).Add(6*time.Hour + time.Minute + 9*time.Minute)
+			tripDelay := 4 * time.Minute
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+				ID:    gtfs.TripID{ID: tripID},
+				Delay: &tripDelay,
+				StopTimeUpdates: []gtfs.StopTimeUpdate{
+					{StopID: &far, Departure: &gtfs.StopTimeEvent{Time: &late}},
+					{StopID: &near, Departure: &gtfs.StopTimeEvent{Time: &late}},
+				},
+			}})
+
+			scheduledArrival := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+			scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
+			query := time.Date(2010, 1, 1, 7, 50, 0, 0, time.UTC)
+			arrival, departure, predicted := api.getPredictedTimes(
+				ctx, tripID, serviceDate, "dp-stop", 4, scheduledArrival, scheduledDeparture, query,
+			)
+			require.True(t, predicted)
+			assert.Equal(t, scheduledArrival.Add(9*time.Minute), arrival)
+			assert.Equal(t, scheduledDeparture.Add(4*time.Minute), departure)
 		})
 	}
 }
