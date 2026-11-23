@@ -1236,8 +1236,8 @@ const minStopTimesPerTrip = 2
 const tooFewStopTimesProblem = "trip has fewer than two stop times"
 
 // inMemoryStopTimesProblem checks the stop times of a trip held in memory,
-// which may have been built by hand. A parsed feed never has a stop time
-// without a stop: go-gtfs drops the rows whose stop is unknown.
+// which may have been built by hand. A streamed feed's GTFS-Flex stop times
+// without a stop are dropped by stopTimesAtStops instead.
 func inMemoryStopTimesProblem(stopTimes []gtfs.ScheduledStopTime) string {
 	if len(stopTimes) < minStopTimesPerTrip {
 		return tooFewStopTimesProblem
