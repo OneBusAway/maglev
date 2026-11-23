@@ -292,10 +292,16 @@ func buildSnapshotFromStops(
 	if monotonic && dwellingAtPreviousStop(stops, nextStopIndex, currentSeconds) {
 		nextStopIndex--
 		distanceAlongBlock = stops[nextStopIndex].DistanceAlongBlock
+	} else if dwellingAtLastStop(stops, nextStopIndex, currentSeconds) {
+		nextStopIndex = len(stops) - 1
+		distanceAlongBlock = stops[nextStopIndex].DistanceAlongBlock
 	}
 
 	firstStopSec := stops[0].EffectiveStopSeconds
 	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
+	if nextStopIndex == len(stops)-1 {
+		lastStopSec = max(lastStopSec, stops[len(stops)-1].DepartureSeconds)
+	}
 	return &scheduledBlockSnapshot{
 		Stops:              stops,
 		StopIndex:          stopIndex,
@@ -1009,6 +1015,16 @@ func dwellingAtPreviousStop(stops []blockStopMetric, nextStopIndex int, currentS
 	}
 	previous := stops[nextStopIndex-1]
 	return previous.ArrivalSeconds <= currentSeconds && currentSeconds <= previous.DepartureSeconds
+}
+
+// dwellingAtLastStop reports whether nextStopIndex is -1 (currentTime past all stops)
+// and currentSeconds falls between the arrival and departure of the block's last stop.
+func dwellingAtLastStop(stops []blockStopMetric, nextStopIndex int, currentSeconds int64) bool {
+	if nextStopIndex != -1 || len(stops) == 0 {
+		return false
+	}
+	last := stops[len(stops)-1]
+	return last.ArrivalSeconds <= currentSeconds && currentSeconds <= last.DepartureSeconds
 }
 
 // interpolateBlockDistance linearly interpolates the block's distance-along-block

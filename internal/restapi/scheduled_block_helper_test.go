@@ -1445,6 +1445,65 @@ func TestBuildSnapshotFromStops_NonMonotonicDwell(t *testing.T) {
 	assert.Equal(t, float64(3000), snap.DistanceAlongBlock)
 }
 
+func TestBuildSnapshotFromStops_DwellAtFinalStop(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 100, DistanceAlongBlock: 1000},
+		{EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 360, DistanceAlongBlock: 2000},
+	}
+
+	tests := []struct {
+		name         string
+		seconds      int64
+		wantNext     int
+		wantDistance float64
+		wantInRange  bool
+	}{
+		{name: "arriving at final stop", seconds: 300, wantNext: 2, wantDistance: 2000, wantInRange: true},
+		{name: "dwelling at final stop", seconds: 330, wantNext: 2, wantDistance: 2000, wantInRange: true},
+		{name: "departing final stop", seconds: 360, wantNext: 2, wantDistance: 2000, wantInRange: true},
+		{name: "past final stop departure", seconds: 361, wantNext: -1, wantDistance: 2000, wantInRange: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			currentTime := serviceDate.Add(time.Duration(tt.seconds) * time.Second)
+
+			snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+			assert.Equal(t, tt.wantNext, snap.NextStopIndex)
+			assert.InDelta(t, tt.wantDistance, snap.DistanceAlongBlock, 0.001)
+			assert.Equal(t, tt.wantInRange, snap.InRange)
+		})
+	}
+}
+
+func TestBuildSnapshotFromStops_NonMonotonicFinalStopDwell(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 200, ArrivalSeconds: 200, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+		{EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 100, DistanceAlongBlock: 1500},
+		{EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 360, DistanceAlongBlock: 2000},
+	}
+
+	// 330 is inside final stop's arrival (300) to departure (360) window
+	currentTime := serviceDate.Add(330 * time.Second)
+	snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+	assert.Equal(t, 3, snap.NextStopIndex)
+	assert.Equal(t, float64(2000), snap.DistanceAlongBlock)
+	assert.True(t, snap.InRange)
+
+	// After departure (370s), dwell check should not apply
+	pastTime := serviceDate.Add(370 * time.Second)
+	pastSnap := buildSnapshotFromStops(stops, nil, pastTime, serviceDate)
+
+	assert.Equal(t, -1, pastSnap.NextStopIndex)
+	assert.False(t, pastSnap.InRange)
+}
+
 func TestApplySnapshotStops_DwellAtStop(t *testing.T) {
 	snap := &scheduledBlockSnapshot{
 		NextStopIndex: 1,
