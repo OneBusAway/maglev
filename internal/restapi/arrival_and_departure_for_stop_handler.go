@@ -787,7 +787,9 @@ func (api *RestAPI) delayFromPredictedTime(ctx context.Context, tripID string, e
 	if arrival {
 		nanos = visit.arrival
 	}
-	return event.Time.Sub(serviceDate.Add(time.Duration(nanos))), true
+	// Stop-time offsets are added to the service date's offset base. On a
+	// daylight-saving transition that base is not local midnight.
+	return event.Time.Sub(servicedate.OffsetBase(serviceDate).Add(time.Duration(nanos))), true
 }
 
 // getPredictedTimes computes predicted arrival/departure times from GTFS-RT TripUpdate data.
