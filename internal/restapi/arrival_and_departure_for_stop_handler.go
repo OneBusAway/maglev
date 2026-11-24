@@ -356,7 +356,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime, predictionClock{queryTime: currentTime, serviceDate: serviceMidnight})
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledTimes{arrival: scheduledArrivalTime, departure: scheduledDepartureTime}, predictionClock{queryTime: currentTime, serviceDate: serviceMidnight})
 
 		if isPredicted {
 			predictedArrivalTime = predictedArrival
@@ -826,6 +826,13 @@ func (api *RestAPI) delayFromPredictedTime(ctx context.Context, tripID string, e
 	return event.Time.Sub(servicedate.OffsetBase(serviceDate).Add(time.Duration(nanos))), true
 }
 
+// scheduledTimes is one stop's scheduled arrival and departure. Grouped so
+// getPredictedTimes stays within SonarCloud's parameter limit.
+type scheduledTimes struct {
+	arrival   time.Time
+	departure time.Time
+}
+
 // getPredictedTimes computes predicted arrival/departure times from GTFS-RT TripUpdate data.
 // It implements a 3-tier fallback strategy matching the plural handler's behavior:
 //  1. Exact stop match — uses per-stop arrival/departure time or delay directly
@@ -842,7 +849,7 @@ func (api *RestAPI) getPredictedTimes(
 	tripID string,
 	stopCode string,
 	targetStopSequence int64,
-	scheduledArrivalTime, scheduledDepartureTime time.Time,
+	scheduled scheduledTimes,
 	clock predictionClock,
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
@@ -924,7 +931,7 @@ func (api *RestAPI) getPredictedTimes(
 		foundTarget = true
 		if target.Arrival != nil {
 			if target.Arrival.Time != nil {
-				offset := target.Arrival.Time.Sub(scheduledArrivalTime)
+				offset := target.Arrival.Time.Sub(scheduled.arrival)
 				arrivalOffset = &offset
 			} else if target.Arrival.Delay != nil {
 				offset := *target.Arrival.Delay
@@ -933,7 +940,7 @@ func (api *RestAPI) getPredictedTimes(
 		}
 		if target.Departure != nil {
 			if target.Departure.Time != nil {
-				offset := target.Departure.Time.Sub(scheduledDepartureTime)
+				offset := target.Departure.Time.Sub(scheduled.departure)
 				departureOffset = &offset
 			} else if target.Departure.Delay != nil {
 				offset := *target.Departure.Delay
@@ -1000,7 +1007,7 @@ func (api *RestAPI) getPredictedTimes(
 			arrivalOffset = &arrivalDeviation
 			departureOffset = &departureDeviation
 		} else {
-			adjusted := departureDeviationAtQuery(*arrivalOffset, clock.queryTime, scheduledArrivalTime, scheduledDepartureTime)
+			adjusted := departureDeviationAtQuery(*arrivalOffset, clock.queryTime, scheduled.arrival, scheduled.departure)
 			departureOffset = &adjusted
 		}
 	}
@@ -1018,8 +1025,8 @@ func (api *RestAPI) getPredictedTimes(
 
 	// Arrival and departure each take their own offset, matching Java's
 	// setPredictedTimesFromTimepointPredictionRecords.
-	predictedArrival := scheduledArrivalTime.Add(*arrivalOffset)
-	predictedDeparture := scheduledDepartureTime.Add(*departureOffset)
+	predictedArrival := scheduled.arrival.Add(*arrivalOffset)
+	predictedDeparture := scheduled.departure.Add(*departureOffset)
 
 	return predictedArrival, predictedDeparture, true
 }

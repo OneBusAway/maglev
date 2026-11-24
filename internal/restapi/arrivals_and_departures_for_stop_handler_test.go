@@ -1572,8 +1572,8 @@ func TestSlackAdjustedArrivalEntersTheWindow(t *testing.T) {
 	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	schedArr := serviceMidnight.Add(7*time.Hour + 50*time.Minute)
 	schedDep := serviceMidnight.Add(7*time.Hour + 52*time.Minute)
-	slackArr, _, slackOK := api.getPredictedTimes(ctx, tripID, targetStop, 3, schedArr, schedDep, predictionClock{queryTime: when, serviceDate: serviceMidnight})
-	rawArr, _, rawOK := api.getPredictedTimes(ctx, tripID, targetStop, 3, schedArr, schedDep, predictionClock{queryTime: when, serviceDate: serviceMidnight, dwellOnly: true})
+	slackArr, _, slackOK := api.getPredictedTimes(ctx, tripID, targetStop, 3, scheduledTimes{arrival: schedArr, departure: schedDep}, predictionClock{queryTime: when, serviceDate: serviceMidnight})
+	rawArr, _, rawOK := api.getPredictedTimes(ctx, tripID, targetStop, 3, scheduledTimes{arrival: schedArr, departure: schedDep}, predictionClock{queryTime: when, serviceDate: serviceMidnight, dwellOnly: true})
 	require.True(t, slackOK)
 	require.True(t, rawOK)
 	windowEnd := when.Add(12 * time.Minute)
@@ -1644,7 +1644,7 @@ func TestStopTimeInArrivalWindow_DropsALateRowWithoutASnapshot(t *testing.T) {
 	scheduledArrival := serviceDate.Midnight(time.UTC).Add(time.Duration(arrivalOffset))
 	scheduledDeparture := serviceDate.Midnight(time.UTC).Add(time.Duration(departureOffset))
 	before := counter.count.Load()
-	_, _, predicted := api.getPredictedTimes(ctx, tripID, stopID, 1, scheduledArrival, scheduledDeparture, predictionClock{
+	_, _, predicted := api.getPredictedTimes(ctx, tripID, stopID, 1, scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture}, predictionClock{
 		queryTime: when, serviceDate: serviceDate.Midnight(time.UTC),
 	})
 	require.True(t, predicted)
@@ -1698,13 +1698,13 @@ func TestStopTimeInArrivalWindow_KeepsAnEarlyPredictedTime(t *testing.T) {
 
 	scheduledArrival := serviceMidnight.Add(8*time.Hour + 20*time.Minute)
 	scheduledDeparture := serviceMidnight.Add(8*time.Hour + 22*time.Minute)
-	dwellArrival, _, dwellOK := api.getPredictedTimes(ctx, tripID, target, 3, scheduledArrival, scheduledDeparture, predictionClock{
+	dwellArrival, _, dwellOK := api.getPredictedTimes(ctx, tripID, target, 3, scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture}, predictionClock{
 		queryTime: when, serviceDate: serviceMidnight, dwellOnly: true,
 	})
 	require.True(t, dwellOK)
 	assert.Equal(t, scheduledArrival.Add(-5*time.Minute), dwellArrival)
 
-	saturated, _, saturatedOK := api.getPredictedTimes(ctx, tripID, target, 3, scheduledArrival, scheduledDeparture, predictionClock{
+	saturated, _, saturatedOK := api.getPredictedTimes(ctx, tripID, target, 3, scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture}, predictionClock{
 		queryTime: when, dwellOnly: true,
 	})
 	require.True(t, saturatedOK)

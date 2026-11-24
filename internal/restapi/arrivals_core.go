@@ -805,13 +805,14 @@ func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopT
 	// dwell-only call still carries the service date, so a predicted Time
 	// is measured from the offset base instead of a zero clock.
 	serviceMidnight := ast.ServiceDate.Midnight(location)
+	scheduled := scheduledTimes{arrival: arrival, departure: departure}
 	rawClock := predictionClock{queryTime: queryTime, serviceDate: serviceMidnight, dwellOnly: true}
-	rawArrival, rawDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure, rawClock)
+	rawArrival, rawDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), scheduled, rawClock)
 	if !predicted || (!spanOverlapsWindow(arrival, rawArrival, start, end) && !spanOverlapsWindow(departure, rawDeparture, start, end)) {
 		return false
 	}
 	fullClock := predictionClock{queryTime: queryTime, serviceDate: serviceMidnight}
-	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), arrival, departure, fullClock)
+	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.StopID, int64(ast.StopSequence), scheduled, fullClock)
 	return predicted && (inRange(predictedArrival) || inRange(predictedDeparture))
 }
 
@@ -1047,8 +1048,7 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 		st.TripID,
 		in.stopCode,
 		int64(st.StopSequence),
-		scheduledArrivalTime,
-		scheduledDepartureTime,
+		scheduledTimes{arrival: scheduledArrivalTime, departure: scheduledDepartureTime},
 		predictionClock{queryTime: in.queryTime, serviceDate: in.serviceDate.Midnight(in.location)},
 	)
 
