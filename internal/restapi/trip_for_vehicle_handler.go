@@ -81,7 +81,7 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
+	// Fetch the trip's frequency rows once and share them with the status builder.
 	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -92,8 +92,11 @@ func (api *RestAPI) tripForVehicleHandler(w http.ResponseWriter, r *http.Request
 	var status *models.TripStatus
 	var statusExtras *tripStatusExtras
 	if params.IncludeStatus {
+		if vehicle == nil {
+			vehicle = api.vehicleForTrip(ctx, tripID, serviceDate)
+		}
 		var statusErr error
-		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, tripID, vehicle, serviceDate, currentTime, freqMap)
+		status, statusExtras, statusErr = api.buildTripStatusForVehicle(ctx, agencyID, tripID, vehicle, serviceDate, currentTime, freqMap)
 		if statusErr != nil {
 			reqLogger.Warn("BuildTripStatus failed",
 				"tripID", tripID,
