@@ -846,8 +846,7 @@ type scheduledTimes struct {
 // vehicle can refresh it, but another vehicle's update cannot.
 func (api *RestAPI) getPredictedTimes(
 	ctx context.Context,
-	tripID string,
-	stopCode string,
+	tripID, stopCode string,
 	targetStopSequence int64,
 	scheduled scheduledTimes,
 	clock predictionClock,
