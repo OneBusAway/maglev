@@ -1131,5 +1131,7 @@ func TestArrivalsAndDeparturesForLocationRouteAlertUnderscoreAgency(t *testing.T
 	combinedStop := utils.FormCombinedID(agencyID, stopID)
 	require.Contains(t, model.Data.Entry.StopIDs, combinedStop)
 	assert.Empty(t, model.Data.Entry.ArrivalsAndDepartures)
-	assert.Contains(t, model.Data.Entry.SituationIDs, utils.FormCombinedID(agencyID, alertID))
+	// The alert names no agency, so it takes the first static agency's prefix
+	// rather than the underscore agency that owns the stop.
+	assert.Contains(t, model.Data.Entry.SituationIDs, utils.FormCombinedID("25", alertID))
 }
