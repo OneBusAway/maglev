@@ -1235,6 +1235,11 @@ const minStopTimesPerTrip = 2
 // minStopTimesPerTrip.
 const tooFewStopTimesProblem = "trip has fewer than two stop times"
 
+// tooFewStopTimesAtStopsProblem describes a Flex trip whose stop times at
+// stops (excluding location/location-group rows) are fewer than
+// minStopTimesPerTrip.
+const tooFewStopTimesAtStopsProblem = "trip has fewer than two stop times at stops"
+
 // inMemoryStopTimesProblem checks the stop times of a trip held in memory,
 // which may have been built by hand. A streamed feed's GTFS-Flex stop times
 // without a stop are dropped by stopTimesAtStops instead.

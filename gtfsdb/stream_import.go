@@ -23,17 +23,9 @@ func ParseGtfsStream(r io.ReaderAt, size int64, feed FeedIdentity) (*GtfsData, e
 		return nil, fmt.Errorf("error parsing GTFS data: %w", err)
 	}
 
-	stopTimesProblem := streamedStopTimesProblem(stream)
-	if hasFlexLocations(stream.Static) {
-		counts, skipped, err := stopTimeCountsAtStops(stream)
-		if err != nil {
-			return nil, fmt.Errorf("error reading stop times: %w", err)
-		}
-		if skipped > 0 {
-			logger.Warn("skipping GTFS-Flex stop times that serve no stop; Flex import is not supported yet",
-				slog.Int("stop_times", skipped))
-		}
-		stopTimesProblem = stopTimesAtStopsProblem(counts)
+	stopTimesProblem, err := flexAwareStopTimesProblem(stream, logger)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := validateAndFilterGTFSData(stream.Static, logger, stopTimesProblem); err != nil {
@@ -41,6 +33,25 @@ func ParseGtfsStream(r io.ReaderAt, size int64, feed FeedIdentity) (*GtfsData, e
 	}
 
 	return &GtfsData{Static: stream.Static, Hash: feed.Hash, Source: feed.Source, stream: stream}, nil
+}
+
+// flexAwareStopTimesProblem returns the stop-times problem function for a
+// streamed feed. For plain feeds it checks the total stop-time count; for
+// feeds with Flex locations it pre-counts stop times that serve a stop and
+// uses those counts instead, because stop times without a stop are dropped.
+func flexAwareStopTimesProblem(stream *gtfs.StaticStream, logger *slog.Logger) (func(int) string, error) {
+	if !hasFlexLocations(stream.Static) {
+		return streamedStopTimesProblem(stream), nil
+	}
+	counts, skipped, err := stopTimeCountsAtStops(stream)
+	if err != nil {
+		return nil, fmt.Errorf("error reading stop times: %w", err)
+	}
+	if skipped > 0 {
+		logger.Warn("skipping GTFS-Flex stop times that serve no stop; Flex import is not supported yet",
+			slog.Int("stop_times", skipped))
+	}
+	return stopTimesAtStopsProblem(counts), nil
 }
 
 // hasFlexLocations reports whether the feed has GTFS-Flex locations or
@@ -77,7 +88,7 @@ func stopTimeCountsAtStops(stream *gtfs.StaticStream) ([]int, int, error) {
 func stopTimesAtStopsProblem(counts []int) func(tripIndex int) string {
 	return func(tripIndex int) string {
 		if counts[tripIndex] < minStopTimesPerTrip {
-			return tooFewStopTimesProblem
+			return tooFewStopTimesAtStopsProblem
 		}
 		return ""
 	}

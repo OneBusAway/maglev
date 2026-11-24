@@ -23,7 +23,25 @@ func flexFeedFiles() map[string]string {
 	}
 }
 
+// flexLocationFeedFiles is like flexFeedFiles but uses a locations.geojson
+// polygon instead of a location group, covering the static.Locations != nil
+// branch of hasFlexLocations.
+func flexLocationFeedFiles() map[string]string {
+	return map[string]string{
+		"agency.txt":        "agency_id,agency_name,agency_url,agency_timezone\na,A,http://a,America/Los_Angeles\n",
+		"routes.txt":        "route_id,agency_id,route_type\nR1,a,3\n",
+		"calendar.txt":      "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\nWK,1,1,1,1,1,0,0,20240101,20301231\n",
+		"stops.txt":         "stop_id,stop_name,stop_lat,stop_lon\nS1,One,47.60,-122.30\nS2,Two,47.61,-122.31\nS3,Three,47.62,-122.32\n",
+		"locations.geojson": `{"type":"FeatureCollection","features":[{"type":"Feature","id":"Z1","properties":{"stop_name":"Zone"},"geometry":{"type":"Polygon","coordinates":[[[-122.30,47.60],[-122.31,47.61],[-122.32,47.62],[-122.30,47.60]]]}}]}`,
+	}
+}
+
 const flexStopTimesHeader = "trip_id,arrival_time,departure_time,stop_id,location_group_id,stop_sequence,start_pickup_drop_off_window,end_pickup_drop_off_window,pickup_type,drop_off_type\n"
+
+// flexLocationStopTimesHeader is like flexStopTimesHeader but references
+// location_id instead of location_group_id, for feeds that use
+// locations.geojson.
+const flexLocationStopTimesHeader = "trip_id,arrival_time,departure_time,stop_id,location_id,stop_sequence,start_pickup_drop_off_window,end_pickup_drop_off_window,pickup_type,drop_off_type\n"
 
 // importFlexFeed streams and stores a feed, returning its trip IDs and each
 // trip's stop IDs in order.
@@ -107,6 +125,42 @@ func TestStreamedImportSkipsDeviatedTripWithOneStop(t *testing.T) {
 	tripIDs, _ := importFlexFeed(t, files)
 
 	assert.Equal(t, []string{"T1"}, tripIDs)
+}
+
+// A feed with locations.geojson (not location_groups.txt) also triggers the
+// Flex path: a trip that serves only a GeoJSON location is skipped, and a
+// regular trip in the same feed loads normally. This covers the
+// static.Locations != nil half of hasFlexLocations.
+func TestStreamedImportSkipsTripsWithOnlyLocationIDStopTimes(t *testing.T) {
+	files := flexLocationFeedFiles()
+	files["trips.txt"] = "route_id,service_id,trip_id\nR1,WK,T1\nR1,WK,ZONE\n"
+	files["stop_times.txt"] = flexLocationStopTimesHeader +
+		"T1,06:00:00,06:00:00,S1,,1,,,,\n" +
+		"T1,06:10:00,06:10:00,S2,,2,,,,\n" +
+		"T1,06:20:00,06:20:00,S3,,3,,,,\n" +
+		"ZONE,,,,Z1,1,08:00:00,18:00:00,2,1\n" +
+		"ZONE,,,,Z1,2,08:00:00,18:00:00,1,2\n"
+
+	tripIDs, stopIDs := importFlexFeed(t, files)
+
+	assert.Equal(t, []string{"T1"}, tripIDs)
+	assert.Equal(t, []string{"S1", "S2", "S3"}, stopIDs["T1"])
+}
+
+// A deviated trip that mixes stops and a GeoJSON location keeps its stop
+// times at stops; the location deviation is skipped.
+func TestStreamedImportKeepsStopsOfLocationDeviatedTrip(t *testing.T) {
+	files := flexLocationFeedFiles()
+	files["trips.txt"] = "route_id,service_id,trip_id\nR1,WK,T1\n"
+	files["stop_times.txt"] = flexLocationStopTimesHeader +
+		"T1,06:00:00,06:00:00,S1,,1,,,0,1\n" +
+		"T1,,,,Z1,2,06:05:00,06:15:00,2,2\n" +
+		"T1,06:20:00,06:20:00,S3,,3,,,1,0\n"
+
+	tripIDs, stopIDs := importFlexFeed(t, files)
+
+	assert.Equal(t, []string{"T1"}, tripIDs)
+	assert.Equal(t, []string{"S1", "S3"}, stopIDs["T1"])
 }
 
 func TestStopTimesAtStops(t *testing.T) {
