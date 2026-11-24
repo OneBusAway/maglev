@@ -1816,6 +1816,66 @@ func TestDwellSlack_TimeOnlyDelayUsesOffsetBaseOnDST(t *testing.T) {
 	}
 }
 
+// A target stop that already has an arrival does not read the prior delay,
+// so a prior predicted Time must not load the trip's stop times.
+func TestDwellSlack_TargetArrivalSkipsPriorScheduleRead(t *testing.T) {
+	scheduledArrival := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+	scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
+	targetDelay := 2 * time.Minute
+	counts := map[string]int64{}
+
+	for _, kind := range []string{"delay", "time"} {
+		t.Run(kind, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 4)
+			ctx := context.Background()
+			q := api.GtfsManager.GtfsDB.Queries
+			prior := "dp-prior"
+			_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+				ID: prior, Name: nulls.String(prior), Lat: 47.0, Lon: -122.0,
+			})
+			require.NoError(t, err)
+			_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+				TripID: tripID, StopID: prior, StopSequence: 2,
+				ArrivalTime:   int64(6 * time.Hour),
+				DepartureTime: int64(6*time.Hour + time.Minute),
+			})
+			require.NoError(t, err)
+
+			seq2, seq4 := uint32(2), uint32(4)
+			targetStop := "dp-stop"
+			var priorEvent *gtfs.StopTimeEvent
+			if kind == "delay" {
+				delay := 9 * time.Minute
+				priorEvent = &gtfs.StopTimeEvent{Delay: &delay}
+			} else {
+				late := time.Date(2010, 1, 1, 6, 10, 0, 0, time.UTC)
+				priorEvent = &gtfs.StopTimeEvent{Time: &late}
+			}
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+				ID: gtfs.TripID{ID: tripID},
+				StopTimeUpdates: []gtfs.StopTimeUpdate{
+					{StopID: &prior, StopSequence: &seq2, Departure: priorEvent},
+					{StopID: &targetStop, StopSequence: &seq4, Arrival: &gtfs.StopTimeEvent{Delay: &targetDelay}},
+				},
+			}})
+
+			counter := swapInQueryCounter(t, api)
+			arrival, departure, predicted := api.getPredictedTimes(
+				ctx, tripID, targetStop, 4, scheduledArrival, scheduledDeparture,
+				predictionClock{serviceDate: predictionServiceDate},
+			)
+			counts[kind] = counter.count.Load()
+			require.True(t, predicted)
+			assert.Equal(t, scheduledArrival.Add(targetDelay), arrival)
+			assert.Equal(t, scheduledDeparture.Add(targetDelay), departure)
+		})
+	}
+	assert.Equal(t, counts["delay"], counts["time"], "a prior predicted time must not add a schedule read")
+}
+
 // An absolute Arrival.Time and Departure.Time pair goes down the same path as
 // delays, so the two sides must stay independent there too.
 func TestGetPredictedTimes_UnequalAbsoluteTimes(t *testing.T) {
