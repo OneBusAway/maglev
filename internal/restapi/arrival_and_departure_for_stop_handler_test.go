@@ -558,7 +558,7 @@ func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
 	scheduledArrival := time.Now()
 	scheduledDeparture := scheduledArrival.Add(2 * time.Minute)
 
-	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), "nonexistent_trip", predictionServiceDate, "nonexistent_stop", 1, scheduledArrival, scheduledDeparture, time.Time{})
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), "nonexistent_trip", predictionServiceDate, "nonexistent_stop", 1, scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture}, time.Time{})
 
 	assert.True(t, predArrival.IsZero())
 	assert.True(t, predDeparture.IsZero())
@@ -695,7 +695,7 @@ func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 
 	scheduledTime := time.Now()
 
-	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), "test_trip", predictionServiceDate, "test_stop", 1, scheduledTime, scheduledTime, time.Time{})
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), "test_trip", predictionServiceDate, "test_stop", 1, scheduledTimes{arrival: scheduledTime, departure: scheduledTime}, time.Time{})
 
 	assert.True(t, predArrival.IsZero())
 	assert.True(t, predDeparture.IsZero())
@@ -949,7 +949,7 @@ func TestGetPredictedTimes_DelayPropagationLogic(t *testing.T) {
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
 
 	scheduledTime := time.Now()
-	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), tripID, predictionServiceDate, "test_stop", targetStopSequence, scheduledTime, scheduledTime, time.Time{})
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), tripID, predictionServiceDate, "test_stop", targetStopSequence, scheduledTimes{arrival: scheduledTime, departure: scheduledTime}, time.Time{})
 
 	expectedTime := scheduledTime.Add(delayDuration)
 	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 120s delay")
@@ -984,7 +984,7 @@ func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
 
 	scheduledTime := time.Now()
-	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), tripID, predictionServiceDate, "test_stop", targetStopSequence, scheduledTime, scheduledTime, time.Time{})
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), tripID, predictionServiceDate, "test_stop", targetStopSequence, scheduledTimes{arrival: scheduledTime, departure: scheduledTime}, time.Time{})
 
 	expectedTime := scheduledTime.Add(delayDuration)
 	assert.True(t, predicted, "Should be predicted when trip-level delay is available")
@@ -1091,7 +1091,8 @@ func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 			scheduledTime := time.Now()
 			predArrival, predDeparture, predicted := api.getPredictedTimes(
 				context.Background(),
-				tc.tripID, predictionServiceDate, tc.lookupStopID, tc.lookupStopSeq, scheduledTime, scheduledTime,
+				tc.tripID, predictionServiceDate, tc.lookupStopID, tc.lookupStopSeq,
+				scheduledTimes{arrival: scheduledTime, departure: scheduledTime},
 				time.Time{},
 			)
 
@@ -1206,7 +1207,8 @@ func TestGetPredictedTimes_UnequalArrivalAndDepartureDeviation(t *testing.T) {
 			scheduledDeparture := scheduledArrival.Add(tc.scheduledDwell)
 			predArrival, predDeparture, predicted := api.getPredictedTimes(
 				context.Background(),
-				tc.tripID, predictionServiceDate, targetStopID, int64(targetSeq), scheduledArrival, scheduledDeparture,
+				tc.tripID, predictionServiceDate, targetStopID, int64(targetSeq),
+				scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture},
 				time.Time{},
 			)
 
@@ -1465,7 +1467,9 @@ func TestGetPredictedTimes_DwellSlack(t *testing.T) {
 			scheduledDeparture := scheduledArrival.Add(tc.dwell)
 			predArrival, predDeparture, predicted := api.getPredictedTimes(
 				context.Background(),
-				"dwell-"+tc.kind, predictionServiceDate, targetStop, int64(targetSeq), scheduledArrival, scheduledDeparture, tc.queryTime,
+				"dwell-"+tc.kind, predictionServiceDate, targetStop, int64(targetSeq),
+				scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture},
+				tc.queryTime,
 			)
 
 			assert.True(t, predicted)
@@ -1612,7 +1616,9 @@ func TestDwellSlack_StopIDOnlyUpdatesUseUniqueSequence(t *testing.T) {
 
 			counter := swapInQueryCounter(t, api)
 			_, predDeparture, predicted := api.getPredictedTimes(
-				ctx, tripID, predictionServiceDate, "dp-stop", 4, scheduledArrival, scheduledDeparture, time.Time{},
+				ctx, tripID, predictionServiceDate, "dp-stop", 4,
+				scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture},
+				time.Time{},
 			)
 			assert.Equal(t, tc.wantScheduleReads, counter.count.Load())
 			assert.Equal(t, tc.wantPredicted, predicted)
@@ -1667,7 +1673,9 @@ func TestDwellSlack_StopIDOnlyPriorDelayBeatsTripDelay(t *testing.T) {
 	scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
 	query := time.Date(2010, 1, 1, 7, 50, 0, 0, time.UTC)
 	arrival, departure, predicted := api.getPredictedTimes(
-		ctx, tripID, predictionServiceDate, "dp-stop", 4, scheduledArrival, scheduledDeparture, query,
+		ctx, tripID, predictionServiceDate, "dp-stop", 4,
+		scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture},
+		query,
 	)
 	require.True(t, predicted)
 	assert.Equal(t, scheduledArrival.Add(9*time.Minute), arrival)
@@ -1746,7 +1754,9 @@ func TestDwellSlack_StopIDOnlyPriorTimeBeatsTripDelay(t *testing.T) {
 			scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
 			query := time.Date(2010, 1, 1, 7, 50, 0, 0, time.UTC)
 			arrival, departure, predicted := api.getPredictedTimes(
-				ctx, tripID, predictionServiceDate, "dp-stop", 4, scheduledArrival, scheduledDeparture, query,
+				ctx, tripID, predictionServiceDate, "dp-stop", 4,
+				scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture},
+				query,
 			)
 			assert.Equal(t, int64(15), counter.count.Load())
 			require.True(t, predicted)
@@ -1809,7 +1819,9 @@ func TestDwellSlack_TimeOnlyDelayUsesOffsetBaseOnDST(t *testing.T) {
 			scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
 			query := time.Date(2010, 1, 1, 7, 50, 0, 0, time.UTC)
 			arrival, departure, predicted := api.getPredictedTimes(
-				ctx, tripID, serviceDate, "dp-stop", 4, scheduledArrival, scheduledDeparture, query,
+				ctx, tripID, serviceDate, "dp-stop", 4,
+				scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture},
+				query,
 			)
 			require.True(t, predicted)
 			assert.Equal(t, scheduledArrival.Add(9*time.Minute), arrival)
@@ -1867,7 +1879,8 @@ func TestDwellSlack_TargetArrivalSkipsPriorScheduleRead(t *testing.T) {
 			counter := swapInQueryCounter(t, api)
 			arrival, departure, predicted := api.getPredictedTimes(
 				ctx, tripID, predictionServiceDate, targetStop, 4,
-				scheduledArrival, scheduledDeparture, time.Time{},
+				scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture},
+				time.Time{},
 			)
 			counts[kind] = counter.count.Load()
 			require.True(t, predicted)
@@ -1906,7 +1919,8 @@ func TestGetPredictedTimes_UnequalAbsoluteTimes(t *testing.T) {
 
 	arrival, departure, predicted := api.getPredictedTimes(
 		context.Background(),
-		tripID, predictionServiceDate, stopID, int64(seq), scheduledArrival, scheduledDeparture,
+		tripID, predictionServiceDate, stopID, int64(seq),
+		scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture},
 		time.Time{},
 	)
 
@@ -2509,12 +2523,12 @@ func TestGetPredictedTimes_LoopTripPrefersMatchingSequence(t *testing.T) {
 
 	scheduled := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
-	arr, dep, predicted := api.getPredictedTimes(context.Background(), "trip-loop-predicted", predictionServiceDate, stopA, 3, scheduled, scheduled, time.Time{})
+	arr, dep, predicted := api.getPredictedTimes(context.Background(), "trip-loop-predicted", predictionServiceDate, stopA, 3, scheduledTimes{arrival: scheduled, departure: scheduled}, time.Time{})
 	require.True(t, predicted)
 	assert.Equal(t, scheduled.Add(secondVisit), arr, "sequence 3 must use its own update, not sequence 1's")
 	assert.Equal(t, scheduled.Add(secondVisit), dep)
 
-	arr, dep, predicted = api.getPredictedTimes(context.Background(), "trip-loop-predicted", predictionServiceDate, stopA, 1, scheduled, scheduled, time.Time{})
+	arr, dep, predicted = api.getPredictedTimes(context.Background(), "trip-loop-predicted", predictionServiceDate, stopA, 1, scheduledTimes{arrival: scheduled, departure: scheduled}, time.Time{})
 	require.True(t, predicted)
 	assert.Equal(t, scheduled.Add(firstVisit), arr, "sequence 1 keeps its own update")
 	assert.Equal(t, scheduled.Add(firstVisit), dep)
@@ -2647,7 +2661,7 @@ func TestGetPredictedTimes_FallsBackToStopIDWithoutSequence(t *testing.T) {
 	scheduled := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	// The scheduled stop-time has a sequence the feed never mentioned.
-	arr, _, predicted := api.getPredictedTimes(context.Background(), "trip-id-only-predicted", predictionServiceDate, stopC, 7, scheduled, scheduled, time.Time{})
+	arr, _, predicted := api.getPredictedTimes(context.Background(), "trip-id-only-predicted", predictionServiceDate, stopC, 7, scheduledTimes{arrival: scheduled, departure: scheduled}, time.Time{})
 	require.True(t, predicted)
 	assert.Equal(t, scheduled.Add(delay), arr)
 }
@@ -2695,7 +2709,7 @@ func TestGetPredictedTimes_SequenceMustAgreeWithStopID(t *testing.T) {
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			api.GtfsManager.MockAddTripUpdate(tripID, nil, tt.updates)
 
-			arr, _, predicted := api.getPredictedTimes(context.Background(), tripID, predictionServiceDate, target.StopID, target.StopSequence, scheduled, scheduled, time.Time{})
+			arr, _, predicted := api.getPredictedTimes(context.Background(), tripID, predictionServiceDate, target.StopID, target.StopSequence, scheduledTimes{arrival: scheduled, departure: scheduled}, time.Time{})
 			require.True(t, predicted)
 			assert.Equal(t, scheduled.Add(targetDelay), arr)
 		})
