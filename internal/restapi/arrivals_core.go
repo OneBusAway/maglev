@@ -779,7 +779,28 @@ func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopT
 		return true
 	}
 	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.ServiceDate.Midnight(location), ast.StopID, int64(ast.StopSequence), arrival, departure)
-	return predicted && (inRange(predictedArrival) || inRange(predictedDeparture))
+	if !predicted || (!inRange(predictedArrival) && !inRange(predictedDeparture)) {
+		return false
+	}
+	// A delay past one hour is discarded and the row is shown at its scheduled
+	// time. That time is already outside the window, so the predicted time must
+	// not keep the row. ADDED and DUPLICATED trips keep the long delay.
+	update, _ := api.GtfsManager.GetTripUpdateByID(ast.TripID)
+	if !tripUpdateRunsOwnSchedule(update) &&
+		(deviationPastOneHour(arrival, predictedArrival) || deviationPastOneHour(departure, predictedDeparture)) {
+		return false
+	}
+	return true
+}
+
+// deviationPastOneHour reports whether a predicted time is far enough from the
+// scheduled time that the trip update's record is discarded.
+func deviationPastOneHour(scheduled, predicted time.Time) bool {
+	if predicted.IsZero() {
+		return false
+	}
+	seconds := int(predicted.Sub(scheduled) / time.Second)
+	return exceedsBlockNotActiveThreshold(seconds)
 }
 
 // convertStopsInWindowRow adapts the multi-stop window row to the single-stop

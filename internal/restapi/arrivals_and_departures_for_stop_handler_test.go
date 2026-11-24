@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -1421,6 +1422,73 @@ func addEarlierBlockTripSTU(t *testing.T, api *RestAPI, delay time.Duration) {
 
 // findArrivalForTrip returns the arrival for tripID, failing the test when
 // the response has none.
+// A delay past one hour is discarded, so a predicted time inside the window
+// must not keep a row whose scheduled time is outside it. A shorter delay,
+// and a DUPLICATED trip, still use the predicted time.
+func TestPluralArrivals_DiscardedLongDelayLeavesTheWindow(t *testing.T) {
+	when := time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		arrival    time.Duration
+		delay      time.Duration
+		duplicated bool
+		wantRow    bool
+	}{
+		{name: "sixty one minutes is outside once the prediction is dropped", arrival: 7*time.Hour + 28*time.Minute, delay: 61 * time.Minute, wantRow: false},
+		{name: "thirty minutes stays on the predicted time", arrival: 7*time.Hour + 40*time.Minute, delay: 30 * time.Minute, wantRow: true},
+		{name: "a duplicated trip keeps the long delay", arrival: 7*time.Hour + 28*time.Minute, delay: 61 * time.Minute, duplicated: true, wantRow: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(when))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			_, combinedStopID, _, _ := setupDelayPropTestData(t, api, 1)
+			ctx := context.Background()
+			q := api.GtfsManager.GtfsDB.Queries
+			tripID := "window-trip-" + t.Name()
+			_, err := q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+				ID: tripID, RouteID: "dp-route", ServiceID: "dp-svc",
+				BlockID: nulls.String("window-block-" + t.Name()),
+			})
+			require.NoError(t, err)
+			_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+				TripID: tripID, StopID: "dp-stop", StopSequence: 2,
+				ArrivalTime: int64(tc.arrival), DepartureTime: int64(tc.arrival),
+			})
+			require.NoError(t, err)
+
+			delay := tc.delay
+			if tc.duplicated {
+				api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+					ID:        gtfs.TripID{ID: tripID, ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED},
+					Delay:     &delay,
+					Timestamp: &when,
+				})
+			} else {
+				api.GtfsManager.MockAddTripUpdate(tripID, &delay, nil)
+			}
+
+			endpoint := arrivalsAndDeparturesURL(combinedStopID, url.Values{
+				"time":          {fmt.Sprintf("%d", when.UnixMilli())},
+				"minutesBefore": {"5"},
+				"minutesAfter":  {"30"},
+			})
+			_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+			combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+			var found bool
+			for _, arrival := range model.Data.Entry.ArrivalsAndDepartures {
+				if arrival.TripID == combinedTripID {
+					found = true
+					break
+				}
+			}
+			assert.Equal(t, tc.wantRow, found)
+		})
+	}
+}
+
 func findArrivalForTrip(t *testing.T, arrivals []models.ArrivalAndDeparture, tripID string) models.ArrivalAndDeparture {
 	t.Helper()
 	for _, a := range arrivals {
