@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+	"maglev.onebusaway.org/internal/appconf"
 	logging "maglev.onebusaway.org/internal/logging"
 )
 
@@ -177,6 +179,35 @@ func TestRebuildRealTimeVehicleLookupByVehicle_WithInvalidIDs(t *testing.T) {
 	assert.Len(t, manager.mergedRealtime().vehicleLookupByVehicle, 2)
 	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle1"}])
 	assert.Equal(t, 3, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle3"}])
+}
+
+func TestLoadRealtimeData_RedactsQueryFromHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	secretURL := server.URL + "/feed.pb?token=REALTIME_ERROR_SECRET"
+	_, err := loadRealtimeData(context.Background(), secretURL, nil)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "REALTIME_ERROR_SECRET")
+	assert.Contains(t, err.Error(), appconf.RedactedValue)
+}
+
+func TestLoadRealtimeData_RedactsQueryFromTransportError(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	secretURL := server.URL + "/feed.pb?token=REALTIME_TRANSPORT_SECRET"
+	server.Close() // Force the HTTP client to return a *url.Error.
+
+	_, err := loadRealtimeData(context.Background(), secretURL, nil)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "REALTIME_TRANSPORT_SECRET")
+	assert.Contains(t, err.Error(), appconf.RedactedValue)
+
+	var urlErr *url.Error
+	require.ErrorAs(t, err, &urlErr)
+	assert.NotContains(t, urlErr.URL, "REALTIME_TRANSPORT_SECRET")
+	assert.Contains(t, urlErr.URL, appconf.RedactedValue)
 }
 
 func TestLoadRealtimeData_Non200StatusCode(t *testing.T) {
@@ -2525,4 +2556,39 @@ func serveTripUpdate(t *testing.T, manager *Manager, tripID string, timestamp, h
 	}))
 	defer server.Close()
 	manager.updateFeedRealtime(context.Background(), RTFeedConfig{ID: "feed", TripUpdatesURL: server.URL, Enabled: true})
+}
+
+func TestPollFeedLogRedactsConfiguredURLs(t *testing.T) {
+	logOutput := captureStructuredLogOutput(t)
+
+	feedCfg := RTFeedConfig{
+		ID:                  "test-feed",
+		RefreshInterval:     60,
+		TripUpdatesURL:      "https://example.com/trips?token=TRIP_SECRET",
+		VehiclePositionsURL: "https://example.com/vehicles?token=VEHICLE_SECRET",
+		ServiceAlertsURL:    "https://example.com/alerts?token=ALERT_SECRET",
+	}
+
+	manager := &Manager{
+		shutdownChan: make(chan struct{}),
+	}
+
+	manager.wg.Add(1)
+	go manager.pollFeed(feedCfg)
+
+	// The poller logs its configured URLs before waiting on this channel.
+	close(manager.shutdownChan)
+	manager.wg.Wait()
+
+	output := logOutput.String()
+
+	require.Contains(t, output, `"msg":"started_realtime_feed_poller"`)
+
+	require.Contains(t, output, `"tripUpdatesURL":"https://example.com/trips?`+appconf.RedactedValue+`"`)
+	require.Contains(t, output, `"vehiclePositionsURL":"https://example.com/vehicles?`+appconf.RedactedValue+`"`)
+	require.Contains(t, output, `"serviceAlertsURL":"https://example.com/alerts?`+appconf.RedactedValue+`"`)
+
+	assert.NotContains(t, output, "TRIP_SECRET")
+	assert.NotContains(t, output, "VEHICLE_SECRET")
+	assert.NotContains(t, output, "ALERT_SECRET")
 }
