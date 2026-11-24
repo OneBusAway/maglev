@@ -112,6 +112,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	}
 
 	lists := truncateLocationLists(locationLists{
+		stops:    stops,
 		stopIDs:  combinedStopIDs(stops, agencies),
 		arrivals: arrivals,
 		nearby:   nearby,
@@ -134,7 +135,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// A route can serve a retained stop and still have every arrival fall
 	// outside the window. Those route alerts belong on the entry anyway.
-	if err := api.addRouteAlertsForRetainedStops(ctx, lists.stopIDs, entrySituations); err != nil {
+	if err := api.addRouteAlertsForRetainedStops(ctx, lists.stops, entrySituations); err != nil {
 		api.sendArrivalsForLocationError(w, r, ctx, err)
 		return
 	}
@@ -199,8 +200,10 @@ func (api *RestAPI) sendArrivalsForLocationError(w http.ResponseWriter, r *http.
 	api.serverErrorResponse(w, r, err)
 }
 
-// locationLists are the three response lists that share a single maxCount.
+// locationLists holds the response lists and matched stop rows retained under
+// the endpoint's shared maxCount.
 type locationLists struct {
+	stops         []gtfsdb.Stop
 	stopIDs       []string
 	arrivals      []models.ArrivalAndDeparture
 	nearby        []models.StopWithDistance
@@ -208,9 +211,9 @@ type locationLists struct {
 }
 
 // truncateLocationLists trims each list to maxCount independently, reporting a
-// single flag if any of them was shortened — matching how Java caps this
-// endpoint.
+// single flag if any of them was shortened — matching how Java caps this endpoint.
 func truncateLocationLists(lists locationLists, maxCount int) locationLists {
+	lists.stops, lists.limitExceeded = truncateSlice(lists.stops, maxCount, lists.limitExceeded)
 	lists.stopIDs, lists.limitExceeded = truncateSlice(lists.stopIDs, maxCount, lists.limitExceeded)
 	lists.arrivals, lists.limitExceeded = truncateSlice(lists.arrivals, maxCount, lists.limitExceeded)
 	lists.nearby, lists.limitExceeded = truncateSlice(lists.nearby, maxCount, lists.limitExceeded)
@@ -218,13 +221,19 @@ func truncateLocationLists(lists locationLists, maxCount int) locationLists {
 }
 
 // addRouteAlertsForRetainedStops records alerts for every route that serves a
-// retained stop. Agency and route ids stay in separate columns: an agency id
-// can contain an underscore, so the combined agency_code form is not split
-// back apart. Alerts are indexed by the bare route id.
-func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combinedStopIDs []string, situations *situationCollector) error {
-	stopIDs := retainedStopCodes(combinedStopIDs)
-	if len(stopIDs) == 0 {
+// retained stop. Callers pass the retained stop rows, not combined agency_code
+// IDs: an agency id can contain an underscore, so splitting a combined stop id
+// at the first "_" would yield the wrong bare id.
+// Agency and route ids stay in separate columns; alerts are indexed by the bare
+// route id.
+func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, stops []gtfsdb.Stop, situations *situationCollector) error {
+	if len(stops) == 0 {
 		return nil
+	}
+
+	stopIDs := make([]string, len(stops))
+	for i, stop := range stops {
+		stopIDs[i] = stop.ID
 	}
 
 	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesForStops)
@@ -242,25 +251,6 @@ func (api *RestAPI) addRouteAlertsForRetainedStops(ctx context.Context, combined
 		situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), row.AgencyID)
 	}
 	return nil
-}
-
-// retainedStopCodes returns each bare stop id in combinedIDs once, in order.
-// A value that is not an agency_code id is skipped.
-func retainedStopCodes(combinedIDs []string) []string {
-	codes := make([]string, 0, len(combinedIDs))
-	seen := make(map[string]struct{}, len(combinedIDs))
-	for _, id := range combinedIDs {
-		_, code, err := utils.ExtractAgencyIDAndCodeID(id)
-		if err != nil || code == "" {
-			continue
-		}
-		if _, ok := seen[code]; ok {
-			continue
-		}
-		seen[code] = struct{}{}
-		codes = append(codes, code)
-	}
-	return codes
 }
 
 // routeAlertKey is one route serving a retained stop. The same route is
