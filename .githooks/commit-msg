@@ -45,7 +45,7 @@ case "$subject" in
 esac
 
 # Blank line after subject
-second_line=$(sed -n '2p' "$MSG_FILE")
+second_line=$(sed -n '2p' "$cleaned_message")
 
 if [ -n "$second_line" ]; then
     echo "ERROR: Separate subject and body with a blank line."
