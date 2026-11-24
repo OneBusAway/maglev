@@ -1,0 +1,3 @@
+go vet -tags "sqlite_fts5 sqlite_math_functions" ./... || exit 1
+go vet -tags "purego" ./... || exit 1
+gofmt -l . || exit 1
