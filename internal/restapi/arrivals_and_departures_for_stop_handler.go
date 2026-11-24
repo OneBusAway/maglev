@@ -105,8 +105,6 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	params.Time = utils.ResolveArrivalTime(params.TimeParam, loc, api.Clock.Now())
 
 	acc := newArrivalsAccumulator(stopAgencyID)
-	references := models.NewEmptyReferences()
-	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
 	result, err := api.arrivalsForStop(ctx, stopArrivalsInput{
 		StopCode:        stopCode,
@@ -137,13 +135,10 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		return
 	}
 
-	// With nothing scheduled in the window, the requested stop is still a
-	// reference, along with its routes (Java builds these regardless of arrivals).
-	if !result.Matched {
-		acc.stopIDs[stopCode] = true
-	}
+	// Always reference the requested stop and its routes, even with no arrivals.
+	acc.stopIDs[stopCode] = true
 
-	references, err = api.buildArrivalsReferences(ctx, arrivalsReferencesInput{
+	references, err := api.buildArrivalsReferences(ctx, arrivalsReferencesInput{
 		fallbackAgencyID: stopAgencyID,
 		primaryAgency:    &agency,
 	}, acc)
