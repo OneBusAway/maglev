@@ -919,7 +919,8 @@ func haversineStopDistances(stopIDs []string, stopByID map[string]gtfsdb.Stop) (
 // the projected distance and the updated cursor.
 func projectStopGeometric(stop gtfsdb.Stop, shapePoints []gtfs.ShapePoint, cumulativeDistances []float64, cursor int) (float64, int) {
 	const earlyExitThresholdMeters = 100.0
-	const goodMatchThreshold = 500.0
+	// A sparse shape can pass hundreds of meters from a stop before returning to it.
+	const goodMatchThreshold = 50.0
 
 	if cursor >= len(shapePoints)-1 {
 		cursor = len(shapePoints) - 2

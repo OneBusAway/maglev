@@ -1001,6 +1001,27 @@ func TestProjectStopsInSequence_GracefulOnEmptyShape(t *testing.T) {
 	assert.Equal(t, 0.0, distances[1])
 }
 
+func TestProjectStopsInSequence_FindsCloserMatchAfterSparseDetour(t *testing.T) {
+	// The first segment passes about 222 m from the stop. The detour
+	// takes the shape over 400 m away before returning to the stop.
+	shape := []gtfs.ShapePoint{
+		{Latitude: 0.002, Longitude: -0.001},
+		{Latitude: 0.002, Longitude: 0.001},
+		{Latitude: 0.004, Longitude: 0.004},
+		{Latitude: 0.004, Longitude: -0.004},
+		{Latitude: 0, Longitude: 0},
+		{Latitude: 0, Longitude: -0.002},
+	}
+	const stopID = "detour_stop"
+	stops := map[string]gtfsdb.Stop{stopID: {ID: stopID, Lat: 0, Lon: 0}}
+	cumulativeDistances := preCalculateCumulativeDistances(shape)
+
+	distances := projectStopsInSequence([]string{stopID}, stops, shape, cumulativeDistances)
+
+	require.Len(t, distances, 1)
+	assert.InDelta(t, cumulativeDistances[4], distances[0], 1.0)
+}
+
 // TestProjectStopsInSequence_ProjectsAllStopsGeometrically pins the
 // Java-parity port: projectStopsInSequence must IGNORE the publisher's
 // shape_dist_traveled entirely and always project each stop's lat/lon
