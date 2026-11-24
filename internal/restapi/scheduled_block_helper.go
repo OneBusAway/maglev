@@ -657,14 +657,11 @@ func (api *RestAPI) blockTripsForServiceDate(
 		return []blockTripRef{{id: targetTripID}}
 	}
 	fallback := []blockTripRef{{id: targetTripID, shapeID: nulls.StringOrEmpty(trip.ShapeID)}}
-	blockIDStr := nulls.StringOrEmpty(trip.BlockID)
-	if blockIDStr == "" {
-		blockIDStr = targetTripID
-	}
-	blockTrips, err := q.GetTripsByBlockID(ctx, nulls.String(blockIDStr))
+	effectiveBlockID := gtfsdb.EffectiveBlockID(trip)
+	blockTrips, err := q.GetTripsByBlockID(ctx, effectiveBlockID)
 	if err != nil {
 		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetTripsByBlockID failed, degrading to single-trip mode",
-			slog.String("trip_id", targetTripID), slog.String("block_id", blockIDStr))
+			slog.String("trip_id", targetTripID), slog.String("block_id", effectiveBlockID.String))
 		return fallback
 	}
 	if len(blockTrips) == 0 {

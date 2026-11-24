@@ -1381,3 +1381,11 @@ func validateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger, stopTimes
 
 	return nil
 }
+
+// EffectiveBlockID returns the trip's block ID, or its trip ID when the trip has no block.
+func EffectiveBlockID(trip Trip) sql.NullString {
+	if !trip.BlockID.Valid || trip.BlockID.String == "" {
+		return nulls.String(trip.ID)
+	}
+	return trip.BlockID
+}

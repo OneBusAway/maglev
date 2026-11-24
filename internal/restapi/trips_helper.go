@@ -726,10 +726,7 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 }
 
 func (api *RestAPI) GetNextAndPreviousTripIDs(ctx context.Context, trip *gtfsdb.Trip, agencyID string, serviceDate time.Time) (nextTripID string, previousTripID string, stopTimes []gtfsdb.StopTime, err error) {
-	effectiveBlockID := trip.BlockID
-	if !effectiveBlockID.Valid || effectiveBlockID.String == "" {
-		effectiveBlockID = nulls.String(trip.ID)
-	}
+	effectiveBlockID := gtfsdb.EffectiveBlockID(*trip)
 
 	navResult, err := api.GtfsManager.GtfsDB.Queries.GetNextAndPreviousTripsInBlock(ctx, gtfsdb.GetNextAndPreviousTripsInBlockParams{
 		TripID:     trip.ID,

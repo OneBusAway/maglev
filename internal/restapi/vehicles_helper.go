@@ -10,7 +10,6 @@ import (
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -170,10 +169,7 @@ func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID strin
 	if err != nil {
 		return nominalTripID
 	}
-	effectiveBlockID := nominalTrip.BlockID
-	if !effectiveBlockID.Valid || effectiveBlockID.String == "" {
-		effectiveBlockID = nulls.String(nominalTripID)
-	}
+	effectiveBlockID := gtfsdb.EffectiveBlockID(nominalTrip)
 
 	// Wall-clock time since midnight, matching GTFS times which are wall-clock
 	// durations (not elapsed physical time, which shifts by an hour across DST).

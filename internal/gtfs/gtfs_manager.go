@@ -725,15 +725,12 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	effectiveBlockID := nulls.StringOrEmpty(requestedTrip.BlockID)
-	if effectiveBlockID == "" {
-		effectiveBlockID = requestedTrip.ID
-	}
+	effectiveBlockID := gtfsdb.EffectiveBlockID(requestedTrip)
 
-	blockTrips, err := manager.GtfsDB.Queries.Memo(ctx).GetTripsByBlockID(ctx, nulls.String(effectiveBlockID))
+	blockTrips, err := manager.GtfsDB.Queries.Memo(ctx).GetTripsByBlockID(ctx, effectiveBlockID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trips for block", err,
-			slog.String("block_id", effectiveBlockID))
+			slog.String("block_id", effectiveBlockID.String))
 		return nil
 	}
 
