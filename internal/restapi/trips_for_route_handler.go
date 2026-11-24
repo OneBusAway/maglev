@@ -85,7 +85,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err == nil && (route.ID == "" || route.AgencyID != agencyID) {
-		api.sendEmptyTripsForRouteList(w, r, ctx, includeReferences, includeTrip)
+		if err := api.sendEmptyTripsForRouteList(w, r, ctx, includeReferences, includeTrip); err != nil {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -130,7 +132,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	hasBlocks := slices.ContainsFunc(dayBlockIDs, func(blockIDs []string) bool { return len(blockIDs) > 0 })
 	if !hasBlocks && len(nullBlockTrips) == 0 {
-		api.sendEmptyTripsForRouteList(w, r, ctx, includeReferences, includeTrip)
+		if err := api.sendEmptyTripsForRouteList(w, r, ctx, includeReferences, includeTrip); err != nil {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -456,7 +460,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		references = api.buildTripReferences(ctx, tripReferenceParams{
+		references, err = api.buildTripReferences(ctx, tripReferenceParams{
 			IncludeTrip:     includeTrip,
 			Trips:           result,
 			Stops:           stopsReferenced,
@@ -464,6 +468,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			StopIDMap:       stopIDsMap,
 			Situations:      situations.refs,
 		})
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 	} else {
 		references = *models.NewEmptyReferences()
 	}
@@ -474,15 +482,20 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 // sendEmptyTripsForRouteList answers a route with nothing in service, including
 // a prefix that does not own the route. The list is empty and includeReferences
 // is honored, matching an unknown route rather than a 404.
-func (api *RestAPI) sendEmptyTripsForRouteList(w http.ResponseWriter, r *http.Request, ctx context.Context, includeReferences, includeTrip bool) {
+func (api *RestAPI) sendEmptyTripsForRouteList(w http.ResponseWriter, r *http.Request, ctx context.Context, includeReferences, includeTrip bool) error {
 	var references models.ReferencesModel
 	if includeReferences {
-		references = api.buildTripReferences(ctx, tripReferenceParams{IncludeTrip: includeTrip})
+		var err error
+		references, err = api.buildTripReferences(ctx, tripReferenceParams{IncludeTrip: includeTrip})
+		if err != nil {
+			return err
+		}
 	} else {
 		references = *models.NewEmptyReferences()
 	}
 	response := models.NewListResponse([]models.TripsForRouteListEntry{}, references, false, api.Clock)
 	api.sendResponse(w, r, response)
+	return nil
 }
 
 // resolveTripsForRouteBlocks returns the Java-style scheduled active trip for
@@ -1254,7 +1267,7 @@ type tripReferenceParams struct {
 	Situations      []situationRef
 }
 
-func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenceParams) models.ReferencesModel {
+func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenceParams) (models.ReferencesModel, error) {
 	sets := newTripReferenceSets()
 
 	sets.collectPreFetchedTrips(params.PreFetchedTrips)
@@ -1264,7 +1277,11 @@ func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenc
 
 	references := models.NewEmptyReferences()
 	var routesByStopID map[string][]stopRoute
-	references.Stops, routesByStopID = api.stopReferences(ctx, params.Stops, params.StopIDMap)
+	var err error
+	references.Stops, routesByStopID, err = api.stopReferences(ctx, params.Stops, params.StopIDMap)
+	if err != nil {
+		return models.ReferencesModel{}, err
+	}
 
 	for _, routes := range routesByStopID {
 		for _, r := range routes {
@@ -1280,7 +1297,7 @@ func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenc
 	references.Routes = sets.routeList()
 	references.Trips = sets.tripReferenceList(params.IncludeTrip)
 	references.Situations = api.situationReferences(ctx, params.Situations)
-	return *references
+	return *references, nil
 }
 
 // tripSituationRefs resolves a trip's situations from data already loaded,

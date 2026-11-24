@@ -1136,7 +1136,9 @@ type referenceBuilder struct {
 func (rb *referenceBuilder) build(params ReferenceParams) error {
 	rb.situations = params.Situations
 	rb.collectTripIDs(params.Trips)
-	rb.buildStopList(params.Stops, params.StopIDsByBareID)
+	if err := rb.buildStopList(params.Stops, params.StopIDsByBareID); err != nil {
+		return err
+	}
 
 	if err := rb.enrichTripsData(); err != nil {
 		return err
@@ -1181,8 +1183,11 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 }
 
 // buildStopList emits the stop references and registers the routes serving them.
-func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID map[string][]string) {
-	stopList, routesByStop := rb.api.stopReferences(rb.ctx, stops, stopIDsByBareID)
+func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID map[string][]string) error {
+	stopList, routesByStop, err := rb.api.stopReferences(rb.ctx, stops, stopIDsByBareID)
+	if err != nil {
+		return err
+	}
 	rb.stopList = stopList
 
 	// Register the raw route ID (e.g. "100479") rather than the combined one, so
@@ -1193,6 +1198,7 @@ func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID m
 			rb.presentRoutes[r.routeID] = models.Route{}
 		}
 	}
+	return nil
 }
 
 func (rb *referenceBuilder) enrichTripsData() error {

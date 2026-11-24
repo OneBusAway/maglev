@@ -970,8 +970,11 @@ type stopRoute struct {
 // The routes each stop serves are returned alongside the references, for callers
 // that collect route references from them. idsByBareId is a map of a bare stop id
 // to combined agencyId_stopId
-func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, idsByBareID map[string][]string) ([]models.Stop, map[string][]stopRoute) {
-	routesByStop := api.routeIDsForStops(ctx, stops)
+func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, idsByBareID map[string][]string) ([]models.Stop, map[string][]stopRoute, error) {
+	routesByStop, err := api.routeIDsForStops(ctx, stops)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	stopList := make([]models.Stop, 0, len(stops))
 	for _, stop := range stops {
@@ -1004,10 +1007,9 @@ func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, ids
 
 	added, err := api.appendResolvedParents(ctx, stopList, routesByStop)
 	if err != nil {
-		logging.ForComponent(ctx, "http_server").Error("failed to resolve parent stop references", "error", err)
-		return stopList, routesByStop
+		return nil, nil, fmt.Errorf("failed to resolve parent stop references: %w", err)
 	}
-	return append(stopList, added...), routesByStop
+	return append(stopList, added...), routesByStop, nil
 }
 
 // appendResolvedParents adds parent-station records that stopList names but does
@@ -1027,13 +1029,12 @@ func (api *RestAPI) appendResolvedParents(ctx context.Context, stopList []models
 }
 
 // routeIDsForStops maps each stop to the routes serving it.
-func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) map[string][]stopRoute {
+func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) (map[string][]stopRoute, error) {
 	routeIDsByStop := make(map[string][]stopRoute)
 	if len(stops) == 0 {
-		return routeIDsByStop
+		return routeIDsByStop, nil
 	}
 
-	reqLogger := logging.ForComponent(ctx, "http_server")
 	stopIDs := make([]string, len(stops))
 	for i, stop := range stops {
 		stopIDs[i] = stop.ID
@@ -1041,8 +1042,7 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 
 	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops)
 	if err != nil {
-		reqLogger.Error("failed to fetch routes for stop references", "error", err)
-		return routeIDsByStop
+		return nil, fmt.Errorf("fetch routes for stop references: %w", err)
 	}
 	utils.SortRouteIDsForStopsRowsByName(rows)
 	for _, row := range rows {
@@ -1051,7 +1051,7 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 			routeID:  row.RouteID,
 		})
 	}
-	return routeIDsByStop
+	return routeIDsByStop, nil
 }
 
 // Situation references

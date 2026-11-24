@@ -231,8 +231,9 @@ func TestStopReferences(t *testing.T) {
 		malformedReferenceStop.ID: {"malformed-reference-id"},
 	}
 
-	refs, routeIDsByStop := api.stopReferences(ctx,
+	refs, routeIDsByStop, err := api.stopReferences(ctx,
 		[]gtfsdb.Stop{servedStop, routelessStop, defaultStop, malformedReferenceStop}, referringIDs)
+	require.NoError(t, err)
 	require.Len(t, refs, 4, "a stop with no resolvable routes still gets a reference")
 
 	assert.Equal(t, referringIDs[servedStopID][0], refs[0].ID, "the referring entry's ID labels the reference")
@@ -292,7 +293,8 @@ func TestStopReferences_DirectionAndCodeMatchBuildStopModel(t *testing.T) {
 				tt.stop.ID: {utils.FormCombinedID(referringAgencyID, tt.stop.ID)},
 			}
 
-			refs, _ := api.stopReferences(ctx, []gtfsdb.Stop{tt.stop}, referringIDs)
+			refs, _, err := api.stopReferences(ctx, []gtfsdb.Stop{tt.stop}, referringIDs)
+			require.NoError(t, err)
 			require.Len(t, refs, 1)
 
 			assert.Equal(t, tt.wantDirection, refs[0].Direction)
@@ -605,7 +607,8 @@ func TestStopReferences_AgencyWithUnderscore(t *testing.T) {
 		"s1": {"AGENCY_ONE_s1"},
 	}
 
-	refs, routesByStop := api.stopReferences(ctx, stops, referringIDs)
+	refs, routesByStop, err := api.stopReferences(ctx, stops, referringIDs)
+	require.NoError(t, err)
 	require.Len(t, refs, 1)
 	assert.Equal(t, []string{"AGENCY_ONE_ROUTE_100"}, refs[0].RouteIDs)
 
