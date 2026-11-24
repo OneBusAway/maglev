@@ -28,7 +28,9 @@ fi
 
 # Capitalization
 case "$subject" in
-    [a-z]*)
+    [A-Z]*)
+        ;;
+    *)
         echo "ERROR: Subject must start with a capital letter."
         errors=1
         ;;
