@@ -3,9 +3,12 @@
 
 MSG_FILE="$1"
 
-# Clean commit message
-cleaned_message=$(sed '/^# ------------------------ >8 ------------------------/,$d' "$MSG_FILE")
-cleaned_message=$(printf '%s\n' "$cleaned_message" | sed '/^#/d')
+# Get Git's configured comment character (default #)
+COMMENT_CHAR=$(git config core.commentChar || echo "#")
+
+# Clean commit message - remove scissors marker and comments
+cleaned_message=$(sed "/^${COMMENT_CHAR} ------------------------ >8 ------------------------/,\$d" "$MSG_FILE")
+cleaned_message=$(printf '%s\n' "$cleaned_message" | sed "/^${COMMENT_CHAR}/d")
 
 # Extract subject and body
 subject=$(printf '%s\n' "$cleaned_message" | sed -n '1p')
