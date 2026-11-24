@@ -1133,5 +1133,5 @@ func TestArrivalsAndDeparturesForLocationRouteAlertUnderscoreAgency(t *testing.T
 	assert.Empty(t, model.Data.Entry.ArrivalsAndDepartures)
 	// The alert names no agency, so it takes the first static agency's prefix
 	// rather than the underscore agency that owns the stop.
-	assert.Contains(t, model.Data.Entry.SituationIDs, utils.FormCombinedID("25", alertID))
+	assert.Contains(t, model.Data.Entry.SituationIDs, utils.FormCombinedID(api.GtfsManager.FirstStaticAgencyID(), alertID))
 }
