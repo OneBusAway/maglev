@@ -260,7 +260,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 		logging.LogOperation(logger, "gtfs_data_import_completed",
 			slog.Duration("duration_ms", c.importRuntime),
-			slog.String("source", data.Source))
+			slog.String("source", appconf.RedactURL(data.Source)))
 	}()
 
 	// 1. Check if we already have this data imported
@@ -497,7 +497,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 	logging.LogOperation(logger, "updating_import_metadata",
 		slog.String("hash", data.Hash[:8]),
-		slog.String("source", data.Source))
+		slog.String("source", appconf.RedactURL(data.Source)))
 
 	_, err = qtx.UpsertImportMetadata(ctx, UpsertImportMetadataParams{
 		FileHash:   data.Hash,
