@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -321,47 +322,63 @@ func TestBlockHandlerBlocklessTrip(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, modelOther.Code)
 }
 
-func TestBlockHandlerBlocklessTripSharingIDWithBlock(t *testing.T) {
-	files := basicTripsForRouteFiles()
-	// Trip with trip_id="shared-id" and no block_id (blockless trip)
-	// along with another trip with block_id="shared-id".
-	files["trips.txt"] = "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
-		tripsForRouteRouteID + ",tfr-svc,shared-id," + tripsForRouteHeadsign + ",0,\n" +
-		tripsForRouteRouteID + ",tfr-svc,other-trip," + tripsForRouteHeadsign + ",0,shared-id\n"
-	files["stop_times.txt"] = "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
-		"other-trip,11:40:00,11:40:00," + tripsForRouteStop1ID + ",1\n" +
-		"other-trip,11:50:00,11:50:00," + tripsForRouteStop2ID + ",2\n" +
-		"shared-id,11:55:00,11:55:00," + tripsForRouteStop1ID + ",1\n" +
-		"shared-id,12:05:00,12:05:00," + tripsForRouteStop2ID + ",2\n"
+// TestBlockHandlerCrossAgencyBlock verifies that a block_id shared by two
+// agencies' trips is two blocks, one per agency, as in Java: each request
+// returns only the trips whose route belongs to the requested agency. The first
+// agency has two trips on different routes, so the block must keep all of them.
+func TestBlockHandlerCrossAgencyBlock(t *testing.T) {
+	files := crossAgencyInterlineFiles()
+	files["routes.txt"] += "tfr-route-2," + tripsForRouteAgencyID + ",TR2,Second Route,3\n"
+	files["trips.txt"] += "tfr-route-2,tfr-svc-today,tfr-xa2,Headsign A2,0,tfr-xblock\n"
+	files["stop_times.txt"] += "tfr-xa2,01:05:00,01:05:00," + tripsForRouteStop1ID + ",1\n" +
+		"tfr-xa2,01:25:00,01:25:00," + tripsForRouteStop2ID + ",2\n"
+	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "block-cross-agency.zip", files)
 
-	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "shared-block.zip", files)
-	defer api.Shutdown()
-
-	combinedBlockID := utils.FormCombinedID(tripsForRouteAgencyID, "shared-id")
-
-	// Querying block endpoint with shared-id returns 200 with both trips in configuration.
-	resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL(combinedBlockID))
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, http.StatusOK, model.Code)
-	assert.Equal(t, combinedBlockID, model.Data.Entry.ID)
-	require.Len(t, model.Data.Entry.Configurations, 1)
-
-	config := model.Data.Entry.Configurations[0]
-	assert.Equal(t, []string{utils.FormCombinedID(tripsForRouteAgencyID, "tfr-svc")}, config.ActiveServiceIds)
-	require.Len(t, config.Trips, 2)
-
-	// Trips are ordered by trip ID in configuration: other-trip, shared-id
-	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "other-trip"), config.Trips[0].TripId)
-	assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, "shared-id"), config.Trips[1].TripId)
-
-	// Both trips appear in references and both have BlockID matching combinedBlockID.
-	require.Len(t, model.Data.References.Trips, 2)
-	refMap := make(map[string]models.Trip)
-	for _, tripRef := range model.Data.References.Trips {
-		refMap[tripRef.ID] = tripRef
+	tests := []struct {
+		name       string
+		agencyID   string
+		serviceID  string
+		tripRoutes map[string]string // trip ID to route ID, both without the agency prefix
+	}{
+		{"first agency", tripsForRouteAgencyID, "tfr-svc-today", map[string]string{
+			"tfr-xa":  tripsForRouteRouteID,
+			"tfr-xa2": "tfr-route-2",
+		}},
+		{"second agency", tfrAgencyB, "tfr-svc-yest", map[string]string{
+			"tfr-xb": "tfr-route-otr",
+		}},
 	}
-	require.Contains(t, refMap, utils.FormCombinedID(tripsForRouteAgencyID, "other-trip"))
-	require.Contains(t, refMap, utils.FormCombinedID(tripsForRouteAgencyID, "shared-id"))
-	assert.Equal(t, combinedBlockID, refMap[utils.FormCombinedID(tripsForRouteAgencyID, "other-trip")].BlockID)
-	assert.Equal(t, combinedBlockID, refMap[utils.FormCombinedID(tripsForRouteAgencyID, "shared-id")].BlockID)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blockID := utils.FormCombinedID(tt.agencyID, "tfr-xblock")
+			wantServiceID := utils.FormCombinedID(tt.agencyID, tt.serviceID)
+			wantRouteByTrip := make(map[string]string, len(tt.tripRoutes))
+			for tripID, routeID := range tt.tripRoutes {
+				wantRouteByTrip[utils.FormCombinedID(tt.agencyID, tripID)] = utils.FormCombinedID(tt.agencyID, routeID)
+			}
+
+			resp, model := callAPIHandler[BlockEntryResponse](t, api, blockURL(blockID))
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, blockID, model.Data.Entry.ID)
+
+			require.Len(t, model.Data.Entry.Configurations, 1)
+			config := model.Data.Entry.Configurations[0]
+			assert.Equal(t, []string{wantServiceID}, config.ActiveServiceIds)
+			configTripIDs := make([]string, 0, len(config.Trips))
+			for _, trip := range config.Trips {
+				configTripIDs = append(configTripIDs, trip.TripId)
+			}
+			assert.ElementsMatch(t, slices.Collect(maps.Keys(wantRouteByTrip)), configTripIDs)
+
+			require.Len(t, model.Data.References.Trips, len(wantRouteByTrip))
+			for _, trip := range model.Data.References.Trips {
+				wantRouteID, ok := wantRouteByTrip[trip.ID]
+				require.True(t, ok, "unexpected trip reference %s", trip.ID)
+				assert.Equal(t, wantRouteID, trip.RouteID)
+				assert.Equal(t, wantServiceID, trip.ServiceID)
+				assert.Equal(t, blockID, trip.BlockID)
+			}
+		})
+	}
 }

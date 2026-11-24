@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -71,6 +73,8 @@ type Manager struct {
 	// Per-feed time its trip data was produced: the trip-updates feed's
 	// header timestamp, else its fetch time.
 	feedTripDataTime map[string]time.Time
+	// Per-feed, per-trip moment the trip update's current timestamp first arrived.
+	feedTripUpdateSeen map[string]map[string]tripUpdateSeen
 	// Per-feed agency filter: feedID -> set of allowed agency IDs.
 	// Populated once during InitGTFSManager before goroutines start; read-only thereafter.
 	// No lock is required for reads.
@@ -113,6 +117,7 @@ func (manager *Manager) clearFeedData(feedID string) {
 	delete(manager.feedUnattributedTrips, feedID)
 	delete(manager.feedTripAgency, feedID)
 	delete(manager.feedTripDataTime, feedID)
+	delete(manager.feedTripUpdateSeen, feedID)
 	manager.feedVehicles[feedID] = nil
 	manager.feedAlerts[feedID] = nil
 
@@ -181,6 +186,10 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	gtfsDB, err := openGtfsDB(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open GTFS database: %w", err)
+	}
+
+	if config.Clock == nil {
+		config.Clock = clock.RealClock{}
 	}
 
 	manager := &Manager{
@@ -709,7 +718,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 
 	reqLogger := logging.ForComponent(ctx, "gtfs_manager")
 
-	requestedTrip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	requestedTrip, err := manager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trip", err,
 			slog.String("trip_id", tripID))
@@ -721,7 +730,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		effectiveBlockID = requestedTrip.ID
 	}
 
-	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, nulls.String(effectiveBlockID))
+	blockTrips, err := manager.GtfsDB.Queries.Memo(ctx).GetTripsByBlockID(ctx, nulls.String(effectiveBlockID))
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trips for block", err,
 			slog.String("block_id", effectiveBlockID))
@@ -745,13 +754,20 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 	return nil
 }
 
-func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) {
+// GetVehicleByID returns the vehicle matching the exact agency and vehicle ID.
+// It does not fall back to unattributed vehicles or another agency.
+// The returned struct is a shallow copy. Its Trip, ID and Timestamp pointers
+// still reference the shared snapshot, so callers must not mutate them.
+func (manager *Manager) GetVehicleByID(agencyID, vehicleID string) (*gtfs.Vehicle, error) {
 	merged := manager.mergedRealtime()
-	if index, exists := merged.vehicleLookupByVehicle[vehicleID]; exists {
-		vehicle := merged.vehicles[index]
+	key := agencyVehicleKey{agencyID: agencyID, vehicleID: vehicleID}
+	if idx, ok := merged.vehicleLookupByVehicle[key]; ok {
+		vehicle := merged.vehicles[idx]
 		return &vehicle, nil
 	}
-
+	if agencyID != "" {
+		return nil, fmt.Errorf("vehicle with ID %s not found for agency %s", vehicleID, agencyID)
+	}
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
 }
 
@@ -802,7 +818,7 @@ func (manager *Manager) PrintStatistics() {
 	}
 
 	logging.LogOperation(logger, "gtfs_statistics",
-		slog.String("source", manager.config.GtfsURL),
+		slog.String("source", appconf.RedactURL(manager.config.GtfsURL)),
 		slog.Time("last_updated", manager.GetStaticLastUpdated(ctx)),
 		slog.Int64("stops", countOrZero(manager.GtfsDB.Queries.CountStops(ctx))),
 		slog.Int64("routes", countOrZero(manager.GtfsDB.Queries.CountRoutes(ctx))),
@@ -900,12 +916,18 @@ func (manager *Manager) SetRealTimeTripsForTest(trips []gtfs.Trip) {
 }
 
 // SetRealTimeVehiclesForTest injects real-time vehicles under the synthetic
-// feed ID "_test" so real feed updates do not discard them.
-func (manager *Manager) SetRealTimeVehiclesForTest(vehicles []gtfs.Vehicle) {
+// feed ID "_test" so real feed updates do not discard them. Optional retained IDs
+// simulate vehicles kept after dropping out of that feed's latest update.
+func (manager *Manager) SetRealTimeVehiclesForTest(vehicles []gtfs.Vehicle, retainedIDs ...string) {
 	manager.realTimeMutex.Lock()
 	defer manager.realTimeMutex.Unlock()
 
 	manager.feedVehicles["_test"] = vehicles
+	retained := make(map[vehicleKey]struct{}, len(retainedIDs))
+	for _, id := range retainedIDs {
+		retained[vehicleKey{id: id}] = struct{}{}
+	}
+	manager.feedRetainedVehicles["_test"] = retained
 	manager.rebuildMergedRealtimeLocked()
 }
 
@@ -916,6 +938,21 @@ func (manager *Manager) GetStaticLastUpdated(ctx context.Context) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(0, metadata.ImportTime).UTC()
+}
+
+// TripUpdateFirstSeen returns the feed time at which a trip's update first arrived
+// with its current timestamp, and false when no feed has delivered one. It takes
+// no lock, so request paths can call it per row.
+func (manager *Manager) TripUpdateFirstSeen(tripID string) (time.Time, bool) {
+	seenAt, ok := manager.mergedRealtime().tripUpdateSeenAt[tripID]
+	return seenAt, ok
+}
+
+func (manager *Manager) recordFeedUpdateLocked(feedID string, updatedAt time.Time) {
+	if manager.feedLastUpdate == nil {
+		manager.feedLastUpdate = make(map[string]time.Time)
+	}
+	manager.feedLastUpdate[feedID] = updatedAt
 }
 
 // GetFeedUpdateTimes returns a copy of the last update times for all realtime feeds.
@@ -936,12 +973,7 @@ func (manager *Manager) SetFeedUpdateTimeForTest(feedID string, t time.Time) {
 	manager.realTimeMutex.Lock()
 	defer manager.realTimeMutex.Unlock()
 
-	// Ensure map is initialized (helpful for tests)
-	if manager.feedLastUpdate == nil {
-		manager.feedLastUpdate = make(map[string]time.Time)
-	}
-
-	manager.feedLastUpdate[feedID] = t
+	manager.recordFeedUpdateLocked(feedID, t)
 }
 
 // SetStaticLastUpdatedForTest writes the static data timestamp to the database for testing purposes.

@@ -47,6 +47,22 @@ func rebuildStopAgencyIndex(t *testing.T, api *RestAPI) {
 	require.NoError(t, api.GtfsManager.GtfsDB.Queries.BuildStopAgencies(ctx))
 }
 
+// rebuildStopRouteIndex refreshes the precomputed stop-to-route index that route lookups
+// for stops read. Like rebuildStopAgencyIndex, it stands in for the import that builds the
+// index in production, for tests that insert stop times straight into the database.
+func rebuildStopRouteIndex(t *testing.T, api *RestAPI) {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, api.GtfsManager.GtfsDB.Queries.ClearStopRoutes(ctx))
+	require.NoError(t, api.GtfsManager.GtfsDB.Queries.BuildStopRoutes(ctx))
+}
+
+// clearIndexedStopRoutes removes the given stops from the stop-to-route index, for the same
+// fixture cleanup reason as clearIndexedStopAgencies.
+func clearIndexedStopRoutes(stopIDs string) string {
+	return `DELETE FROM stop_routes WHERE stop_id IN (` + stopIDs + `)`
+}
+
 // clearIndexedStopAgencies removes the given stops from the index. Fixture cleanup has to
 // run this before deleting the stops or agencies the index rows point at.
 func clearIndexedStopAgencies(stopIDs string) string {
@@ -232,18 +248,22 @@ func TestSearchStopsHandlerSpecialCharactersOnly(t *testing.T) {
 
 func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
 	tests := []struct {
-		name           string
-		maxCount       string
-		expectedStatus int
-		expectError    bool
+		name                 string
+		maxCount             string
+		expectedStatus       int
+		expectError          bool
+		expectedErrorMessage string
 	}{
-		{"omitted", "", http.StatusOK, false},
-		{"valid", "10", http.StatusOK, false},
-		{"atCeiling", "250", http.StatusOK, false},
-		{"zero", "0", http.StatusBadRequest, true},
-		{"negative", "-1", http.StatusBadRequest, true},
-		{"tooLarge", "251", http.StatusBadRequest, true},
-		{"nonInteger", "abc", http.StatusBadRequest, true},
+		{"omitted", "", http.StatusOK, false, ""},
+		{"valid", "10", http.StatusOK, false, ""},
+		{"atCeiling", "250", http.StatusOK, false, ""},
+		{"zero", "0", http.StatusBadRequest, true, "must be greater than zero"},
+		{"negative", "-1", http.StatusBadRequest, true, "must be greater than zero"},
+		{"tooLarge", "251", http.StatusBadRequest, true, "must not exceed 250"},
+		{"nonInteger", "abc", http.StatusBadRequest, true, `Invalid field value for field "maxCount".`},
+		{"64BitOverflow", "99999999999", http.StatusBadRequest, true, `Invalid field value for field "maxCount".`},
+		{"int32Overflow", "2147483648", http.StatusBadRequest, true, `Invalid field value for field "maxCount".`},
+		{"int32Underflow", "-2147483649", http.StatusBadRequest, true, `Invalid field value for field "maxCount".`},
 	}
 
 	for _, tt := range tests {
@@ -260,6 +280,9 @@ func TestSearchStopsHandlerMaxCountBoundaries(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
 			if tt.expectError {
 				assert.Contains(t, stopsResp.Data.FieldErrors, "maxCount")
+				if tt.expectedErrorMessage != "" {
+					assert.Contains(t, stopsResp.Data.FieldErrors["maxCount"], tt.expectedErrorMessage)
+				}
 			} else {
 				assert.NotEmpty(t, stopsResp.Data.List)
 			}
@@ -473,6 +496,7 @@ func TestSearchStopsHandlerOrdersByCombinedID(t *testing.T) {
 
 	registerFixtureCleanup(t, api.GtfsManager.GtfsDB.DB,
 		clearIndexedStopAgencies(`'aaa_stop', 'zzz_stop'`),
+		clearIndexedStopRoutes(`'aaa_stop', 'zzz_stop'`),
 		`DELETE FROM stop_times WHERE trip_id IN ('trip_ord_alpha', 'trip_ord_zulu')`,
 		`DELETE FROM trips WHERE id IN ('trip_ord_alpha', 'trip_ord_zulu')`,
 		`DELETE FROM routes WHERE id IN ('route_ord_alpha', 'route_ord_zulu')`,
@@ -523,6 +547,7 @@ func TestSearchStopsHandlerOrdersByCombinedID(t *testing.T) {
 	require.NoError(t, err)
 
 	rebuildStopAgencyIndex(t, api)
+	rebuildStopRouteIndex(t, api)
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Ordertest"}}))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -550,6 +575,7 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 
 	registerFixtureCleanup(t, api.GtfsManager.GtfsDB.DB,
 		clearIndexedStopAgencies(`'child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared', 'child_stop_multi_agency'`),
+		clearIndexedStopRoutes(`'child_stop_1', 'parent_stat_1', 'child_stop_2', 'parent_stat_2', 'child_stop_shared', 'child_stop_multi_agency'`),
 		`DELETE FROM stop_times WHERE trip_id IN ('trip_parent_test', 'trip_parent_test_2', 'trip_parent_only', 'trip_multi_agency')`,
 		`DELETE FROM trips WHERE id IN ('trip_parent_test', 'trip_parent_test_2', 'trip_parent_only', 'trip_multi_agency')`,
 		`DELETE FROM routes WHERE id IN ('route_parent_test', 'route_parent_test_2', 'route_parent_only')`,
@@ -687,6 +713,7 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	require.NoError(t, err)
 
 	rebuildStopAgencyIndex(t, api)
+	rebuildStopRouteIndex(t, api)
 
 	// Alerts must not add unreferenced situations or disturb parent/route/agency references.
 	stopID := "child_stop_1"
@@ -735,8 +762,8 @@ func TestSearchStopsHandlerParentStationReferences(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "888_child_stop_multi_agency", childMultiAgency.ID)
 	assert.Equal(t, "888_parent_stat_1", childMultiAgency.Parent)
-	assert.Equal(t, []string{"888_route_parent_test_2", "999_route_parent_test"}, childMultiAgency.RouteIDs,
-		"routeIds must be in a stable, deterministic order")
+	assert.Equal(t, []string{"999_route_parent_test", "888_route_parent_test_2"}, childMultiAgency.RouteIDs,
+		"routeIds should be sorted by route name (RT-P before RT-P2), as Java does")
 
 	referenceIDs := make([]string, 0, len(stopsResp.Data.References.Stops))
 	for _, parentRef := range stopsResp.Data.References.Stops {
@@ -809,6 +836,7 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	// The RABA agency and the service_1 calendar are shared records and are left in place.
 	registerFixtureCleanup(t, db,
 		clearIndexedStopAgencies(`'zero_route_stop', 'school_bus_stop', 'valid_bus_stop', 'two_school_routes_stop', 'limit_ghost_1', 'limit_ghost_2', 'limit_valid_3'`),
+		clearIndexedStopRoutes(`'zero_route_stop', 'school_bus_stop', 'valid_bus_stop', 'two_school_routes_stop', 'limit_ghost_1', 'limit_ghost_2', 'limit_valid_3'`),
 		`DELETE FROM stop_times WHERE trip_id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`,
 		`DELETE FROM trips WHERE id IN ('school_trip_1', 'school_trip_2', 'valid_trip_1')`,
 		`DELETE FROM routes WHERE id IN ('school_route_1', 'school_route_2', 'valid_route_1')`,
@@ -854,6 +882,7 @@ func TestSearchStopsHandlerRouteTypeExclusion(t *testing.T) {
 	require.NoError(t, err)
 
 	rebuildStopAgencyIndex(t, api)
+	rebuildStopRouteIndex(t, api)
 
 	// Test exclusion of a stop with no stop_times. zero_route_stop is dropped by the SQL
 	// revenue filter, which is now what excludes a routeless stop in practice: routes are
@@ -902,6 +931,7 @@ func TestSearchStopsHandlerParentStationCrossAgencyReference(t *testing.T) {
 
 	registerFixtureCleanup(t, db,
 		clearIndexedStopAgencies(`'child_stop_cross', 'parent_station_cross'`),
+		clearIndexedStopRoutes(`'child_stop_cross', 'parent_station_cross'`),
 		`DELETE FROM stop_times WHERE trip_id IN ('child_trip', 'parent_trip')`,
 		`DELETE FROM trips WHERE id IN ('child_trip', 'parent_trip')`,
 		`DELETE FROM routes WHERE id IN ('child_route', 'parent_route')`,
@@ -939,6 +969,7 @@ func TestSearchStopsHandlerParentStationCrossAgencyReference(t *testing.T) {
 	require.NoError(t, err)
 
 	rebuildStopAgencyIndex(t, api)
+	rebuildStopRouteIndex(t, api)
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Child Stop Cross"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -972,6 +1003,7 @@ func TestSearchStopsHandlerRevenueServiceFilter(t *testing.T) {
 	db := api.GtfsManager.GtfsDB.DB
 
 	registerFixtureCleanup(t, db,
+		clearIndexedStopRoutes(`'revenue_both_restricted', 'revenue_pickup_only', 'revenue_dropoff_only', 'revenue_phone_agency', 'revenue_coordinate_driver', 'revenue_null_columns'`),
 		`DELETE FROM stop_times WHERE trip_id IN ('revenue_trip_1', 'revenue_trip_2', 'revenue_trip_3', 'revenue_trip_4', 'revenue_trip_5', 'revenue_trip_6')`,
 		`DELETE FROM trips WHERE id IN ('revenue_trip_1', 'revenue_trip_2', 'revenue_trip_3', 'revenue_trip_4', 'revenue_trip_5', 'revenue_trip_6')`,
 		`DELETE FROM routes WHERE id = 'revenue_route_1'`,
@@ -1021,6 +1053,8 @@ func TestSearchStopsHandlerRevenueServiceFilter(t *testing.T) {
 		INSERT INTO stop_times (trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('revenue_trip_5', 'revenue_null_columns', 1, 28800, 28800);
 	`)
 	require.NoError(t, err)
+
+	rebuildStopRouteIndex(t, api)
 
 	resp, stopsResp := callAPIHandler[StopsResponse](t, api, searchStopsURL(url.Values{"input": {"Revenue Test"}}))
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

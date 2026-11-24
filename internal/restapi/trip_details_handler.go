@@ -153,7 +153,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Share database reads and block snapshots across service-date and status lookups.
+	ctx := WithSnapshotCache(gtfsdb.WithReadMemo(r.Context()), newSnapshotCache())
 	defaults := TripParamDefaults{IncludeTrip: true, IncludeSchedule: true}
 
 	// Format errors do not need the agency timezone. Catch them before GetTrip so
@@ -166,15 +167,19 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		api.dbErrorResponse(w, r, err)
 		return
 	}
 
-	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
+	route, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetRoute(ctx, trip.RouteID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
+		return
+	}
+	if route.AgencyID != agencyID {
+		api.sendNotFound(w, r)
 		return
 	}
 
@@ -203,6 +208,8 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	date := servicedate.Of(currentTime)
 	if params.ServiceDate != nil {
 		date = servicedate.FromInstant(*params.ServiceDate, loc)
+	} else if params.VehicleID != "" {
+		date = api.tripUpdateVehicleServiceDate(ctx, trip.ID, currentTime, loc)
 	}
 	serviceDate := date.Midnight(loc)
 	serviceStart := date.Start(loc)
@@ -224,33 +231,15 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var requestedVehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
-		vehicleAgencyID, rawVehicleID, vErr := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
-		if vErr != nil {
+		requestedVehicle = api.requestedVehicleForTrip(ctx, params.VehicleID, agencyID, trip.ID, serviceDate)
+		if requestedVehicle == nil {
 			api.sendNotFound(w, r)
 			return
 		}
-		if vehicleAgencyID != agencyID {
-			api.sendNotFound(w, r)
-			return
-		}
-		v, vErr := api.GtfsManager.GetVehicleByID(rawVehicleID)
-		if vErr != nil || v == nil {
-			api.sendNotFound(w, r)
-			return
-		}
-		// The trip-details endpoint must not accept a vehicle currently on
-		// a different trip. Java's TripDetailsBeanService restricts the
-		// vehicle argument to the trip we're describing; a mismatch is 404
-		// so the response never conflates two unrelated trips.
-		if v.Trip == nil || v.Trip.ID.ID != trip.ID {
-			api.sendNotFound(w, r)
-			return
-		}
-		requestedVehicle = v
 	}
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
-	freqRows, err := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	freqRows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -397,7 +386,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 // serviceActiveOn reports whether serviceID runs on serviceDate.
 func (api *RestAPI) serviceActiveOn(ctx context.Context, serviceID string, serviceDate time.Time) (bool, error) {
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
 	if err != nil {
 		return false, err
 	}

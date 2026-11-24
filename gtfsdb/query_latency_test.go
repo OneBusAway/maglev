@@ -49,11 +49,7 @@ func loadLatencyFixture(tb testing.TB) (*Client, string, string) {
 		dbPath, _ = filepath.Abs(filepath.Join("..", "testdata", "perf", "trimet-perf.db"))
 	case latencyFileExists(rabaZip):
 		zipPath = rabaZip
-		tmpDir := filepath.Join(os.TempDir(), "maglev_query_latency")
-		if mkErr := os.MkdirAll(tmpDir, 0755); mkErr != nil {
-			tb.Fatalf("cannot create tmp dir: %v", mkErr)
-		}
-		dbPath = filepath.Join(tmpDir, "raba_latency.db")
+		dbPath = filepath.Join(tb.TempDir(), "raba_latency.db")
 	default:
 		tb.Skip("no GTFS dataset found – run scripts/download-perf-data.sh or ensure testdata/raba.zip exists")
 	}
