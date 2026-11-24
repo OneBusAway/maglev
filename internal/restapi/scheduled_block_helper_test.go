@@ -395,6 +395,30 @@ func TestMetricsForStop_NotInRangeRefusesClampedResults(t *testing.T) {
 	assert.Equal(t, 0, n)
 }
 
+func TestMetricsForStop_DwellAtFinalStop(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{TripID: "A", StopID: "first", StopSequenceInTrip: 1, BlockSequence: 0, EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{TripID: "A", StopID: "mid", StopSequenceInTrip: 2, BlockSequence: 1, EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 100, DistanceAlongBlock: 1000},
+		{TripID: "A", StopID: "final", StopSequenceInTrip: 3, BlockSequence: 2, EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 360, DistanceAlongBlock: 2000},
+	}
+
+	currentTime := serviceDate.Add(330 * time.Second)
+	snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+	// Target = final stop (Sequence 3). Bus is dwelling at this stop.
+	d, n, ok := snap.metricsForStop("A", 3)
+	require.True(t, ok)
+	assert.InDelta(t, 0.0, d, 0.001)
+	assert.Equal(t, 0, n)
+
+	// Target = first stop (Sequence 1). Bus has passed it.
+	d, n, ok = snap.metricsForStop("A", 1)
+	require.True(t, ok)
+	assert.InDelta(t, -2000.0, d, 0.001)
+	assert.Equal(t, -2, n)
+}
+
 func TestMetricsForStop_NextStopUnset(t *testing.T) {
 	// currentTime is past every stop → NextStopIndex = -1. Mirroring Java's
 	// behaviour, we report ok=false so the caller leaves distanceFromStop and
@@ -1519,5 +1543,25 @@ func TestApplySnapshotStops_DwellAtStop(t *testing.T) {
 	assert.Equal(t, "1_dwell", status.NextStop)
 	assert.Zero(t, status.NextStopTimeOffset)
 	assert.Equal(t, "1_dwell", status.ClosestStop)
+	assert.Zero(t, status.ClosestStopTimeOffset)
+}
+
+func TestApplySnapshotStops_DwellAtFinalStop(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{StopID: "first", EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{StopID: "mid", EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 100, DistanceAlongBlock: 1000},
+		{StopID: "final", EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 360, DistanceAlongBlock: 2000},
+	}
+
+	currentTime := serviceDate.Add(330 * time.Second)
+	snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+	status := models.NewTripStatus()
+	applySnapshotStops(status, snap, 330, "1")
+
+	assert.Equal(t, "1_final", status.NextStop)
+	assert.Zero(t, status.NextStopTimeOffset)
+	assert.Equal(t, "1_final", status.ClosestStop)
 	assert.Zero(t, status.ClosestStopTimeOffset)
 }

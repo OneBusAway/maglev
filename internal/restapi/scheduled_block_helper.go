@@ -43,13 +43,13 @@ func (s blockStopMetric) dwellSeconds() int64 {
 type scheduledBlockSnapshot struct {
 	Stops         []blockStopMetric
 	StopIndex     map[scheduledStopKey]int
-	NextStopIndex int // -1 when currentTime is past the block's last stop
+	NextStopIndex int // -1 once currentTime is past the last stop's departure
 
 	// Block-level interpolated distance at currentTime.
 	DistanceAlongBlock float64
 
 	// InRange is true when currentTime falls within the shift's [firstStop,
-	// lastStop] scheduled span. When false, DistanceAlongBlock is clamped to
+	// lastStop] scheduled span (through the last stop's departure). When false, DistanceAlongBlock is clamped to
 	// a block boundary and downstream code must NOT treat the derived
 	// per-trip fields (ActiveTripScheduledDistance, distanceFromStop) as
 	// meaningful. Mirrors Java's null-BlockLocation semantics
@@ -289,17 +289,14 @@ func buildSnapshotFromStops(
 	distanceAlongBlock := interpolateBlockDistance(stops, currentSeconds, monotonic)
 	// Only ordered stop times make the adjacent stop a safe dwell candidate;
 	// otherwise preserve the non-monotonic interpolation fallback.
+	firstStopSec := stops[0].EffectiveStopSeconds
+	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
 	if monotonic && dwellingAtPreviousStop(stops, nextStopIndex, currentSeconds) {
 		nextStopIndex--
 		distanceAlongBlock = stops[nextStopIndex].DistanceAlongBlock
 	} else if dwellingAtLastStop(stops, nextStopIndex, currentSeconds) {
 		nextStopIndex = len(stops) - 1
 		distanceAlongBlock = stops[nextStopIndex].DistanceAlongBlock
-	}
-
-	firstStopSec := stops[0].EffectiveStopSeconds
-	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
-	if nextStopIndex == len(stops)-1 {
 		lastStopSec = max(lastStopSec, stops[len(stops)-1].DepartureSeconds)
 	}
 	return &scheduledBlockSnapshot{
