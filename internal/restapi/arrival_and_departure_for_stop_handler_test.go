@@ -683,7 +683,7 @@ func TestArrivalAndDepartureForStop_StopTimeUpdatePastAnHourIsNotPredicted(t *te
 	assert.True(t, entry.PredictedDepartureTime.IsZero())
 }
 
-func TestBuildTripStatus_DuplicatedTripKeepsALongDelay(t *testing.T) {
+func TestBuildTripStatus_DuplicatedTripStaysPredicted(t *testing.T) {
 	when := time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)
 	api := createTestApiWithClock(t, clock.NewMockClock(when))
 	defer api.Shutdown()
@@ -708,7 +708,8 @@ func TestBuildTripStatus_DuplicatedTripKeepsALongDelay(t *testing.T) {
 	status, _, err := api.BuildTripStatus(context.Background(), "dp-agency", tripID, vehicle, time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC), when, nil)
 	require.NoError(t, err)
 	require.NotNil(t, status)
-	assert.True(t, status.Predicted, "ADDED and DUPLICATED trips are not discarded at one hour")
+	assert.True(t, status.Predicted, "a DUPLICATED trip past one hour stays predicted")
+	assert.Equal(t, 0, status.ScheduleDeviation, "only the predicted flag is kept; the deviation is still dropped")
 }
 
 // TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictedWithoutTimes

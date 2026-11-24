@@ -282,6 +282,8 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 	scheduleDeviation, hasRealtimeTripUpdate, discarded := api.recordDeviation(ctx, updates, input.serviceDate, input.currentTime)
 	// ADDED and DUPLICATED trips leave the static block, so Java does not
 	// apply blockNotActive to them (GtfsRealtimeSource.handleCombinedUpdates).
+	// recordDeviation has already dropped a deviation past one hour, so this
+	// only keeps the predicted flag. Java would also keep the 90 minutes.
 	if runsOwnSchedule(input.vehicle) {
 		discarded = false
 	}
