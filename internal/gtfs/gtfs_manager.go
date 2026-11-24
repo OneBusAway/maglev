@@ -106,6 +106,11 @@ type Manager struct {
 	// trip-updates sub-feed ages out on its own clock even while sibling
 	// sub-feeds keep resetting the feed-wide staleness timer.
 	feedTripLastSuccess map[string]time.Time
+
+	// Tracks the last successful service-alerts fetch per feed, so a failing
+	// service-alerts sub-feed ages out on its own clock even while sibling
+	// sub-feeds keep resetting the feed-wide staleness timer.
+	feedAlertLastSuccess map[string]time.Time
 }
 
 // clearFeedData removes stale data for a specific feed when the staleness threshold is crossed
@@ -133,6 +138,12 @@ func (manager *Manager) clearFeedData(feedID string) {
 	manager.rebuildMergedRealtimeLocked()
 }
 
+// subFeedStale reports whether a sub-feed has not succeeded within staleFeedThreshold.
+func subFeedStale(lastSuccess map[string]time.Time, feedID string) bool {
+	last, ok := lastSuccess[feedID]
+	return ok && time.Since(last) > staleFeedThreshold
+}
+
 // clearStaleTripUpdates clears a feed's stored trip updates when its
 // trip-updates sub-feed has kept failing for longer than staleFeedThreshold
 // while a sibling sub-feed keeps succeeding. A partial success resets the
@@ -143,8 +154,7 @@ func (manager *Manager) clearStaleTripUpdates(feedID string) bool {
 	manager.realTimeMutex.Lock()
 	defer manager.realTimeMutex.Unlock()
 
-	last, ok := manager.feedTripLastSuccess[feedID]
-	if !ok || time.Since(last) <= staleFeedThreshold || (len(manager.feedTrips[feedID]) == 0 && len(manager.feedUnattributedTrips[feedID]) == 0) {
+	if !subFeedStale(manager.feedTripLastSuccess, feedID) || (len(manager.feedTrips[feedID]) == 0 && len(manager.feedUnattributedTrips[feedID]) == 0) {
 		return false
 	}
 
@@ -152,6 +162,25 @@ func (manager *Manager) clearStaleTripUpdates(feedID string) bool {
 	delete(manager.feedUnattributedTrips, feedID)
 	delete(manager.feedTripAgency, feedID)
 	delete(manager.feedTripDataTime, feedID)
+	manager.rebuildMergedRealtimeLocked()
+	return true
+}
+
+// clearStaleAlerts clears a feed's stored service alerts when its
+// service-alerts sub-feed has kept failing for longer than
+// staleFeedThreshold while a sibling sub-feed keeps succeeding. A partial
+// success resets the feed-wide staleness timer, so without this the last
+// good alerts — including ones the agency cancelled — would be served
+// forever. Returns true when alert data was cleared.
+func (manager *Manager) clearStaleAlerts(feedID string) bool {
+	manager.realTimeMutex.Lock()
+	defer manager.realTimeMutex.Unlock()
+
+	if !subFeedStale(manager.feedAlertLastSuccess, feedID) || len(manager.feedAlerts[feedID]) == 0 {
+		return false
+	}
+
+	manager.feedAlerts[feedID] = nil
 	manager.rebuildMergedRealtimeLocked()
 	return true
 }
@@ -200,6 +229,8 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedVehicles:         make(map[string][]gtfs.Vehicle),
 		feedAlerts:           make(map[string][]gtfs.Alert),
 		feedLastUpdate:       make(map[string]time.Time),
+		feedTripLastSuccess:  make(map[string]time.Time),
+		feedAlertLastSuccess: make(map[string]time.Time),
 		feedAgencyFilter:     config.feedAgencyFilters(),
 		feedVehicleLastSeen:  make(map[string]map[vehicleKey]time.Time),
 		feedVehicleAgency:    make(map[string]map[vehicleKey]string),

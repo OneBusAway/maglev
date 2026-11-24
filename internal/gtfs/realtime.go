@@ -852,6 +852,12 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 		manager.feedTripLastSuccess[feedID] = time.Now()
 	}
 
+	// Stamp service-alerts success on its own clock, within the same lock.
+	// This is the timestamp clearStaleAlerts ages when the sub-feed fails.
+	if alertsUpdated {
+		manager.feedAlertLastSuccess[feedID] = time.Now()
+	}
+
 	return hasNewData
 }
 
@@ -1639,6 +1645,11 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 
 				if hasNewData && manager.clearStaleTripUpdates(feedCfg.ID) {
 					logger.Warn("trip updates stale beyond threshold while sibling sub-feeds succeed, clearing trip data",
+						slog.String("feed", feedCfg.ID))
+				}
+
+				if hasNewData && manager.clearStaleAlerts(feedCfg.ID) {
+					logger.Warn("service alerts stale beyond threshold while sibling sub-feeds succeed, clearing alert data",
 						slog.String("feed", feedCfg.ID))
 				}
 

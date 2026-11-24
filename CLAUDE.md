@@ -335,6 +335,8 @@ The manager keeps two kinds of static state in memory:
 - `feedTripAgency` - `map[string]map[string]string`: the one agency each trip update was attributed to at ingestion, by trip ID (its route's agency, else its static trip's, else the feed's first `agency-ids` entry)
 - `feedTripDataTime` - `map[string]time.Time`: when each feed's trip data was produced (header timestamp, else fetch time)
 - `feedTripUpdateSeen` - `map[string]map[string]tripUpdateSeen`: per-feed, per-trip feed time at which each trip update's timestamp was first seen
+- `feedTripLastSuccess` - `map[string]time.Time`: per-feed timestamp of last successful trip-updates fetch
+- `feedAlertLastSuccess` - `map[string]time.Time`: per-feed timestamp of last successful service-alerts fetch
 
 *Derived merged view*, published by `rebuildMergedRealtimeLocked` after each feed
 update as one immutable `mergedRealtime` snapshot held in `merged
