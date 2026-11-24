@@ -32,6 +32,29 @@ Do not write commit messages that refer indirectly to PR comments — e.g. "appl
 
 Do not attribute commits to a coding agent (e.g. no `Co-Authored-By` lines for Claude or similar tools). The human contributor authored and is responsible for the code, regardless of what tooling assisted in writing it.
 
+### Git Hooks
+
+To help detect commit messages written in the wrong style and automate pre-commit checks, you can set up git hooks:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This configures git to use the hooks in the `.githooks` directory:
+
+- **commit-msg**: Performs mechanical commit message checks:
+  - Subject line length (≤50 characters)
+  - Capitalization of the subject line
+  - No period at the end of the subject line
+  - Blank line between subject and body
+  - Presence of a body
+  - Body line length (≤72 characters)
+  - Does not check subjective guidelines requiring human judgment (imperative mood, explanatory body content)
+
+- **pre-commit**: Runs `go vet` with both tag sets and `gofmt` checks
+
+- **pre-push**: Runs `make test`
+
 ### Before Committing
 
 Before committing any code, always run these steps and have them all succeed:
