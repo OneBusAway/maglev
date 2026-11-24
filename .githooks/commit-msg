@@ -1,0 +1,77 @@
+
+#!/bin/sh
+
+MSG_FILE="$1"
+
+# Clean commit message
+cleaned_message=$(sed '/^# ------------------------ >8 ------------------------/,$d' "$MSG_FILE")
+cleaned_message=$(printf '%s\n' "$cleaned_message" | sed '/^#/d')
+
+# Extract subject and body
+subject=$(printf '%s\n' "$cleaned_message" | sed -n '1p')
+body=$(printf '%s\n' "$cleaned_message" | sed -n '3,$p')
+
+errors=0
+
+# Allow automatically generated commit messages
+case "$subject" in
+    Merge\ *|Revert\ *|fixup!\ *|squash!\ *|amend!\ *)
+        exit 0
+        ;;
+esac
+
+# Subject length
+if [ "${#subject}" -gt 50 ]; then
+    echo "ERROR: Subject exceeds 50 characters."
+    errors=1
+fi
+
+# Capitalization
+case "$subject" in
+    [a-z]*)
+        echo "ERROR: Subject must start with a capital letter."
+        errors=1
+        ;;
+esac
+
+# No period at the end
+case "$subject" in
+    *.)
+        echo "ERROR: Subject must not end with a period."
+        errors=1
+        ;;
+esac
+
+# Blank line after subject
+second_line=$(sed -n '2p' "$MSG_FILE")
+
+if [ -n "$second_line" ]; then
+    echo "ERROR: Separate subject and body with a blank line."
+    errors=1
+fi
+
+# Require a body
+if ! printf '%s\n' "$body" | grep -q '[^[:space:]]'; then
+    echo "ERROR: Commit body is required."
+    errors=1
+fi
+
+# Body line length
+tmpfile=$(mktemp) || exit 1
+
+printf '%s\n' "$body" > "$tmpfile"
+
+while IFS= read -r line || [ -n "$line" ]; do
+    if [ "${#line}" -gt 72 ]; then
+        echo "ERROR: Body line exceeds 72 characters."
+        errors=1
+    fi
+done < "$tmpfile"
+
+rm -f "$tmpfile"
+
+if [ "$errors" -ne 0 ]; then
+    exit 1
+fi
+
+echo "Commit message validation passed."
