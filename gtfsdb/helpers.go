@@ -656,9 +656,12 @@ func buildStopRouteIndex(ctx context.Context, qtx *Queries) error {
 	return nil
 }
 
-// updateFeedExpiresAtFromCalendar persists the end of the latest service date
-// in the latest-expiring agency timezone. Call within a transaction so expiry
-// is atomic with the calendar and agency data it was derived from.
+// updateFeedExpiresAtFromCalendar persists the expiry timestamp for the feed.
+// It uses the latest service date from the calendar and extends it by the
+// feed's latest departure time (feed-wide across all trips), so a Friday owl
+// trip ending at 27:00 pushes expiry past midnight even when the calendar's
+// last service date has no trips past 23:00. Call within a transaction so
+// expiry is atomic with the calendar and agency data it was derived from.
 func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 	val, err := qtx.GetFeedEndDate(ctx)
 	if err != nil {
@@ -687,7 +690,11 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 		if err != nil {
 			return fmt.Errorf("failed to get agency timezones: %w", err)
 		}
-		expiresAt, err := latestAgencyExpiry(parsedTime, agencies)
+		latestDepartureNs, err := qtx.GetFeedLatestDepartureTime(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get feed latest departure time: %w", err)
+		}
+		expiresAt, err := latestAgencyExpiry(parsedTime, agencies, latestDepartureNs)
 		if err != nil {
 			return err
 		}
@@ -700,9 +707,16 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 	return nil
 }
 
-func latestAgencyExpiry(serviceDate time.Time, agencies []Agency) (time.Time, error) {
+func latestAgencyExpiry(serviceDate time.Time, agencies []Agency, latestStopNs int64) (time.Time, error) {
 	if len(agencies) == 0 {
 		return time.Time{}, fmt.Errorf("cannot calculate feed expiry without an agency timezone")
+	}
+	// Use the latest stop time duration from the feed, with end-of-day as a floor
+	// so feeds without stop times (or with stop times before 23:59:59) still expire
+	// at the same time as before this change.
+	const endOfDayNs = int64(23*time.Hour + 59*time.Minute + 59*time.Second)
+	if latestStopNs < endOfDayNs {
+		latestStopNs = endOfDayNs
 	}
 	var latest time.Time
 	seen := make(map[string]bool)
@@ -719,9 +733,12 @@ func latestAgencyExpiry(serviceDate time.Time, agencies []Agency) (time.Time, er
 			return time.Time{}, fmt.Errorf("agency %q has invalid timezone %q: %w", agency.ID, timezone, err)
 		}
 		seen[timezone] = true
-		// Construct local end-of-day directly: adding 24 hours to midnight
-		// is incorrect on daylight-saving transition dates.
-		expiresAt := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 23, 59, 59, 0, location)
+		// Compute midnight as "noon minus 12h" per the GTFS elapsed-time
+		// convention, which avoids the DST-gap and fold ambiguity that
+		// affects building a wall-clock time directly.
+		expiresAt := time.Date(serviceDate.Year(), serviceDate.Month(), serviceDate.Day(), 12, 0, 0, 0, location).
+			Add(-12 * time.Hour).
+			Add(time.Duration(latestStopNs))
 		if latest.IsZero() || expiresAt.After(latest) {
 			latest = expiresAt
 		}

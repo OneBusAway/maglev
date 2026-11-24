@@ -2326,6 +2326,19 @@ func (q *Queries) GetFeedEndDate(ctx context.Context) (interface{}, error) {
 	return feed_end_date, err
 }
 
+const getFeedLatestDepartureTime = `-- name: GetFeedLatestDepartureTime :one
+SELECT CAST(COALESCE(MAX(max_departure_time), 0) AS INTEGER) AS latest_departure_ns FROM trips
+`
+
+// Returns the latest departure time in nanoseconds since midnight across all trips.
+// May exceed 86400000000000 (24 h) for trips running past midnight.
+func (q *Queries) GetFeedLatestDepartureTime(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.getFeedLatestDepartureTimeStmt, getFeedLatestDepartureTime)
+	var latest_departure_ns int64
+	err := row.Scan(&latest_departure_ns)
+	return latest_departure_ns, err
+}
+
 const getFirstStopOfNextTripInBlock = `-- name: GetFirstStopOfNextTripInBlock :one
 SELECT st.trip_id, st.arrival_time, st.departure_time, st.stop_id, st.stop_sequence, st.stop_headsign, st.pickup_type, st.drop_off_type, st.shape_dist_traveled, st.timepoint
 FROM stop_times st
