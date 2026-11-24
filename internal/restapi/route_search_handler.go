@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"math"
 	"net/http"
 
 	"maglev.onebusaway.org/internal/models"
@@ -31,7 +32,9 @@ func (api *RestAPI) routeSearchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	routes, err := api.GtfsManager.SearchRoutes(ctx, query, maxCount+1)
+	// Fetch every match: SearchRoutes ranks by relevance, so any SQL limit would
+	// pick the page by rank before the name sort below could see all candidates.
+	routes, err := api.GtfsManager.SearchRoutes(ctx, query, math.MaxInt32)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
