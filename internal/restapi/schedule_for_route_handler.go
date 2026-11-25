@@ -80,20 +80,25 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// noTripsResponse distinguishes the two no-service cases for this route: if the
-	// route has no service on any date after the requested one, the reason is
-	// ServiceDateOutOfRange; otherwise the route simply has no service that day
-	// (NoServiceThatDay). Both return body code 200 with an empty-schedule body.
+	// noTripsResponse distinguishes the two empty-schedule cases for this route
+	// using the planned service span (wiki SD-01): outside [first, last] is
+	// ServiceDateOutOfRange; inside with no trips that day is NoServiceThatDay.
+	// Both return body code 200 with an empty-schedule body.
 	noTripsResponse := func() (models.ResponseModel, error) {
-		hasFuture, err := api.GtfsManager.GtfsDB.Queries.RouteHasFutureService(ctx, gtfsdb.RouteHasFutureServiceParams{
-			RouteID: routeID,
-			RefDate: targetDate,
-		})
+		span, err := api.GtfsManager.GtfsDB.Queries.GetRouteServiceSpan(ctx, routeID)
+		if err != nil {
+			return models.ResponseModel{}, err
+		}
+		first, err := gtfsdb.CoalesceYYYYMMDD(span.FirstDate)
+		if err != nil {
+			return models.ResponseModel{}, err
+		}
+		last, err := gtfsdb.CoalesceYYYYMMDD(span.LastDate)
 		if err != nil {
 			return models.ResponseModel{}, err
 		}
 		text := "NoServiceThatDay"
-		if hasFuture == 0 {
+		if first == "" || last == "" || targetDate < first || targetDate > last {
 			text = "ServiceDateOutOfRange"
 		}
 		return buildNoServiceResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, text, api.Clock), nil
