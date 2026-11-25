@@ -526,3 +526,17 @@ curl http://localhost:4000/healthz
 
 * The container runs as a non-root user (maglev:1000).
 * Ensure mounted volumes are accessible.
+
+## Deploying Behind a CDN
+
+A CDN or caching proxy in front of Maglev may serve a cached response without contacting Maglev. On a cache hit, neither API-key validation nor rate limiting runs for that request.
+
+**Configure your CDN to include the `key` query parameter in its cache key for every `/api/` path.** Otherwise, a response cached for a valid key could be returned to a request with an invalid key. This matters especially for protected endpoints such as `problem-reports-for-*`, where a cached response could otherwise expose reports to a non-protected key.
+
+Including `key` in the cache key creates separate cache entries for different API keys, which can reduce your cache hit rate. Consider this tradeoff when configuring your CDN.
+
+Routes wrapped in `CacheControlMiddleware` with a positive duration send `Cache-Control: public, max-age=N` on successful responses and `304 Not Modified`. Routes that use `CacheDurationNone` send `no-cache, no-store, must-revalidate` instead. See `internal/restapi/routes.go` for the current routes and durations.
+
+`config.json` and `metrics.json` do not send a `Cache-Control` header, so the CDN may apply its configured default TTL to them. Error responses from routes wrapped in `CacheControlMiddleware`, including the 401 for an invalid key and the 429 from the rate limiter, send `Cache-Control: no-cache, no-store, must-revalidate`; errors from earlier middleware may not include this header.
+
+The `report-problem-with-*` endpoints are GETs that write. They send `Cache-Control: no-cache, no-store, must-revalidate`, but a CDN that ignores origin cache headers on GET could swallow repeated reports. Do not override origin cache headers on `/api/where/report-problem-*`.
