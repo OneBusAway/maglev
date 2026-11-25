@@ -18,9 +18,9 @@ import (
 func TestDSNAppendsConnectionSettingsWithCorrectSeparator(t *testing.T) {
 	cacheSize := strconv.Itoa(-connectionCacheKiB)
 	busyTimeout := strconv.Itoa(connectionBusyTimeoutMs)
-	params := "_foreign_keys=on&_cache_size=" + cacheSize + "&_busy_timeout=" + busyTimeout
+	params := "_foreign_keys=on&_recursive_triggers=on&_cache_size=" + cacheSize + "&_busy_timeout=" + busyTimeout
 	if DriverName == "sqlite" {
-		params = "_pragma=foreign_keys(1)&_pragma=cache_size(" + cacheSize + ")&_pragma=busy_timeout(" + busyTimeout + ")"
+		params = "_pragma=foreign_keys(1)&_pragma=recursive_triggers(1)&_pragma=cache_size(" + cacheSize + ")&_pragma=busy_timeout(" + busyTimeout + ")"
 	}
 
 	assert.Equal(t, "test.db?"+params, DSN("test.db"))
@@ -59,11 +59,13 @@ func TestDSNWithExistingQueryOpens(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	ctx := context.Background()
-	var foreignKeys, busyTimeout int
+	var foreignKeys, recursiveTriggers, busyTimeout int
 	require.NoError(t, db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys))
+	require.NoError(t, db.QueryRowContext(ctx, "PRAGMA recursive_triggers").Scan(&recursiveTriggers))
 	require.NoError(t, db.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyTimeout))
 
 	assert.Equal(t, 1, foreignKeys)
+	assert.Equal(t, 1, recursiveTriggers)
 	assert.Equal(t, connectionBusyTimeoutMs, busyTimeout)
 }
 

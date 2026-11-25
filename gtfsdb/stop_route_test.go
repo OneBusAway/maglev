@@ -175,3 +175,33 @@ func addSecondRouteAtStop(t *testing.T, client *Client) string {
 	require.NoError(t, buildStopRouteIndex(ctx, client.Queries))
 	return stopID
 }
+
+func TestNewClient_BackfillsBothStopIndexesInOrder(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "raba.db")
+
+	client, err := NewClient(Config{DBPath: dbPath, Env: appconf.Development})
+	require.NoError(t, err)
+	rabaBytes, err := os.ReadFile("../testdata/raba.zip")
+	require.NoError(t, err)
+	parsed, err := ParseGtfsData(rabaBytes, "test-raba")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(ctx, parsed)
+	require.NoError(t, err)
+
+	// Stand in for a database imported before either index existed. stop_agencies is
+	// built from stop_routes, so it only fills if stop_routes is backfilled first.
+	for _, table := range []string{"stop_agencies", "stop_routes"} {
+		_, err = client.DB.ExecContext(ctx, "DELETE FROM "+table)
+		require.NoError(t, err)
+	}
+	require.NoError(t, client.Close())
+
+	client, err = NewClient(Config{DBPath: dbPath, Env: appconf.Development})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	assert.Positive(t, countRows(t, client, "SELECT COUNT(*) FROM stop_routes"))
+	assert.Positive(t, countRows(t, client, "SELECT COUNT(*) FROM stop_agencies"),
+		"stop_agencies should be backfilled from the freshly backfilled stop_routes")
+}
