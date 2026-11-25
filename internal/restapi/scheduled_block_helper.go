@@ -117,6 +117,26 @@ type snapshotCache struct {
 	// activeTripSequences memoizes a block-trip sequence lookup, which rows on
 	// one block all make for the same active trip.
 	activeTripSequences map[activeTripSequenceKey]int
+	// blockShiftTripIDs memoizes blockShiftTripIDsSortedByStartTime, which the
+	// vehicle lookup, the cancellation check and the deviation each make for
+	// every arrival row.
+	blockShiftTripIDs map[blockShiftKey][]string
+	// tripAgencies memoizes tripAgencyID, which building a trip-update vehicle
+	// makes for each named update on the block.
+	tripAgencies map[string]tripAgency
+	// positionVehiclesByShift assigns anonymous updates to one live vehicle per
+	// service-date shift, including cached nil assignments.
+	positionVehiclesByShift map[blockShiftKey]*gtfs.Vehicle
+}
+
+type tripAgency struct {
+	agencyID string
+	known    bool
+}
+
+type blockShiftKey struct {
+	tripID          string
+	serviceDateUnix int64
 }
 
 type activeTripSequenceKey struct {
@@ -134,6 +154,8 @@ func newSnapshotCache() *snapshotCache {
 	return &snapshotCache{
 		m:                   make(map[snapshotCacheEntryKey]*scheduledBlockSnapshot),
 		activeTripSequences: make(map[activeTripSequenceKey]int),
+		blockShiftTripIDs:   make(map[blockShiftKey][]string),
+		tripAgencies:        make(map[string]tripAgency),
 	}
 }
 
@@ -263,13 +285,22 @@ func buildSnapshotFromStops(
 		shiftTripIDs[t.id] = struct{}{}
 	}
 
+	nextStopIndex := findNextStopIndex(stops, currentSeconds, monotonic)
+	distanceAlongBlock := interpolateBlockDistance(stops, currentSeconds, monotonic)
+	// Only ordered stop times make the adjacent stop a safe dwell candidate;
+	// otherwise preserve the non-monotonic interpolation fallback.
+	if monotonic && dwellingAtPreviousStop(stops, nextStopIndex, currentSeconds) {
+		nextStopIndex--
+		distanceAlongBlock = stops[nextStopIndex].DistanceAlongBlock
+	}
+
 	firstStopSec := stops[0].EffectiveStopSeconds
 	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
 	return &scheduledBlockSnapshot{
 		Stops:              stops,
 		StopIndex:          stopIndex,
-		NextStopIndex:      findNextStopIndex(stops, currentSeconds, monotonic),
-		DistanceAlongBlock: interpolateBlockDistance(stops, currentSeconds, monotonic),
+		NextStopIndex:      nextStopIndex,
+		DistanceAlongBlock: distanceAlongBlock,
 		InRange:            currentSeconds >= firstStopSec && currentSeconds <= lastStopSec,
 		ShiftTripIDs:       shiftTripIDs,
 	}
@@ -465,13 +496,9 @@ func shapeGapDistance(from, to blockTripData) float64 {
 //     short-circuits applyBlockLocationToBean; without this guard our
 //     snapshot clamps to the last stop's distance, producing "bus is 7 km
 //     past your stop" for trips that ended hours ago), or
-//   - !InRange (currentTime is before or after the block's schedule
-//     window). BuildTripStatus deliberately leaves the tripStatus distance
-//     fields at their defaults when InRange is false; callers of this
-//     method must apply the same gate or the arrival's distanceFromStop /
-//     numberOfStopsAway will report a clamped-to-block-start position for
-//     a bus that hasn't left the depot yet — e.g. "14 stops away" on an
-//     08:00 request for a trip departing 23:00 the same service day.
+//   - !InRange (currentTime is outside the block's schedule window). Callers
+//     wanting Java's position before the block starts pass the block's start
+//     time: see statusBlockSnapshot.
 func (s *scheduledBlockSnapshot) metricsForStop(
 	tripID string,
 	stopSequenceInTrip int,
@@ -972,6 +999,18 @@ func findNextStopIndex(stops []blockStopMetric, currentSeconds int64, monotonic 
 	return -1
 }
 
+// dwellingAtPreviousStop reports whether currentSeconds falls between the arrival
+// and departure of the stop before nextStopIndex. Java treats that as being at
+// the stop (ScheduledBlockLocationServiceImpl.java:218), so it is still the next
+// stop, and its distance is the vehicle's.
+func dwellingAtPreviousStop(stops []blockStopMetric, nextStopIndex int, currentSeconds int64) bool {
+	if nextStopIndex <= 0 {
+		return false
+	}
+	previous := stops[nextStopIndex-1]
+	return previous.ArrivalSeconds <= currentSeconds && currentSeconds <= previous.DepartureSeconds
+}
+
 // interpolateBlockDistance linearly interpolates the block's distance-along-block
 // at currentSeconds between the two surrounding stops. Clamped to the first /
 // last stop when currentSeconds is outside the block's scheduled span.
@@ -1017,11 +1056,14 @@ func interpolateBlockDistance(stops []blockStopMetric, currentSeconds int64, mon
 		from = stops[idx-1]
 		to = stops[idx]
 	}
-	span := to.EffectiveStopSeconds - from.EffectiveStopSeconds
-	if span == 0 {
+	// Java moves the vehicle only from the departure of one stop to the arrival
+	// of the next, so during the from-stop's dwell it stays at that stop.
+	fromSeconds := max(from.EffectiveStopSeconds, from.DepartureSeconds)
+	span := to.EffectiveStopSeconds - fromSeconds
+	if span <= 0 {
 		return from.DistanceAlongBlock
 	}
-	ratio := float64(currentSeconds-from.EffectiveStopSeconds) / float64(span)
+	ratio := float64(max(currentSeconds-fromSeconds, 0)) / float64(span)
 	return from.DistanceAlongBlock + ratio*(to.DistanceAlongBlock-from.DistanceAlongBlock)
 }
 

@@ -1,0 +1,684 @@
+package restapi
+
+import (
+	"context"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
+	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
+	"maglev.onebusaway.org/internal/servicedate"
+	"maglev.onebusaway.org/internal/utils"
+)
+
+// tripUpdateVehicleBlockWindow mirrors Java's _blockInstanceMatchingWindow
+// (BlockLocationServiceImpl.java): a record only matches a block running
+// within this long of the record's time.
+const tripUpdateVehicleBlockWindow = time.Hour
+
+// vehicleForTrip returns the vehicle serving a trip's block: one reporting
+// positions when there is one, otherwise one known only from a trip update.
+//
+// A feed carrying trip updates at its vehicle positions URL makes go-gtfs list
+// a position-less vehicle for each update naming one. That vehicle is skipped
+// here so the trip-update path builds it with Java's record checks.
+func (api *RestAPI) vehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+	vehicle := api.positionVehicleForTrip(ctx, tripID, serviceDate)
+	if vehicle != nil && !isTripUpdateVehicle(vehicle) &&
+		api.vehicleMatchesTripRecord(ctx, vehicle, tripID, serviceDate) {
+		if checked := api.positionVehicleWithRecord(ctx, vehicle, serviceDate); checked != nil {
+			return checked
+		}
+	}
+	return api.tripUpdateVehicleForTrip(ctx, tripID, serviceDate)
+}
+
+// vehicleMatchesTripRecord prevents a block-mate from replacing the vehicle
+// identified by this trip's updates, including when that vehicle has expired.
+func (api *RestAPI) vehicleMatchesTripRecord(ctx context.Context, vehicle *gtfs.Vehicle, tripID string, serviceDate time.Time) bool {
+	if vehicle.ID == nil {
+		return false
+	}
+	if !isTripUpdateVehicle(vehicle) && vehicle.Trip != nil && vehicle.Trip.ID.ID == tripID {
+		return true
+	}
+	updates := api.GtfsManager.GetTripUpdatesForTrip(tripID)
+	return len(updates) == 0 || slices.ContainsFunc(updates, func(update gtfs.Trip) bool {
+		return api.updateBelongsToVehicleRecord(ctx, tripUpdateForTrip{tripID: tripID, tu: update}, vehicle, serviceDate)
+	})
+}
+
+// positionVehicleWithRecord applies a position vehicle's record to it, or returns
+// nil when that record has expired.
+func (api *RestAPI) positionVehicleWithRecord(ctx context.Context, vehicle *gtfs.Vehicle, serviceDate time.Time) *gtfs.Vehicle {
+	blockUpdates := api.vehicleBlockTripUpdates(ctx, vehicle, serviceDate)
+	if api.vehicleRecordExpired(blockUpdates) {
+		return nil
+	}
+	return vehicleWithRecordStatus(vehicle, blockUpdates, serviceDate)
+}
+
+// vehicleBlockTripUpdates returns the trip updates of the block a vehicle reports
+// serving, which make up Java's record for it. A position-only vehicle has none.
+func (api *RestAPI) vehicleBlockTripUpdates(ctx context.Context, vehicle *gtfs.Vehicle, serviceDate time.Time) []tripUpdateForTrip {
+	if vehicle.Trip == nil {
+		return nil
+	}
+	return api.vehicleRecordUpdates(ctx, api.tripBlockUpdates(ctx, vehicle.Trip.ID.ID, serviceDate), vehicle, serviceDate)
+}
+
+// tripBlockUpdates returns a trip's block updates in block order. The trip need
+// not have its own update: a named vehicle can have a record on a block-mate.
+func (api *RestAPI) tripBlockUpdates(ctx context.Context, tripID string, serviceDate time.Time) []tripUpdateForTrip {
+	if len(api.GtfsManager.GetAllTripUpdates()) == 0 {
+		return nil
+	}
+	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
+	if !slices.Contains(blockTripIDs, tripID) {
+		blockTripIDs = []string{tripID}
+	}
+	return api.blockTripUpdates(blockTripIDs)
+}
+
+// predictionRecordUpdates pairs anonymous updates with a position vehicle on
+// their block, or otherwise selects the named vehicle/block stand-in's record.
+func (api *RestAPI) predictionRecordUpdates(ctx context.Context, update gtfs.Trip, tripID string, serviceDate time.Time) []tripUpdateForTrip {
+	vehicle := api.positionVehicleForTrip(ctx, tripID, serviceDate)
+	reportsBlock := vehicle != nil && !isTripUpdateVehicle(vehicle) && api.vehicleMatchesTripRecord(ctx, vehicle, tripID, serviceDate)
+	if !reportsBlock || namesAnotherVehicle(update, vehicle) {
+		vehicle = &gtfs.Vehicle{ID: api.tripUpdateVehicleID(ctx, update, tripID), Trip: &update}
+	}
+	if vehicle.ID == nil {
+		return []tripUpdateForTrip{{tripID: tripID, tu: update}}
+	}
+	return api.vehicleRecordUpdates(ctx, api.tripBlockUpdates(ctx, tripID, serviceDate), vehicle, serviceDate)
+}
+
+// vehicleRecordExpired reports whether Java has dropped a vehicle's record because
+// its trip updates are too old. Maglev retains a vehicle that left the feed for
+// longer than that, and a position-only vehicle has no record to expire.
+func (api *RestAPI) vehicleRecordExpired(blockUpdates []tripUpdateForTrip) bool {
+	recordTime, hasTime := blockRecordTime(blockUpdates)
+	return hasTime && api.recordTimeExpired(recordTime)
+}
+
+// vehicleWithRecordStatus cancels a vehicle whose own trip a trip update cancels.
+// A position only adds a location to Java's record (GtfsRealtimeTripLibrary.java
+// :1101-1102), so the update outranks the position's own descriptor. Java gives
+// the record the status of the block's first update (:325), but Maglev scopes
+// cancellation to one trip (wiki trip-details, SD-02): an earlier canceled trip
+// does not cancel the one the bus is now running. It returns a copy because
+// vehicles are shared across requests.
+func vehicleWithRecordStatus(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForTrip, serviceDate time.Time) *gtfs.Vehicle {
+	if vehicle.Trip == nil {
+		return vehicle
+	}
+	canceledUpdate, found := cancelingUpdate(blockUpdates, vehicle.Trip.ID.ID, serviceDate)
+	if !found || namesAnotherVehicle(canceledUpdate, vehicle) {
+		return vehicle
+	}
+	canceledTrip := *vehicle.Trip
+	canceledTrip.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+	canceledVehicle := *vehicle
+	canceledVehicle.Trip = &canceledTrip
+	return &canceledVehicle
+}
+
+// tripUpdateVehicleForTrip finds a vehicle named by a trip update on the trip's
+// block but missing from the vehicle positions feed. Java groups trip updates
+// by vehicle and builds a record even with no position (GtfsRealtimeTripLibrary
+// .java:355-378), so feeds that plan a block before a bus is assigned, such as
+// Swiftly's block_*_schedBasedVehicle, still produce a vehicle in its responses.
+//
+// The vehicle is built from the block's first update, and describes the trip its
+// record is running: see applyRunningTrip.
+func (api *RestAPI) tripUpdateVehicleForTrip(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+	if len(api.GtfsManager.GetAllTripUpdates()) == 0 {
+		return nil
+	}
+	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
+	blockUpdates := api.blockTripUpdates(blockTripIDs)
+	for _, blockUpdate := range blockUpdates {
+		vehicle, recordUpdates := api.vehicleFromTripUpdate(ctx, blockUpdate.tu, blockUpdate.tripID, blockUpdates, serviceDate)
+		if vehicle == nil || !api.vehicleMatchesTripRecord(ctx, vehicle, tripID, serviceDate) {
+			continue
+		}
+		if checked := api.recordVehicleInService(ctx, vehicle, tripRecord{
+			tripID:       blockUpdate.tripID,
+			blockUpdates: recordUpdates,
+			recordTime:   *vehicle.Timestamp,
+			serviceDate:  serviceDate,
+		}); checked != nil {
+			return checked
+		}
+	}
+	return nil
+}
+
+// tripRecord is the block record a trip-update vehicle is built from.
+type tripRecord struct {
+	tripID       string
+	blockUpdates []tripUpdateForTrip
+	recordTime   time.Time
+	serviceDate  time.Time
+}
+
+// recordVehicleInService returns a trip-update vehicle with the status of the trip
+// its record is running, or nil when Java discards the record. Java discards one
+// over an hour off schedule (GtfsRealtimeSource.java:728) and has no location once
+// the record's schedule time is past the block's last stop, unless the trip is
+// canceled (AbstractBlockLocationServiceImpl.java:274). ADDED and DUPLICATED
+// trips skip both, since they leave the static block schedule.
+func (api *RestAPI) recordVehicleInService(ctx context.Context, vehicle *gtfs.Vehicle, record tripRecord) *gtfs.Vehicle {
+	if runsOwnSchedule(vehicle) {
+		return vehicle
+	}
+	deviation, _, discarded := api.recordDeviation(ctx, record.blockUpdates, record.serviceDate, record.recordTime)
+	if discarded {
+		return nil
+	}
+	scheduleTime := record.recordTime.Add(-time.Duration(deviation) * time.Second)
+	snap := api.computeScheduledBlockSnapshot(ctx, record.tripID, scheduleTime, record.serviceDate)
+	runningTripID := record.tripID
+	if snap != nil && snap.ActiveTripID != "" {
+		runningTripID = snap.ActiveTripID
+	}
+	applyRunningTrip(vehicle, record.blockUpdates, runningTripID, record.serviceDate)
+	if isCanceledVehicle(vehicle) || snap == nil {
+		return vehicle
+	}
+	blockEnd := snap.Stops[len(snap.Stops)-1].DepartureSeconds
+	if utils.CalculateSecondsSinceServiceDate(scheduleTime, record.serviceDate) > blockEnd {
+		return nil
+	}
+	return vehicle
+}
+
+// applyRunningTrip makes a trip-update vehicle describe the trip its record is
+// running. The vehicle is built from the block's first update, which may be an
+// earlier trip, and a status reads its stop times, shape and stop delays from the
+// vehicle's trip. The vehicle keeps the first update's vehicle descriptor, so its
+// ID renders the same. Java gives the record the status of that first update
+// (GtfsRealtimeTripLibrary.java:325), which can cancel an earlier trip; Maglev
+// takes the running trip's own status (wiki trip-details, SD-02). The vehicle
+// must be one built for this request.
+func applyRunningTrip(vehicle *gtfs.Vehicle, blockUpdates []tripUpdateForTrip, runningTripID string, serviceDate time.Time) {
+	if vehicle.Trip.ID.ID == runningTripID {
+		return
+	}
+	runningTrip := *vehicle.Trip
+	runningTrip.ID = gtfs.TripID{
+		ID:           runningTripID,
+		HasStartDate: vehicle.Trip.ID.HasStartDate,
+		StartDate:    vehicle.Trip.ID.StartDate,
+	}
+	runningTrip.Delay = nil
+	runningTrip.StopTimeUpdates = nil
+	canceledUpdate, found := cancelingUpdate(blockUpdates, runningTripID, serviceDate)
+	if found && !namesAnotherVehicle(canceledUpdate, vehicle) {
+		runningTrip.ID.ScheduleRelationship = gtfsrt.TripDescriptor_CANCELED
+	}
+	vehicle.Trip = &runningTrip
+}
+
+// namesAnotherVehicle reports whether a trip update belongs to a vehicle other
+// than this one, whose cancellation therefore does not apply to it.
+func namesAnotherVehicle(tripUpdate gtfs.Trip, vehicle *gtfs.Vehicle) bool {
+	return namesVehicle(tripUpdate) && (vehicle.ID == nil || vehicle.ID.ID != tripUpdate.Vehicle.ID.ID)
+}
+
+// cancelingUpdate returns the update in a block record that cancels tripID's run
+// on serviceDate. An update for another day's run does not cancel this one.
+func cancelingUpdate(blockUpdates []tripUpdateForTrip, tripID string, serviceDate time.Time) (gtfs.Trip, bool) {
+	for _, blockUpdate := range blockUpdates {
+		cancelsThisRun := blockUpdate.tripID == tripID &&
+			blockUpdate.tu.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED &&
+			tripUpdateOnServiceDate(blockUpdate.tu, serviceDate)
+		if cancelsThisRun {
+			return blockUpdate.tu, true
+		}
+	}
+	return gtfs.Trip{}, false
+}
+
+// arrivalCanceled reports whether an arrival's own trip is canceled, either by its
+// vehicle reporting that trip canceled or by the trip's own update. A vehicle
+// canceled for another trip on the block does not cancel this one (SD-02).
+func (api *RestAPI) arrivalCanceled(ctx context.Context, tripID string, vehicle *gtfs.Vehicle, serviceDate time.Time) bool {
+	if isCanceledVehicle(vehicle) && vehicle.Trip.ID.ID == tripID {
+		return true
+	}
+	hasCancelingUpdate := slices.ContainsFunc(api.GtfsManager.GetTripUpdatesForTrip(tripID), func(tripUpdate gtfs.Trip) bool {
+		return tripUpdate.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED && tripUpdateOnServiceDate(tripUpdate, serviceDate)
+	})
+	if !hasCancelingUpdate {
+		return false
+	}
+	blockUpdates := api.tripBlockUpdates(ctx, tripID, serviceDate)
+	if api.vehicleRecordExpired(blockUpdates) {
+		return false
+	}
+	_, found := cancelingUpdate(blockUpdates, tripID, serviceDate)
+	return found
+}
+
+// tripUpdateVehicleServiceDate returns the service date a vehicle known only from
+// a trip update is running tripID on. A trip past midnight belongs to the previous
+// date, which is the only case that differs from the date of at.
+func (api *RestAPI) tripUpdateVehicleServiceDate(ctx context.Context, tripID string, at time.Time, location *time.Location) servicedate.Date {
+	date, _ := api.tripUpdateVehicleOnServiceDate(ctx, tripID, at, location)
+	return date
+}
+
+// tripUpdateVehicleOnServiceDate returns tripUpdateVehicleServiceDate's date
+// together with the vehicle built for it, or nil when neither date builds one,
+// so a caller that needs both builds the vehicle once.
+func (api *RestAPI) tripUpdateVehicleOnServiceDate(ctx context.Context, tripID string, at time.Time, location *time.Location) (servicedate.Date, *gtfs.Vehicle) {
+	today := servicedate.Of(at)
+	if vehicle := api.tripUpdateVehicleForTrip(ctx, tripID, today.Midnight(location)); vehicle != nil {
+		return today, vehicle
+	}
+	yesterday := today.AddDays(-1)
+	if vehicle := api.tripUpdateVehicleForTrip(ctx, tripID, yesterday.Midnight(location)); vehicle != nil {
+		return yesterday, vehicle
+	}
+	return today, nil
+}
+
+// requestedVehicleForTrip applies the automatic lookup's record checks before
+// matching an explicit vehicle ID. A position vehicle must report this trip;
+// trip-update-only vehicles can describe another trip on the same block. Several
+// position vehicles can report one trip ID, as on a frequency trip, while the
+// automatic lookup picks one, so another of them is looked up by its ID.
+func (api *RestAPI) requestedVehicleForTrip(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+	vehicle := api.vehicleForTrip(ctx, tripID, serviceDate)
+	if vehicle == nil || vehicle.ID == nil || vehicle.Trip == nil || responseVehicleID(agencyID, vehicle) != requestedID {
+		return api.requestedPositionVehicle(ctx, requestedID, agencyID, tripID, serviceDate)
+	}
+	if !isTripUpdateVehicle(vehicle) && vehicle.Trip.ID.ID != tripID {
+		return nil
+	}
+	return vehicle
+}
+
+// requestedPositionVehicle finds a position vehicle reporting tripID by its
+// agency-qualified ID and applies its record, or returns nil. The ID is read after
+// agencyID's prefix, since an agency ID can itself contain an underscore.
+func (api *RestAPI) requestedPositionVehicle(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+	rawVehicleID, hasAgencyPrefix := strings.CutPrefix(requestedID, agencyID+"_")
+	if !hasAgencyPrefix {
+		return nil
+	}
+	vehicle, err := api.GtfsManager.GetVehicleByID(agencyID, rawVehicleID)
+	reportsTrip := err == nil && vehicle != nil && !isTripUpdateVehicle(vehicle) &&
+		vehicle.Trip != nil && vehicle.Trip.ID.ID == tripID
+	if !reportsTrip {
+		return nil
+	}
+	return api.positionVehicleWithRecord(ctx, vehicle, serviceDate)
+}
+
+func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.Trip, tripID string, blockUpdates []tripUpdateForTrip, serviceDate time.Time) (*gtfs.Vehicle, []tripUpdateForTrip) {
+	if !tripUpdateOnServiceDate(tripUpdate, serviceDate) || api.tripUpdateVehicleHasPosition(ctx, tripUpdate, tripID, serviceDate) {
+		return nil, nil
+	}
+	vehicleID := api.tripUpdateVehicleID(ctx, tripUpdate, tripID)
+	if vehicleID == nil {
+		return nil, nil
+	}
+	vehicle := &gtfs.Vehicle{ID: vehicleID, Trip: &tripUpdate}
+	recordUpdates := api.vehicleRecordUpdates(ctx, blockUpdates, vehicle, serviceDate)
+	if api.vehicleRecordExpired(recordUpdates) {
+		return nil, nil
+	}
+	recordTime, hasTime := blockRecordTime(recordUpdates)
+	if !hasTime {
+		recordTime = api.Clock.Now()
+	}
+	if !api.blockRunsNear(ctx, tripID, recordTime, serviceDate) {
+		return nil, nil
+	}
+	vehicle.Timestamp = &recordTime
+	return vehicle, recordUpdates
+}
+
+// tripUpdateVehicleID returns the vehicle a trip update names. Java's record uses
+// the block's ID when it names none (GtfsRealtimeTripLibrary.java:556-559).
+func (api *RestAPI) tripUpdateVehicleID(ctx context.Context, tripUpdate gtfs.Trip, tripID string) *gtfs.VehicleID {
+	if namesVehicle(tripUpdate) {
+		return tripUpdate.Vehicle.ID
+	}
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	if err != nil {
+		return nil
+	}
+	blockID := nulls.StringOrEmpty(trip.BlockID)
+	if blockID == "" {
+		return nil
+	}
+	return &gtfs.VehicleID{ID: blockID}
+}
+
+func namesVehicle(tripUpdate gtfs.Trip) bool {
+	return tripUpdate.Vehicle != nil && tripUpdate.Vehicle.ID != nil && tripUpdate.Vehicle.ID.ID != ""
+}
+
+func tripUpdateOnServiceDate(tripUpdate gtfs.Trip, serviceDate time.Time) bool {
+	const yyyymmdd = "20060102"
+	return !tripUpdate.ID.HasStartDate || tripUpdate.ID.StartDate.Format(yyyymmdd) == serviceDate.Format(yyyymmdd)
+}
+
+// blockRunsNear reports whether the trip's block is scheduled to run within
+// tripUpdateVehicleBlockWindow of recordTime.
+func (api *RestAPI) blockRunsNear(ctx context.Context, tripID string, recordTime, serviceDate time.Time) bool {
+	snap := api.computeScheduledBlockSnapshot(ctx, tripID, recordTime, serviceDate)
+	if snap == nil {
+		return false
+	}
+	recordSeconds := utils.CalculateSecondsSinceServiceDate(recordTime, serviceDate)
+	window := int64(tripUpdateVehicleBlockWindow.Seconds())
+	blockStart := snap.Stops[0].ArrivalSeconds
+	blockEnd := snap.Stops[len(snap.Stops)-1].DepartureSeconds
+	return recordSeconds >= blockStart-window && recordSeconds <= blockEnd+window
+}
+
+// tripUpdateVehicleTrip finds the trip of a vehicle known only from a trip update
+// and the agency that trip belongs to. A raw ID such as
+// block_37462_schedBasedVehicle arrives split at its first separator, so its
+// parts are joined again to compare it with the feed's.
+func (api *RestAPI) tripUpdateVehicleTrip(ctx context.Context, agencyID, vehicleID string) (string, string, bool) {
+	rawVehicleID := utils.FormCombinedID(agencyID, vehicleID)
+	for _, tripUpdate := range api.GtfsManager.GetAllTripUpdates() {
+		if !namesVehicle(tripUpdate) {
+			continue
+		}
+		feedVehicleID := tripUpdate.Vehicle.ID.ID
+		if feedVehicleID != rawVehicleID && feedVehicleID != vehicleID {
+			continue
+		}
+		tripAgencyID, known := api.tripAgencyID(ctx, tripUpdate.ID.ID)
+		if !known || (feedVehicleID != rawVehicleID && tripAgencyID != agencyID) {
+			continue
+		}
+		if activeTripID, found := api.activeTripOfTripUpdateVehicle(ctx, tripAgencyID, tripUpdate.ID.ID, feedVehicleID); found {
+			return tripAgencyID, activeTripID, true
+		}
+	}
+	return api.blockVehicleTrip(ctx, agencyID, vehicleID)
+}
+
+// blockVehicleTrip finds the trip of a block standing in as a vehicle because its
+// trip update names none.
+func (api *RestAPI) blockVehicleTrip(ctx context.Context, agencyID, blockID string) (string, string, bool) {
+	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, nulls.String(blockID))
+	if err != nil {
+		return "", "", false
+	}
+	for _, blockTrip := range blockTrips {
+		for _, tripUpdate := range api.GtfsManager.GetTripUpdatesForTrip(blockTrip.ID) {
+			if namesVehicle(tripUpdate) {
+				continue
+			}
+			if tripAgencyID, known := api.tripAgencyID(ctx, blockTrip.ID); !known || tripAgencyID != agencyID {
+				continue
+			}
+			if activeTripID, found := api.activeTripOfTripUpdateVehicle(ctx, agencyID, blockTrip.ID, blockID); found {
+				return agencyID, activeTripID, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// activeTripOfTripUpdateVehicle selects the trip at the same effective record
+// time as its status, so a delayed vehicle cannot name a later trip at a boundary.
+// It reports false unless tripID's block builds the vehicle feedVehicleID names,
+// so the lookup applies the same record checks as the responses reporting it,
+// including expiry of the block's updates as one record. It falls back to tripID
+// when the agency or scheduled position is unavailable.
+func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID, tripID, feedVehicleID string) (string, bool) {
+	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+	if err != nil {
+		return tripID, true
+	}
+	location, err := loadAgencyLocation(agency.ID, agency.Timezone)
+	if err != nil {
+		return tripID, true
+	}
+	now := api.Clock.Now().In(location)
+	date, vehicle := api.tripUpdateVehicleOnServiceDate(ctx, tripID, now, location)
+	if vehicle == nil || vehicle.ID.ID != feedVehicleID {
+		return "", false
+	}
+	serviceDate := date.Midnight(location)
+	blockTripIDs := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
+	record := api.resolveVehicleRecord(ctx, vehicle, blockTripIDs, serviceDate)
+	updates := api.vehicleRecordUpdates(ctx, api.blockTripUpdates(blockTripIDs), vehicle, serviceDate)
+	// Dynamic trips have no static-block record, but may still have fresh delays.
+	hasFreshDynamicUpdates := runsOwnSchedule(vehicle) && !api.vehicleRecordExpired(updates)
+	if !record.present && !hasFreshDynamicUpdates {
+		updates = nil
+	}
+	deviation, _, _ := api.recordDeviation(ctx, updates, serviceDate, now)
+	snap := api.statusBlockSnapshot(ctx, models.NewTripStatus(), tripStatusInput{
+		agencyID: agencyID, tripID: tripID, dbTripID: tripID,
+		vehicle: vehicle, serviceDate: serviceDate, currentTime: now,
+	}, record, deviation)
+	if snap == nil || snap.ActiveTripID == "" {
+		return tripID, true
+	}
+	return snap.ActiveTripID, true
+}
+
+// tripAgencyID returns the agency of tripID's route. A request-scoped
+// snapshotCache (see WithSnapshotCache) memoizes it per trip.
+func (api *RestAPI) tripAgencyID(ctx context.Context, tripID string) (string, bool) {
+	cache := snapshotCacheFrom(ctx)
+	if cache == nil {
+		return api.loadTripAgencyID(ctx, tripID)
+	}
+	agency, cached := cache.tripAgencies[tripID]
+	if !cached {
+		agency.agencyID, agency.known = api.loadTripAgencyID(ctx, tripID)
+		cache.tripAgencies[tripID] = agency
+	}
+	return agency.agencyID, agency.known
+}
+
+func (api *RestAPI) loadTripAgencyID(ctx context.Context, tripID string) (string, bool) {
+	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	if err != nil {
+		return "", false
+	}
+	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
+	if err != nil {
+		return "", false
+	}
+	return route.AgencyID, true
+}
+
+// isTripUpdateVehicle reports whether a vehicle comes from a trip update alone
+// rather than from a vehicle position entity. go-gtfs leaves IsEntityInMessage
+// false on a vehicle only a trip update names, and every stored trip update has
+// it set, so this holds for vehicleFromTripUpdate's vehicles and go-gtfs's alike.
+func isTripUpdateVehicle(vehicle *gtfs.Vehicle) bool {
+	return vehicle != nil &&
+		!vehicle.IsEntityInMessage &&
+		vehicle.Position == nil &&
+		vehicle.Trip != nil &&
+		vehicle.Trip.IsEntityInMessage
+}
+
+// responseVehicleID renders a vehicle's ID for an API response. Java leaves a
+// trip-update-only ID as the feed sent it when it already splits into an agency
+// and an ID, so live Tampa reports block_37462_schedBasedVehicle unprefixed. A
+// block standing in as the vehicle is always qualified with its agency.
+func responseVehicleID(agencyID string, vehicle *gtfs.Vehicle) string {
+	if isTripUpdateVehicle(vehicle) && namesVehicle(*vehicle.Trip) && strings.Contains(vehicle.ID.ID, "_") {
+		return vehicle.ID.ID
+	}
+	return utils.FormCombinedID(agencyID, vehicle.ID.ID)
+}
+
+// isCanceledVehicle reports whether a vehicle's trip is canceled. Java neither
+// names the vehicle nor predicts times on such an arrival
+// (ArrivalsAndDeparturesBeanServiceImpl.java:426, :449, :476).
+func isCanceledVehicle(vehicle *gtfs.Vehicle) bool {
+	return vehicle != nil && vehicle.Trip != nil && vehicle.Trip.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED
+}
+
+// statusBlockSnapshot positions the block for a trip status at the vehicle's
+// schedule time. Java's record fixes that position when it is built, with
+// location interpolation off by default (AbstractBlockLocationServiceImpl.java
+// :320), so a vehicle with a trip update stays where its record placed it. A
+// vehicle with no record, including a position-only one, is placed by currentTime.
+//
+// A schedule time before the block starts is held at the block's first stop.
+// Java's getScheduledBlockLocationBeforeStartOfBlock does the same however long
+// before the start, so distanceFromStop and numberOfStopsAway stay meaningful.
+func (api *RestAPI) statusBlockSnapshot(
+	ctx context.Context,
+	status *models.TripStatus,
+	input tripStatusInput,
+	record vehicleRecord,
+	scheduleDeviation int,
+) *scheduledBlockSnapshot {
+	positionTime := input.currentTime
+	if record.present {
+		positionTime = record.time
+	}
+	effectiveTime := positionTime.Add(-time.Duration(scheduleDeviation) * time.Second)
+
+	snap := api.computeScheduledBlockSnapshot(ctx, input.dbTripID, effectiveTime, input.serviceDate)
+	if snap == nil {
+		return nil
+	}
+	year, month, day := input.serviceDate.Date()
+	blockStart := time.Date(year, month, day, 0, 0, int(snap.Stops[0].EffectiveStopSeconds), 0, input.serviceDate.Location())
+	beforeBlockStart := effectiveTime.Before(blockStart) && !runsOwnSchedule(input.vehicle)
+
+	hasNoPosition := input.vehicle == nil || input.vehicle.Position == nil
+	if record.present || (beforeBlockStart && hasNoPosition) {
+		effectiveSeconds := utils.CalculateSecondsSinceServiceDate(effectiveTime, input.serviceDate)
+		applySnapshotStops(status, snap, effectiveSeconds, input.agencyID)
+	}
+	if beforeBlockStart {
+		return api.computeScheduledBlockSnapshot(ctx, input.dbTripID, blockStart, input.serviceDate)
+	}
+	return snap
+}
+
+// vehicleRecord is the trip-update record Java would hold for a vehicle, which
+// fixes its position and update time.
+type vehicleRecord struct {
+	time    time.Time
+	present bool
+}
+
+// resolveVehicleRecord reads the vehicle's record once, so callers that share it
+// cannot disagree about whether it expired.
+func (api *RestAPI) resolveVehicleRecord(ctx context.Context, vehicle *gtfs.Vehicle, blockTripIDs []string, serviceDate time.Time) vehicleRecord {
+	recordTime, present := api.vehicleRecordTime(ctx, vehicle, blockTripIDs, serviceDate)
+	return vehicleRecord{time: recordTime, present: present}
+}
+
+// vehicleRecordTime returns the time of the record Java would hold for a vehicle
+// on this block. A position-only vehicle has none, since Java builds records
+// from trip updates (see #1915), and neither does one on an ADDED or DUPLICATED
+// trip, which leaves the static block schedule. Updates naming this vehicle
+// contribute. Anonymous block updates belong to the preferred position vehicle,
+// or a block stand-in when no position vehicle is assigned.
+//
+// Retention and deviation use the same update ownership rules. Other block-wide
+// prediction and vehicle-selection behavior is tracked in #2105.
+func (api *RestAPI) vehicleRecordTime(ctx context.Context, vehicle *gtfs.Vehicle, blockTripIDs []string, serviceDate time.Time) (time.Time, bool) {
+	if vehicle == nil || vehicle.ID == nil || runsOwnSchedule(vehicle) {
+		return time.Time{}, false
+	}
+	updates := api.vehicleRecordUpdates(ctx, api.blockTripUpdates(blockTripIDs), vehicle, serviceDate)
+	if recordTime, ok := blockRecordTime(updates); ok {
+		return recordTime, !api.recordTimeExpired(recordTime)
+	}
+	// A synthesized vehicle's Timestamp may already contain another vehicle's
+	// block update time. Only its own trip update is a safe fallback.
+	if isTripUpdateVehicle(vehicle) && vehicle.Trip.Timestamp != nil {
+		return *vehicle.Trip.Timestamp, !api.tripUpdateExpired(*vehicle.Trip)
+	}
+	return time.Time{}, false
+}
+
+// vehicleRecordUpdates selects one vehicle's updates without discarding expired
+// records, so retention can distinguish an expired record from no record.
+func (api *RestAPI) vehicleRecordUpdates(ctx context.Context, updates []tripUpdateForTrip, vehicle *gtfs.Vehicle, serviceDate time.Time) []tripUpdateForTrip {
+	if vehicle == nil || vehicle.ID == nil {
+		return nil
+	}
+	var matching []tripUpdateForTrip
+	for _, update := range updates {
+		if api.updateBelongsToVehicleRecord(ctx, update, vehicle, serviceDate) {
+			matching = append(matching, update)
+		}
+	}
+	return matching
+}
+
+// updateBelongsToVehicleRecord matches named updates by vehicle ID. Anonymous
+// updates belong to one preferred position vehicle per block, or a stand-in
+// when no position vehicle is assigned. Without a position assignment, named
+// update-only vehicles retain their own-trip anonymous matching.
+// The caller must supply a non-nil vehicle with an ID and an update from its block.
+//
+// Named updates match by raw vehicle ID, not agency. A block's trips come from
+// one static feed, so a mismatch needs two of its agencies to share a block_id
+// and also reuse a vehicle ID.
+func (api *RestAPI) updateBelongsToVehicleRecord(ctx context.Context, update tripUpdateForTrip, vehicle *gtfs.Vehicle, serviceDate time.Time) bool {
+	isBlockVehicle := isTripUpdateVehicle(vehicle) && !namesVehicle(*vehicle.Trip)
+	if namesVehicle(update.tu) {
+		return !isBlockVehicle && update.tu.Vehicle.ID.ID == vehicle.ID.ID
+	}
+	preferred := api.preferredPositionVehicle(ctx, update.tripID, serviceDate)
+	if isBlockVehicle {
+		return preferred == nil
+	}
+	if isTripUpdateVehicle(vehicle) {
+		return preferred == nil && vehicle.Trip.ID.ID == update.tripID
+	}
+	return vehicle.Trip != nil && preferred != nil && preferred.ID.ID == vehicle.ID.ID
+}
+
+// runsOwnSchedule reports whether a vehicle's trip departs from the static block
+// schedule, as Java's applyDynamicTripUpdatesToRecord assumes for these trips.
+func runsOwnSchedule(vehicle *gtfs.Vehicle) bool {
+	if vehicle == nil || vehicle.Trip == nil {
+		return false
+	}
+	relationship := vehicle.Trip.ID.ScheduleRelationship
+	return relationship == gtfsrt.TripDescriptor_ADDED || relationship == gtfsrt.TripDescriptor_DUPLICATED
+}
+
+// applySnapshotStops mirrors Java's getScheduledBlockLocationBetweenStopTimes
+// for a vehicle placed by its record: the next stop is the snapshot's, and the
+// closest stop is whichever of it and the previous stop is nearer in time. A
+// vehicle dwelling at the next stop is at it, with both offsets zero.
+func applySnapshotStops(status *models.TripStatus, snap *scheduledBlockSnapshot, effectiveSeconds int64, agencyID string) {
+	if snap.NextStopIndex < 0 {
+		return
+	}
+	next := snap.Stops[snap.NextStopIndex]
+	nextOffset := max(next.ArrivalSeconds-effectiveSeconds, 0)
+	status.NextStop = utils.FormCombinedID(agencyID, next.StopID)
+	status.NextStopTimeOffset = int(nextOffset)
+
+	closestStopID, closestOffset := next.StopID, nextOffset
+	if snap.NextStopIndex > 0 {
+		previous := snap.Stops[snap.NextStopIndex-1]
+		if previousOffset := previous.DepartureSeconds - effectiveSeconds; absInt64(previousOffset) < absInt64(nextOffset) {
+			closestStopID, closestOffset = previous.StopID, previousOffset
+		}
+	}
+	status.ClosestStop = utils.FormCombinedID(agencyID, closestStopID)
+	status.ClosestStopTimeOffset = int(closestOffset)
+}

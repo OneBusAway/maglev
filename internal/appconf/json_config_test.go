@@ -1,6 +1,10 @@
 package appconf
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"testing"
 
@@ -867,6 +871,24 @@ func TestGtfsStaticFeedRedacted(t *testing.T) {
 	percentPathFeed := GtfsStaticFeed{URL: "./feeds/100%.zip"}
 	assert.Equal(t, "./feeds/100%.zip", percentPathFeed.Redacted().URL,
 		"local paths containing percent signs should remain readable")
+
+	schemelessFeed := GtfsStaticFeed{
+		URL: "feeds.example.com/gtfs.zip?api_key=SECRET",
+	}
+	assert.Equal(
+		t,
+		"feeds.example.com/gtfs.zip?"+RedactedValue,
+		schemelessFeed.Redacted().URL,
+	)
+
+	ftpFeed := GtfsStaticFeed{
+		URL: "ftp://user:SECRET@host/x",
+	}
+	assert.Equal(
+		t,
+		"ftp://user:xxxxx@host/x",
+		ftpFeed.Redacted().URL,
+	)
 }
 
 func TestRedactURL(t *testing.T) {
@@ -875,12 +897,81 @@ func TestRedactURL(t *testing.T) {
 		raw  string
 		want string
 	}{
-		{name: "empty", raw: "", want: ""},
-		{name: "no query", raw: "https://example.com/bundle-inputs.json", want: "https://example.com/bundle-inputs.json"},
-		{name: "signed query", raw: "https://example.com/b.json?X-Amz-Signature=abc&X-Amz-Expires=60", want: "https://example.com/b.json?" + RedactedValue},
-		{name: "password in userinfo", raw: "https://user:secret@example.com/b.json", want: "https://user:xxxxx@example.com/b.json"},
-		{name: "local path", raw: "./testdata/bundle-inputs.json", want: "./testdata/bundle-inputs.json"},
-		{name: "unparseable", raw: "https://[::1/b.json?sig=abc", want: RedactedValue},
+		{
+			name: "empty",
+			raw:  "",
+			want: "",
+		},
+		{
+			name: "no query",
+			raw:  "https://example.com/bundle-inputs.json",
+			want: "https://example.com/bundle-inputs.json",
+		},
+		{
+			name: "signed query",
+			raw:  "https://example.com/b.json?X-Amz-Signature=abc&X-Amz-Expires=60",
+			want: "https://example.com/b.json?" + RedactedValue,
+		},
+		{
+			name: "password in userinfo",
+			raw:  "https://user:secret@example.com/b.json",
+			want: "https://user:xxxxx@example.com/b.json",
+		},
+		{
+			name: "redacts URL credentials and query",
+			raw:  "https://user:secret@example.com/feed.zip?token=secret",
+			want: "https://user:xxxxx@example.com/feed.zip?" + RedactedValue,
+		},
+		{
+			name: "local relative path",
+			raw:  "./testdata/bundle-inputs.json",
+			want: "./testdata/bundle-inputs.json",
+		},
+		{
+			name: "local path with percent sign",
+			raw:  "C:/feeds/100%.zip",
+			want: "C:/feeds/100%.zip",
+		},
+		{
+			name: "unparseable URL",
+			raw:  "https://[::1/b.json?sig=abc",
+			want: RedactedValue,
+		},
+		{
+			name: "malformed HTTP scheme",
+			raw:  "https:/example.com/feed.zip?token=SECRET",
+			want: RedactedValue,
+		},
+		{
+			name: "HTTP URL with surrounding whitespace",
+			raw:  " https://example.com/feed.zip?token=SECRET ",
+			want: "https://example.com/feed.zip?" + RedactedValue,
+		},
+		{
+			name: "whitespace-prefixed URL credentials",
+			raw:  " \thttps://example.com/feed.zip?token=WHITESPACE_SECRET \t",
+			want: "https://example.com/feed.zip?" + RedactedValue,
+		},
+		{
+			name: "malformed whitespace-prefixed URL",
+			raw:  " https://example.com/bad path?token=MALFORMED_SECRET ",
+			want: RedactedValue,
+		},
+		{
+			name: "whitespace in URL query",
+			raw:  "https://example.com/feed.zip?token=BAD SECRET",
+			want: RedactedValue,
+		},
+		{
+			name: "scheme-less URL with query",
+			raw:  "feeds.example.com/gtfs.zip?api_key=SECRET",
+			want: "feeds.example.com/gtfs.zip?" + RedactedValue,
+		},
+		{
+			name: "FTP URL with password in userinfo",
+			raw:  "ftp://user:SECRET@host/x",
+			want: "ftp://user:xxxxx@host/x",
+		},
 	}
 
 	for _, tt := range tests {
@@ -888,4 +979,49 @@ func TestRedactURL(t *testing.T) {
 			assert.Equal(t, tt.want, RedactURL(tt.raw))
 		})
 	}
+}
+
+func TestRedactURLError(t *testing.T) {
+	secretURL := "https://feeds.example.test/trip.pb?token=URL_ERROR_SECRET"
+	underlying := errors.New("connection refused")
+	original := &url.Error{Op: "Get", URL: secretURL, Err: underlying}
+	wrapped := fmt.Errorf("request failed: %w", original)
+
+	redacted := RedactURLError(wrapped)
+	assert.NotContains(t, redacted.Error(), "URL_ERROR_SECRET")
+	assert.Contains(t, redacted.Error(), "https://feeds.example.test/trip.pb?"+RedactedValue)
+	assert.ErrorIs(t, redacted, underlying)
+	var got *url.Error
+	if assert.ErrorAs(t, redacted, &got) {
+		assert.NotContains(t, got.URL, "URL_ERROR_SECRET")
+		assert.Contains(t, got.URL, RedactedValue)
+		assert.NotContains(t, got.Error(), "URL_ERROR_SECRET")
+	}
+}
+
+func TestRedactURLError_SourceInNonURLError(t *testing.T) {
+	secretURL := "https://feeds.example.test/bad%zz?token=PARSE_ERROR_SECRET"
+	cause := errors.New("invalid URL escape")
+	original := fmt.Errorf("parse %q: %w", secretURL, cause)
+
+	redacted := RedactURLError(original, secretURL)
+	assert.NotContains(t, redacted.Error(), "PARSE_ERROR_SECRET")
+	assert.Contains(t, redacted.Error(), RedactedValue)
+	assert.ErrorIs(t, redacted, cause)
+}
+
+func TestRedactURLError_QuotedURLWithControlCharacter(t *testing.T) {
+	secretURL := "https://feeds.example.test/trip.pb?token=QUOTED_URL_SECRET\t"
+	_, err := http.NewRequest(http.MethodGet, secretURL, nil)
+	require.Error(t, err)
+
+	redacted := RedactURLError(err, secretURL)
+	assert.NotContains(t, redacted.Error(), "QUOTED_URL_SECRET")
+	assert.Contains(t, redacted.Error(), RedactedValue)
+
+	var got *url.Error
+	require.ErrorAs(t, redacted, &got)
+	assert.NotContains(t, got.URL, "QUOTED_URL_SECRET")
+	assert.Contains(t, got.URL, RedactedValue)
+	assert.NotContains(t, got.Error(), "QUOTED_URL_SECRET")
 }

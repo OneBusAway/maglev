@@ -408,7 +408,7 @@ func TestSearchStopsByNameOrdersByCombinedID(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, buildStopAgencyIndex(ctx, client.Queries))
+	require.NoError(t, buildStopIndexes(ctx, client.Queries))
 
 	results, err := client.Queries.SearchStopsByName(ctx, SearchStopsByNameParams{
 		SearchQuery: "Ordertest",
