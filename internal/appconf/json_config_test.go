@@ -771,6 +771,29 @@ func TestApplyEnvironmentOverrides(t *testing.T) {
 		assert.Equal(t, "rt-secret", cfg.GtfsRtFeeds[0].RealTimeAuthHeaderValue)
 	})
 
+	t.Run("skips static and realtime auth when Skip*Auth is set", func(t *testing.T) {
+		t.Setenv("GTFS_API_KEYS", "")
+		t.Setenv("GTFS_STATIC_AUTH_NAME", "Env-Static")
+		t.Setenv("GTFS_STATIC_AUTH_VALUE", "env-static-secret")
+		t.Setenv("GTFS_REALTIME_AUTH_NAME", "Env-RT")
+		t.Setenv("GTFS_REALTIME_AUTH_VALUE", "env-rt-secret")
+
+		cfg := cliShapedConfig()
+		cfg.GtfsStaticFeeds[0].AuthHeaderName = "Cli-Static"
+		cfg.GtfsStaticFeeds[0].AuthHeaderValue = "cli-static-secret"
+		cfg.GtfsRtFeeds[0].RealTimeAuthHeaderName = "Cli-RT"
+		cfg.GtfsRtFeeds[0].RealTimeAuthHeaderValue = "cli-rt-secret"
+
+		require.NoError(t, cfg.ApplyEnvironmentOverrides(EnvOverrideOptions{
+			SkipStaticAuth:   true,
+			SkipRealtimeAuth: true,
+		}))
+		assert.Equal(t, "Cli-Static", cfg.GtfsStaticFeeds[0].AuthHeaderName)
+		assert.Equal(t, "cli-static-secret", cfg.GtfsStaticFeeds[0].AuthHeaderValue)
+		assert.Equal(t, "Cli-RT", cfg.GtfsRtFeeds[0].RealTimeAuthHeaderName)
+		assert.Equal(t, "cli-rt-secret", cfg.GtfsRtFeeds[0].RealTimeAuthHeaderValue)
+	})
+
 	t.Run("multi static feed auth env returns error", func(t *testing.T) {
 		t.Setenv("GTFS_API_KEYS", "")
 		t.Setenv("GTFS_STATIC_AUTH_NAME", "X-Api-Key")

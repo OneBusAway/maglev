@@ -216,7 +216,7 @@ func TestMain_FlagPathEnvironmentOverrides(t *testing.T) {
 			},
 		},
 		{
-			name: "auth env overwrites CLI auth header flags",
+			name: "CLI auth header flags beat auth env",
 			args: "-env development -data-path :memory: -gtfs-static-auth-header-name Cli-Static -gtfs-static-auth-header-value cli-static-secret -realtime-auth-header-name Cli-RT -realtime-auth-header-value cli-rt-secret",
 			env: map[string]string{
 				"GTFS_STATIC_AUTH_NAME":    "Env-Static",
@@ -230,15 +230,15 @@ func TestMain_FlagPathEnvironmentOverrides(t *testing.T) {
 
 				staticFeeds := dumped["gtfs-static-feeds"].([]any)
 				staticFeed := staticFeeds[0].(map[string]any)
-				assert.Equal(t, "Env-Static", staticFeed["auth-header-name"])
+				assert.Equal(t, "Cli-Static", staticFeed["auth-header-name"])
 				assert.Equal(t, appconf.RedactedValue, staticFeed["auth-header-value"])
 
 				rtFeeds := dumped["gtfs-rt-feeds"].([]any)
 				rtFeed := rtFeeds[0].(map[string]any)
 				headers := rtFeed["headers"].(map[string]any)
-				assert.Equal(t, appconf.RedactedValue, headers["Env-RT"])
-				_, hasCLIHeader := headers["Cli-RT"]
-				assert.False(t, hasCLIHeader)
+				assert.Equal(t, appconf.RedactedValue, headers["Cli-RT"])
+				_, hasEnvHeader := headers["Env-RT"]
+				assert.False(t, hasEnvHeader)
 
 				assert.NotContains(t, output, "cli-static-secret")
 				assert.NotContains(t, output, "cli-rt-secret")

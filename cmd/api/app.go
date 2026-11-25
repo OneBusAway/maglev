@@ -111,17 +111,28 @@ func cliProtectedAPIKeys(protectedAPIKeysFlag string, env string) []string {
 	return appconf.DefaultProtectedAPIKeys(env)
 }
 
+// flagVisited reports whether any of the named flags was set on the command
+// line. Used so defaults (for example -api-keys=test) are not treated as
+// explicit when distinguishing flag vs env precedence.
+func flagVisited(names ...string) bool {
+	wanted := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		wanted[name] = struct{}{}
+	}
+	visited := false
+	flag.Visit(func(f *flag.Flag) {
+		if _, ok := wanted[f.Name]; ok {
+			visited = true
+		}
+	})
+	return visited
+}
+
 // apiKeysFlagExplicit reports whether -api-keys was set on the command line.
 // The flag defaults to "test", so callers must use flag.Visit (not a non-empty
 // value check) to distinguish an explicit set from the default.
 func apiKeysFlagExplicit() bool {
-	explicit := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "api-keys" {
-			explicit = true
-		}
-	})
-	return explicit
+	return flagVisited("api-keys")
 }
 
 func parseLogLevel(level string) slog.Level {

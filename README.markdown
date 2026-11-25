@@ -498,7 +498,7 @@ and the first real-time fetch has been attempted, then `ok`.
 | `MAGLEV_ENABLE_PPROF`      | `1` starts the pprof server on `127.0.0.1:6060` (see Profiling)      | off     |
 | `MAGLEV_PROFILE_MUTEX`     | `1` enables mutex and block profiling (slows the server)             | off     |
 
-`TZ` sets the process timezone in both modes. Maglev applies `GTFS_API_KEYS`, `GTFS_PROTECTED_API_KEYS`, the four feed-auth variables, and the two profiling variables for both `-f` and flag-based starts. `MAGLEV_LOG_LEVEL` and `MAGLEV_LOG_FORMAT` are read only with a config file (`-f`). On a flag-based start, feed-auth env vars overwrite the corresponding CLI auth header flags when set; on `-f`, `GTFS_API_KEYS` always replaces file `api-keys` when set.
+`TZ` sets the process timezone in both modes. Maglev applies `GTFS_API_KEYS`, `GTFS_PROTECTED_API_KEYS`, the four feed-auth variables, and the two profiling variables for both `-f` and flag-based starts. `MAGLEV_LOG_LEVEL` and `MAGLEV_LOG_FORMAT` are read only with a config file (`-f`). On a flag-based start, an explicit `-api-keys` or feed-auth header flag beats the matching environment variable; on `-f`, those env vars replace the matching file values when set.
 
 ### Troubleshooting
 

@@ -677,6 +677,14 @@ type EnvOverrideOptions struct {
 	// SkipAPIKeys leaves ApiKeys unchanged even when GTFS_API_KEYS is set.
 	// Used on the flag path when -api-keys was explicitly visited.
 	SkipAPIKeys bool
+	// SkipStaticAuth leaves static feed auth headers unchanged when
+	// GTFS_STATIC_AUTH_* is set. Used on the flag path when a static auth
+	// header flag was visited.
+	SkipStaticAuth bool
+	// SkipRealtimeAuth leaves realtime feed auth headers unchanged when
+	// GTFS_REALTIME_AUTH_* is set. Used on the flag path when a realtime auth
+	// header flag was visited.
+	SkipRealtimeAuth bool
 }
 
 // ApplyEnvironmentOverrides applies GTFS_API_KEYS and static/realtime feed-auth
@@ -697,10 +705,14 @@ func (j *JSONConfig) ApplyEnvironmentOverrides(opts EnvOverrideOptions) error {
 		}
 	}
 
-	if err := j.applyStaticAuthEnvOverrides(); err != nil {
-		return err
+	if !opts.SkipStaticAuth {
+		if err := j.applyStaticAuthEnvOverrides(); err != nil {
+			return err
+		}
 	}
-	j.applyRealtimeAuthEnvOverrides()
+	if !opts.SkipRealtimeAuth {
+		j.applyRealtimeAuthEnvOverrides()
+	}
 	return nil
 }
 
