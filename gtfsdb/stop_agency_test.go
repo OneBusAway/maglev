@@ -104,7 +104,7 @@ func TestBuildStopAgencyIndex_KeepsEveryAgencyServingAStop(t *testing.T) {
 	`, stopID)
 	require.NoError(t, err)
 
-	require.NoError(t, buildStopAgencyIndex(ctx, client.Queries))
+	require.NoError(t, buildStopIndexes(ctx, client.Queries))
 
 	rows, err := client.DB.QueryContext(ctx, "SELECT agency_id FROM stop_agencies WHERE stop_id = ?", stopID)
 	require.NoError(t, err)
@@ -278,6 +278,8 @@ func TestBackfillStopAgencyIndex_SettlesWhenNoStopTimeJoinsARoute(t *testing.T) 
 	ctx := context.Background()
 
 	_, err := client.DB.ExecContext(ctx, "DELETE FROM stop_agencies")
+	require.NoError(t, err)
+	_, err = client.DB.ExecContext(ctx, "DELETE FROM stop_routes")
 	require.NoError(t, err)
 
 	// Replace every stop_times row with one whose trip_id resolves to nothing, so the
