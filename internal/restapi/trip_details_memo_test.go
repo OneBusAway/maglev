@@ -97,46 +97,13 @@ func TestTripDetailsLeavesMemoizedRowsUnchanged(t *testing.T) {
 
 			counter.count.Store(0)
 			memo := api.GtfsManager.GtfsDB.Queries.Memo(ctx)
-			memoized := readTripDetailsRows(t, ctx, memo, tt.tripID, serviceDate)
+			memoized := readMemoizedTripRows(t, ctx, memo, tt.tripID, serviceDate)
 			require.Zero(t, counter.count.Load(), "every row should already be in the request's memo")
 
-			fresh := readTripDetailsRows(t, context.Background(), direct.Memo(context.Background()), tt.tripID, serviceDate)
+			fresh := readMemoizedTripRows(t, context.Background(), direct.Memo(context.Background()), tt.tripID, serviceDate)
 			assert.Equal(t, fresh, memoized)
 		})
 	}
-}
-
-// tripDetailsRows holds every memoized lookup a trip-details request makes
-// for one trip.
-type tripDetailsRows struct {
-	trip             gtfsdb.Trip
-	route            gtfsdb.Route
-	activeServiceIDs []string
-	blockTrips       []gtfsdb.GetTripsByBlockIDRow
-	stopTimes        []gtfsdb.StopTime
-	shapePoints      []gtfsdb.GetShapePointsByTripIDRow
-	frequencies      []gtfsdb.Frequency
-}
-
-func readTripDetailsRows(t *testing.T, ctx context.Context, reader gtfsdb.MemoReader, tripID, serviceDate string) tripDetailsRows {
-	t.Helper()
-	var rows tripDetailsRows
-	var err error
-	rows.trip, err = reader.GetTrip(ctx, tripID)
-	require.NoError(t, err)
-	rows.route, err = reader.GetRoute(ctx, rows.trip.RouteID)
-	require.NoError(t, err)
-	rows.activeServiceIDs, err = reader.GetActiveServiceIDsForDate(ctx, serviceDate)
-	require.NoError(t, err)
-	rows.blockTrips, err = reader.GetTripsByBlockID(ctx, rows.trip.BlockID)
-	require.NoError(t, err)
-	rows.stopTimes, err = reader.GetStopTimesForTrip(ctx, tripID)
-	require.NoError(t, err)
-	rows.shapePoints, err = reader.GetShapePointsByTripID(ctx, tripID)
-	require.NoError(t, err)
-	rows.frequencies, err = reader.GetFrequenciesForTrip(ctx, tripID)
-	require.NoError(t, err)
-	return rows
 }
 
 // swapInQueryCounter routes api's sqlc queries through a counter for the

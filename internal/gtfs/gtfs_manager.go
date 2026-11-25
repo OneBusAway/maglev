@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/models"
@@ -57,6 +58,11 @@ type Manager struct {
 
 	staticMutex  sync.RWMutex
 	regionBounds map[string]*RegionBounds
+	// firstAgencyID is the lowest agency ID in the static feed; see FirstStaticAgencyID.
+	// It is "" until static data loads. Until then, an alert with no agency on a
+	// feed without agency-ids gets an unprefixed situation ID, and the prefix
+	// appears once the first reload completes.
+	firstAgencyID string
 
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
@@ -819,7 +825,7 @@ func (manager *Manager) PrintStatistics() {
 	}
 
 	logging.LogOperation(logger, "gtfs_statistics",
-		slog.String("source", manager.config.GtfsURL),
+		slog.String("source", appconf.RedactURL(manager.config.GtfsURL)),
 		slog.Time("last_updated", manager.GetStaticLastUpdated(ctx)),
 		slog.Int64("stops", countOrZero(manager.GtfsDB.Queries.CountStops(ctx))),
 		slog.Int64("routes", countOrZero(manager.GtfsDB.Queries.CountRoutes(ctx))),
