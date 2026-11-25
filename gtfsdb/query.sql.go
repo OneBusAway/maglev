@@ -15,14 +15,15 @@ const buildStopAgencies = `-- name: BuildStopAgencies :exec
 INSERT INTO
     stop_agencies (stop_id, agency_id)
 SELECT DISTINCT
-    stop_times.stop_id,
+    stop_routes.stop_id,
     routes.agency_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 `
 
+// Reads stop_routes, so build that first; it already holds every (stop, route) pair a
+// trip produces, which saves a second walk over stop_times.
 func (q *Queries) BuildStopAgencies(ctx context.Context) error {
 	_, err := q.exec(ctx, q.buildStopAgenciesStmt, buildStopAgencies)
 	return err

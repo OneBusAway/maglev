@@ -394,7 +394,7 @@ The SQLite database is persisted using Docker volumes:
 * **Production**: `maglev-data` volume mounted at `/app/data`.
 * **Development**: `maglev-dev-data` volume.
 
-The GTFS database is stored in `/app/data/gtfs.db` within the container.
+The GTFS database is stored in `/app/data/gtfs.db` within the container. The image sets `TMPDIR=/app/data` so temporary files (used by Go, such as `gtfs-tidy` and in-memory feed downloads, as well as SQLite temporary spill files during large static GTFS imports) stay on the writable volume. When deploying containers with a read-only root filesystem (such as `--read-only` in Docker or `readOnlyRootFilesystem: true` in Kubernetes), or if you mount the database volume elsewhere, ensure `TMPDIR` (or `SQLITE_TMPDIR` for SQLite alone) points to an existing writable directory.
 
 #### Copy database to host for inspection
 
@@ -493,12 +493,13 @@ and the first real-time fetch has been attempted, then `ok`.
 | `GTFS_STATIC_AUTH_VALUE`   | Auth header value for the static GTFS feed                           | —       |
 | `GTFS_REALTIME_AUTH_NAME`  | Auth header name for the first GTFS-RT feed only                     | —       |
 | `GTFS_REALTIME_AUTH_VALUE` | Auth header value for the first GTFS-RT feed only                    | —       |
+| `TMPDIR`                   | Temporary directory used by Go and SQLite during static GTFS imports | `/app/data` in the Docker image |
 | `MAGLEV_LOG_LEVEL`         | Log level; overrides the config file                                 | —       |
 | `MAGLEV_LOG_FORMAT`        | Log format; overrides the config file                                | —       |
 | `MAGLEV_ENABLE_PPROF`      | `1` starts the pprof server on `127.0.0.1:6060` (see Profiling)      | off     |
 | `MAGLEV_PROFILE_MUTEX`     | `1` enables mutex and block profiling (slows the server)             | off     |
 
-All except `TZ`, `GTFS_PROTECTED_API_KEYS` and the two profiling variables are read only when Maglev starts with a config file (`-f`).
+All except `TZ`, `TMPDIR`, `GTFS_PROTECTED_API_KEYS` and the two profiling variables are read only when Maglev starts with a config file (`-f`).
 
 ### Troubleshooting
 
@@ -525,3 +526,17 @@ curl http://localhost:4000/healthz
 
 * The container runs as a non-root user (maglev:1000).
 * Ensure mounted volumes are accessible.
+
+## Deploying Behind a CDN
+
+A CDN or caching proxy in front of Maglev may serve a cached response without contacting Maglev. On a cache hit, neither API-key validation nor rate limiting runs for that request.
+
+**Configure your CDN to include the `key` query parameter in its cache key for every `/api/` path.** Otherwise, a response cached for a valid key could be returned to a request with an invalid key. This matters especially for protected endpoints such as `problem-reports-for-*`, where a cached response could otherwise expose reports to a non-protected key.
+
+Including `key` in the cache key creates separate cache entries for different API keys, which can reduce your cache hit rate. Consider this tradeoff when configuring your CDN.
+
+Routes wrapped in `CacheControlMiddleware` with a positive duration send `Cache-Control: public, max-age=N` on successful responses and `304 Not Modified`. Routes that use `CacheDurationNone` send `no-cache, no-store, must-revalidate` instead. See `internal/restapi/routes.go` for the current routes and durations.
+
+`config.json` and `metrics.json` do not send a `Cache-Control` header, so the CDN may apply its configured default TTL to them. Error responses from routes wrapped in `CacheControlMiddleware`, including the 401 for an invalid key and the 429 from the rate limiter, send `Cache-Control: no-cache, no-store, must-revalidate`; errors from earlier middleware may not include this header.
+
+The `report-problem-with-*` endpoints are GETs that write. They send `Cache-Control: no-cache, no-store, must-revalidate`, but a CDN that ignores origin cache headers on GET could swallow repeated reports. Do not override origin cache headers on `/api/where/report-problem-*`.

@@ -70,7 +70,7 @@ func TestProblemReportsForStopSubmitThenRetrieve(t *testing.T) {
 	require.Len(t, model.Data.List, 1, "Should have exactly one report")
 
 	report := model.Data.List[0]
-	assert.Equal(t, "75403", report.StopID)
+	assert.Equal(t, testStopForProblemReports, report.StopID)
 	assert.Equal(t, "stop_name_wrong", report.Code)
 	assert.Equal(t, "Wrong name", report.UserComment)
 	assert.InDelta(t, 38.5678, report.UserLat, 0.001)

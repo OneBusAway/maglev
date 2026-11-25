@@ -16,6 +16,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
+	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -48,6 +49,7 @@ type agencyVehicleKey struct {
 type mergedRealtime struct {
 	trips                    []gtfs.Trip
 	vehicles                 []gtfs.Vehicle
+	liveVehicles             []gtfs.Vehicle
 	tripLookup               map[string]int
 	tripUpdateSeenAt         map[string]time.Time
 	vehicleLookupByTrip      map[string]int
@@ -100,6 +102,7 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 	out := &mergedRealtime{
 		trips:                    slices.Clone(m.trips),
 		vehicles:                 slices.Clone(m.vehicles),
+		liveVehicles:             slices.Clone(m.liveVehicles),
 		tripLookup:               maps.Clone(m.tripLookup),
 		tripUpdateSeenAt:         maps.Clone(m.tripUpdateSeenAt),
 		vehicleLookupByTrip:      maps.Clone(m.vehicleLookupByTrip),
@@ -361,6 +364,13 @@ func (manager *Manager) GetRealTimeTrips() []gtfs.Trip {
 	return manager.mergedRealtime().trips
 }
 
+// GetLiveRealTimeVehicles returns only vehicles in their feed's latest update,
+// excluding retained vehicles. The result shares GetRealTimeVehicles' read-only
+// contract and is published in the same immutable snapshot.
+func (manager *Manager) GetLiveRealTimeVehicles() []gtfs.Vehicle {
+	return manager.mergedRealtime().liveVehicles
+}
+
 // GetRealTimeVehicles returns the current snapshot's vehicles under the same
 // read-only contract as GetRealTimeTrips.
 func (manager *Manager) GetRealTimeVehicles() []gtfs.Vehicle {
@@ -465,7 +475,7 @@ func (manager *Manager) GetAlertsForStop(stopID, agencyID string) []FeedAlert {
 func loadRealtimeData(ctx context.Context, source string, headers map[string]string) (*gtfs.Realtime, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", source, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid GTFS-RT source URL: %w", appconf.RedactURLError(err, source))
 	}
 
 	for key, value := range headers {
@@ -474,7 +484,10 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 
 	resp, err := realtimeHTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute GTFS-RT request: %w", err)
+		return nil, fmt.Errorf(
+			"failed to execute GTFS-RT request: %w",
+			appconf.RedactURLError(err, source),
+		)
 	}
 
 	defer logging.SafeCloseWithLogging(resp.Body,
@@ -482,7 +495,7 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 		"http_response_body")
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gtfs-rt fetch failed: %s returned %s", source, resp.Status)
+		return nil, fmt.Errorf("gtfs-rt fetch failed: %s returned %s", appconf.RedactURL(source), resp.Status)
 	}
 
 	const maxBodySize = 25 * 1024 * 1024
@@ -518,7 +531,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			if tripErr != nil {
 				logging.LogError(logger, "Error loading GTFS-RT trip updates data", tripErr,
 					slog.String("feed", feedID),
-					slog.String("url", feedCfg.TripUpdatesURL))
+					slog.String("url", appconf.RedactURL(feedCfg.TripUpdatesURL)))
 			}
 		}()
 	}
@@ -531,7 +544,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			if vehicleErr != nil {
 				logging.LogError(logger, "Error loading GTFS-RT vehicle positions data", vehicleErr,
 					slog.String("feed", feedID),
-					slog.String("url", feedCfg.VehiclePositionsURL))
+					slog.String("url", appconf.RedactURL(feedCfg.VehiclePositionsURL)))
 			}
 		}()
 	}
@@ -544,7 +557,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			if alertErr != nil {
 				logging.LogError(logger, "Error loading GTFS-RT service alerts data", alertErr,
 					slog.String("feed", feedID),
-					slog.String("url", feedCfg.ServiceAlertsURL))
+					slog.String("url", appconf.RedactURL(feedCfg.ServiceAlertsURL)))
 			}
 		}()
 	}
@@ -1537,6 +1550,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	manager.merged.Store(&mergedRealtime{
 		trips:                    allTrips,
 		vehicles:                 vehicleIndex.allVehicles,
+		liveVehicles:             manager.liveVehicles(vehicleFeedIDs),
 		tripLookup:               tripLookup,
 		tripUpdateSeenAt:         tripUpdateSeenAt,
 		vehicleLookupByTrip:      vehicleIndex.vehicleLookupByTrip,
@@ -1594,9 +1608,9 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 	logging.LogOperation(logger, "started_realtime_feed_poller",
 		slog.String("feed", feedCfg.ID),
 		slog.Float64("interval_ms", float64(baseInterval)/float64(time.Millisecond)),
-		slog.String("tripUpdatesURL", feedCfg.TripUpdatesURL),
-		slog.String("vehiclePositionsURL", feedCfg.VehiclePositionsURL),
-		slog.String("serviceAlertsURL", feedCfg.ServiceAlertsURL),
+		slog.String("tripUpdatesURL", appconf.RedactURL(feedCfg.TripUpdatesURL)),
+		slog.String("vehiclePositionsURL", appconf.RedactURL(feedCfg.VehiclePositionsURL)),
+		slog.String("serviceAlertsURL", appconf.RedactURL(feedCfg.ServiceAlertsURL)),
 	)
 
 	// Use a Timer instead of Ticker to dynamically control intervals (backoff/jitter)

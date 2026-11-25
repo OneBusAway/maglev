@@ -27,6 +27,7 @@ func NewOKResponseAt(data any, t time.Time) ResponseModel {
 }
 
 func NewListResponse(list any, references ReferencesModel, limitExceeded bool, c clock.Clock) ResponseModel {
+	references.Normalize()
 	data := map[string]any{
 		"limitExceeded": limitExceeded,
 		"list":          list,
@@ -36,6 +37,7 @@ func NewListResponse(list any, references ReferencesModel, limitExceeded bool, c
 }
 
 func NewListResponseWithRange(list any, references ReferencesModel, outOfRange bool, c clock.Clock, isLimitExceeded bool) ResponseModel {
+	references.Normalize()
 	data := map[string]any{
 		"limitExceeded": isLimitExceeded,
 		"list":          list,
@@ -46,6 +48,7 @@ func NewListResponseWithRange(list any, references ReferencesModel, outOfRange b
 }
 
 func NewEntryResponse(entry any, references ReferencesModel, c clock.Clock) ResponseModel {
+	references.Normalize()
 	data := map[string]any{
 		"entry":      entry,
 		"references": references,
@@ -59,6 +62,7 @@ func NewEntryResponse(entry any, references ReferencesModel, c clock.Clock) Resp
 // OBAKit reject "nearbyStopIds": null. Unlike Java, Maglev always emits situationIds
 // as an array because iOS clients require it, as documented in the endpoint spec.
 func NewArrivalsAndDepartureResponse(arrivalsAndDepartures []ArrivalAndDeparture, references ReferencesModel, nearbyStopIds []string, situationIds []string, stopId string, c clock.Clock) ResponseModel {
+	references.Normalize()
 	entryData := map[string]any{
 		"arrivalsAndDepartures": emptyIfNil(arrivalsAndDepartures),
 		"nearbyStopIds":         emptyIfNil(nearbyStopIds),
@@ -85,6 +89,7 @@ func NewArrivalsAndDeparturesForLocationResponse(
 	limitExceeded bool,
 	c clock.Clock,
 ) ResponseModel {
+	references.Normalize()
 	entryData := map[string]any{
 		"arrivalsAndDepartures": emptyIfNil(arrivalsAndDepartures),
 		"limitExceeded":         limitExceeded,

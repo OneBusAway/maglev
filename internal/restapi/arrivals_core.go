@@ -45,26 +45,17 @@ type arrivalsAccumulator struct {
 	stopIDs    map[string]bool
 	situations *situationCollector
 
-	// alertAgencyID is the fallback agency the single-stop handler passes to
-	// situations.add for the stop-level alert lookup. It starts as that
-	// handler's primary agency and, only when that is empty, adopts the first
-	// route agency seen. A multi-stop caller must not rely on this field —
-	// it is single-caller by design and must pass a per-stop agency ID to
-	// situations.add directly instead.
-	alertAgencyID string
-
 	// deviationSamples lets arrivals on the same block share the deviation
 	// samples the schedule-deviation fallback builds.
 	deviationSamples deviationSampleCache
 }
 
-func newArrivalsAccumulator(primaryAgencyID string) *arrivalsAccumulator {
+func newArrivalsAccumulator() *arrivalsAccumulator {
 	return &arrivalsAccumulator{
 		trips:            make(map[string]*gtfsdb.Trip),
 		routes:           make(map[string]*gtfsdb.Route),
 		stopIDs:          make(map[string]bool),
 		situations:       newSituationCollector(),
-		alertAgencyID:    primaryAgencyID,
 		deviationSamples: deviationSampleCache{},
 	}
 }
@@ -354,7 +345,7 @@ func (api *RestAPI) stopTimesForGroupServiceDay(
 	serviceStart := serviceDate.Start(agencyLoc)
 	serviceDateStr := serviceDate.String()
 
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, serviceDateStr)
 	if err != nil {
 		return nil, fmt.Errorf("query active service IDs for %s: %w", serviceDateStr, err)
 	}
@@ -556,7 +547,7 @@ func (api *RestAPI) addStopLevelArrivalAlerts(ctx context.Context, stops []gtfsd
 			return ctx.Err()
 		}
 		agencyID := agencies.agencyIDFor(stop.ID)
-		situations.add(api.GtfsManager.GetAlertsForStop(stop.ID, agencyID), agencyID)
+		situations.add(api.GtfsManager.GetAlertsForStop(stop.ID, agencyID), api.GtfsManager.FirstStaticAgencyID())
 	}
 	return nil
 }
@@ -678,7 +669,7 @@ func (api *RestAPI) activeServicesForDate(ctx context.Context, serviceDateStr st
 		return set, nil
 	}
 
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, serviceDateStr)
 	if err != nil {
 		if dayOffset == 0 {
 			return nil, fmt.Errorf("query active service IDs for %s: %w", serviceDateStr, err)
@@ -1008,10 +999,6 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
 
-	if acc.alertAgencyID == "" && route.AgencyID != "" {
-		acc.alertAgencyID = route.AgencyID
-	}
-
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID),  // routeID
 		nulls.StringOrEmpty(route.ShortName),            // routeShortName
@@ -1056,6 +1043,7 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 	api.applyTripStatusPrediction(ctx, arrival, tripStatus, statusExtras, in, acc.deviationSamples)
 
 	arrival.TripStatus = tripStatus
+	applyVehicleRecordUpdateTime(arrival, tripStatus, statusExtras)
 	arrival.DistanceFromStop = distanceFromStop
 	arrival.NumberOfStopsAway = numberOfStopsAway
 	// Already computed by BuildTripStatus; reuse rather than redoing the block
