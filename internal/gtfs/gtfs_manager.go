@@ -723,7 +723,12 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 
 	reqLogger := logging.ForComponent(ctx, "gtfs_manager")
 
-	requestedTrip, err := manager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
+	queries := manager.GtfsDB.Queries
+	if requestQueries := gtfsdb.QueriesFromContext(ctx); requestQueries != nil {
+		queries = requestQueries
+	}
+
+	requestedTrip, err := queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trip", err,
 			slog.String("trip_id", tripID))
@@ -737,7 +742,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	blockTrips, err := manager.GtfsDB.Queries.Memo(ctx).GetTripsByBlockID(ctx, requestedTrip.BlockID)
+	blockTrips, err := queries.Memo(ctx).GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trips for block", err,
 			slog.String("block_id", requestedBlockID))

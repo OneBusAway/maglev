@@ -25,7 +25,7 @@ func (api *RestAPI) positionVehicleForTrip(ctx context.Context, tripID string, s
 // same service-date shift used by record and snapshot placement. A reused static
 // block_id must not connect overlapping shifts or different service dates.
 func (api *RestAPI) preferredPositionVehicle(ctx context.Context, tripID string, serviceDate time.Time) *gtfs.Vehicle {
-	if _, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID); err != nil {
+	if _, err := api.gtfsQueries(ctx).Memo(ctx).GetTrip(ctx, tripID); err != nil {
 		warnIfRealDBError(err, "preferredPositionVehicle: GetTrip failed")
 		return nil
 	}

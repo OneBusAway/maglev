@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -220,4 +221,48 @@ func TestPrecomputeDirections_StopDistancePlaceholders(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, sql.NullString{String: []string{"E", "E", "NE", "N"}[i], Valid: true}, stop.Direction)
 	}
+}
+
+func TestCalculateStopDirectionUsesRequestGTFSnapshot(t *testing.T) {
+	ctx := context.Background()
+	client, err := gtfsdb.NewClient(gtfsdb.Config{
+		DBPath: filepath.Join(t.TempDir(), "gtfs.db"),
+		Env:    appconf.Development,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	feed := buildDirectionFeed(t, []string{"0", "0", "0", "0"}, increasingDirectionShape)
+	parsed, err := gtfsdb.ParseGtfsData(feed, "direction-snapshot-test")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(ctx, parsed)
+	require.NoError(t, err)
+
+	calculator := NewAdvancedDirectionCalculator(client.Queries)
+	readTx, err := client.DB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = readTx.Rollback() }()
+	requestQueries := client.Queries.WithTx(readTx)
+	requestCtx := gtfsdb.WithQueries(ctx, requestQueries)
+
+	// Establish the request snapshot before the replacement is committed.
+	_, err = requestQueries.GetTrip(requestCtx, "T1")
+	require.NoError(t, err)
+
+	writeTx, err := client.DB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = writeTx.ExecContext(ctx, "UPDATE stop_times SET shape_dist_traveled = stop_sequence - 1")
+	require.NoError(t, err)
+	require.NoError(t, writeTx.Commit())
+
+	// The old generation uses geographic matching and reports north at S4.
+	// The committed generation uses increasing stop distances and reports east.
+	assert.Equal(t, "N", calculator.CalculateStopDirection(requestCtx, "S4"))
+	_, cached := calculator.cache.Load().directionResults.Load("S4")
+	assert.False(t, cached, "a snapshot-specific direction must not enter the shared cache")
+	_, cached = calculator.cache.Load().tripDistances.Load("T1")
+	assert.False(t, cached, "snapshot-specific trip validation must not enter the shared cache")
+
+	assert.Equal(t, "E", calculator.CalculateStopDirection(ctx, "S4"))
+	require.NoError(t, readTx.Commit())
 }

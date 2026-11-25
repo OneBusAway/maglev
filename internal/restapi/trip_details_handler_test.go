@@ -2,11 +2,16 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
+	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/nulls"
@@ -925,4 +931,219 @@ func TestTripSpanCovers(t *testing.T) {
 			assert.Equal(t, tc.want, tripSpanCovers(tc.trip, tc.freqs, tc.offset))
 		})
 	}
+}
+
+type tripDetailsReloadClock struct {
+	now time.Time
+
+	reached    chan struct{}
+	resume     chan struct{}
+	startOnce  sync.Once
+	resumeOnce sync.Once
+}
+
+func newTripDetailsReloadClock(now time.Time) *tripDetailsReloadClock {
+	return &tripDetailsReloadClock{
+		now:     now,
+		reached: make(chan struct{}),
+		resume:  make(chan struct{}),
+	}
+}
+
+func (c *tripDetailsReloadClock) Now() time.Time {
+	c.startOnce.Do(func() {
+		close(c.reached)
+		<-c.resume
+	})
+	return c.now
+}
+
+func (c *tripDetailsReloadClock) unblock() {
+	c.resumeOnce.Do(func() {
+		close(c.resume)
+	})
+}
+
+func TestTripDetailsHandlerKeepsOneGTFSGenerationDuringReload(t *testing.T) {
+	// This test needs a file-backed SQLite database with WAL so a writer
+	// can commit while the request holds its read snapshot.
+	if runtime.GOOS == "windows" {
+		t.Skip("SQLite file I/O is too slow for this reload test on Windows")
+	}
+
+	ctx := context.Background()
+	initialFeed := filepath.Join("../../testdata", "raba.zip")
+	nextFeed := filepath.Join("../../testdata", "gtfs.zip")
+
+	gtfsConfig := internalgtfs.Config{
+		GtfsURL:      initialFeed,
+		GTFSDataPath: filepath.Join(t.TempDir(), "gtfs.db"),
+		Env:          appconf.Development,
+	}
+
+	manager, err := internalgtfs.InitGTFSManager(ctx, gtfsConfig)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, manager.Shutdown(context.Background()))
+	}()
+
+	directionCalculator := internalgtfs.NewAdvancedDirectionCalculator(
+		manager.GtfsDB.Queries,
+	)
+	manager.DirectionCalculator = directionCalculator
+
+	// Now() blocks the HTTP request after it has read the initial trip,
+	// route, and agency. At this point its SQLite read snapshot is established.
+	testClock := newTripDetailsReloadClock(
+		time.Date(2025, 6, 12, 12, 0, 0, 0, time.UTC),
+	)
+	defer testClock.unblock()
+
+	api := NewRestAPI(&app.Application{
+		Config: appconf.Config{
+			Env:       appconf.EnvFlagToEnvironment("test"),
+			ApiKeys:   []string{"TEST"},
+			RateLimit: 100,
+		},
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         manager,
+		DirectionCalculator: directionCalculator,
+		Clock:               testClock,
+	})
+
+	// Capture generation A's identifiers before starting the request.
+	oldTrip := mustGetTrip(t, api)
+
+	oldRoute, err := manager.GtfsDB.Queries.GetRoute(ctx, oldTrip.RouteID)
+	require.NoError(t, err)
+
+	oldAgency, err := manager.GtfsDB.Queries.GetAgency(ctx, oldRoute.AgencyID)
+	require.NoError(t, err)
+
+	oldTripID := utils.FormCombinedID(oldAgency.ID, oldTrip.ID)
+	endpoint := "/api/where/trip-details/" +
+		url.PathEscape(oldTripID) + ".json?key=TEST"
+
+	// Use a real clock in the expiry middleware. The test clock must only
+	// pause when trip-details resolves its request time, after the initial
+	// GTFS reads have established the SQLite read snapshot.
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+
+	var handler http.Handler = mux
+	handler = GtfsExpiryMiddleware(api.GtfsManager, clock.RealClock{})(handler)
+	handler = api.VersionValidationMiddleware(handler)
+	handler = CompressionMiddleware(handler)
+	handler = api.FreshnessMiddleware(handler)
+
+	type requestResult struct {
+		status   int
+		response TripDetailsResponse
+		err      error
+	}
+
+	resultCh := make(chan requestResult, 1)
+
+	// Start a real HTTP request through the API router.
+	go func() {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, endpoint, nil)
+
+		handler.ServeHTTP(recorder, request)
+
+		var response TripDetailsResponse
+		decodeErr := json.Unmarshal(recorder.Body.Bytes(), &response)
+
+		resultCh <- requestResult{
+			status:   recorder.Code,
+			response: response,
+			err:      decodeErr,
+		}
+	}()
+
+	// Wait until the request has completed its initial GTFS reads.
+	select {
+	case <-testClock.reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("trip-details request did not reach the clock pause")
+	}
+
+	// Replace generation A with generation B while the first request
+	// remains paused inside its request-scoped read transaction.
+	manager.SetGtfsURL(nextFeed)
+
+	changed, err := manager.ReloadStatic(ctx)
+	require.NoError(t, err)
+	require.True(t, changed, "the second fixture should replace the first")
+
+	// Let the original request continue after generation B has committed.
+	testClock.unblock()
+
+	var first requestResult
+	select {
+	case first = <-resultCh:
+	case <-time.After(30 * time.Second):
+		t.Fatal("trip-details request did not finish after the reload")
+	}
+
+	require.NoError(t, first.err)
+	require.Equal(t, http.StatusOK, first.status, first.response.Text)
+
+	// The in-flight request must still return generation A.
+	assert.Equal(t, oldTripID, first.response.Data.Entry.TripID)
+
+	require.NotNil(t, first.response.Data.Entry.Schedule)
+	require.NotEmpty(t, first.response.Data.Entry.Schedule.StopTimes)
+
+	references := first.response.Data.References
+
+	require.NotEmpty(t, references.Agencies)
+	assert.Equal(t, oldAgency.ID, references.Agencies[0].ID)
+	assert.Equal(t, oldAgency.Name, references.Agencies[0].Name)
+
+	require.NotEmpty(t, references.Trips)
+	assert.Equal(t, oldTripID, references.Trips[0].ID)
+
+	oldPrefix := oldAgency.ID + "_"
+
+	for _, trip := range references.Trips {
+		assert.True(t, strings.HasPrefix(trip.ID, oldPrefix),
+			"trip reference %q must belong to generation A", trip.ID)
+	}
+
+	for _, route := range references.Routes {
+		assert.True(t, strings.HasPrefix(route.ID, oldPrefix),
+			"route reference %q must belong to generation A", route.ID)
+	}
+
+	for _, stop := range references.Stops {
+		assert.True(t, strings.HasPrefix(stop.ID, oldPrefix),
+			"stop reference %q must belong to generation A", stop.ID)
+	}
+
+	// A new request must observe generation B.
+	newTrip := mustGetTrip(t, api)
+
+	newRoute, err := manager.GtfsDB.Queries.GetRoute(ctx, newTrip.RouteID)
+	require.NoError(t, err)
+
+	newAgency, err := manager.GtfsDB.Queries.GetAgency(ctx, newRoute.AgencyID)
+	require.NoError(t, err)
+
+	newTripID := utils.FormCombinedID(newAgency.ID, newTrip.ID)
+	require.NotEqual(t, oldTripID, newTripID)
+
+	secondResp, second := callAPIHandler[TripDetailsResponse](
+		t,
+		api,
+		"/api/where/trip-details/"+url.PathEscape(newTripID)+
+			".json?key=TEST&includeStatus=false&includeSchedule=false",
+	)
+
+	assert.Equal(t, http.StatusOK, secondResp.StatusCode)
+	assert.Equal(t, http.StatusOK, second.Code)
+	assert.Equal(t, newTripID, second.Data.Entry.TripID)
+
+	require.NotEmpty(t, second.Data.References.Agencies)
+	assert.Equal(t, newAgency.ID, second.Data.References.Agencies[0].ID)
 }

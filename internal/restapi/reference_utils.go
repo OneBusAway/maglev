@@ -39,7 +39,7 @@ func (api *RestAPI) BuildRouteReferences(ctx context.Context, agencyID string, s
 		return []models.Route{}, nil
 	}
 
-	routes, err := utils.QueryInBatches(ctx, originalRouteIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
+	routes, err := utils.QueryInBatches(ctx, originalRouteIDs, api.gtfsQueries(ctx).GetRoutesByIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +177,7 @@ func buildRouteModels(ctx context.Context, agencyID string, routes []gtfsdb.Rout
 // its bare (agency-less) route ID. The reference is labelled with the route's own
 // agency, which need not be the agency of the entity that referenced it.
 func (api *RestAPI) routeReferenceByID(ctx context.Context, routeID string) (models.Route, error) {
-	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, routeID)
+	route, err := api.gtfsQueries(ctx).GetRoute(ctx, routeID)
 	if err != nil {
 		return models.Route{}, err
 	}
@@ -283,7 +283,7 @@ func (api *RestAPI) appendTripRouteReferences(ctx context.Context, references *m
 		return nil
 	}
 
-	routes, err := utils.QueryInBatches(ctx, candidateIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs)
+	routes, err := utils.QueryInBatches(ctx, candidateIDs, api.gtfsQueries(ctx).GetRoutesByIDs)
 	if err != nil {
 		return err
 	}
@@ -323,7 +323,7 @@ func (api *RestAPI) appendRouteAgencyReference(ctx context.Context, references *
 	}
 
 	reqLogger := logging.ForComponent(ctx, "http_server")
-	routeAgency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, routeAgencyID)
+	routeAgency, err := api.gtfsQueries(ctx).GetAgency(ctx, routeAgencyID)
 	if err != nil {
 		reqLogger.Warn("failed to fetch route agency for reference",
 			"agencyID", routeAgencyID, "error", err)
@@ -478,7 +478,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 	tripAgencyMap := make(map[string]string)
 
 	if api != nil && api.Application != nil && api.GtfsManager != nil && api.GtfsManager.GtfsDB != nil && api.GtfsManager.GtfsDB.Queries != nil {
-		if agencyIDs, err := api.GtfsManager.GtfsDB.Queries.ListAgencyIds(ctx); err == nil {
+		if agencyIDs, err := api.gtfsQueries(ctx).ListAgencyIds(ctx); err == nil {
 			for _, id := range agencyIDs {
 				knownAgencies[id] = struct{}{}
 			}
@@ -492,7 +492,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 		if len(routeCandidateIDs) > 0 {
 			slices.Sort(routeCandidateIDs)
 			uniqueRouteIDs := slices.Compact(routeCandidateIDs)
-			if routes, err := utils.QueryInBatches(ctx, uniqueRouteIDs, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs); err == nil {
+			if routes, err := utils.QueryInBatches(ctx, uniqueRouteIDs, api.gtfsQueries(ctx).GetRoutesByIDs); err == nil {
 				for _, r := range routes {
 					routeAgencyMap[r.ID] = r.AgencyID
 				}
@@ -504,7 +504,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 		if len(stopCandidateIDs) > 0 {
 			slices.Sort(stopCandidateIDs)
 			uniqueStopIDs := slices.Compact(stopCandidateIDs)
-			if stopRows, err := utils.QueryInBatches(ctx, uniqueStopIDs, api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops); err == nil {
+			if stopRows, err := utils.QueryInBatches(ctx, uniqueStopIDs, api.gtfsQueries(ctx).GetAgenciesForStops); err == nil {
 				for _, row := range stopRows {
 					if _, exists := stopAgencyMap[row.StopID]; !exists {
 						stopAgencyMap[row.StopID] = row.ID
@@ -518,7 +518,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 		if len(tripCandidateIDs) > 0 {
 			slices.Sort(tripCandidateIDs)
 			uniqueTripIDs := slices.Compact(tripCandidateIDs)
-			if trips, err := utils.QueryInBatches(ctx, uniqueTripIDs, api.GtfsManager.GtfsDB.Queries.GetTripsByIDs); err == nil {
+			if trips, err := utils.QueryInBatches(ctx, uniqueTripIDs, api.gtfsQueries(ctx).GetTripsByIDs); err == nil {
 				var missingRouteIDs []string
 				for _, t := range trips {
 					if agency, ok := routeAgencyMap[t.RouteID]; ok {
@@ -530,7 +530,7 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 				if len(missingRouteIDs) > 0 {
 					slices.Sort(missingRouteIDs)
 					uniqueMissing := slices.Compact(missingRouteIDs)
-					if extraRoutes, err := utils.QueryInBatches(ctx, uniqueMissing, api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs); err == nil {
+					if extraRoutes, err := utils.QueryInBatches(ctx, uniqueMissing, api.gtfsQueries(ctx).GetRoutesByIDs); err == nil {
 						for _, r := range extraRoutes {
 							routeAgencyMap[r.ID] = r.AgencyID
 						}
@@ -795,7 +795,7 @@ func stopModelsByIDs(api *RestAPI, ctx context.Context, agencyID string, stopIDs
 
 	uniqueStopIDs := dedupeStrings(stopIDs)
 
-	stopsDB, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, uniqueStopIDs)
+	stopsDB, err := api.gtfsQueries(ctx).GetStopsByIDs(ctx, uniqueStopIDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -804,7 +804,7 @@ func stopModelsByIDs(api *RestAPI, ctx context.Context, agencyID string, stopIDs
 		stopMap[stop.ID] = stop
 	}
 
-	allRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesForStops(ctx, uniqueStopIDs)
+	allRoutes, err := api.gtfsQueries(ctx).GetRoutesForStops(ctx, uniqueStopIDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1039,7 +1039,7 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 		stopIDs[i] = stop.ID
 	}
 
-	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops)
+	rows, err := utils.QueryInBatches(ctx, stopIDs, api.gtfsQueries(ctx).GetRouteIDsForStops)
 	if err != nil {
 		reqLogger.Error("failed to fetch routes for stop references", "error", err)
 		return routeIDsByStop
@@ -1259,7 +1259,7 @@ func (api *RestAPI) stopsReferencedBySchedulesAndStatuses(ctx context.Context, s
 		bareIDs = append(bareIDs, bareID)
 	}
 
-	stops, err := utils.QueryInBatches(ctx, bareIDs, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	stops, err := utils.QueryInBatches(ctx, bareIDs, api.gtfsQueries(ctx).GetStopsByIDs)
 	return stops, stopIDsByBareID, err
 }
 

@@ -50,6 +50,13 @@ func NewAdvancedDirectionCalculator(queries *gtfsdb.Queries) *AdvancedDirectionC
 	return calculator
 }
 
+func (adc *AdvancedDirectionCalculator) queriesForContext(ctx context.Context) *gtfsdb.Queries {
+	if queries := gtfsdb.QueriesFromContext(ctx); queries != nil {
+		return queries
+	}
+	return adc.queries
+}
+
 // ClearCache replaces direction and trip validation caches after a GTFS reload.
 // In-flight calculations can only write to the retired generation.
 func (adc *AdvancedDirectionCalculator) ClearCache() {
@@ -108,6 +115,13 @@ func stopDistancesCanLocateStops(rows []gtfsdb.StopTime) bool {
 }
 
 func (adc *AdvancedDirectionCalculator) tripStopDistancesUsable(ctx context.Context, tripID string, cache *directionCache) (bool, error) {
+	if cache == nil {
+		rows, err := adc.queriesForContext(ctx).GetStopTimesForTrip(ctx, tripID)
+		if err != nil {
+			return false, err
+		}
+		return stopDistancesCanLocateStops(rows), nil
+	}
 	if cached, ok := cache.tripDistances.Load(tripID); ok {
 		return cached.(bool), nil
 	}
@@ -115,7 +129,7 @@ func (adc *AdvancedDirectionCalculator) tripStopDistancesUsable(ctx context.Cont
 		if cached, ok := cache.tripDistances.Load(tripID); ok {
 			return cached.(bool), nil
 		}
-		rows, err := adc.queries.GetStopTimesForTrip(ctx, tripID)
+		rows, err := adc.queriesForContext(ctx).GetStopTimesForTrip(ctx, tripID)
 		if err != nil {
 			return false, err
 		}
@@ -137,6 +151,20 @@ func (adc *AdvancedDirectionCalculator) CalculateStopDirection(ctx context.Conte
 				return direction
 			}
 		}
+	}
+
+	// A request-scoped query set represents a specific database snapshot. Do
+	// not use or populate the calculator's shared cache for that request: it may
+	// belong to a different feed generation after a concurrent reload.
+	if gtfsdb.QueriesFromContext(ctx) != nil {
+		direction, err := adc.computeFromShapesWithCache(context.WithoutCancel(ctx), stopID, nil)
+		if err != nil {
+			slog.Warn("failed to calculate stop direction in request snapshot",
+				slog.String("stopID", stopID),
+				slog.String("error", err.Error()))
+			return ""
+		}
+		return direction
 	}
 
 	// Check the in-memory result cache (includes negative cache for empty results)
@@ -225,7 +253,8 @@ func (adc *AdvancedDirectionCalculator) computeFromShapes(ctx context.Context, s
 }
 
 func (adc *AdvancedDirectionCalculator) computeFromShapesWithCache(ctx context.Context, stopID string, cache *directionCache) (string, error) {
-	stopTrips, err := adc.queries.GetStopsWithShapeContext(ctx, stopID)
+	queries := adc.queriesForContext(ctx)
+	stopTrips, err := queries.GetStopsWithShapeContext(ctx, stopID)
 	if err != nil {
 		slog.Warn("failed to get stop shape context",
 			slog.String("stopID", stopID),
@@ -358,8 +387,10 @@ func (adc *AdvancedDirectionCalculator) directionFromOrientations(orientations [
 // when the calculator has one. Cache hits return before singleflight, which
 // only merges concurrent reads of a shape that isn't cached.
 func (adc *AdvancedDirectionCalculator) shapePoints(ctx context.Context, shapeID string) ([]gtfsdb.GetShapePointsWithDistanceRow, error) {
-	if adc.recentShapes == nil {
-		return adc.queries.GetShapePointsWithDistance(ctx, shapeID)
+	// Request-scoped reads must not use the calculator's cross-request shape
+	// cache, whose contents may have been populated from another feed generation.
+	if gtfsdb.QueriesFromContext(ctx) != nil || adc.recentShapes == nil {
+		return adc.queriesForContext(ctx).GetShapePointsWithDistance(ctx, shapeID)
 	}
 	if points, ok := adc.recentShapes.get(shapeID); ok {
 		return points, nil
@@ -369,7 +400,7 @@ func (adc *AdvancedDirectionCalculator) shapePoints(ctx context.Context, shapeID
 		if points, ok := adc.recentShapes.peek(shapeID); ok {
 			return points, nil
 		}
-		points, err := adc.queries.GetShapePointsWithDistance(ctx, shapeID)
+		points, err := adc.queriesForContext(ctx).GetShapePointsWithDistance(ctx, shapeID)
 		if err != nil {
 			return nil, err
 		}

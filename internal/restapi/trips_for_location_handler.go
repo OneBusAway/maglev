@@ -686,7 +686,11 @@ func (api *RestAPI) shapePointsByShapeIDs(ctx context.Context, shapeIDs []string
 		return byID, nil
 	}
 
-	shapePoints, err := utils.QueryInBatches(ctx, shapeIDs, api.GtfsManager.GtfsDB.Queries.GetShapePointsByIDs)
+	shapePoints, err := utils.QueryInBatches(
+		ctx,
+		shapeIDs,
+		api.gtfsQueries(ctx).GetShapePointsByIDs,
+	)
 	if err != nil {
 		return nil, err
 	}
