@@ -229,16 +229,16 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var requestedVehicle *gtfs.Vehicle
+	var vehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
-		requestedVehicle = api.requestedVehicleForTrip(ctx, params.VehicleID, agencyID, trip.ID, serviceDate)
-		if requestedVehicle == nil {
+		vehicle = api.requestedVehicleForTrip(ctx, params.VehicleID, agencyID, trip.ID, serviceDate)
+		if vehicle == nil {
 			api.sendNotFound(w, r)
 			return
 		}
 	}
 
-	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
+	// Fetch the trip's frequency rows once and share them with the status builder.
 	freqRows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
@@ -251,8 +251,11 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	statusFreqMap := map[string][]gtfsdb.Frequency{trip.ID: freqRows}
 
 	if params.IncludeStatus {
+		if vehicle == nil {
+			vehicle = api.vehicleForTrip(ctx, trip.ID, serviceDate)
+		}
 		var statusErr error
-		status, statusExtras, statusErr = api.BuildTripStatus(ctx, agencyID, trip.ID, requestedVehicle, serviceDate, currentTime, statusFreqMap)
+		status, statusExtras, statusErr = api.buildTripStatusForVehicle(ctx, agencyID, trip.ID, vehicle, serviceDate, currentTime, statusFreqMap)
 		if statusErr != nil {
 			api.serverErrorResponse(w, r, statusErr)
 			return

@@ -46,7 +46,8 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 
 	// One snapshot cache for the whole request. Trip status runs only for the
 	// arrivals that survive maxCount, and those rows still share block snapshots.
-	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
+	// The read memo shares the rows they look up across every stop in the box.
+	ctx := WithSnapshotCache(gtfsdb.WithReadMemo(r.Context()), newSnapshotCache())
 
 	// Uncapped and clamped: Java computes arrivals for every stop in the box and
 	// only trims the three output lists at the end, so capping the stop query
@@ -80,7 +81,7 @@ func (api *RestAPI) arrivalsAndDeparturesForLocationHandler(w http.ResponseWrite
 	// farthest stops must sort last.
 	sortStopsByDistance(stops, params.Location)
 
-	acc := newArrivalsAccumulator("")
+	acc := newArrivalsAccumulator()
 	pending, err := api.arrivalsForStops(ctx, multiStopArrivalsInput{
 		Stops:           stops,
 		Agencies:        agencies,
@@ -250,7 +251,7 @@ func retainedAccumulator(
 	acc *arrivalsAccumulator,
 	entrySituations *situationCollector,
 ) *arrivalsAccumulator {
-	refAcc := newArrivalsAccumulator("")
+	refAcc := newArrivalsAccumulator()
 	refAcc.situations = newSituationCollector()
 	refAcc.situations.addRefs(entrySituations.refs)
 	refAcc.situations.addRefs(acc.situations.refs)
@@ -488,7 +489,7 @@ func (api *RestAPI) combinedIDsForNearbyStops(ctx context.Context, bareIDs []str
 // service-interval filters, measuring each against the centre of the search
 // area and ordering nearest first. A nil servesRouteType means no route-type
 // filter is active, so every stop is kept rather than none.
-func buildNearbyResults(nearbyStops []gtfsdb.Stop, servesRouteType map[string]bool, activeOnDate map[string]bool, combinedByBare map[string]string, loc *internalgtfs.LocationParams) []models.StopWithDistance {
+func buildNearbyResults(nearbyStops []gtfsdb.Stop, servesRouteType, activeOnDate map[string]bool, combinedByBare map[string]string, loc *internalgtfs.LocationParams) []models.StopWithDistance {
 	results := make([]models.StopWithDistance, 0, len(nearbyStops))
 	for _, stop := range nearbyStops {
 		if servesRouteType != nil && !servesRouteType[stop.ID] {
@@ -599,7 +600,7 @@ func (api *RestAPI) collectActiveRoutesForGroup(ctx context.Context, loc *time.L
 // query date in the given agency timezone.
 func (api *RestAPI) activeServiceIDsForLocation(ctx context.Context, loc *time.Location, queryTime time.Time) ([]string, error) {
 	dateStr := queryTime.In(loc).Format("20060102")
-	return api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, dateStr)
+	return api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, dateStr)
 }
 
 // recordActiveRoute keeps one agency-prefixed route ID for a stop.
