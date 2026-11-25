@@ -1260,6 +1260,7 @@ func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenc
 	sets.collectPreFetchedTrips(params.PreFetchedTrips)
 	sets.collectTripIDsFromEntries(params.Trips)
 	api.fillMissingTrips(ctx, sets)
+	sets.noteEmittedTripRoutes(params.IncludeTrip)
 
 	references := models.NewEmptyReferences()
 	var routesByStopID map[string][]stopRoute
@@ -1304,7 +1305,7 @@ func (api *RestAPI) tripSituationRefs(
 		return api.situationRefsForTrip(ctx, tripID)
 	}
 
-	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, trip.RouteID, agencyID), agencyID)
+	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, trip.RouteID, agencyID), api.GtfsManager.FirstStaticAgencyID())
 }
 
 // tripReferenceSets accumulates the entities a trips-for-route response refers
@@ -1358,7 +1359,6 @@ func (s *tripReferenceSets) noteAuxiliaryTripID(combinedID string) {
 func (s *tripReferenceSets) collectPreFetchedTrips(trips []gtfsdb.Trip) {
 	for _, trip := range trips {
 		s.trips[trip.ID] = newTripReference(trip)
-		s.routes[trip.RouteID] = models.Route{}
 		delete(s.missing, trip.ID)
 	}
 }
@@ -1449,6 +1449,23 @@ func (api *RestAPI) addAgencyReference(ctx context.Context, sets *tripReferenceS
 	}
 }
 
+// emitsTrip reports whether a collected trip belongs in references.trips: every
+// trip when includeTrip is true, otherwise only those schedule or status point at.
+func (s *tripReferenceSets) emitsTrip(tripID string, includeTrip bool) bool {
+	return includeTrip || s.auxiliaryTripIDs[tripID]
+}
+
+// noteEmittedTripRoutes notes the route of every trip that references.trips
+// will hold. As in Java, a route reaches references only through a trip
+// reference or a stop, so a trip that includeTrip=false leaves out adds none.
+func (s *tripReferenceSets) noteEmittedTripRoutes(includeTrip bool) {
+	for tripID, trip := range s.trips {
+		if trip.RouteID != "" && s.emitsTrip(tripID, includeTrip) {
+			s.routes[trip.RouteID] = models.Route{}
+		}
+	}
+}
+
 // tripReferenceList emits the collected trips in combined-ID form. A trip whose
 // route was never resolved is skipped, since its agency is unknown.
 // When includeTrip is false, only trips referenced by schedule or status are included.
@@ -1456,9 +1473,7 @@ func (s *tripReferenceSets) tripReferenceList(includeTrip bool) []models.Trip {
 	tripsRefList := make([]models.Trip, 0, len(s.trips))
 
 	for tripID, trip := range s.trips {
-		// When includeTrip=false, skip list entries' own trips unless they were
-		// also referenced by schedule or status.
-		if !includeTrip && !s.auxiliaryTripIDs[tripID] {
+		if !s.emitsTrip(tripID, includeTrip) {
 			continue
 		}
 

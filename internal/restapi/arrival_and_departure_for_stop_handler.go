@@ -148,7 +148,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// The vehicle lookup, cancellation check, predictions and status each build
 	// the same block trip list and snapshot, so they share one request cache.
-	ctx := WithSnapshotCache(r.Context(), newSnapshotCache())
+	// The read memo fetches the trip, route, stop-time and frequency rows they
+	// look up once.
+	ctx := WithSnapshotCache(gtfsdb.WithReadMemo(r.Context()), newSnapshotCache())
 	reqLogger := logging.ForComponent(ctx, "http_server")
 
 	// Capture parsing errors (syntax validation only — localization happens below
@@ -212,13 +214,13 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		params.Time = &resolved
 	}
 
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		api.dbErrorResponse(w, r, err)
 		return
 	}
 
-	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
+	route, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetRoute(ctx, trip.RouteID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -265,7 +267,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	serviceMidnight := serviceDate.Midnight(loc)
 	serviceStart := serviceDate.Start(loc)
 
-	orderedStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	orderedStopTimes, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, tripID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -332,7 +334,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
-	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetFrequenciesForTrip(ctx, tripID)
 	if freqErr != nil {
 		api.serverErrorResponse(w, r, freqErr)
 		return
@@ -463,9 +465,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if tripStatus != nil && tripStatus.ActiveTripID != "" {
 		_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ActiveTripID)
 		if err == nil && activeTripID != tripID {
-			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
+			activeTrip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, activeTripID)
 			if err == nil {
-				activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
+				activeRoute, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetRoute(ctx, activeTrip.RouteID)
 				if err != nil {
 					reqLogger.Warn("failed to fetch route for active trip reference", "tripID", activeTripID, "error", err)
 				} else {
@@ -564,7 +566,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			Lon:                stopData.Lon,
 			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
 			Parent:             parentStationID(stopAgencyID, stopData),
-			Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
+			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
@@ -573,7 +575,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		references.Stops = append(references.Stops, stopRef)
 	}
 
-	addedParents, parentRoutes, err := api.missingParentStops(r.Context(), references.Stops)
+	addedParents, parentRoutes, err := api.missingParentStops(ctx, references.Stops)
 	if err != nil {
 		reqLogger.Warn("failed to resolve parent stops", "error", err)
 	} else {
