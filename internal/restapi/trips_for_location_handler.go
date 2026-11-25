@@ -21,7 +21,9 @@ import (
 // tripsForLocationHandler returns active trips near a geographic location, specified by
 // lat/lon coordinates with latSpan/lonSpan bounds, including real-time status and schedule data.
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	// Trip status for trips on one block repeats the block's trip and service
+	// lookups; the read memo fetches each once.
+	ctx := gtfsdb.WithReadMemo(r.Context())
 
 	parsedReq, fieldErrors, err := api.parseAndValidateRequest(r)
 	if len(fieldErrors) > 0 {
