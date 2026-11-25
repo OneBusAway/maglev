@@ -11,17 +11,9 @@ import (
 
 func spanYYYYMMDD(t *testing.T, v interface{}) string {
 	t.Helper()
-	switch d := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return d
-	case []byte:
-		return string(d)
-	default:
-		t.Fatalf("unexpected span date type %T", v)
-		return ""
-	}
+	s, err := CoalesceYYYYMMDD(v)
+	require.NoError(t, err)
+	return s
 }
 
 func TestGetRouteServiceSpan_CalendarBounds(t *testing.T) {

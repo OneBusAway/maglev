@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -90,11 +89,11 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return models.ResponseModel{}, err
 		}
-		first, err := coalesceYYYYMMDD(span.FirstDate)
+		first, err := gtfsdb.CoalesceYYYYMMDD(span.FirstDate)
 		if err != nil {
 			return models.ResponseModel{}, err
 		}
-		last, err := coalesceYYYYMMDD(span.LastDate)
+		last, err := gtfsdb.CoalesceYYYYMMDD(span.LastDate)
 		if err != nil {
 			return models.ResponseModel{}, err
 		}
@@ -353,22 +352,6 @@ func buildNoServiceResponse(agencyID, routeID string, scheduleDate int64, agency
 		"references": *refs,
 	}
 	return models.NewResponse(200, data, text, clk)
-}
-
-// coalesceYYYYMMDD normalizes sqlc's interface{} date columns (SQLite TEXT /
-// []byte / NULL) to a YYYYMMDD string. Empty means no planned span. Unexpected
-// types error the same way GetFeedEndDate handling does in gtfsdb/helpers.go.
-func coalesceYYYYMMDD(v interface{}) (string, error) {
-	switch d := v.(type) {
-	case nil:
-		return "", nil
-	case string:
-		return d, nil
-	case []byte:
-		return string(d), nil
-	default:
-		return "", fmt.Errorf("unexpected type from GetRouteServiceSpan: %T", v)
-	}
 }
 
 func (api *RestAPI) orderGroupStops(ctx context.Context, trips []gtfsdb.Trip, stopTimesByTrip map[string][]gtfsdb.StopTime) ([]string, error) {
