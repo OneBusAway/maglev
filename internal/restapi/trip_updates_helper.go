@@ -419,7 +419,7 @@ func (api *RestAPI) loadScheduledForTrips(ctx context.Context, tripIDs []string)
 	if len(tripIDs) == 0 {
 		return out
 	}
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTripIDs(ctx, tripIDs)
+	stopTimes, err := api.gtfsQueries(ctx).GetStopTimesForTripIDs(ctx, tripIDs)
 	if err != nil {
 		return out
 	}
@@ -648,7 +648,7 @@ func (api *RestAPI) blockTripIDsSortedByStartTime(ctx context.Context, tripIDs [
 	if len(tripIDs) <= 1 {
 		return tripIDs
 	}
-	rows, err := api.GtfsManager.GtfsDB.Queries.GetTripTimeBoundsByIDs(ctx, tripIDs)
+	rows, err := api.gtfsQueries(ctx).GetTripTimeBoundsByIDs(ctx, tripIDs)
 	if err != nil {
 		// A real DB error on a partial sort would silently scramble
 		// block-trip order — pickTripLevelDeviation depends on that order
@@ -714,7 +714,7 @@ func (api *RestAPI) loadBlockShiftTripIDs(ctx context.Context, targetTripID stri
 	if len(rawTripIDs) <= 1 {
 		return rawTripIDs
 	}
-	rows, err := api.GtfsManager.GtfsDB.Queries.GetTripTimeBoundsByIDs(ctx, rawTripIDs)
+	rows, err := api.gtfsQueries(ctx).GetTripTimeBoundsByIDs(ctx, rawTripIDs)
 	if err != nil {
 		warnIfRealDBError(err, "blockShiftTripIDsSortedByStartTime: GetTripTimeBoundsByIDs failed, falling back to unfiltered sort",
 			slog.Int("trip_count", len(rawTripIDs)))
@@ -867,7 +867,7 @@ func sequenceIdentifiesVisit(stu gtfs.StopTimeUpdate, staticStops map[int64]stri
 // stop_id map. It returns an empty map when the lookup fails.
 func (api *RestAPI) staticStopsForTrip(ctx context.Context, tripID string) map[int64]string {
 	stops := map[int64]string{}
-	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	stopTimes, err := api.gtfsQueries(ctx).GetStopTimesForTrip(ctx, tripID)
 	if err != nil {
 		return stops
 	}

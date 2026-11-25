@@ -166,7 +166,7 @@ func wallClockSinceMidnightNs(t time.Time) int64 {
 // within nominalTripID's block (interlining, spec Extension 5b). It falls back to
 // nominalTripID when there is no block or no better match.
 func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID string, referenceTime time.Time) string {
-	nominalTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, nominalTripID)
+	nominalTrip, err := api.gtfsQueries(ctx).GetTrip(ctx, nominalTripID)
 	if err != nil || nulls.StringOrEmpty(nominalTrip.BlockID) == "" {
 		return nominalTripID
 	}
@@ -192,12 +192,12 @@ func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID strin
 // activeTripInBlockAt returns the block trip whose scheduled window contains
 // sinceMidnightNs on serviceDay's active services, if any.
 func (api *RestAPI) activeTripInBlockAt(ctx context.Context, blockID sql.NullString, serviceDay time.Time, sinceMidnightNs int64) (string, bool) {
-	serviceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDay.Format("20060102"))
+	serviceIDs, err := api.gtfsQueries(ctx).GetActiveServiceIDsForDate(ctx, serviceDay.Format("20060102"))
 	if err != nil || len(serviceIDs) == 0 {
 		return "", false
 	}
 
-	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
+	blockTrips, err := api.gtfsQueries(ctx).GetTripsByBlockIDOrdered(ctx, gtfsdb.GetTripsByBlockIDOrderedParams{
 		BlockID:    blockID,
 		ServiceIds: serviceIDs,
 	})

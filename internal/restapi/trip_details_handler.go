@@ -153,8 +153,6 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Share database reads and block snapshots across service-date and status lookups.
-	ctx := WithSnapshotCache(gtfsdb.WithReadMemo(r.Context()), newSnapshotCache())
 	defaults := TripParamDefaults{IncludeTrip: true, IncludeSchedule: true}
 
 	// Format errors do not need the agency timezone. Catch them before GetTrip so
@@ -167,13 +165,27 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
+	// Keep every static GTFS lookup in this response on one SQLite read
+	// snapshot. A reload can commit between queries, but this transaction keeps
+	// the request on the generation it saw in its first database read.
+	readTx, err := api.GtfsManager.GtfsDB.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+	defer func() { _ = readTx.Rollback() }()
+
+	queries := api.GtfsManager.GtfsDB.Queries.WithTx(readTx)
+	ctx := gtfsdb.WithQueries(r.Context(), queries)
+	ctx = WithSnapshotCache(gtfsdb.WithReadMemo(ctx), newSnapshotCache())
+
+	trip, err := api.gtfsQueries(ctx).Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		api.dbErrorResponse(w, r, err)
 		return
 	}
 
-	route, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetRoute(ctx, trip.RouteID)
+	route, err := api.gtfsQueries(ctx).Memo(ctx).GetRoute(ctx, trip.RouteID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -183,7 +195,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, route.AgencyID)
+	agency, err := api.gtfsQueries(ctx).GetAgency(ctx, route.AgencyID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -239,7 +251,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch the trip's frequency rows once and share them with the status builder.
-	freqRows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetFrequenciesForTrip(ctx, tripID)
+	freqRows, err := api.gtfsQueries(ctx).Memo(ctx).GetFrequenciesForTrip(ctx, tripID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -383,13 +395,20 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Finish the read transaction before writing the response so connection
+	// pool resources are released promptly and commit errors are still reported.
+	if err := readTx.Commit(); err != nil {
+		api.serverErrorResponse(w, r, err)
+		return
+	}
+
 	response := models.NewEntryResponse(tripDetails, *references, api.Clock)
 	api.sendResponse(w, r, response)
 }
 
 // serviceActiveOn reports whether serviceID runs on serviceDate.
 func (api *RestAPI) serviceActiveOn(ctx context.Context, serviceID string, serviceDate time.Time) (bool, error) {
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
+	activeServiceIDs, err := api.gtfsQueries(ctx).Memo(ctx).GetActiveServiceIDsForDate(ctx, serviceDate.Format("20060102"))
 	if err != nil {
 		return false, err
 	}
@@ -459,7 +478,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 	}
 
 	// batch fetch
-	batchedTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(ctx, uniqueTripIDs)
+	batchedTrips, err := api.gtfsQueries(ctx).GetTripsByIDs(ctx, uniqueTripIDs)
 	if err != nil {
 		return referencedTrips, fmt.Errorf("batch fetch trips: %w", err)
 	}
@@ -477,7 +496,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 		routeIDs = append(routeIDs, rid)
 	}
 
-	batchedRoutes, err := api.GtfsManager.GtfsDB.Queries.GetRoutesByIDs(ctx, routeIDs)
+	batchedRoutes, err := api.gtfsQueries(ctx).GetRoutesByIDs(ctx, routeIDs)
 	if err != nil {
 		return referencedTrips, fmt.Errorf("batch fetch routes: %w", err)
 	}

@@ -647,7 +647,7 @@ func (api *RestAPI) blockTripsForServiceDate(
 	// degrade the snapshot to single-trip mode. The single-trip fallback IS
 	// the right behaviour for the not-found cases — it just shouldn't be
 	// reached on real DB errors without a warning.
-	q := api.GtfsManager.GtfsDB.Queries.Memo(ctx)
+	q := api.gtfsQueries(ctx).Memo(ctx)
 
 	trip, err := q.GetTrip(ctx, targetTripID)
 	if err != nil {
@@ -706,7 +706,7 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, blockTrips []blockTri
 	if len(blockTrips) == 0 {
 		return nil
 	}
-	q := api.GtfsManager.GtfsDB.Queries
+	q := api.gtfsQueries(ctx)
 	tripIDs := make([]string, len(blockTrips))
 	for i, blockTrip := range blockTrips {
 		tripIDs[i] = blockTrip.id
@@ -817,7 +817,7 @@ func (api *RestAPI) fetchStopCoords(
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	stops, err := utils.QueryInBatches(ctx, ids, api.GtfsManager.GtfsDB.Queries.GetStopsByIDs)
+	stops, err := utils.QueryInBatches(ctx, ids, api.gtfsQueries(ctx).GetStopsByIDs)
 	if err != nil {
 		slog.Warn("fetchStopCoords: GetStopsByIDs failed",
 			slog.Int("stop_count", len(ids)), slog.String("error", err.Error()))

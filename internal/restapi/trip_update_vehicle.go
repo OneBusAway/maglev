@@ -351,7 +351,7 @@ func (api *RestAPI) tripUpdateVehicleID(ctx context.Context, tripUpdate gtfs.Tri
 	if namesVehicle(tripUpdate) {
 		return tripUpdate.Vehicle.ID
 	}
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	trip, err := api.gtfsQueries(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		return nil
 	}
@@ -413,7 +413,7 @@ func (api *RestAPI) tripUpdateVehicleTrip(ctx context.Context, agencyID, vehicle
 // blockVehicleTrip finds the trip of a block standing in as a vehicle because its
 // trip update names none.
 func (api *RestAPI) blockVehicleTrip(ctx context.Context, agencyID, blockID string) (string, string, bool) {
-	blockTrips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByBlockID(ctx, nulls.String(blockID))
+	blockTrips, err := api.gtfsQueries(ctx).GetTripsByBlockID(ctx, nulls.String(blockID))
 	if err != nil {
 		return "", "", false
 	}
@@ -440,7 +440,7 @@ func (api *RestAPI) blockVehicleTrip(ctx context.Context, agencyID, blockID stri
 // including expiry of the block's updates as one record. It falls back to tripID
 // when the agency or scheduled position is unavailable.
 func (api *RestAPI) activeTripOfTripUpdateVehicle(ctx context.Context, agencyID, tripID, feedVehicleID string) (string, bool) {
-	agency, err := api.GtfsManager.GtfsDB.Queries.GetAgency(ctx, agencyID)
+	agency, err := api.gtfsQueries(ctx).GetAgency(ctx, agencyID)
 	if err != nil {
 		return tripID, true
 	}
@@ -489,11 +489,11 @@ func (api *RestAPI) tripAgencyID(ctx context.Context, tripID string) (string, bo
 }
 
 func (api *RestAPI) loadTripAgencyID(ctx context.Context, tripID string) (string, bool) {
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	trip, err := api.gtfsQueries(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		return "", false
 	}
-	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
+	route, err := api.gtfsQueries(ctx).GetRoute(ctx, trip.RouteID)
 	if err != nil {
 		return "", false
 	}
