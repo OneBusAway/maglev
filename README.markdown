@@ -487,19 +487,19 @@ and the first real-time fetch has been attempted, then `ok`.
 | Variable                   | Description                                                          | Default |
 | -------------------------- | -------------------------------------------------------------------- | ------- |
 | `TZ`                       | Timezone for the container                                           | `UTC`   |
-| `GTFS_API_KEYS`            | Comma-separated API keys; replaces `api-keys` from the config file   | —       |
+| `GTFS_API_KEYS`            | Comma-separated API keys; replaces `api-keys` from the config file. On a flag-based start, replaces the default `-api-keys` value unless `-api-keys` was set explicitly | — |
 | `GTFS_PROTECTED_API_KEYS`  | Comma-separated keys for protected endpoints; replaces `protected-api-keys` from the config file. In a flag-based start the `-protected-api-keys` flag takes precedence | — |
-| `GTFS_STATIC_AUTH_NAME`    | Auth header name for the static GTFS feed                            | —       |
-| `GTFS_STATIC_AUTH_VALUE`   | Auth header value for the static GTFS feed                           | —       |
-| `GTFS_REALTIME_AUTH_NAME`  | Auth header name for the first GTFS-RT feed only                     | —       |
-| `GTFS_REALTIME_AUTH_VALUE` | Auth header value for the first GTFS-RT feed only                    | —       |
+| `GTFS_STATIC_AUTH_NAME`    | Auth header name for the static GTFS feed (also applies on a flag-based start; with `-f`, only when exactly one static feed is configured) | — |
+| `GTFS_STATIC_AUTH_VALUE`   | Auth header value for the static GTFS feed (also applies on a flag-based start; with `-f`, only when exactly one static feed is configured) | — |
+| `GTFS_REALTIME_AUTH_NAME`  | Auth header name for the first GTFS-RT feed only (also applies on a flag-based start) | — |
+| `GTFS_REALTIME_AUTH_VALUE` | Auth header value for the first GTFS-RT feed only (also applies on a flag-based start) | — |
 | `TMPDIR`                   | Temporary directory used by Go and SQLite during static GTFS imports | `/app/data` in the Docker image |
 | `MAGLEV_LOG_LEVEL`         | Log level; overrides the config file                                 | —       |
 | `MAGLEV_LOG_FORMAT`        | Log format; overrides the config file                                | —       |
 | `MAGLEV_ENABLE_PPROF`      | `1` starts the pprof server on `127.0.0.1:6060` (see Profiling)      | off     |
 | `MAGLEV_PROFILE_MUTEX`     | `1` enables mutex and block profiling (slows the server)             | off     |
 
-All except `TZ`, `TMPDIR`, `GTFS_PROTECTED_API_KEYS` and the two profiling variables are read only when Maglev starts with a config file (`-f`).
+`TZ` and `TMPDIR` apply in both modes. Maglev applies `GTFS_API_KEYS`, `GTFS_PROTECTED_API_KEYS`, the four feed-auth variables, and the two profiling variables for both `-f` and flag-based starts. `MAGLEV_LOG_LEVEL` and `MAGLEV_LOG_FORMAT` are read only with a config file (`-f`). On a flag-based start, an explicit `-api-keys` or feed-auth header flag beats the matching environment variable; on `-f`, those env vars replace the matching file values when set.
 
 ### Troubleshooting
 

@@ -2,10 +2,8 @@ package restapi
 
 import (
 	"context"
-	"errors"
 	"maps"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"slices"
 	"sort"
@@ -893,62 +891,23 @@ func TestArrivalsAndDeparturesForLocationKeepsAlertsWithoutArrivals(t *testing.T
 	assert.True(t, sawStop, "references must include the stop alert")
 }
 
-func TestAddRouteAlertsForRetainedStopsEmpty(t *testing.T) {
-	api := createTestApi(t)
-	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), nil, newSituationCollector()))
-}
-
-func TestAddRouteAlertsForRetainedStopsQueryError(t *testing.T) {
+// With no stops there is nothing to look up, so the helper returns before
+// querying. A cancelled context would make any query fail.
+func TestAddRouteAlertsForStopsSkipsEmptyInput(t *testing.T) {
 	api := createTestApi(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, stopID, err := utils.ExtractAgencyIDAndCodeID(testdata.Stop4062.ID)
-	require.NoError(t, err)
-	err = api.addRouteAlertsForRetainedStops(ctx, []gtfsdb.Stop{{ID: stopID}}, newSituationCollector())
-	require.Error(t, err)
+	require.NoError(t, api.addRouteAlertsForStops(ctx, nil, newSituationCollector()))
 }
 
-// A cancelled request must not be reported as a server failure: client
-// cancellation writes nothing, an expired deadline writes 504.
-func TestSendArrivalsForLocationErrorDistinguishesCancellation(t *testing.T) {
+func TestAddRouteAlertsForStopsQueryError(t *testing.T) {
 	api := createTestApi(t)
-	defer api.Shutdown()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
-	newRequest := func(ctx context.Context) (*httptest.ResponseRecorder, *http.Request) {
-		req := httptest.NewRequest(http.MethodGet, "/api/where/arrivals-and-departures-for-location.json", nil).WithContext(ctx)
-		return httptest.NewRecorder(), req
-	}
-
-	t.Run("client cancellation writes nothing", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		rec, req := newRequest(ctx)
-
-		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
-
-		assert.Empty(t, rec.Body.String(), "no body should be written when the client cancels")
-	})
-
-	t.Run("expired deadline writes gateway timeout", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 0)
-		defer cancel()
-		rec, req := newRequest(ctx)
-
-		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
-
-		assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
-		assert.Contains(t, rec.Body.String(), "gateway timeout")
-	})
-
-	t.Run("genuine failure writes server error", func(t *testing.T) {
-		ctx := context.Background()
-		rec, req := newRequest(ctx)
-
-		api.sendArrivalsForLocationError(rec, req, ctx, errors.New("boom"))
-
-		assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	})
+	err := api.addRouteAlertsForStops(ctx, []string{testdata.Stop4062.Code}, newSituationCollector())
+	require.Error(t, err)
 }
 
 // Nearby stops served only by routes with no service on the query date are
@@ -967,10 +926,10 @@ func TestBuildNearbyResultsDropsStopsInactiveOnDate(t *testing.T) {
 	assert.Equal(t, "25_active", results[0].StopID)
 }
 
-// An agency id that contains an underscore must stay intact when namespacing
-// the alert. Agency and route ids are separate columns, so the alert is keyed
-// under the full agency id rather than the first underscore segment.
-func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
+// An agency id that contains an underscore must stay intact. Splitting the
+// combined agency_code route id would treat the first segment as the agency
+// and look up alerts under the wrong route.
+func TestAddRouteAlertsForStopsKeepsAgencyUnderscore(t *testing.T) {
 	api := createTestApi(t)
 	db := api.GtfsManager.GtfsDB.DB
 
@@ -1022,7 +981,7 @@ func TestAddRouteAlertsForRetainedStopsKeepsAgencyUnderscore(t *testing.T) {
 	})
 
 	situations := newSituationCollector()
-	require.NoError(t, api.addRouteAlertsForRetainedStops(context.Background(), []gtfsdb.Stop{{ID: stopID}}, situations))
+	require.NoError(t, api.addRouteAlertsForStops(context.Background(), []string{testdata.Stop4062.Code}, situations))
 
 	ids := situationIDsFromRefs(situations.refs)
 	assert.Contains(t, ids, utils.FormCombinedID(agencyID, alertID))

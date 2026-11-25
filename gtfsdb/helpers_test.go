@@ -424,6 +424,23 @@ func newFeedExpiryTestDB(t *testing.T) (*sql.DB, *Queries) {
 	return db, New(db)
 }
 
+func TestCoalesceYYYYMMDD(t *testing.T) {
+	s, err := CoalesceYYYYMMDD(nil)
+	require.NoError(t, err)
+	assert.Empty(t, s)
+
+	s, err = CoalesceYYYYMMDD("20240101")
+	require.NoError(t, err)
+	assert.Equal(t, "20240101", s)
+
+	s, err = CoalesceYYYYMMDD([]byte("20251231"))
+	require.NoError(t, err)
+	assert.Equal(t, "20251231", s)
+
+	_, err = CoalesceYYYYMMDD(42)
+	require.ErrorContains(t, err, "unexpected type for YYYYMMDD column")
+}
+
 func TestUpdateFeedExpiresAtFromCalendar(t *testing.T) {
 	ctx := context.Background()
 	db, q := newFeedExpiryTestDB(t)

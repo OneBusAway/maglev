@@ -703,6 +703,21 @@ func buildStopRouteIndex(ctx context.Context, qtx *Queries) error {
 	return nil
 }
 
+// CoalesceYYYYMMDD normalizes a sqlc interface{} SQLite TEXT date column
+// (string, []byte, or NULL) to a YYYYMMDD string. Empty means no value.
+func CoalesceYYYYMMDD(v interface{}) (string, error) {
+	switch d := v.(type) {
+	case nil:
+		return "", nil
+	case string:
+		return d, nil
+	case []byte:
+		return string(d), nil
+	default:
+		return "", fmt.Errorf("unexpected type for YYYYMMDD column: %T", v)
+	}
+}
+
 // updateFeedExpiresAtFromCalendar persists the end of the latest service date
 // in the latest-expiring agency timezone. Call within a transaction so expiry
 // is atomic with the calendar and agency data it was derived from.
@@ -712,16 +727,9 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 		return fmt.Errorf("failed to get feed end date: %w", err)
 	}
 
-	var dateStr string
-	switch v := val.(type) {
-	case nil:
-		// No calendar data — feed_expires_at will be NULL.
-	case string:
-		dateStr = v
-	case []byte:
-		dateStr = string(v)
-	default:
-		return fmt.Errorf("unexpected type from GetFeedEndDate: %T", val)
+	dateStr, err := CoalesceYYYYMMDD(val)
+	if err != nil {
+		return fmt.Errorf("GetFeedEndDate: %w", err)
 	}
 
 	var expires sql.NullInt64
@@ -1282,9 +1290,14 @@ const minStopTimesPerTrip = 2
 // minStopTimesPerTrip.
 const tooFewStopTimesProblem = "trip has fewer than two stop times"
 
+// tooFewStopTimesAtStopsProblem describes a Flex trip whose stop times at
+// stops (excluding location/location-group rows) are fewer than
+// minStopTimesPerTrip.
+const tooFewStopTimesAtStopsProblem = "trip has fewer than two stop times at stops"
+
 // inMemoryStopTimesProblem checks the stop times of a trip held in memory,
-// which may have been built by hand. A parsed feed never has a stop time
-// without a stop: go-gtfs drops the rows whose stop is unknown.
+// which may have been built by hand. A streamed feed's GTFS-Flex stop times
+// without a stop are dropped by stopTimesAtStops instead.
 func inMemoryStopTimesProblem(stopTimes []gtfs.ScheduledStopTime) string {
 	if len(stopTimes) < minStopTimesPerTrip {
 		return tooFewStopTimesProblem
