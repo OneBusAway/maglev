@@ -1215,7 +1215,7 @@ func (api *RestAPI) situationRefsForTrip(ctx context.Context, tripID string) []s
 		}
 	}
 
-	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, routeID, agencyID), agencyID)
+	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, routeID, agencyID), api.GtfsManager.FirstStaticAgencyID())
 }
 
 func (api *RestAPI) calculateOffsetForStop(
