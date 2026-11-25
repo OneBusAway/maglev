@@ -1594,7 +1594,7 @@ func TestGetNearbyStopIDs_ReturnsQueryError(t *testing.T) {
 }
 
 func TestAddNearbyStopRefs_UnderscoreAgency(t *testing.T) {
-	acc := newArrivalsAccumulator("AGENCY_ONE")
+	acc := newArrivalsAccumulator()
 	// Stop IDs might contain underscores, or belong to agencies with underscores.
 	// Since bare stop IDs are passed directly without parsing, they are accurately preserved.
 	addNearbyStopRefs(acc, []string{"stop_1", "stop2"})
@@ -1645,7 +1645,7 @@ func TestGetNearbyStopIDs_UnderscoreAgencyKeepsBareIDs(t *testing.T) {
 	require.Equal(t, []string{"s2"}, bareIDs, "the bare IDs must be the real stop IDs, not re-split combined IDs")
 	assert.Equal(t, agencyID, agencies["s2"])
 
-	acc := newArrivalsAccumulator(agencyID)
+	acc := newArrivalsAccumulator()
 	addNearbyStopRefs(acc, bareIDs)
 	require.True(t, acc.stopIDs["s2"], "the bare stop ID must reach the accumulator intact")
 
