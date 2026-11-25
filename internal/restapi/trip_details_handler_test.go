@@ -1024,6 +1024,18 @@ func TestTripDetailsHandlerKeepsOneGTFSGenerationDuringReload(t *testing.T) {
 	endpoint := "/api/where/trip-details/" +
 		url.PathEscape(oldTripID) + ".json?key=TEST"
 
+	// Use a real clock in the expiry middleware. The test clock must only
+	// pause when trip-details resolves its request time, after the initial
+	// GTFS reads have established the SQLite read snapshot.
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+
+	var handler http.Handler = mux
+	handler = GtfsExpiryMiddleware(api.GtfsManager, clock.RealClock{})(handler)
+	handler = api.VersionValidationMiddleware(handler)
+	handler = CompressionMiddleware(handler)
+	handler = api.FreshnessMiddleware(handler)
+
 	type requestResult struct {
 		status   int
 		response TripDetailsResponse
@@ -1037,7 +1049,7 @@ func TestTripDetailsHandlerKeepsOneGTFSGenerationDuringReload(t *testing.T) {
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodGet, endpoint, nil)
 
-		api.SetupAPIRoutes().ServeHTTP(recorder, request)
+		handler.ServeHTTP(recorder, request)
 
 		var response TripDetailsResponse
 		decodeErr := json.Unmarshal(recorder.Body.Bytes(), &response)
