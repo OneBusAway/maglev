@@ -278,15 +278,7 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 	// buses under one block) leak the last shift's delay into the first
 	// shift's scheduleDeviation, and status.ScheduleDeviation flows onward
 	// into effectiveTime / stop-offset math for every arrival on this trip.
-	updates := api.statusRecordUpdates(ctx, input, extras.blockTripIDs)
-	scheduleDeviation, hasRealtimeTripUpdate, discarded := api.recordDeviation(ctx, updates, input.serviceDate, input.currentTime)
-	// ADDED and DUPLICATED trips leave the static block, so Java does not
-	// apply blockNotActive to them (GtfsRealtimeSource.handleCombinedUpdates).
-	// recordDeviation has already dropped a deviation past one hour, so this
-	// only keeps the predicted flag. Java would also keep the 90 minutes.
-	if runsOwnSchedule(input.vehicle) {
-		discarded = false
-	}
+	updates, scheduleDeviation, hasRealtimeTripUpdate, discarded := api.statusRecordDeviation(ctx, input, extras.blockTripIDs)
 
 	if hasRealtimeTripUpdate {
 		status.ScheduleDeviation = scheduleDeviation
@@ -309,6 +301,21 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 		status.SetPredicted(extras.record.present || hasVehicleRealtimeData || hasRealtimeTripUpdate)
 	}
 	return scheduleDeviation
+}
+
+// statusRecordDeviation is the deviation applyBlockDeviation publishes, and the
+// decision stopTimeInArrivalWindow uses to drop a row. ADDED and DUPLICATED
+// vehicles leave the static block, so Java does not apply blockNotActive to
+// them (GtfsRealtimeSource.handleCombinedUpdates). recordDeviation has already
+// dropped a deviation past one hour, so this only keeps the predicted flag.
+// Java would also keep the 90 minutes.
+func (api *RestAPI) statusRecordDeviation(ctx context.Context, input tripStatusInput, blockTripIDs []string) (updates []tripUpdateForTrip, deviation int, ok, discarded bool) {
+	updates = api.statusRecordUpdates(ctx, input, blockTripIDs)
+	deviation, ok, discarded = api.recordDeviation(ctx, updates, input.serviceDate, input.currentTime)
+	if runsOwnSchedule(input.vehicle) {
+		discarded = false
+	}
+	return updates, deviation, ok, discarded
 }
 
 // statusRecordUpdates uses one vehicle's fresh record. Without a vehicle there

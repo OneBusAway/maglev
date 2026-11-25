@@ -1420,23 +1420,27 @@ func addEarlierBlockTripSTU(t *testing.T, api *RestAPI, delay time.Duration) {
 	})
 }
 
-// findArrivalForTrip returns the arrival for tripID, failing the test when
-// the response has none.
 // A delay past one hour is discarded, so a predicted time inside the window
-// must not keep a row whose scheduled time is outside it. A shorter delay,
-// and a DUPLICATED trip, still use the predicted time.
+// must not keep a row whose scheduled time is outside it. The window follows
+// the row's record, so a long block delay drops a shorter stop update, and a
+// stop update past one hour stays when the record itself is inside the hour.
+// A shorter delay, and a DUPLICATED trip, still use the predicted time.
 func TestPluralArrivals_DiscardedLongDelayLeavesTheWindow(t *testing.T) {
 	when := time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)
 	tests := []struct {
 		name       string
 		arrival    time.Duration
 		delay      time.Duration
+		stopDelay  time.Duration
+		useStop    bool
 		duplicated bool
 		wantRow    bool
 	}{
 		{name: "sixty one minutes is outside once the prediction is dropped", arrival: 7*time.Hour + 28*time.Minute, delay: 61 * time.Minute, wantRow: false},
 		{name: "thirty minutes stays on the predicted time", arrival: 7*time.Hour + 40*time.Minute, delay: 30 * time.Minute, wantRow: true},
 		{name: "a duplicated trip keeps the long delay", arrival: 7*time.Hour + 28*time.Minute, delay: 61 * time.Minute, duplicated: true, wantRow: true},
+		{name: "a late record drops a stop fifty minutes late", arrival: 7*time.Hour + 28*time.Minute, delay: 65 * time.Minute, stopDelay: 50 * time.Minute, useStop: true, wantRow: false},
+		{name: "a stop past one hour stays when the record does", arrival: 7*time.Hour + 28*time.Minute, delay: 50 * time.Minute, stopDelay: 61 * time.Minute, useStop: true, wantRow: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1460,6 +1464,16 @@ func TestPluralArrivals_DiscardedLongDelayLeavesTheWindow(t *testing.T) {
 			require.NoError(t, err)
 
 			delay := tc.delay
+			var updates []gtfs.StopTimeUpdate
+			if tc.useStop {
+				stopID := "dp-stop"
+				seq := uint32(2)
+				stopDelay := tc.stopDelay
+				updates = []gtfs.StopTimeUpdate{{
+					StopID: &stopID, StopSequence: &seq,
+					Arrival: &gtfs.StopTimeEvent{Delay: &stopDelay},
+				}}
+			}
 			if tc.duplicated {
 				api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
 					ID:        gtfs.TripID{ID: tripID, ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED},
@@ -1467,7 +1481,7 @@ func TestPluralArrivals_DiscardedLongDelayLeavesTheWindow(t *testing.T) {
 					Timestamp: &when,
 				})
 			} else {
-				api.GtfsManager.MockAddTripUpdate(tripID, &delay, nil)
+				api.GtfsManager.MockAddTripUpdate(tripID, &delay, updates)
 			}
 
 			endpoint := arrivalsAndDeparturesURL(combinedStopID, url.Values{
@@ -1489,6 +1503,8 @@ func TestPluralArrivals_DiscardedLongDelayLeavesTheWindow(t *testing.T) {
 	}
 }
 
+// findArrivalForTrip returns the arrival for tripID, failing the test when
+// the response has none.
 func findArrivalForTrip(t *testing.T, arrivals []models.ArrivalAndDeparture, tripID string) models.ArrivalAndDeparture {
 	t.Helper()
 	for _, a := range arrivals {

@@ -659,16 +659,6 @@ func runsOwnSchedule(vehicle *gtfs.Vehicle) bool {
 	return relationship == gtfsrt.TripDescriptor_ADDED || relationship == gtfsrt.TripDescriptor_DUPLICATED
 }
 
-// tripUpdateRunsOwnSchedule reports whether the trip update itself is ADDED
-// or DUPLICATED. Those trips keep a delay past one hour.
-func tripUpdateRunsOwnSchedule(update *gtfs.Trip) bool {
-	if update == nil {
-		return false
-	}
-	relationship := update.ID.ScheduleRelationship
-	return relationship == gtfsrt.TripDescriptor_ADDED || relationship == gtfsrt.TripDescriptor_DUPLICATED
-}
-
 // applySnapshotStops mirrors Java's getScheduledBlockLocationBetweenStopTimes
 // for a vehicle placed by its record: the next stop is the snapshot's, and the
 // closest stop is whichever of it and the previous stop is nearer in time. A
