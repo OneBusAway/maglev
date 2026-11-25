@@ -1111,8 +1111,7 @@ func TestArrivalsAndDeparturesForLocationRouteAlertUnderscoreAgency(t *testing.T
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence) VALUES (?, 0, 0, ?, 1)`, tripID, stopID)
 	require.NoError(t, err)
-	rebuildStopAgencyIndex(t, api)
-	rebuildStopRouteIndex(t, api)
+	rebuildStopIndexes(t, api)
 
 	bareRoute := routeID
 	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
