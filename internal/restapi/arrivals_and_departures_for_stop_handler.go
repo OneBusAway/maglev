@@ -107,7 +107,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 	}
 	params.Time = utils.ResolveArrivalTime(params.TimeParam, loc, api.Clock.Now())
 
-	acc := newArrivalsAccumulator(stopAgencyID)
+	acc := newArrivalsAccumulator()
 	references := models.NewEmptyReferences()
 	references.Agencies = append(references.Agencies, models.AgencyReferenceFromDatabase(&agency))
 
@@ -122,16 +122,19 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		FrequencyAfter:  params.FrequencyAfter,
 	}, acc)
 	if err != nil {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 
 	// Sort after the arrivals are built so predicted times are already filled in.
 	sortArrivalsByBestTime(result.Arrivals)
+
+	// A route can serve this stop and still have every arrival fall outside
+	// the window. Those route alerts belong on the entry anyway.
+	if err := api.addRouteAlertsForStops(ctx, []string{stopCode}, acc.situations); err != nil {
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
+		return
+	}
 
 	// Java looks up nearby stops whether or not the window has arrivals.
 	nearbyStopIDs, bareNearbyStopIDs, stopAgencies, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, stopCode, stopAgencyID)
@@ -154,11 +157,7 @@ func (api *RestAPI) arrivalsAndDeparturesForStopHandler(w http.ResponseWriter, r
 		primaryAgency:    &agency,
 	}, acc)
 	if err != nil {
-		if ctx.Err() != nil {
-			api.clientCanceledResponse(w, r, ctx.Err())
-		} else {
-			api.serverErrorResponse(w, r, err)
-		}
+		api.canceledOrServerErrorResponse(w, r, ctx, err)
 		return
 	}
 
@@ -178,9 +177,9 @@ func addNearbyStopRefs(acc *arrivalsAccumulator, bareNearbyStopIDs []string) {
 // addStopSituations records the stop's own and agency-wide alerts, adds every
 // collected situation to references, and returns their IDs for the entry.
 // The list covers every alert reachable from this stop, whether it was matched
-// through an arrival's trip or through the stop itself.
+// through an arrival's trip, a route serving the stop, or the stop itself.
 func (api *RestAPI) addStopSituations(ctx context.Context, references *models.ReferencesModel, acc *arrivalsAccumulator, stopCode, stopAgencyID string) []string {
-	acc.situations.add(api.GtfsManager.GetAlertsForStop(stopCode, stopAgencyID), acc.alertAgencyID)
+	acc.situations.add(api.GtfsManager.GetAlertsForStop(stopCode, stopAgencyID), api.GtfsManager.FirstStaticAgencyID())
 	references.Situations = append(references.Situations, api.situationReferences(ctx, acc.situations.refs)...)
 	return situationIDsFromRefs(acc.situations.refs)
 }

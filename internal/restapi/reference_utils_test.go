@@ -871,31 +871,36 @@ func TestEndpoints_ReferencesNeverContainNullArrays(t *testing.T) {
 	server := httptest.NewServer(api.SetupAPIRoutes())
 	defer server.Close()
 
-	// Endpoints identified in #2121 and related issues, tested with
-	// empty, missing, or standard queries to verify reference arrays.
+	// Endpoints tested with empty, missing, or standard queries to verify reference arrays.
+	// Uses key=org.onebusaway.iphone because it is exempt from rate limits (the "TEST" key
+	// is capped at 5 requests/sec).
 	endpoints := []struct {
 		name string
 		url  string
 	}{
 		{
 			name: "search/route with no matches",
-			url:  "/api/where/search/route.json?key=TEST&input=nomatchxyz999",
+			url:  "/api/where/search/route.json?key=org.onebusaway.iphone&input=nomatchxyz999",
 		},
 		{
 			name: "search/stop with no matches",
-			url:  "/api/where/search/stop.json?key=TEST&input=nomatchxyz999",
+			url:  "/api/where/search/stop.json?key=org.onebusaway.iphone&input=nomatchxyz999",
 		},
 		{
 			name: "stops-for-location empty area",
-			url:  "/api/where/stops-for-location.json?key=TEST&lat=0.0&lon=0.0&latSpan=0.01&lonSpan=0.01",
+			url:  "/api/where/stops-for-location.json?key=org.onebusaway.iphone&lat=0.0&lon=0.0&latSpan=0.01&lonSpan=0.01",
 		},
 		{
 			name: "stops-for-agency",
-			url:  "/api/where/stops-for-agency/25.json?key=TEST",
+			url:  "/api/where/stops-for-agency/25.json?key=org.onebusaway.iphone",
 		},
 		{
 			name: "routes-for-agency",
-			url:  "/api/where/routes-for-agency/25.json?key=TEST",
+			url:  "/api/where/routes-for-agency/25.json?key=org.onebusaway.iphone",
+		},
+		{
+			name: "agency by ID",
+			url:  "/api/where/agency/25.json?key=org.onebusaway.iphone",
 		},
 	}
 

@@ -1,7 +1,5 @@
 package models
 
-import "encoding/json"
-
 // ReferencesModel References model for related data
 type ReferencesModel struct {
 	Agencies   []AgencyReference `json:"agencies"`
@@ -33,14 +31,6 @@ func (r *ReferencesModel) Normalize() {
 	if r.Trips == nil {
 		r.Trips = []Trip{}
 	}
-}
-
-// MarshalJSON normalizes nil slices to empty slices before marshaling to prevent
-// references lists from serializing as null.
-func (r ReferencesModel) MarshalJSON() ([]byte, error) {
-	type Alias ReferencesModel
-	r.Normalize()
-	return json.Marshal((Alias)(r))
 }
 
 func NewEmptyReferences() *ReferencesModel {

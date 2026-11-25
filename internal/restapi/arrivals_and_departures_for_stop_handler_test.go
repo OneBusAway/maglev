@@ -337,6 +337,46 @@ func TestArrivalsAndDeparturesForStopHandler_AgencyAlertWithoutArrivals(t *testi
 	assert.Contains(t, referencedIDs, wantSituationID)
 }
 
+func TestArrivalsAndDeparturesForStopHandler_RouteAlertWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// Route 154 is the only route serving stop 4062; route 15 doesn't serve it.
+	const servingRouteID = "154"
+	const otherRouteID = "15"
+	routeIDs := map[string]string{
+		"serving-route-alert": servingRouteID,
+		"other-route-alert":   otherRouteID,
+	}
+	for alertID, routeID := range routeIDs {
+		api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+			ID:               alertID,
+			InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}},
+			Header:           []gtfs.AlertText{{Text: "Route alert", Language: "en"}},
+		})
+	}
+
+	requestURL := arrivalsAndDeparturesURL(arrivalsTestStopID,
+		url.Values{"minutesBefore": {"0"}, "minutesAfter": {"0"}})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the empty window must leave no arrival to carry the alert")
+
+	agencyID := testdata.Raba.ID
+	servingSituationID := utils.FormCombinedID(agencyID, "serving-route-alert")
+	assert.Contains(t, model.Data.Entry.SituationIDs, servingSituationID,
+		"a stop must show alerts for the routes that serve it")
+	assert.NotContains(t, model.Data.Entry.SituationIDs, utils.FormCombinedID(agencyID, "other-route-alert"),
+		"a stop must not show alerts for routes that don't serve it")
+	var referencedIDs []string
+	for _, situation := range model.Data.References.Situations {
+		referencedIDs = append(referencedIDs, situation.ID)
+	}
+	assert.Contains(t, referencedIDs, servingSituationID)
+}
+
 func TestArrivalsAndDeparturesForStopHandlerTimeParams(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
@@ -1594,7 +1634,7 @@ func TestGetNearbyStopIDs_ReturnsQueryError(t *testing.T) {
 }
 
 func TestAddNearbyStopRefs_UnderscoreAgency(t *testing.T) {
-	acc := newArrivalsAccumulator("AGENCY_ONE")
+	acc := newArrivalsAccumulator()
 	// Stop IDs might contain underscores, or belong to agencies with underscores.
 	// Since bare stop IDs are passed directly without parsing, they are accurately preserved.
 	addNearbyStopRefs(acc, []string{"stop_1", "stop2"})
@@ -1645,7 +1685,7 @@ func TestGetNearbyStopIDs_UnderscoreAgencyKeepsBareIDs(t *testing.T) {
 	require.Equal(t, []string{"s2"}, bareIDs, "the bare IDs must be the real stop IDs, not re-split combined IDs")
 	assert.Equal(t, agencyID, agencies["s2"])
 
-	acc := newArrivalsAccumulator(agencyID)
+	acc := newArrivalsAccumulator()
 	addNearbyStopRefs(acc, bareIDs)
 	require.True(t, acc.stopIDs["s2"], "the bare stop ID must reach the accumulator intact")
 
@@ -1830,7 +1870,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *t
 	expectedArrivalUTC := time.Date(2026, 1, 15, 15, 10, 0, 0, time.UTC)
 	expectedMidnightLA := time.Date(2026, 1, 15, 0, 0, 0, 0, locLA)
 
-	rebuildStopRouteIndex(t, api)
+	rebuildStopIndexes(t, api)
 
 	// Query via UTC Agency prefix
 	{
@@ -1904,6 +1944,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *
 		if err == nil {
 			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = OFF")
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_routes WHERE stop_id = ?", sharedStop)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_agencies WHERE stop_id = ?", sharedStop)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_times WHERE stop_id = ?", sharedStop)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM trips WHERE id = ?", tripInvalid)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM routes WHERE id IN (?, ?)", routePrimary, routeInvalid)
@@ -1966,7 +2007,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *
 	})
 	require.NoError(t, err)
 
-	rebuildStopRouteIndex(t, api)
+	rebuildStopIndexes(t, api)
 
 	endpoint := arrivalsAndDeparturesURL(utils.FormCombinedID(agencyPrimary, sharedStop), nil)
 	resp, model := callAPIHandler[models.ResponseModel](t, api, endpoint)
@@ -1999,6 +2040,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 		if err == nil {
 			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = OFF")
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_routes WHERE stop_id = ?", sharedStop)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_agencies WHERE stop_id = ?", sharedStop)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_times WHERE stop_id = ?", sharedStop)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM trips WHERE id IN (?, ?)", tripPrimary, tripMissing)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM routes WHERE id IN (?, ?)", routePrimary, routeMissing)
@@ -2084,7 +2126,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 	require.NoError(t, err)
 	conn.Close()
 
-	rebuildStopRouteIndex(t, api)
+	rebuildStopIndexes(t, api)
 
 	endpoint := arrivalsAndDeparturesURL(utils.FormCombinedID(agencyPrimary, sharedStop), url.Values{
 		"minutesBefore": {"5"},
