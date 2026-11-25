@@ -2,7 +2,9 @@ package gtfsdb
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,9 +36,58 @@ func TestPerformDatabaseMigration_Idempotency(t *testing.T) {
 	assert.NoError(t, err, "Second migration should be idempotent and succeed")
 }
 
+func TestNewClient_DoesNotChangeSchemaOnReopen(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "migration.db")
+	client, err := NewClient(Config{
+		DBPath: dbPath,
+		Env:    appconf.Development,
+	})
+	require.NoError(t, err)
+	var versionBefore int
+	err = client.DB.QueryRowContext(
+		ctx,
+		"PRAGMA schema_version",
+	).Scan(&versionBefore)
+	require.NoError(t, err)
+	var userVersionBefore int
+	err = client.DB.QueryRowContext(
+		ctx,
+		"PRAGMA user_version",
+	).Scan(&userVersionBefore)
+
+	require.NoError(t, err)
+	require.Equal(t, schemaVersion, userVersionBefore)
+	require.NoError(t, client.Close())
+	client, err = NewClient(Config{
+		DBPath: dbPath,
+		Env:    appconf.Development,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, client.Close())
+	})
+	var versionAfter int
+	err = client.DB.QueryRowContext(
+		ctx,
+		"PRAGMA schema_version",
+	).Scan(&versionAfter)
+	require.NoError(t, err)
+	require.Equal(t, versionBefore, versionAfter,
+		"reopening an initialized database should not change its schema")
+	var userVersionAfter int
+	err = client.DB.QueryRowContext(
+		ctx,
+		"PRAGMA user_version",
+	).Scan(&userVersionAfter)
+
+	require.NoError(t, err)
+	require.Equal(t, userVersionBefore, userVersionAfter)
+}
+
 func TestPerformDatabaseMigration_ErrorHandling(t *testing.T) {
-	db, err := sql.Open(DriverName, ":memory:")
-	assert.NoError(t, err)
+	db, err := sql.Open(DriverName, DSN(filepath.Join(t.TempDir(), "rollback.db")))
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		if err := db.Close(); err != nil {
 			t.Errorf("failed to close database: %v", err)
@@ -54,8 +105,22 @@ func TestPerformDatabaseMigration_ErrorHandling(t *testing.T) {
 	ctx := context.Background()
 	err = performDatabaseMigration(ctx, db)
 
-	assert.Error(t, err, "Migration should fail on invalid SQL")
-	assert.Contains(t, err.Error(), "error executing DDL statement", "Error should wrap the failing context")
+	require.Error(t, err, "Migration should fail on invalid SQL")
+	assert.ErrorContains(t, err, "error executing DDL statement")
+	var tableCount int
+	err = db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'valid_table'",
+	).Scan(&tableCount)
+
+	require.NoError(t, err)
+	assert.Zero(t, tableCount, "Partial schema changes should be rolled back")
+
+	// Verify a failed migration did not advance the schema version.
+	var version int
+	err = db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version)
+
+	require.NoError(t, err)
+	assert.Zero(t, version, "Failed migration should not advance user_version")
 }
 
 func TestPerformDatabaseMigration_RecreatesTriggers(t *testing.T) {
@@ -99,7 +164,8 @@ func TestPerformDatabaseMigration_RecreatesTriggers(t *testing.T) {
 	for _, stub := range stubs {
 		exec(stub)
 	}
-
+	// Simulate a legacy database that needs a schema upgrade.
+	exec("PRAGMA user_version = 0")
 	require.NoError(t, performDatabaseMigration(ctx, db))
 
 	exec(`INSERT INTO stops (id, lat, lon) VALUES ('s-ins', 30.0, -122.0)`)
@@ -614,4 +680,20 @@ func TestLatestAgencyExpiry(t *testing.T) {
 		expected := time.Date(2025, 6, 15, 23, 59, 59, 0, locLA)
 		assert.Equal(t, expected, expiry)
 	})
+}
+func TestSchemaVersion_MatchesSchemaHash(t *testing.T) {
+	// Append a new entry when bumping schemaVersion.
+	// Do not overwrite hashes for existing versions.
+	knownHashes := map[int]string{
+		1: "1194bf134b12563b4ad12469c952b7587ab70c9ef247ba3a788fc4357158288a",
+	}
+
+	expectedHash, ok := knownHashes[schemaVersion]
+	require.True(t, ok, "schemaVersion %d has no recorded hash", schemaVersion)
+
+	hash := sha256.Sum256([]byte(ddl))
+	actualHash := hex.EncodeToString(hash[:])
+
+	require.Equal(t, expectedHash, actualHash,
+		"schema.sql changed: bump schemaVersion and add a new hash entry")
 }
