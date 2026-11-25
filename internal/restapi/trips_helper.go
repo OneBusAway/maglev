@@ -105,8 +105,8 @@ func (api *RestAPI) BuildTripStatus(
 	return api.buildTripStatusForVehicle(ctx, agencyID, tripID, vehicle, serviceDate, currentTime, freqMap)
 }
 
-// buildTripStatusForVehicle is BuildTripStatus for a caller that has already
-// looked up the vehicle, where nil means the trip has none.
+// buildTripStatusForVehicle builds status from the caller's vehicle selection
+// after any record checks. A nil vehicle means the lookup found no vehicle.
 func (api *RestAPI) buildTripStatusForVehicle(
 	ctx context.Context,
 	agencyID, tripID string,
@@ -1215,7 +1215,7 @@ func (api *RestAPI) situationRefsForTrip(ctx context.Context, tripID string) []s
 		}
 	}
 
-	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, routeID, agencyID), agencyID)
+	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, routeID, agencyID), api.GtfsManager.FirstStaticAgencyID())
 }
 
 func (api *RestAPI) calculateOffsetForStop(

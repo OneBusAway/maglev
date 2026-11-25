@@ -45,26 +45,17 @@ type arrivalsAccumulator struct {
 	stopIDs    map[string]bool
 	situations *situationCollector
 
-	// alertAgencyID is the fallback agency the single-stop handler passes to
-	// situations.add for the stop-level alert lookup. It starts as that
-	// handler's primary agency and, only when that is empty, adopts the first
-	// route agency seen. A multi-stop caller must not rely on this field —
-	// it is single-caller by design and must pass a per-stop agency ID to
-	// situations.add directly instead.
-	alertAgencyID string
-
 	// deviationSamples lets arrivals on the same block share the deviation
 	// samples the schedule-deviation fallback builds.
 	deviationSamples deviationSampleCache
 }
 
-func newArrivalsAccumulator(primaryAgencyID string) *arrivalsAccumulator {
+func newArrivalsAccumulator() *arrivalsAccumulator {
 	return &arrivalsAccumulator{
 		trips:            make(map[string]*gtfsdb.Trip),
 		routes:           make(map[string]*gtfsdb.Route),
 		stopIDs:          make(map[string]bool),
 		situations:       newSituationCollector(),
-		alertAgencyID:    primaryAgencyID,
 		deviationSamples: deviationSampleCache{},
 	}
 }
@@ -354,7 +345,7 @@ func (api *RestAPI) stopTimesForGroupServiceDay(
 	serviceStart := serviceDate.Start(agencyLoc)
 	serviceDateStr := serviceDate.String()
 
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, serviceDateStr)
 	if err != nil {
 		return nil, fmt.Errorf("query active service IDs for %s: %w", serviceDateStr, err)
 	}
@@ -556,9 +547,43 @@ func (api *RestAPI) addStopLevelArrivalAlerts(ctx context.Context, stops []gtfsd
 			return ctx.Err()
 		}
 		agencyID := agencies.agencyIDFor(stop.ID)
-		situations.add(api.GtfsManager.GetAlertsForStop(stop.ID, agencyID), agencyID)
+		situations.add(api.GtfsManager.GetAlertsForStop(stop.ID, agencyID), api.GtfsManager.FirstStaticAgencyID())
 	}
 	return nil
+}
+
+// addRouteAlertsForStops records alerts for every route that serves one of
+// stopCodes, which are bare GTFS stop ids. Agency and route ids stay in
+// separate columns: an agency id can contain an underscore, so the combined
+// agency_code form is not split back apart. Alerts are indexed by the bare
+// route id.
+func (api *RestAPI) addRouteAlertsForStops(ctx context.Context, stopCodes []string, situations *situationCollector) error {
+	if len(stopCodes) == 0 {
+		return nil
+	}
+
+	rows, err := utils.QueryInBatches(ctx, stopCodes, api.GtfsManager.GtfsDB.Queries.GetRoutesForStops)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[routeAlertKey]struct{})
+	for _, row := range rows {
+		key := routeAlertKey{agencyID: row.AgencyID, routeID: row.ID}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		situations.add(api.GtfsManager.GetAlertsForRoute(row.ID), api.GtfsManager.FirstStaticAgencyID())
+	}
+	return nil
+}
+
+// routeAlertKey is one route serving a requested stop. The same route is
+// returned once per stop it serves, and only the first copy is recorded.
+type routeAlertKey struct {
+	agencyID string
+	routeID  string
 }
 
 // agencyGroup is one timezone-shared set of stops: a single query instant,
@@ -678,7 +703,7 @@ func (api *RestAPI) activeServicesForDate(ctx context.Context, serviceDateStr st
 		return set, nil
 	}
 
-	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.GetActiveServiceIDsForDate(ctx, serviceDateStr)
+	activeServiceIDs, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, serviceDateStr)
 	if err != nil {
 		if dayOffset == 0 {
 			return nil, fmt.Errorf("query active service IDs for %s: %w", serviceDateStr, err)
@@ -1007,10 +1032,6 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 	)
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
-
-	if acc.alertAgencyID == "" && route.AgencyID != "" {
-		acc.alertAgencyID = route.AgencyID
-	}
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID),  // routeID

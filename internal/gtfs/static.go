@@ -91,6 +91,47 @@ func (manager *Manager) updateStaticGTFS() { // nolint
 	}
 }
 
+// readFirstAgencyID returns the lowest agency ID in the loaded static feed. An
+// empty agency table gives "" with no error; a failed query gives an error, so the
+// caller can tell the two apart.
+func (manager *Manager) readFirstAgencyID(ctx context.Context) (string, error) {
+	agencyIDs, err := manager.GtfsDB.Queries.ListAgencyIds(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(agencyIDs) == 0 {
+		return "", nil
+	}
+	return agencyIDs[0], nil
+}
+
+// publishStaticSnapshot swaps in the region bounds and first agency of a reload.
+// The static lock covers only the swap and the cache replacement, so readers are
+// not held up by the logging that follows the reload.
+func (manager *Manager) publishStaticSnapshot(changed bool, regionBounds map[string]*RegionBounds, firstAgencyID string) {
+	manager.staticMutex.Lock()
+	defer manager.staticMutex.Unlock()
+
+	manager.regionBounds = regionBounds
+	manager.firstAgencyID = firstAgencyID
+
+	// Replace direction and trip-distance caches together for the new feed.
+	// In-flight calculations retain the retired cache generation.
+	if changed && manager.DirectionCalculator != nil {
+		manager.DirectionCalculator.ClearCache()
+	}
+}
+
+// FirstStaticAgencyID returns the first agency ID of the loaded static feed. It is
+// the situation ID prefix for an alert that names no agency on a feed with no
+// agency-ids, matching the fallback Java's createId uses. It is "" until static data
+// has loaded.
+func (manager *Manager) FirstStaticAgencyID() string {
+	manager.staticMutex.RLock()
+	defer manager.staticMutex.RUnlock()
+	return manager.firstAgencyID
+}
+
 // ReloadStatic is the single code path for importing GTFS static data into
 // manager.GtfsDB. It is called from both startup (InitGTFSManager) and the
 // periodic refresh. Returns (changed, err). Caller is responsible
@@ -117,17 +158,12 @@ func (manager *Manager) ReloadStatic(ctx context.Context) (bool, error) {
 	}
 
 	newRegionBounds := computeRegionBounds(ctx, manager.GtfsDB)
-
-	manager.staticMutex.Lock()
-	defer manager.staticMutex.Unlock()
-
-	manager.regionBounds = newRegionBounds
-
-	// Replace direction and trip-distance caches together for the new feed.
-	// In-flight calculations retain the retired cache generation.
-	if changed && manager.DirectionCalculator != nil {
-		manager.DirectionCalculator.ClearCache()
+	newFirstAgencyID, agencyErr := manager.readFirstAgencyID(ctx)
+	if agencyErr != nil {
+		logging.LogError(logger, "failed to read first static agency ID; keeping the previous value", agencyErr)
+		newFirstAgencyID = manager.FirstStaticAgencyID()
 	}
+	manager.publishStaticSnapshot(changed, newRegionBounds, newFirstAgencyID)
 
 	if eTag := manager.GetSystemETag(ctx); eTag != "" {
 		logging.LogOperation(logger, "system_etag_updated_successfully", slog.String("etag", eTag))
