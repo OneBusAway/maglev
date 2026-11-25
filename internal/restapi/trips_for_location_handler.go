@@ -1317,23 +1317,13 @@ func (rb *referenceBuilder) createTripReference(trip models.Trip, currentAgency 
 }
 
 func (rb *referenceBuilder) toReferencesModel(ctx context.Context) models.ReferencesModel {
-	trips := rb.tripsRefList
-	if trips == nil {
-		trips = []models.Trip{}
+	return models.ReferencesModel{
+		Agencies:   rb.getAgenciesList(),
+		Routes:     rb.getRoutesList(),
+		Stops:      rb.stopList,
+		Trips:      rb.tripsRefList,
+		Situations: rb.getSituationsList(ctx),
 	}
-	stops := rb.stopList
-	if stops == nil {
-		stops = []models.Stop{}
-	}
-
-	references := models.NewEmptyReferences()
-	references.Agencies = rb.getAgenciesList()
-	references.Routes = rb.getRoutesList()
-	references.Stops = stops
-	references.Trips = trips
-	references.Situations = rb.getSituationsList(ctx)
-
-	return *references
 }
 
 func (rb *referenceBuilder) getSituationsList(ctx context.Context) []models.Situation {
