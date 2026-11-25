@@ -111,6 +111,24 @@ func TestFeedHashIncludesGTFSTidy(t *testing.T) {
 	assert.Equal(t, "abc+gtfstidy", feedHash("abc", Config{EnableGTFSTidy: true}))
 }
 
+// TestContentHashStripsGTFSTidyMarker checks that ContentHash removes the
+// gtfstidy marker and leaves a hash without it unchanged.
+func TestContentHashStripsGTFSTidyMarker(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored string
+		want   string
+	}{
+		{name: "tidy marker is removed", stored: "abc+gtfstidy", want: "abc"},
+		{name: "no marker is unchanged", stored: "abc", want: "abc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ContentHash(tt.stored))
+		})
+	}
+}
+
 func TestFetchFeedFileTruncatedDownloadLeavesNoFile(t *testing.T) {
 	const promisedBytes, sentBytes = 1024, 10
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -392,4 +410,56 @@ func TestParsedFeedFileIsClosedAndRemoved(t *testing.T) {
 	assert.ErrorIs(t, err, os.ErrClosed)
 	_, err = os.Stat(feed.path)
 	assert.True(t, os.IsNotExist(err))
+}
+
+func TestFetchFeedFileDownloadErrorRedactsQuery(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	serverURL := server.URL
+	server.Close() // force the HTTP client to return a wrapped *url.Error
+
+	_, err := fetchFeedFile(context.Background(), Config{GtfsURL: serverURL + "/gtfs.zip?token=STATIC_ERROR_SECRET"})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "STATIC_ERROR_SECRET")
+	assert.Contains(t, err.Error(), appconf.RedactedValue)
+}
+
+func TestFetchFeedFile_MalformedHTTPSourceErrorRedactsQuery(t *testing.T) {
+	secretSource := "https:/feeds.example.test/missing.zip?token=LOCAL_PATH_SECRET"
+	_, err := fetchFeedFile(context.Background(), Config{GtfsURL: secretSource})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "LOCAL_PATH_SECRET")
+	assert.Contains(t, err.Error(), appconf.RedactedValue)
+}
+
+func TestFetchFeedFile_LocalPathErrorRemainsReadable(t *testing.T) {
+	localPath := filepath.Join(t.TempDir(), "missing-feed.zip")
+	_, err := fetchFeedFile(context.Background(), Config{GtfsURL: localPath})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), localPath)
+	assert.NotContains(t, err.Error(), appconf.RedactedValue)
+}
+
+func TestFetchFeedFileLogRedactsSource(t *testing.T) {
+	logOutput := captureStructuredLogOutput(t)
+
+	const secret = "STATIC_LOG_SECRET"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	sourceURL := server.URL + "/feed.zip?token=" + secret
+
+	_, err := fetchFeedFile(context.Background(), Config{
+		GtfsURL: sourceURL,
+	})
+
+	require.Error(t, err)
+
+	output := logOutput.String()
+
+	require.Contains(t, output, `"msg":"reading_gtfs_data"`)
+	assert.Contains(t, output, server.URL+"/feed.zip?"+appconf.RedactedValue)
+	assert.NotContains(t, output, secret)
 }

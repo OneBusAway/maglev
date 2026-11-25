@@ -16,6 +16,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
+	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/utils"
 )
@@ -32,6 +33,12 @@ type alertIndex struct {
 	all []FeedAlert
 }
 
+// agencyVehicleKey identifies a vehicle within a specific transit agency.
+type agencyVehicleKey struct {
+	agencyID  string
+	vehicleID string
+}
+
 // mergedRealtime is the merged view of every realtime feed, published as a
 // single immutable value.
 //
@@ -42,9 +49,11 @@ type alertIndex struct {
 type mergedRealtime struct {
 	trips                    []gtfs.Trip
 	vehicles                 []gtfs.Vehicle
+	liveVehicles             []gtfs.Vehicle
 	tripLookup               map[string]int
+	tripUpdateSeenAt         map[string]time.Time
 	vehicleLookupByTrip      map[string]int
-	vehicleLookupByVehicle   map[string]int
+	vehicleLookupByVehicle   map[agencyVehicleKey]int
 	duplicatedVehicleByRoute map[string][]gtfs.Vehicle
 	vehiclesByRoute          map[string][]gtfs.Vehicle
 	vehiclePositionsByAgency map[string]AgencyVehiclePositions
@@ -61,8 +70,9 @@ type mergedRealtime struct {
 // Manager, which several tests construct, reads as empty rather than panicking.
 var emptyMergedRealtime = &mergedRealtime{
 	tripLookup:               map[string]int{},
+	tripUpdateSeenAt:         map[string]time.Time{},
 	vehicleLookupByTrip:      map[string]int{},
-	vehicleLookupByVehicle:   map[string]int{},
+	vehicleLookupByVehicle:   map[agencyVehicleKey]int{},
 	duplicatedVehicleByRoute: map[string][]gtfs.Vehicle{},
 	vehiclesByRoute:          map[string][]gtfs.Vehicle{},
 	vehiclePositionsByAgency: map[string]AgencyVehiclePositions{},
@@ -92,7 +102,9 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 	out := &mergedRealtime{
 		trips:                    slices.Clone(m.trips),
 		vehicles:                 slices.Clone(m.vehicles),
+		liveVehicles:             slices.Clone(m.liveVehicles),
 		tripLookup:               maps.Clone(m.tripLookup),
+		tripUpdateSeenAt:         maps.Clone(m.tripUpdateSeenAt),
 		vehicleLookupByTrip:      maps.Clone(m.vehicleLookupByTrip),
 		vehicleLookupByVehicle:   maps.Clone(m.vehicleLookupByVehicle),
 		duplicatedVehicleByRoute: maps.Clone(m.duplicatedVehicleByRoute),
@@ -117,7 +129,7 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 		out.vehicleLookupByTrip = map[string]int{}
 	}
 	if out.vehicleLookupByVehicle == nil {
-		out.vehicleLookupByVehicle = map[string]int{}
+		out.vehicleLookupByVehicle = map[agencyVehicleKey]int{}
 	}
 	if out.duplicatedVehicleByRoute == nil {
 		out.duplicatedVehicleByRoute = map[string][]gtfs.Vehicle{}
@@ -352,6 +364,13 @@ func (manager *Manager) GetRealTimeTrips() []gtfs.Trip {
 	return manager.mergedRealtime().trips
 }
 
+// GetLiveRealTimeVehicles returns only vehicles in their feed's latest update,
+// excluding retained vehicles. The result shares GetRealTimeVehicles' read-only
+// contract and is published in the same immutable snapshot.
+func (manager *Manager) GetLiveRealTimeVehicles() []gtfs.Vehicle {
+	return manager.mergedRealtime().liveVehicles
+}
+
 // GetRealTimeVehicles returns the current snapshot's vehicles under the same
 // read-only contract as GetRealTimeTrips.
 func (manager *Manager) GetRealTimeVehicles() []gtfs.Vehicle {
@@ -456,7 +475,7 @@ func (manager *Manager) GetAlertsForStop(stopID, agencyID string) []FeedAlert {
 func loadRealtimeData(ctx context.Context, source string, headers map[string]string) (*gtfs.Realtime, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", source, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid GTFS-RT source URL: %w", appconf.RedactURLError(err, source))
 	}
 
 	for key, value := range headers {
@@ -465,7 +484,10 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 
 	resp, err := realtimeHTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute GTFS-RT request: %w", err)
+		return nil, fmt.Errorf(
+			"failed to execute GTFS-RT request: %w",
+			appconf.RedactURLError(err, source),
+		)
 	}
 
 	defer logging.SafeCloseWithLogging(resp.Body,
@@ -473,7 +495,7 @@ func loadRealtimeData(ctx context.Context, source string, headers map[string]str
 		"http_response_body")
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gtfs-rt fetch failed: %s returned %s", source, resp.Status)
+		return nil, fmt.Errorf("gtfs-rt fetch failed: %s returned %s", appconf.RedactURL(source), resp.Status)
 	}
 
 	const maxBodySize = 25 * 1024 * 1024
@@ -509,7 +531,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			if tripErr != nil {
 				logging.LogError(logger, "Error loading GTFS-RT trip updates data", tripErr,
 					slog.String("feed", feedID),
-					slog.String("url", feedCfg.TripUpdatesURL))
+					slog.String("url", appconf.RedactURL(feedCfg.TripUpdatesURL)))
 			}
 		}()
 	}
@@ -522,7 +544,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			if vehicleErr != nil {
 				logging.LogError(logger, "Error loading GTFS-RT vehicle positions data", vehicleErr,
 					slog.String("feed", feedID),
-					slog.String("url", feedCfg.VehiclePositionsURL))
+					slog.String("url", appconf.RedactURL(feedCfg.VehiclePositionsURL)))
 			}
 		}()
 	}
@@ -535,7 +557,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 			if alertErr != nil {
 				logging.LogError(logger, "Error loading GTFS-RT service alerts data", alertErr,
 					slog.String("feed", feedID),
-					slog.String("url", feedCfg.ServiceAlertsURL))
+					slog.String("url", appconf.RedactURL(feedCfg.ServiceAlertsURL)))
 			}
 		}()
 	}
@@ -545,6 +567,12 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	// Check for context cancellation
 	if ctx.Err() != nil {
 		return false
+	}
+
+	var tripFeedTime time.Time
+	if tripData != nil && tripErr == nil {
+		dropTripsWithoutTripUpdate(tripData)
+		tripFeedTime = normalizeTripUpdateTimestamps(tripData, time.Now())
 	}
 
 	// Apply agency-based filtering if configured for this feed.
@@ -572,6 +600,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	var vehicleAgencies map[vehicleKey]string
 	if vehicleData != nil && vehicleErr == nil {
+		normalizeVehicleTimestamps(vehicleData.Vehicles, time.Now())
 		var ok bool
 		vehicleData.Vehicles, vehicleAgencies, ok = manager.attributeFeedVehicles(ctx, logger, feedCfg, vehicleData.Vehicles)
 		if !ok {
@@ -584,6 +613,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	if tripData != nil && tripErr == nil {
 		manager.storeFeedTrips(feedID, trips, tripData.CreatedAt)
+		manager.recordTripUpdatesSeenLocked(feedID, trips.kept, tripFeedTime)
 	}
 
 	// False until a vehicle payload is actually stored. A stale header is not
@@ -810,10 +840,7 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 
 	// Update timestamp within the same lock
 	if hasNewData {
-		if manager.feedLastUpdate == nil {
-			manager.feedLastUpdate = make(map[string]time.Time)
-		}
-		manager.feedLastUpdate[feedID] = time.Now()
+		manager.recordFeedUpdateLocked(feedID, time.Now())
 	}
 
 	// Stamp trip-updates success on its own clock, within the same lock. This
@@ -826,6 +853,96 @@ func (manager *Manager) updateFeedRealtime(ctx context.Context, feedCfg RTFeedCo
 	}
 
 	return hasNewData
+}
+
+// dropTripsWithoutTripUpdate removes the trips go-gtfs makes up for vehicle and
+// alert entities. Java builds records only from TripUpdate entities
+// (GtfsRealtimeTripLibrary.java:315-347), and an empty trip here would read as
+// a live update with no times.
+func dropTripsWithoutTripUpdate(tripData *gtfs.Realtime) {
+	tripData.Trips = slices.DeleteFunc(tripData.Trips, func(trip gtfs.Trip) bool {
+		return !trip.IsEntityInMessage
+	})
+}
+
+// maxPlausibleTimestampAge separates seconds from milliseconds: a value this far
+// from now as seconds must be in another scale, as Java's ensureMillis assumes.
+const maxPlausibleTimestampAge = 100 * 365 * 24 * time.Hour
+
+// normalizeTripUpdateTimestamps gives each trip update the time of the record
+// Java builds from it. Some feeds send milliseconds, and an update with no
+// timestamp, or a zero one, takes the feed's header time
+// (GtfsRealtimeTripLibrary.java:381-389, :532, :1106), so it can still expire when
+// the feed freezes. With no header it takes the fetch time. It returns that feed
+// time.
+func normalizeTripUpdateTimestamps(tripData *gtfs.Realtime, fetchedAt time.Time) time.Time {
+	feedTime := fetchedAt
+	if tripData.CreatedAt.Unix() > 0 {
+		feedTime = timestampInSeconds(tripData.CreatedAt, fetchedAt)
+	}
+	for i := range tripData.Trips {
+		timestamp := tripData.Trips[i].Timestamp
+		normalized := feedTime
+		if timestamp != nil && timestamp.Unix() != 0 {
+			normalized = timestampInSeconds(*timestamp, fetchedAt)
+		}
+		tripData.Trips[i].Timestamp = &normalized
+	}
+	return feedTime
+}
+
+// normalizeVehicleTimestamps corrects vehicle timestamps that a feed sent in
+// milliseconds, as Java's ensureMillis does for vehicle positions too. Each
+// vehicle gets a new pointer because the parsed feed may share the old one.
+func normalizeVehicleTimestamps(vehicles []gtfs.Vehicle, fetchedAt time.Time) {
+	for i := range vehicles {
+		timestamp := vehicles[i].Timestamp
+		if timestamp == nil {
+			continue
+		}
+		normalized := timestampInSeconds(*timestamp, fetchedAt)
+		vehicles[i].Timestamp = &normalized
+	}
+}
+
+// timestampInSeconds corrects a time parsed from a millisecond value as seconds.
+func timestampInSeconds(timestamp, now time.Time) time.Time {
+	age := now.Sub(timestamp)
+	if age > -maxPlausibleTimestampAge && age < maxPlausibleTimestampAge {
+		return timestamp
+	}
+	return time.UnixMilli(timestamp.Unix()).In(timestamp.Location())
+}
+
+// tripUpdateSeen is when a trip update's timestamp first arrived.
+type tripUpdateSeen struct {
+	timestamp time.Time
+	at        time.Time
+}
+
+func (manager *Manager) recordTripUpdatesSeenLocked(feedID string, trips []gtfs.Trip, feedTime time.Time) {
+	if manager.feedTripUpdateSeen == nil {
+		manager.feedTripUpdateSeen = make(map[string]map[string]tripUpdateSeen)
+	}
+	manager.feedTripUpdateSeen[feedID] = nextTripUpdatesSeen(manager.feedTripUpdateSeen[feedID], trips, feedTime)
+}
+
+// nextTripUpdatesSeen carries a trip's first-seen time forward until its update's
+// timestamp changes. Java reprocesses a vehicle's record only when that timestamp
+// advances, using the feed's time then (GtfsRealtimeSource.java:645, :742).
+func nextTripUpdatesSeen(previous map[string]tripUpdateSeen, trips []gtfs.Trip, feedTime time.Time) map[string]tripUpdateSeen {
+	seen := make(map[string]tripUpdateSeen, len(trips))
+	for _, trip := range trips {
+		if trip.ID.ID == "" || trip.Timestamp == nil {
+			continue
+		}
+		if prior, ok := previous[trip.ID.ID]; ok && prior.timestamp.Equal(*trip.Timestamp) {
+			seen[trip.ID.ID] = prior
+			continue
+		}
+		seen[trip.ID.ID] = tripUpdateSeen{timestamp: *trip.Timestamp, at: feedTime}
+	}
+	return seen
 }
 
 func collectTripRouteIDs(routeIDSet map[string]struct{}, trips []gtfs.Trip) {
@@ -1259,6 +1376,70 @@ func routeBelongsToAllowedAgency(routeID string, allowed map[string]bool, routeA
 	return ok && allowed[agencyID]
 }
 
+type vehicleIndices struct {
+	allVehicles              []gtfs.Vehicle
+	vehicleLookupByTrip      map[string]int
+	vehicleLookupByVehicle   map[agencyVehicleKey]int
+	duplicatedVehicleByRoute map[string][]gtfs.Vehicle
+	vehiclesByRoute          map[string][]gtfs.Vehicle
+}
+
+func (manager *Manager) buildVehicleIndices(vehicleFeedIDs []string, totalVehicles int, tripLookup map[string]int, allTrips []gtfs.Trip) vehicleIndices {
+	indices := vehicleIndices{
+		allVehicles:              make([]gtfs.Vehicle, 0, totalVehicles),
+		vehicleLookupByTrip:      make(map[string]int, totalVehicles),
+		vehicleLookupByVehicle:   make(map[agencyVehicleKey]int, totalVehicles),
+		duplicatedVehicleByRoute: make(map[string][]gtfs.Vehicle),
+		vehiclesByRoute:          make(map[string][]gtfs.Vehicle),
+	}
+
+	for _, feedID := range vehicleFeedIDs {
+		agencyMap := manager.feedVehicleAgency[feedID]
+		for _, vehicle := range manager.feedVehicles[feedID] {
+			indices.indexVehicle(vehicle, agencyMap, tripLookup, allTrips)
+		}
+	}
+	return indices
+}
+
+func (indices *vehicleIndices) indexVehicle(vehicle gtfs.Vehicle, agencyMap map[vehicleKey]string, tripLookup map[string]int, allTrips []gtfs.Trip) {
+	indices.allVehicles = append(indices.allVehicles, vehicle)
+	i := len(indices.allVehicles) - 1
+
+	if vehicle.Trip != nil {
+		if tripID := vehicle.Trip.ID.ID; tripID != "" {
+			indices.vehicleLookupByTrip[tripID] = i
+		}
+		if routeID := vehicle.Trip.ID.RouteID; routeID != "" {
+			indices.vehiclesByRoute[routeID] = append(indices.vehiclesByRoute[routeID], vehicle)
+		}
+	}
+
+	if vehicle.ID != nil && vehicle.ID.ID != "" {
+		agencyID := agencyMap[newVehicleKey(vehicle.ID)]
+		indices.vehicleLookupByVehicle[agencyVehicleKey{agencyID: agencyID, vehicleID: vehicle.ID.ID}] = i
+	}
+
+	indices.indexDuplicatedVehicle(vehicle, tripLookup, allTrips)
+}
+
+func (indices *vehicleIndices) indexDuplicatedVehicle(vehicle gtfs.Vehicle, tripLookup map[string]int, allTrips []gtfs.Trip) {
+	if vehicle.Trip == nil || vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
+		return
+	}
+	routeID := vehicle.Trip.ID.RouteID
+	// Some feeds omit route_id in VehiclePosition trip descriptors.
+	// Fall back to the corresponding TripUpdate to resolve the route.
+	if routeID == "" && vehicle.Trip.ID.ID != "" {
+		if index, exists := tripLookup[vehicle.Trip.ID.ID]; exists {
+			routeID = allTrips[index].ID.RouteID
+		}
+	}
+	if routeID != "" {
+		indices.duplicatedVehicleByRoute[routeID] = append(indices.duplicatedVehicleByRoute[routeID], vehicle)
+	}
+}
+
 func (manager *Manager) rebuildMergedRealtimeLocked() {
 	builtAt := time.Now()
 	previous := manager.mergedRealtime()
@@ -1290,10 +1471,6 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	// Writes the released copies back to feedVehicles, so a trip stays released
 	// after the vehicle that took it drops out.
 	manager.releaseTripsTakenAcrossFeeds(vehicleFeedIDs)
-	allVehicles := make([]gtfs.Vehicle, 0, totalVehicles)
-	for _, id := range vehicleFeedIDs {
-		allVehicles = append(allVehicles, manager.feedVehicles[id]...)
-	}
 
 	alertFeedIDs := make([]string, 0, len(manager.feedAlerts))
 	for id := range manager.feedAlerts {
@@ -1308,35 +1485,15 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		}
 	}
 
-	vehicleLookupByTrip := make(map[string]int, len(allVehicles))
-	vehicleLookupByVehicle := make(map[string]int, len(allVehicles))
-	duplicatedVehicleByRoute := make(map[string][]gtfs.Vehicle)
-	vehiclesByRoute := make(map[string][]gtfs.Vehicle)
-	for i, vehicle := range allVehicles {
-		if vehicle.Trip != nil && vehicle.Trip.ID.ID != "" {
-			vehicleLookupByTrip[vehicle.Trip.ID.ID] = i
-		}
-		if vehicle.Trip != nil && vehicle.Trip.ID.RouteID != "" {
-			vehiclesByRoute[vehicle.Trip.ID.RouteID] = append(vehiclesByRoute[vehicle.Trip.ID.RouteID], vehicle)
-		}
-		if vehicle.ID != nil && vehicle.ID.ID != "" {
-			vehicleLookupByVehicle[vehicle.ID.ID] = i
-		}
-		if vehicle.Trip == nil || vehicle.Trip.ID.ScheduleRelationship != gtfsrt.TripDescriptor_DUPLICATED {
-			continue
-		}
-		routeID := vehicle.Trip.ID.RouteID
-		// Some feeds omit route_id in VehiclePosition trip descriptors.
-		// Fall back to the corresponding TripUpdate to resolve the route.
-		if routeID == "" && vehicle.Trip.ID.ID != "" {
-			if index, exists := tripLookup[vehicle.Trip.ID.ID]; exists {
-				routeID = allTrips[index].ID.RouteID
-			}
-		}
-		if routeID != "" {
-			duplicatedVehicleByRoute[routeID] = append(duplicatedVehicleByRoute[routeID], vehicle)
+	tripUpdateSeenAt := make(map[string]time.Time, len(allTrips))
+	for _, id := range feedIDs {
+		for tripID, seen := range manager.feedTripUpdateSeen[id] {
+			tripUpdateSeenAt[tripID] = seen.at
 		}
 	}
+
+	vehicleIndex := manager.buildVehicleIndices(vehicleFeedIDs, totalVehicles, tripLookup, allTrips)
+
 	idx := alertIndex{
 		byTrip:   make(map[string][]FeedAlert),
 		byRoute:  make(map[string][]FeedAlert),
@@ -1392,12 +1549,14 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 
 	manager.merged.Store(&mergedRealtime{
 		trips:                    allTrips,
-		vehicles:                 allVehicles,
+		vehicles:                 vehicleIndex.allVehicles,
+		liveVehicles:             manager.liveVehicles(vehicleFeedIDs),
 		tripLookup:               tripLookup,
-		vehicleLookupByTrip:      vehicleLookupByTrip,
-		vehicleLookupByVehicle:   vehicleLookupByVehicle,
-		duplicatedVehicleByRoute: duplicatedVehicleByRoute,
-		vehiclesByRoute:          vehiclesByRoute,
+		tripUpdateSeenAt:         tripUpdateSeenAt,
+		vehicleLookupByTrip:      vehicleIndex.vehicleLookupByTrip,
+		vehicleLookupByVehicle:   vehicleIndex.vehicleLookupByVehicle,
+		duplicatedVehicleByRoute: vehicleIndex.duplicatedVehicleByRoute,
+		vehiclesByRoute:          vehicleIndex.vehiclesByRoute,
 		vehiclePositionsByAgency: manager.buildVehiclePositionsByAgency(vehicleFeedIDs, builtAt),
 		alerts:                   idx,
 		alertFeedsByAgency:       manager.buildAlertFeedsByAgency(alertFeedIDs, previous, builtAt),
@@ -1449,9 +1608,9 @@ func (manager *Manager) pollFeed(feedCfg RTFeedConfig) {
 	logging.LogOperation(logger, "started_realtime_feed_poller",
 		slog.String("feed", feedCfg.ID),
 		slog.Float64("interval_ms", float64(baseInterval)/float64(time.Millisecond)),
-		slog.String("tripUpdatesURL", feedCfg.TripUpdatesURL),
-		slog.String("vehiclePositionsURL", feedCfg.VehiclePositionsURL),
-		slog.String("serviceAlertsURL", feedCfg.ServiceAlertsURL),
+		slog.String("tripUpdatesURL", appconf.RedactURL(feedCfg.TripUpdatesURL)),
+		slog.String("vehiclePositionsURL", appconf.RedactURL(feedCfg.VehiclePositionsURL)),
+		slog.String("serviceAlertsURL", appconf.RedactURL(feedCfg.ServiceAlertsURL)),
 	)
 
 	// Use a Timer instead of Ticker to dynamically control intervals (backoff/jitter)

@@ -49,11 +49,7 @@ func loadLatencyFixture(tb testing.TB) (*Client, string, string) {
 		dbPath, _ = filepath.Abs(filepath.Join("..", "testdata", "perf", "trimet-perf.db"))
 	case latencyFileExists(rabaZip):
 		zipPath = rabaZip
-		tmpDir := filepath.Join(os.TempDir(), "maglev_query_latency")
-		if mkErr := os.MkdirAll(tmpDir, 0755); mkErr != nil {
-			tb.Fatalf("cannot create tmp dir: %v", mkErr)
-		}
-		dbPath = filepath.Join(tmpDir, "raba_latency.db")
+		dbPath = filepath.Join(tb.TempDir(), "raba_latency.db")
 	default:
 		tb.Skip("no GTFS dataset found – run scripts/download-perf-data.sh or ensure testdata/raba.zip exists")
 	}
@@ -225,6 +221,7 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 	type querySpec struct {
 		name string
 		fn   func() error
+		skip bool
 	}
 	querySpecs := []querySpec{
 		{
@@ -261,14 +258,24 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 			},
 		},
 		{
-			name: "GetActiveRouteIDsForStopsOnDate (stops-for-location batch)",
+			name: "GetActiveRouteIDsForStopsOnDate (stops-for-location)",
+			skip: len(svcIDs) == 0,
 			fn: func() error {
-				if len(svcIDs) == 0 {
-					return nil
-				}
 				_, err := client.Queries.GetActiveRouteIDsForStopsOnDate(ctx, GetActiveRouteIDsForStopsOnDateParams{
 					StopIds:    []string{stopID},
 					ServiceIds: svcIDs,
+				})
+				return err
+			},
+		},
+		{
+			name: "GetActiveRouteIDsForStopsInInterval (nearby stops)",
+			skip: len(svcIDs) == 0,
+			fn: func() error {
+				_, err := client.Queries.GetActiveRouteIDsForStopsInInterval(ctx, GetActiveRouteIDsForStopsInIntervalParams{
+					StopIds:     []string{stopID},
+					ServiceIds:  svcIDs,
+					IntervalEnd: int64(24 * time.Hour),
 				})
 				return err
 			},
@@ -290,6 +297,12 @@ func TestQueryLatencyUnderConcurrentLoad(t *testing.T) {
 		concurrency, iterations, latencyIsWALEnabled(ctx, t, client.DB))
 
 	for _, q := range querySpecs {
+
+		if q.skip {
+			t.Logf("Skipping %s: no active service IDs for today", q.name)
+			continue
+		}
+
 		stat := &queryLatencyStat{name: q.name}
 		var mu sync.Mutex
 		var wg sync.WaitGroup

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/logging"
 )
 
@@ -61,14 +62,14 @@ func (f *feedFile) close() {
 // database and hashed on the way. Call close when done.
 func fetchFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 	logger := slog.Default().With(slog.String("component", "gtfs_loader"))
-	logging.LogOperation(logger, "reading_gtfs_data", slog.String("source", config.GtfsURL))
+	logging.LogOperation(logger, "reading_gtfs_data", slog.String("source", appconf.RedactURL(config.GtfsURL)))
 
 	if !config.isLocalFile() {
 		return downloadFeedFile(ctx, config)
 	}
 	contentHash, err := hashFile(config.GtfsURL)
 	if err != nil {
-		return nil, fmt.Errorf("error reading local GTFS file: %w", err)
+		return nil, fmt.Errorf("error reading local GTFS file: %w", appconf.RedactURLError(err, config.GtfsURL))
 	}
 	return &feedFile{path: config.GtfsURL, contentHash: contentHash}, nil
 }
@@ -111,7 +112,7 @@ func (f *feedFile) makePrivate(config Config) error {
 func downloadFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, config.GtfsURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("error creating GTFS request: %w", err)
+		return nil, fmt.Errorf("error creating GTFS request: %w", appconf.RedactURLError(err, config.GtfsURL))
 	}
 	if config.StaticAuthHeaderKey != "" && config.StaticAuthHeaderValue != "" {
 		req.Header.Set(config.StaticAuthHeaderKey, config.StaticAuthHeaderValue)
@@ -119,7 +120,7 @@ func downloadFeedFile(ctx context.Context, config Config) (*feedFile, error) {
 
 	resp, err := staticHTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("error downloading GTFS data: %w", err)
+		return nil, fmt.Errorf("error downloading GTFS data: %w", appconf.RedactURLError(err, config.GtfsURL))
 	}
 	defer logging.SafeCloseWithLogging(resp.Body,
 		slog.Default().With(slog.String("component", "gtfs_downloader")),
@@ -269,6 +270,10 @@ func (l downloadLocation) owns(name string) bool {
 	return found && random != "" && strings.Trim(random, "0123456789") == ""
 }
 
+// gtfsTidySuffix marks a stored hash made with gtfstidy on. feedHash adds it
+// and ContentHash removes it, so the two stay in step.
+const gtfsTidySuffix = "+gtfstidy"
+
 // feedHash identifies a feed in import_metadata. With gtfstidy on, the stored
 // data comes from the tidied feed, so the setting is part of the identity:
 // turning it on or off causes a re-import. The mark records that tidy was on,
@@ -277,9 +282,15 @@ func (l downloadLocation) owns(name string) bool {
 // retried when the feed changes.
 func feedHash(contentHash string, config Config) string {
 	if config.EnableGTFSTidy {
-		return contentHash + "+gtfstidy"
+		return contentHash + gtfsTidySuffix
 	}
 	return contentHash
+}
+
+// ContentHash returns the hex sha256 of the raw static GTFS zip from a stored
+// import_metadata hash, dropping the gtfstidy marker that feedHash may add.
+func ContentHash(storedHash string) string {
+	return strings.TrimSuffix(storedHash, gtfsTidySuffix)
 }
 
 // parse parses the feed as a stream from its private copy, so its stop times

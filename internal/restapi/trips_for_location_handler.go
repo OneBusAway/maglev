@@ -21,7 +21,9 @@ import (
 // tripsForLocationHandler returns active trips near a geographic location, specified by
 // lat/lon coordinates with latSpan/lonSpan bounds, including real-time status and schedule data.
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	// Trip status for trips on one block repeats the block's trip and service
+	// lookups; the read memo fetches each once.
+	ctx := gtfsdb.WithReadMemo(r.Context())
 
 	parsedReq, fieldErrors, err := api.parseAndValidateRequest(r)
 	if len(fieldErrors) > 0 {
@@ -324,7 +326,7 @@ func (api *RestAPI) blocklessScheduledTripIDsInBounds(
 	}
 	// One lookup for the union of every candidate's stops. Fetching per trip
 	// would be a query per candidate, and the candidate set runs to hundreds.
-	stopsByID, err := api.fetchStopCoordsForStopTimes(ctx, unionStopTimes(stopTimesByTrip))
+	stopsByID, err := api.fetchStopCoords(ctx, unionStopIDs(stopTimesByTrip))
 	if err != nil {
 		return nil, err
 	}
@@ -352,17 +354,19 @@ func (api *RestAPI) blocklessScheduledTripIDsInBounds(
 	return visible, nil
 }
 
-// unionStopTimes flattens per-trip stop times into one slice, so their stops can
-// be fetched in a single query.
-func unionStopTimes(stopTimesByTrip map[string][]gtfsdb.StopTime) []gtfsdb.StopTime {
+// unionStopIDs flattens per-trip stop times into one slice of stop IDs, so
+// their stops can be fetched in a single query.
+func unionStopIDs(stopTimesByTrip map[string][]gtfsdb.StopTime) []string {
 	total := 0
 	for _, stopTimes := range stopTimesByTrip {
 		total += len(stopTimes)
 	}
 
-	union := make([]gtfsdb.StopTime, 0, total)
+	union := make([]string, 0, total)
 	for _, stopTimes := range stopTimesByTrip {
-		union = append(union, stopTimes...)
+		for _, stopTime := range stopTimes {
+			union = append(union, stopTime.StopID)
+		}
 	}
 	return union
 }
@@ -666,6 +670,12 @@ func (api *RestAPI) shapePointsForTrips(ctx context.Context, trips []gtfsdb.Trip
 		shapeIDs = append(shapeIDs, shapeID)
 	}
 
+	return api.shapePointsByShapeIDs(ctx, shapeIDs)
+}
+
+// shapePointsByShapeIDs returns the points of each shape, keyed by shape ID.
+// A shape with no points is absent.
+func (api *RestAPI) shapePointsByShapeIDs(ctx context.Context, shapeIDs []string) (map[string][]gtfs.ShapePoint, error) {
 	byID := make(map[string][]gtfs.ShapePoint, len(shapeIDs))
 	if len(shapeIDs) == 0 {
 		return byID, nil
@@ -943,7 +953,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  servicedate.OffsetBase(serviceDate).UnixMilli(),
-			SituationIds: situations.add(alerts, agencyID),
+			SituationIds: situations.add(alerts, api.GtfsManager.FirstStaticAgencyID()),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
 		result = append(result, entry)
@@ -1309,23 +1319,13 @@ func (rb *referenceBuilder) createTripReference(trip models.Trip, currentAgency 
 }
 
 func (rb *referenceBuilder) toReferencesModel(ctx context.Context) models.ReferencesModel {
-	trips := rb.tripsRefList
-	if trips == nil {
-		trips = []models.Trip{}
+	return models.ReferencesModel{
+		Agencies:   rb.getAgenciesList(),
+		Routes:     rb.getRoutesList(),
+		Stops:      rb.stopList,
+		Trips:      rb.tripsRefList,
+		Situations: rb.getSituationsList(ctx),
 	}
-	stops := rb.stopList
-	if stops == nil {
-		stops = []models.Stop{}
-	}
-
-	references := models.NewEmptyReferences()
-	references.Agencies = rb.getAgenciesList()
-	references.Routes = rb.getRoutesList()
-	references.Stops = stops
-	references.Trips = trips
-	references.Situations = rb.getSituationsList(ctx)
-
-	return *references
 }
 
 func (rb *referenceBuilder) getSituationsList(ctx context.Context) []models.Situation {

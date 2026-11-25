@@ -52,7 +52,7 @@
             "occupancyCapacity": -1,
             "occupancyCount": -1,
             "occupancyStatus": "",
-            "orientation": 280.243421,
+            "orientation": 283.392498,
             "phase": "scheduled",
             "position": {
               "lat": 40.62512,
@@ -106,7 +106,7 @@
           "tripId": "25_18d5d560-4d07-4871-bc06-376c979c7a26",
           "tripStatus": {
             "activeTripId": "25_dcd9e9b6-e261-4020-87f7-b65bf6b34e87",
-            "blockTripSequence": 6,
+            "blockTripSequence": 4,
             "closestStop": "25_1030",
             "closestStopTimeOffset": 3060,
             "distanceAlongTrip": 0,
@@ -119,7 +119,7 @@
             "occupancyCapacity": -1,
             "occupancyCount": -1,
             "occupancyStatus": "",
-            "orientation": 280.243421,
+            "orientation": 283.392498,
             "phase": "scheduled",
             "position": {
               "lat": 40.62512,
@@ -236,6 +236,23 @@
           "locationType": 0,
           "lon": -122.400736,
           "name": "Lake Blvd at Tamarack Dr",
+          "parent": "",
+          "routeIds": [
+            "25_151"
+          ],
+          "staticRouteIds": [
+            "25_151"
+          ],
+          "wheelchairBoarding": "UNKNOWN"
+        },
+        {
+          "code": "1064",
+          "direction": "W",
+          "id": "25_1064",
+          "lat": 40.680597,
+          "locationType": 0,
+          "lon": -122.364431,
+          "name": "Shasta Dam Blvd at Farmers Marketplace (MB)",
           "parent": "",
           "routeIds": [
             "25_151"
