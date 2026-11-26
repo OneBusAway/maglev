@@ -40,7 +40,7 @@ const RedactedValue = "***REDACTED***"
 const redactedURLUserinfo = "xxxxx"
 
 // Redacted returns a copy of the feed with its secrets hidden: URL query
-// credentials and passwords, AuthHeaderValue, and every Headers value.
+// credentials and userinfo, AuthHeaderValue, and every Headers value.
 // Update it when adding a field that can hold a secret.
 func (feed GtfsStaticFeed) Redacted() GtfsStaticFeed {
 	feed.URL = RedactURL(feed.URL)
