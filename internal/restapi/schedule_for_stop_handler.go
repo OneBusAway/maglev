@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -215,7 +216,9 @@ func (api *RestAPI) scheduleForStopHandler(w http.ResponseWriter, r *http.Reques
 
 		var directionSchedules []models.StopRouteDirectionSchedule
 
-		for dirID := range dirIDs {
+		// Iterate in sorted direction-ID order so headsign ties deterministically
+		// keep direction "0" before "1" instead of depending on map order.
+		for _, dirID := range slices.Sorted(maps.Keys(dirIDs)) {
 			tripHeadsign := pluralityHeadsign(routeDirectionHeadsignCounts, combinedRouteID, dirID)
 
 			frequencies := frequencyMap[dirID]
