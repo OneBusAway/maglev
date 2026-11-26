@@ -13,6 +13,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
@@ -48,6 +49,24 @@ func setupTestApiWithMockVehicle(t *testing.T) (api *RestAPI, vehicleCombinedID 
 	api.GtfsManager.MockAddVehicle(mockVehicleID, trip.ID, combinedRouteID)
 
 	return api, utils.FormCombinedID(testdata.Raba.ID, mockVehicleID)
+}
+
+func TestTripForVehicleHandler_UnattributedVehicleNotFound(t *testing.T) {
+	api, combinedID := setupTestApiWithMockVehicle(t)
+	agencyID, vehicleID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+	require.NoError(t, err)
+	vehicle, err := api.GtfsManager.GetVehicleByID(agencyID, vehicleID)
+	require.NoError(t, err)
+
+	// Replace the attributed fixture with the same vehicle without an agency.
+	api.GtfsManager.MockResetRealTimeData()
+	api.GtfsManager.MockSetAgencyVehicles("_test", "", []gtfs.Vehicle{*vehicle})
+	_, err = api.GtfsManager.GetVehicleByID("", vehicleID)
+	require.NoError(t, err, "the unattributed vehicle must exist")
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(combinedID))
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNotFound, model.Code)
 }
 
 func TestTripForVehicleHandlerRequiresValidApiKey(t *testing.T) {
@@ -111,6 +130,59 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 		assert.NotEmpty(t, stop.Name)
 		assert.NotZero(t, stop.Lat)
 		assert.NotZero(t, stop.Lon)
+	}
+}
+
+func TestTripForVehicleHandler_KeepsRequestedVehicleOnSharedTrip(t *testing.T) {
+	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	t.Cleanup(api.Shutdown)
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(testdata.Raba.ID, trip.ID)
+	vehicles := []struct {
+		id       string
+		lat, lon float32
+	}{
+		{"shared-trip-v1", 40.58, -122.39},
+		{"shared-trip-v2", 40.60, -122.37},
+	}
+	const feedA, feedZ = "shared-trip-a", "shared-trip-z"
+	for _, order := range []struct {
+		name  string
+		feeds [2]string
+	}{
+		{"V1 in first feed", [2]string{feedA, feedZ}},
+		{"V2 in first feed", [2]string{feedZ, feedA}},
+	} {
+		t.Run(order.name, func(t *testing.T) {
+			for i, v := range vehicles {
+				feed := order.feeds[i]
+				api.GtfsManager.MockSetAgencyVehicles(feed, testdata.Raba.ID, []gtfs.Vehicle{{
+					ID:        &gtfs.VehicleID{ID: v.id},
+					Trip:      &gtfs.Trip{ID: gtfs.TripID{ID: trip.ID, RouteID: trip.RouteID}},
+					Timestamp: &now,
+					Position:  &gtfs.Position{Latitude: &v.lat, Longitude: &v.lon},
+				}})
+				t.Cleanup(func() { api.GtfsManager.MockSetAgencyVehicles(feed, testdata.Raba.ID, nil) })
+			}
+
+			for _, v := range vehicles {
+				t.Run(v.id, func(t *testing.T) {
+					vehicleID := utils.FormCombinedID(testdata.Raba.ID, v.id)
+					endpoint := tripForVehicleURL(vehicleID, url.Values{"includeStatus": {"true"}})
+					resp, model := callAPIHandler[TripDetailsResponse](t, api, endpoint)
+
+					require.Equal(t, http.StatusOK, resp.StatusCode)
+					assert.Equal(t, tripID, model.Data.Entry.TripID)
+					status := model.Data.Entry.Status
+					require.NotNil(t, status)
+					assert.Equal(t, vehicleID, status.VehicleID)
+					require.NotNil(t, status.LastKnownLocation)
+					assert.InDelta(t, float64(v.lat), status.LastKnownLocation.Lat, 0.00001)
+					assert.InDelta(t, float64(v.lon), status.LastKnownLocation.Lon, 0.00001)
+				})
+			}
+		})
 	}
 }
 
@@ -369,7 +441,11 @@ func TestTripForVehicleHandler_MissingRoute(t *testing.T) {
 	)
 
 	insertStubTrip(t, api, orphanTripID, missingRouteID)
-	api.GtfsManager.MockAddVehicle(orphanVehicleID, orphanTripID, missingRouteID)
+	// Keep the vehicle attributed even though its route cannot be resolved.
+	api.GtfsManager.MockSetAgencyVehicles("_test", testdata.Raba.ID, []gtfs.Vehicle{{
+		ID:   &gtfs.VehicleID{ID: orphanVehicleID},
+		Trip: &gtfs.Trip{ID: gtfs.TripID{ID: orphanTripID, RouteID: missingRouteID}},
+	}})
 
 	// The trip row lands in the package-shared fixture database, so take it back
 	// out rather than leaving a routeless trip behind for later tests.
@@ -413,7 +489,12 @@ func TestTripForVehicleHandler_RouteFromAnotherAgency(t *testing.T) {
 	api.GtfsManager.MockAddAgency(otherAgencyID, "Other Agency")
 	api.GtfsManager.MockAddRoute(otherRouteID, otherAgencyID, "Cross-agency route")
 	insertStubTrip(t, api, crossAgencyTrip, otherRouteID)
-	api.GtfsManager.MockAddVehicle(crossAgencyVehID, crossAgencyTrip, otherRouteID)
+	// Explicitly model a vehicle namespace distinct from its route's agency;
+	// do not rely on an unattributed record matching an arbitrary prefix.
+	api.GtfsManager.MockSetAgencyVehicles("_test", testdata.Raba.ID, []gtfs.Vehicle{{
+		ID:   &gtfs.VehicleID{ID: crossAgencyVehID},
+		Trip: &gtfs.Trip{ID: gtfs.TripID{ID: crossAgencyTrip, RouteID: otherRouteID}},
+	}})
 
 	// These rows land in the package-shared fixture database, so take them back
 	// out rather than leaving them behind for later tests.
@@ -700,4 +781,69 @@ func TestTripForVehicleHandler_ScheduleTripsResolve(t *testing.T) {
 			assert.True(t, routeRefs[routeID], "route %s of trip %s is missing from references.routes", routeID, id)
 		}
 	}
+}
+
+// TestTripForVehicleHandler_SharedVehicleAcrossAgencies reproduces #2050:
+// two feeds attributed to different agencies report the same vehicle ID.
+// trip-for-vehicle returns each agency's own trip (both 200), and a third prefix returns 404.
+func TestTripForVehicleHandler_SharedVehicleAcrossAgencies(t *testing.T) {
+	api := createTestApi(t)
+	t.Cleanup(api.Shutdown)
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	const (
+		agency1   = "agency1"
+		agency2   = "agency2"
+		agency3   = "agency3"
+		vehicleID = "SHARED"
+		trip1ID   = "SHARED_TRIP_1"
+		trip2ID   = "SHARED_TRIP_2"
+	)
+
+	api.GtfsManager.MockAddAgency(agency1, "Agency One")
+	api.GtfsManager.MockAddAgency(agency2, "Agency Two")
+	api.GtfsManager.MockAddAgency(agency3, "Agency Three")
+	t.Cleanup(func() {
+		ctx := context.Background()
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM agencies WHERE id IN (?, ?, ?)`, agency1, agency2, agency3)
+		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id IN (?, ?)`, trip1ID, trip2ID)
+		api.GtfsManager.MockSetAgencyVehicles("feed-1", "", nil)
+		api.GtfsManager.MockSetAgencyVehicles("feed-2", "", nil)
+	})
+
+	insertStubTrip(t, api, trip1ID, "route1")
+	insertStubTrip(t, api, trip2ID, "route2")
+
+	now := time.Now()
+	veh1 := gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: vehicleID},
+		Timestamp: &now,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{ID: trip1ID, RouteID: "route1"},
+		},
+	}
+	veh2 := gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: vehicleID},
+		Timestamp: &now,
+		Trip: &gtfs.Trip{
+			ID: gtfs.TripID{ID: trip2ID, RouteID: "route2"},
+		},
+	}
+
+	api.GtfsManager.MockSetAgencyVehicles("feed-1", agency1, []gtfs.Vehicle{veh1})
+	api.GtfsManager.MockSetAgencyVehicles("feed-2", agency2, []gtfs.Vehicle{veh2})
+
+	// 1. Query with agency1 prefix -> 200 with agency1's trip
+	resp1, model1 := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(utils.FormCombinedID(agency1, vehicleID)))
+	assert.Equal(t, http.StatusOK, resp1.StatusCode)
+	assert.Equal(t, utils.FormCombinedID(agency1, trip1ID), model1.Data.Entry.TripID)
+
+	// 2. Query with agency2 prefix -> 200 with agency2's trip
+	resp2, model2 := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(utils.FormCombinedID(agency2, vehicleID)))
+	assert.Equal(t, http.StatusOK, resp2.StatusCode)
+	assert.Equal(t, utils.FormCombinedID(agency2, trip2ID), model2.Data.Entry.TripID)
+
+	// 3. Query with agency3 prefix -> 404
+	resp3, _ := callAPIHandler[TripDetailsResponse](t, api, tripForVehicleURL(utils.FormCombinedID(agency3, vehicleID)))
+	assert.Equal(t, http.StatusNotFound, resp3.StatusCode)
 }

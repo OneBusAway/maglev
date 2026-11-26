@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/clock"
 	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
@@ -2407,7 +2408,7 @@ func slackTestSnapshot(trips ...slackTestTrip) *scheduledBlockSnapshot {
 	snap := &scheduledBlockSnapshot{StopIndex: map[scheduledStopKey]int{}}
 	blockTrips := make([]blockTripData, len(trips))
 	for i, trip := range trips {
-		blockTrips[i] = blockTripData{id: trip.id, stopTimes: make([]gtfsdb.StopTime, len(trip.stops))}
+		blockTrips[i] = blockTripData{id: trip.id, stopTimes: make([]gtfsdb.GetBlockStopTimesForTripIDsRow, len(trip.stops))}
 		for k, times := range trip.stops {
 			snap.StopIndex[scheduledStopKey{TripID: trip.id, StopSequenceInTrip: k + 1}] = len(snap.Stops)
 			snap.Stops = append(snap.Stops, blockStopMetric{
@@ -2421,6 +2422,102 @@ func slackTestSnapshot(trips ...slackTestTrip) *scheduledBlockSnapshot {
 	}
 	accumulateBlockSlack(snap.Stops, blockTrips, make([]float64, len(trips)))
 	return snap
+}
+
+// blockStatusFiles is a block of two trips on one route: trip-08 runs A to B,
+// then trip-09 runs B back to A.
+func blockStatusFiles() map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"blk,Block Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"r,blk,R,Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"A,Stop A,47.6000,-122.3000\n" +
+			"B,Stop B,47.6100,-122.3000\n",
+		"trips.txt": "route_id,service_id,trip_id,block_id\n" +
+			"r,svc,trip-08,block\n" +
+			"r,svc,trip-09,block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"trip-08,10:00:00,10:00:00,A,1\n" +
+			"trip-08,10:05:00,10:05:00,B,2\n" +
+			"trip-09,10:10:00,10:10:00,B,1\n" +
+			"trip-09,10:15:00,10:15:00,A,2\n",
+	}
+}
+
+// With only the schedule, Java reads closest and next stops off the block's
+// scheduled location, so a later trip in the block reports where the active
+// trip is rather than its own first stop.
+func TestBuildTripStatus_LaterBlockTripUsesBlockStops(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := time.Date(2025, 1, 1, 10, 4, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(currentTime), "block-status.zip", blockStatusFiles())
+
+	status, _, err := api.BuildTripStatus(context.Background(), "blk", "trip-09", nil, serviceDate, currentTime, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, "blk_B", status.NextStop)
+	assert.Equal(t, 60, status.NextStopTimeOffset)
+	assert.Equal(t, "blk_B", status.ClosestStop)
+	assert.Equal(t, 60, status.ClosestStopTimeOffset)
+}
+
+// A trip update without a vehicle position still places the trip on its
+// block: Java shifts the block's scheduled location by the update's one
+// schedule deviation and reads closest and next stops from it, rather than
+// applying per-stop delays to the trip's own stops.
+func TestBuildTripStatus_TripUpdateWithoutVehicleUsesShiftedBlockStops(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := time.Date(2025, 1, 1, 10, 4, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(currentTime), "block-status.zip", blockStatusFiles())
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	delay := 2 * time.Minute
+	recordTime := currentTime.Add(-time.Minute)
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:        gtfs.TripID{ID: "trip-09"},
+		Timestamp: &recordTime,
+		Delay:     &delay,
+	})
+
+	status, _, err := api.BuildTripStatus(context.Background(), "blk", "trip-09", nil, serviceDate, currentTime, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, 120, status.ScheduleDeviation)
+	assert.Equal(t, "blk_A", status.ClosestStop, "the 10:03 record shifted to 10:01 is nearer trip-08's A than its B")
+	assert.Equal(t, -60, status.ClosestStopTimeOffset)
+	assert.Equal(t, "blk_B", status.NextStop)
+	assert.Equal(t, 240, status.NextStopTimeOffset)
+}
+
+// An ADDED or DUPLICATED trip leaves the static block schedule, so with no
+// vehicle position it keeps its own stops instead of reading another trip's
+// stops off the block.
+func TestBuildTripStatus_DynamicTripWithoutPositionKeepsOwnStops(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := time.Date(2025, 1, 1, 10, 4, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(currentTime), "block-status.zip", blockStatusFiles())
+
+	for _, relationship := range []gtfsrt.TripDescriptor_ScheduleRelationship{
+		gtfsrt.TripDescriptor_ADDED,
+		gtfsrt.TripDescriptor_DUPLICATED,
+	} {
+		t.Run(relationship.String(), func(t *testing.T) {
+			vehicle := &gtfs.Vehicle{
+				ID:   &gtfs.VehicleID{ID: "bus-1"},
+				Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "trip-09", ScheduleRelationship: relationship}},
+			}
+
+			status, _, err := api.BuildTripStatus(context.Background(), "blk", "trip-09", vehicle, serviceDate, currentTime, nil)
+			require.NoError(t, err)
+
+			assert.Equal(t, "blk_B", status.NextStop)
+			assert.Equal(t, 360, status.NextStopTimeOffset, "trip-09's own B at 10:10, not trip-08's B at 10:05")
+		})
+	}
 }
 
 // segmentOrientation measures the angle counter-clockwise from east on raw
@@ -2441,6 +2538,126 @@ func TestSegmentOrientation_MatchesJava(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.InDelta(t, tt.want, segmentOrientation(from, tt.to), 1e-6)
+		})
+	}
+}
+
+// Java's distanceAlongTrip comes from the location its record fixes, not from
+// GPS, and its lastUpdateTime is the record's time rather than the position's.
+func TestBuildTripStatus_VehicleWithRecordUsesScheduleDistance(t *testing.T) {
+	serviceDate := time.Date(2025, 6, 2, 0, 0, 0, 0, time.UTC)
+	mockClock := clock.NewMockClock(serviceDate)
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+
+	agencyID := mustGetAgencies(t, api)[0].ID
+	trips, err := api.GtfsManager.GetTrips(ctx, 100)
+	require.NoError(t, err)
+
+	var tripID, routeID string
+	var stopTimes []gtfsdb.StopTime
+	var shapeRows []gtfsdb.GetShapePointsByTripIDRow
+	for _, trip := range trips {
+		shapeRows, err = api.GtfsManager.GtfsDB.Queries.GetShapePointsByTripID(ctx, trip.ID)
+		require.NoError(t, err)
+		stopTimes, err = api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+		require.NoError(t, err)
+		if len(shapeRows) > 1 && len(stopTimes) >= 3 {
+			tripID, routeID = trip.ID, trip.RouteID
+			break
+		}
+	}
+	require.NotEmpty(t, tripID, "need a trip with shape data and stop times")
+
+	midStop := stopTimes[len(stopTimes)/2]
+	recordTime := serviceDate.Add(time.Duration(midStop.ArrivalTime))
+	positionTime := recordTime.Add(20 * time.Second)
+	mockClock.Set(positionTime)
+
+	lastShapePoint := shapeRows[len(shapeRows)-1]
+	latitude, longitude := float32(lastShapePoint.Lat), float32(lastShapePoint.Lon)
+	tests := []struct {
+		name        string
+		vehicle     *gtfs.Vehicle
+		positionAge time.Duration
+	}{
+		{name: "named update", vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}},
+		{name: "anonymous update"},
+		{name: "fresh named record with stale GPS", vehicle: &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "bus"}}, positionAge: 16 * time.Minute},
+		{name: "fresh anonymous record with stale GPS", positionAge: 16 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			gpsTime := positionTime.Add(-tt.positionAge)
+			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, routeID, internalgtfs.MockVehicleOptions{
+				Position:  &gtfs.Position{Latitude: &latitude, Longitude: &longitude},
+				Timestamp: &gpsTime,
+			})
+			onTime := time.Duration(0)
+			api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+				ID:        gtfs.TripID{ID: tripID},
+				Timestamp: &recordTime,
+				Delay:     &onTime,
+				Vehicle:   tt.vehicle,
+			})
+
+			status, _, err := api.BuildTripStatus(ctx, agencyID, tripID, nil, serviceDate, positionTime, nil)
+
+			require.NoError(t, err)
+			assert.Positive(t, status.ScheduledDistanceAlongTrip)
+			assert.Equal(t, status.ScheduledDistanceAlongTrip, status.DistanceAlongTrip)
+			assert.Zero(t, status.LastKnownDistanceAlongTrip)
+			assert.Equal(t, recordTime.UnixMilli(), status.LastUpdateTime.UnixMilli())
+			assert.Equal(t, "SCHEDULED", status.Status)
+			assert.Equal(t, "in_progress", status.Phase)
+			assert.True(t, status.Predicted)
+			if tt.positionAge > 0 {
+				assert.True(t, status.LastLocationUpdateTime.IsZero())
+				assert.Nil(t, status.LastKnownLocation, "a fresh record must not revive stale GPS")
+				assert.NotZero(t, status.Position.Lat, "use the record's scheduled position")
+			} else {
+				assert.Equal(t, positionTime.UnixMilli(), status.LastLocationUpdateTime.UnixMilli())
+			}
+		})
+	}
+}
+
+// A shapeless trip takes the block's scheduled position, between stops, when
+// it has no live vehicle. A vehicle whose GPS is older than the stale window
+// counts as no vehicle, as Java drops its record, so it gets the same position.
+func TestBuildTripStatus_ShapelessTripScheduledPosition(t *testing.T) {
+	now := time.Date(2025, 1, 1, 10, 10, 0, 0, time.UTC)
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	staleGPSTime := now.Add(-20 * time.Minute)
+	gpsLat, gpsLon := float32(37.80), float32(-122.40)
+
+	tests := []struct {
+		name       string
+		addVehicle bool
+	}{
+		{name: "without a vehicle"},
+		{name: "with a stale vehicle", addVehicle: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now), "agency-prefix.zip", agencyPrefixFiles())
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			if tt.addVehicle {
+				api.GtfsManager.MockAddVehicleWithOptions("bus", "other-trip", "other-route", internalgtfs.MockVehicleOptions{
+					Position:  &gtfs.Position{Latitude: &gpsLat, Longitude: &gpsLon},
+					Timestamp: &staleGPSTime,
+				})
+			}
+
+			status, _, err := api.BuildTripStatus(context.Background(), "other", "other-trip", nil, serviceDate, now, nil)
+			require.NoError(t, err)
+
+			// A third of the way from stop-1 (37.7749,-122.4194) to stop-2 (37.7849,-122.4094).
+			assert.InDelta(t, 37.7749+0.01/3, status.Position.Lat, 1e-6)
+			assert.InDelta(t, -122.4194+0.01/3, status.Position.Lon, 1e-6)
 		})
 	}
 }

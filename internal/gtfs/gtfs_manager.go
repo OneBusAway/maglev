@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/appconf"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/metrics"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -56,6 +58,11 @@ type Manager struct {
 
 	staticMutex  sync.RWMutex
 	regionBounds map[string]*RegionBounds
+	// firstAgencyID is the lowest agency ID in the static feed; see FirstStaticAgencyID.
+	// It is "" until static data loads. Until then, an alert with no agency on a
+	// feed without agency-ids gets an unprefixed situation ID, and the prefix
+	// appears once the first reload completes.
+	firstAgencyID string
 
 	feedTrips    map[string][]gtfs.Trip
 	feedVehicles map[string][]gtfs.Vehicle
@@ -184,6 +191,10 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 	gtfsDB, err := openGtfsDB(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open GTFS database: %w", err)
+	}
+
+	if config.Clock == nil {
+		config.Clock = clock.RealClock{}
 	}
 
 	manager := &Manager{
@@ -712,7 +723,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 
 	reqLogger := logging.ForComponent(ctx, "gtfs_manager")
 
-	requestedTrip, err := manager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	requestedTrip, err := manager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trip", err,
 			slog.String("trip_id", tripID))
@@ -726,7 +737,7 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	blockTrips, err := manager.GtfsDB.Queries.GetTripsByBlockID(ctx, requestedTrip.BlockID)
+	blockTrips, err := manager.GtfsDB.Queries.Memo(ctx).GetTripsByBlockID(ctx, requestedTrip.BlockID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trips for block", err,
 			slog.String("block_id", requestedBlockID))
@@ -750,22 +761,21 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 	return nil
 }
 
-func (manager *Manager) GetVehicleByID(vehicleID string) (*gtfs.Vehicle, error) {
+// GetVehicleByID returns the vehicle matching the exact agency and vehicle ID.
+// It does not fall back to unattributed vehicles or another agency.
+// The returned struct is a shallow copy. Its Trip, ID and Timestamp pointers
+// still reference the shared snapshot, so callers must not mutate them.
+func (manager *Manager) GetVehicleByID(agencyID, vehicleID string) (*gtfs.Vehicle, error) {
 	merged := manager.mergedRealtime()
-	if index, exists := merged.vehicleLookupByVehicle[vehicleID]; exists {
-		vehicle := merged.vehicles[index]
+	key := agencyVehicleKey{agencyID: agencyID, vehicleID: vehicleID}
+	if idx, ok := merged.vehicleLookupByVehicle[key]; ok {
+		vehicle := merged.vehicles[idx]
 		return &vehicle, nil
 	}
-
+	if agencyID != "" {
+		return nil, fmt.Errorf("vehicle with ID %s not found for agency %s", vehicleID, agencyID)
+	}
 	return nil, fmt.Errorf("vehicle with ID %s not found", vehicleID)
-}
-
-// VehicleAgencyID returns the agency the vehicle GetVehicleByID finds was
-// attributed to at ingestion. ok is false when the vehicle is unknown or has
-// no attributed agency.
-func (manager *Manager) VehicleAgencyID(vehicleID string) (agencyID string, ok bool) {
-	agencyID, ok = manager.mergedRealtime().vehicleAgencyByVehicle[vehicleID]
-	return agencyID, ok
 }
 
 func (manager *Manager) GetTripUpdatesForTrip(tripID string) []gtfs.Trip {
@@ -815,7 +825,7 @@ func (manager *Manager) PrintStatistics() {
 	}
 
 	logging.LogOperation(logger, "gtfs_statistics",
-		slog.String("source", manager.config.GtfsURL),
+		slog.String("source", appconf.RedactURL(manager.config.GtfsURL)),
 		slog.Time("last_updated", manager.GetStaticLastUpdated(ctx)),
 		slog.Int64("stops", countOrZero(manager.GtfsDB.Queries.CountStops(ctx))),
 		slog.Int64("routes", countOrZero(manager.GtfsDB.Queries.CountRoutes(ctx))),
@@ -913,12 +923,18 @@ func (manager *Manager) SetRealTimeTripsForTest(trips []gtfs.Trip) {
 }
 
 // SetRealTimeVehiclesForTest injects real-time vehicles under the synthetic
-// feed ID "_test" so real feed updates do not discard them.
-func (manager *Manager) SetRealTimeVehiclesForTest(vehicles []gtfs.Vehicle) {
+// feed ID "_test" so real feed updates do not discard them. Optional retained IDs
+// simulate vehicles kept after dropping out of that feed's latest update.
+func (manager *Manager) SetRealTimeVehiclesForTest(vehicles []gtfs.Vehicle, retainedIDs ...string) {
 	manager.realTimeMutex.Lock()
 	defer manager.realTimeMutex.Unlock()
 
 	manager.feedVehicles["_test"] = vehicles
+	retained := make(map[vehicleKey]struct{}, len(retainedIDs))
+	for _, id := range retainedIDs {
+		retained[vehicleKey{id: id}] = struct{}{}
+	}
+	manager.feedRetainedVehicles["_test"] = retained
 	manager.rebuildMergedRealtimeLocked()
 }
 

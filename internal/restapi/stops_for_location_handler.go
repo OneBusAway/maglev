@@ -230,13 +230,6 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		if agencies == nil {
-			agencies = []models.AgencyReference{}
-		}
-		if routes == nil {
-			routes = []models.Route{}
-		}
-
 		references.Agencies = agencies
 		references.Routes = routes
 	}
@@ -285,7 +278,10 @@ func (api *RestAPI) parentStationReferences(
 		return nil, nil, err
 	}
 
-	parentStops, routesByStop := api.stopReferences(ctx, parents, parentIDsByBareID)
+	parentStops, routesByStop, err := api.stopReferences(ctx, parents, parentIDsByBareID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build parent stop references: %w", err)
+	}
 	return parentStops, routesByStop, nil
 }
 
@@ -342,6 +338,7 @@ func (api *RestAPI) routeIDsByStop(
 		if err != nil {
 			return nil, err
 		}
+		utils.SortRouteIDsForStopsRowsByName(rows)
 		for _, row := range rows {
 			collect(row.StopID, row.AgencyID, row.RouteID)
 		}
@@ -359,6 +356,7 @@ func (api *RestAPI) routeIDsByStop(
 	if err != nil {
 		return nil, err
 	}
+	utils.SortActiveRouteIDsForStopsRowsByName(rows)
 	for _, row := range rows {
 		collect(row.StopID, row.AgencyID, row.RouteID)
 	}

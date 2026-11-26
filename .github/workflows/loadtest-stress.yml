@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -76,13 +76,16 @@ jobs:
           exit 1
 
       - name: Install k6
+        env:
+          # Dependabot doesn't track apt packages; bump this by hand.
+          K6_VERSION: "2.4.0"
         run: |
           sudo mkdir -p -m 755 /etc/apt/keyrings
           curl --proto '=https' --tlsv1.2 -fsSL https://dl.k6.io/key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/k6-archive-keyring.gpg
           echo "deb [signed-by=/etc/apt/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
             | sudo tee /etc/apt/sources.list.d/k6.list
           sudo apt-get update -qq
-          sudo apt-get install -y k6
+          sudo apt-get install -y "k6=${K6_VERSION}"
 
       - name: Capture pprof baseline (before load)
         run: |

@@ -46,6 +46,10 @@ func TestTripUpdateEntityID(t *testing.T) {
 		want string
 	}{
 		{name: "trip only", trip: gtfs.TripID{ID: "T1"}, want: "T1"},
+		{name: "date-like trip ID suffix", trip: gtfs.TripID{ID: "T1_20261015"}, want: "T1%5F20261015"},
+		{name: "time-like trip ID suffix", trip: gtfs.TripID{ID: "T1_08:00:00"}, want: "T1%5F08:00:00"},
+		{name: "literal escape", trip: gtfs.TripID{ID: "T1%5F20261015"}, want: "T1%255F20261015"},
+		{name: "escaped ID with date", trip: gtfs.TripID{ID: "T_1", HasStartDate: true, StartDate: serviceDate}, want: "T%5F1_20261015"},
 		{name: "start date", trip: gtfs.TripID{ID: "T1", HasStartDate: true, StartDate: serviceDate}, want: "T1_20261015"},
 		{
 			name: "start date and time",
@@ -61,7 +65,7 @@ func TestTripUpdateEntityID(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, TripUpdateEntityID(tt.trip))
+			assert.Equal(t, tt.want, exportTripUpdateIdentity(tt.trip).entityID())
 		})
 	}
 }
@@ -95,6 +99,24 @@ func TestTripUpdatesForAgency_EntitySet(t *testing.T) {
 		updates := manager.TripUpdatesForAgency("A").TripUpdates
 		require.Len(t, updates, 1)
 		assert.Equal(t, "R1", updates[0].Trip.ID.RouteID)
+	})
+
+	t.Run("duplicate identity uses the exported service date and distinguishes midnight from no time", func(t *testing.T) {
+		manager := newTripUpdatesTestManager("feed")
+		midnight := tripOnRoute("T1", "first")
+		midnight.ID.HasStartDate, midnight.ID.StartDate = true, day1
+		midnight.ID.HasStartTime = true
+		duplicate := tripOnRoute("T1", "second")
+		duplicate.ID.HasStartDate = true
+		duplicate.ID.StartDate = time.Date(2026, 10, 15, 0, 0, 0, 0, time.FixedZone("agency", -7*60*60))
+		duplicate.ID.HasStartTime = true
+		untimed := midnight
+		untimed.ID.HasStartTime = false
+		setFeedTrips(manager, "feed", dataTime, map[string]string{"T1": "A"}, midnight, duplicate, untimed)
+
+		updates := manager.TripUpdatesForAgency("A")
+		require.Equal(t, []string{"T1_20261015", "T1_20261015_00:00:00"}, entityIDs(updates))
+		assert.Equal(t, "first", updates.TripUpdates[1].Trip.ID.RouteID)
 	})
 
 	t.Run("the same ID in two feeds keeps the feed listed first", func(t *testing.T) {

@@ -180,11 +180,29 @@ WHERE min_arrival_time IS NULL OR max_departure_time IS NULL;
 DELETE FROM stop_agencies WHERE TRUE;
 
 -- name: BuildStopAgencies :exec
+-- Reads stop_routes, so build that first; it already holds every (stop, route) pair a
+-- trip produces, which saves a second walk over stop_times.
 INSERT INTO
     stop_agencies (stop_id, agency_id)
 SELECT DISTINCT
-    stop_times.stop_id,
+    stop_routes.stop_id,
     routes.agency_id
+FROM
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id;
+
+-- name: ClearStopRoutes :exec
+DELETE FROM stop_routes
+WHERE
+    TRUE;
+
+-- name: BuildStopRoutes :exec
+-- Joins routes so a trip whose route_id resolves to nothing contributes no pair.
+INSERT INTO
+    stop_routes (stop_id, route_id)
+SELECT DISTINCT
+    stop_times.stop_id,
+    routes.id
 FROM
     stop_times
     JOIN trips ON stop_times.trip_id = trips.id
@@ -388,7 +406,8 @@ FROM
     INNER JOIN stop_times st ON s.id = st.stop_id;
 
 -- name: GetRoutesForStop :many
-SELECT DISTINCT
+-- Reads the routes stop_routes lists for the stop rather than walking its stop_times.
+SELECT
     routes.id,
     routes.agency_id,
     routes.short_name,
@@ -399,11 +418,10 @@ SELECT DISTINCT
     routes.color,
     routes.text_color
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id = ?;
+    stop_routes.stop_id = ?;
 
 -- name: GetShapeByID :many
 SELECT
@@ -463,41 +481,26 @@ FROM shapes s
 ORDER BY s.shape_pt_sequence;
 
 -- name: GetActiveServiceIDsForDate :many
-WITH formatted_date AS (
-    SELECT STRFTIME('%w', SUBSTR(?1, 1, 4) || '-' || SUBSTR(?1, 5, 2) || '-' || SUBSTR(?1, 7, 2)) AS weekday
-),
-base_services AS (
-    SELECT c.id AS service_id
-    FROM calendar c, formatted_date fd
-    WHERE c.start_date <= ?1
-      AND c.end_date >= ?1
-      AND (
-        (fd.weekday = '0' AND c.sunday = 1) OR
-        (fd.weekday = '1' AND c.monday = 1) OR
-        (fd.weekday = '2' AND c.tuesday = 1) OR
-        (fd.weekday = '3' AND c.wednesday = 1) OR
-        (fd.weekday = '4' AND c.thursday = 1) OR
-        (fd.weekday = '5' AND c.friday = 1) OR
-        (fd.weekday = '6' AND c.saturday = 1)
-      )
-),
-removed_services AS (
-    SELECT service_id
-    FROM calendar_dates
-    WHERE date = ?1
-      AND exception_type = 2
-),
-added_services AS (
-    SELECT service_id
-    FROM calendar_dates
-    WHERE date = ?1
-      AND exception_type = 1
-)
-SELECT DISTINCT service_id
-FROM base_services
-WHERE service_id NOT IN (SELECT service_id FROM removed_services)
+-- Written without CTEs: the CTE form cost twice as much per call and, through
+-- SQLite's allocator, contended badly when many requests ran it at once.
+SELECT c.id AS service_id
+FROM calendar c
+WHERE c.start_date <= ?1
+  AND c.end_date >= ?1
+  AND CASE STRFTIME('%w', SUBSTR(?1, 1, 4) || '-' || SUBSTR(?1, 5, 2) || '-' || SUBSTR(?1, 7, 2))
+      WHEN '0' THEN c.sunday
+      WHEN '1' THEN c.monday
+      WHEN '2' THEN c.tuesday
+      WHEN '3' THEN c.wednesday
+      WHEN '4' THEN c.thursday
+      WHEN '5' THEN c.friday
+      WHEN '6' THEN c.saturday
+  END = 1
+  AND c.id NOT IN (
+    SELECT service_id FROM calendar_dates WHERE date = ?1 AND exception_type = 2
+  )
 UNION
-SELECT DISTINCT service_id FROM added_services;
+SELECT service_id FROM calendar_dates WHERE date = ?1 AND exception_type = 1;
 
 -- name: GetTripsForRouteInActiveServiceIDs :many
 SELECT DISTINCT *
@@ -644,7 +647,10 @@ DELETE FROM agencies;
 -- Batch queries to solve N+1 problems
 
 -- name: GetRoutesForStops :many
-SELECT DISTINCT
+-- Reads the (stop, route) pairs stop_routes holds rather than walking every stop_time at
+-- these stops, which grows with how many trips serve them. stop_id breaks ties so rows
+-- for one route at several stops come back in a fixed order.
+SELECT
     routes.id,
     routes.agency_id,
     routes.short_name,
@@ -654,33 +660,38 @@ SELECT DISTINCT
     routes.url,
     routes.color,
     routes.text_color,
-    stop_times.stop_id
+    stop_routes.stop_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'))
+    stop_routes.stop_id IN (sqlc.slice('stop_ids'))
 ORDER BY
     routes.agency_id ASC,
-    routes.id ASC;
+    routes.id ASC,
+    stop_routes.stop_id ASC;
 
 -- name: GetRouteIDsForStops :many
-SELECT DISTINCT
+-- Reads the (stop, route) pairs stop_routes holds rather than walking every stop_time at
+-- these stops. Returns the route names too, so callers can order each stop's routes by name.
+SELECT
     routes.id AS route_id,
     routes.agency_id,
-    stop_times.stop_id
+    routes.short_name,
+    routes.long_name,
+    stop_routes.stop_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'));
+    stop_routes.stop_id IN (sqlc.slice('stop_ids'));
 
 -- name: GetActiveRouteIDsForStopsOnDate :many
 SELECT DISTINCT
     routes.id AS route_id,
     routes.agency_id,
+    routes.short_name,
+    routes.long_name,
     stop_times.stop_id
 FROM
     stop_times
@@ -710,7 +721,9 @@ WHERE
     AND trips.service_id IN (sqlc.slice('service_ids'));
 
 -- name: GetAgenciesForStops :many
-SELECT DISTINCT
+-- Reads the (stop, agency) pairs stop_agencies holds rather than walking every
+-- stop_time at these stops, which grows with how many trips serve them.
+SELECT
     a.id,
     a.name,
     a.url,
@@ -719,16 +732,14 @@ SELECT DISTINCT
     a.phone,
     a.fare_url,
     a.email,
-    stop_times.stop_id
+    stop_agencies.stop_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
-    JOIN agencies a ON routes.agency_id = a.id
+    stop_agencies
+    JOIN agencies a ON stop_agencies.agency_id = a.id
 WHERE
-    stop_times.stop_id IN (sqlc.slice('stop_ids'))
+    stop_agencies.stop_id IN (sqlc.slice('stop_ids'))
 ORDER BY
-    stop_times.stop_id ASC,
+    stop_agencies.stop_id ASC,
     a.id ASC;
 
 -- name: GetStopTimesForTrip :many
@@ -797,12 +808,8 @@ WHERE
 
 -- name: GetShapePointsByTripID :many
 SELECT
-    s.id,
-    s.shape_id,
     s.lat,
-    s.lon,
-    s.shape_pt_sequence,
-    s.shape_dist_traveled
+    s.lon
 FROM
     shapes s
     JOIN trips t ON t.shape_id = s.shape_id
@@ -834,14 +841,6 @@ FROM trips t
 WHERE t.block_id = ?
   AND t.service_id IN (sqlc.slice('service_ids'))
 ORDER BY t.min_arrival_time;
-
--- name: GetBlockIDByTripID :one
-SELECT
-    block_id
-FROM
-    trips
-WHERE
-    id = ?;
 
 -- name: GetStopsByIDs :many
 SELECT
@@ -902,6 +901,8 @@ ORDER BY
     t.id ASC, st.stop_sequence ASC;
 
 -- name: GetBlockDetails :many
+-- A block is keyed by agency and block_id, as in Java, so trips on another
+-- agency's routes that share the block_id belong to that agency's block.
 SELECT
     t.service_id,
     t.id as trip_id,
@@ -917,23 +918,16 @@ SELECT
 FROM
     trips t
         JOIN
+    routes r ON r.id = t.route_id
+        JOIN
     stop_times st ON t.id = st.trip_id
         JOIN
     stops s ON st.stop_id = s.id
 WHERE
-    t.block_id = ?
+    t.block_id = sqlc.arg(block_id)
+    AND r.agency_id = sqlc.arg(agency_id)
 ORDER BY
     t.id, st.stop_sequence;
-
--- name: BlockHasTripForAgency :one
--- Returns 1 if a trip on one of the agency's routes is in the block, 0 otherwise.
-SELECT CAST(EXISTS (
-    SELECT 1
-    FROM trips t
-    JOIN routes r ON r.id = t.route_id
-    WHERE t.block_id = sqlc.arg(block_id)
-      AND r.agency_id = sqlc.arg(agency_id)
-) AS INTEGER) AS has_trip;
 
 -- name: GetTripIDsForStops :many
 -- GetTripIDsForStops returns the IDs of the trips serving any of these stops.
@@ -1342,22 +1336,6 @@ FROM shapes
 WHERE shape_id IN (sqlc.slice('shape_ids'))
 ORDER BY shape_id, shape_pt_sequence;
 
--- name: GetShapePointsByTripIDs :many
--- Batch equivalent of GetShapePointsByTripID for N+1 avoidance when loading
--- an entire block's worth of trips at once (loadBlockTripData). Rows are
--- returned with their originating trip_id so callers can group them.
-SELECT
-    t.id AS trip_id,
-    s.shape_id,
-    s.lat,
-    s.lon,
-    s.shape_pt_sequence,
-    s.shape_dist_traveled
-FROM shapes s
-JOIN trips t ON t.shape_id = s.shape_id
-WHERE t.id IN (sqlc.slice('trip_ids'))
-ORDER BY t.id ASC, s.shape_pt_sequence ASC;
-
 -- name: GetTripTimeBoundsByIDs :many
 -- Returns cached min_arrival_time and max_departure_time (nanoseconds since
 -- midnight) for each trip_id. Callers use these to sort a block's trips by
@@ -1372,6 +1350,11 @@ WHERE id IN (sqlc.slice('trip_ids'));
 SELECT * FROM stop_times
 WHERE trip_id IN (sqlc.slice('trip_ids'))
 ORDER BY trip_id, stop_sequence;
+
+-- name: GetBlockStopTimesForTripIDs :many
+SELECT trip_id, stop_id, stop_sequence, arrival_time, departure_time FROM stop_times
+WHERE trip_id IN (sqlc.slice('trip_ids'))
+ORDER BY trip_id ASC, stop_sequence ASC;
 
 -- name: GetStopIDsForTripIDs :many
 SELECT trip_id, stop_id FROM stop_times
@@ -1445,82 +1428,32 @@ FROM (
     SELECT MAX(date) AS max_date FROM calendar_dates WHERE exception_type = 1
 );
 
--- name: RouteHasFutureService :one
--- Returns 1 if the given route has at least one EFFECTIVE service date strictly
--- after the given date (YYYYMMDD), 0 otherwise. "Effective" means: the date
--- falls within a calendar row's [start_date, end_date] on an enabled weekday
--- and is not removed by a calendar_dates exception (type=2), OR the date has
--- a calendar_dates addition (type=1) for one of this route's services.
---
--- Used to distinguish ServiceDateOutOfRange from NoServiceThatDay in the
--- schedule-for-route error path. Bounded to 2 years past the LATER of
--- ref_date and today (anchoring to today matters for historical ref_date
--- queries -- e.g. ref_date=1970 against a feed whose service starts in
--- 2024 -- so the check still reaches "today's" feed span).
---
--- Implementation: two indexed range checks against calendar and
--- calendar_dates -- no day-by-day enumeration. Part 1 asks "is there any
--- exception_type=1 addition in the window?", Part 2 asks "does any
--- calendar row overlap the window on an enabled weekday?".
---
--- Part 2 is a mild over-approximation: it does not verify that the
--- calendar row's intersection with the window actually contains an
--- enabled weekday, nor that every regular day in that intersection is
--- cancelled by an exception_type=2 row. Given the 2-year horizon, the
--- intersection is almost always >=7 days so every weekday appears; the
--- rare edge cases where this over-reports would only flip the caller's
--- error message from ServiceDateOutOfRange to NoServiceThatDay -- both
--- surface an empty schedule, so the miscategorization is benign.
-WITH
-    -- Parse ref_date once; horizon = 2 years past MAX(ref_date, today).
-    -- CAST(... AS TEXT) once so sqlc infers RefDate as string, not
-    -- interface{}. YYYYMMDD strings sort lexicographically, so string
-    -- comparisons below are correct without any date() round-trip.
-    ref(ref_ymd, horizon_ymd) AS (
-        SELECT
-            ymd,
-            strftime('%Y%m%d', date(MAX(iso, date('now')), '+2 years'))
-        FROM (
-            SELECT
-                CAST(sqlc.arg(ref_date) AS TEXT) AS ymd,
-                substr(CAST(sqlc.arg(ref_date) AS TEXT), 1, 4) || '-' ||
-                substr(CAST(sqlc.arg(ref_date) AS TEXT), 5, 2) || '-' ||
-                substr(CAST(sqlc.arg(ref_date) AS TEXT), 7, 2) AS iso
-        )
-    )
--- CAST(... AS INTEGER) so sqlc infers int64 for has_future_service
--- instead of interface{}; callers rely on `== 0` / `== 1` comparisons.
-SELECT CAST((
-    -- Part 1: an exception-added service day strictly after ref_date,
-    -- within the horizon. Indexed via idx_calendar_dates_service_id.
-    EXISTS (
-        SELECT 1
-        FROM trips t
-        JOIN calendar_dates cd ON cd.service_id = t.service_id
-        WHERE t.route_id = sqlc.arg(route_id)
-          AND cd.exception_type = 1
-          AND cd.date > (SELECT ref_ymd FROM ref)
-          AND cd.date <= (SELECT horizon_ymd FROM ref)
-    )
-    OR
-    -- Part 2: a calendar row for this route overlaps (ref_date, horizon]
-    -- with at least one enabled weekday. Indexed via
-    -- idx_trips_route_service; cal.end_date > ref_ymd preserves strict
-    -- ref_date exclusivity, cal.start_date <= horizon_ymd preserves the
-    -- upper bound.
-    EXISTS (
-        SELECT 1
-        FROM trips t
-        JOIN calendar cal ON cal.id = t.service_id
-        WHERE t.route_id = sqlc.arg(route_id)
-          AND cal.end_date > (SELECT ref_ymd FROM ref)
-          AND cal.start_date <= (SELECT horizon_ymd FROM ref)
-          AND (cal.sunday + cal.monday + cal.tuesday + cal.wednesday
-             + cal.thursday + cal.friday + cal.saturday) > 0
-    )
-) AS INTEGER) AS has_future_service;
-
-
+-- name: GetRouteServiceSpan :one
+-- Planned [first,last] YYYYMMDD service dates for a route. Used by
+-- schedule-for-route to distinguish ServiceDateOutOfRange (outside the
+-- span) from NoServiceThatDay (inside the span, no trips that day).
+-- Weekday-all-zero calendars are excluded (they plan no regular days);
+-- type-1 calendar_dates still expand the span. Type-2 removals do not
+-- shrink it. Empty first/last means the route has no planned span.
+WITH svc AS (
+    SELECT DISTINCT service_id
+    FROM trips
+    WHERE route_id = sqlc.arg(route_id)
+)
+SELECT
+    COALESCE(CAST(MIN(first_date) AS TEXT), '') AS first_date,
+    COALESCE(CAST(MAX(last_date) AS TEXT), '') AS last_date
+FROM (
+    SELECT start_date AS first_date, end_date AS last_date
+    FROM calendar
+    WHERE id IN (SELECT service_id FROM svc)
+      AND (sunday + monday + tuesday + wednesday + thursday + friday + saturday) > 0
+    UNION ALL
+    SELECT date, date
+    FROM calendar_dates
+    WHERE exception_type = 1
+      AND service_id IN (SELECT service_id FROM svc)
+);
 
 -- name: GetBlockTripSequence :one
 -- Calculates a trip's zero-based index within its block's ordered sequence,
