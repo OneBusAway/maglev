@@ -1,6 +1,7 @@
 package restapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
@@ -82,4 +84,44 @@ func TestServerErrorResponse(t *testing.T) {
 		t.Errorf("timestamp out of reasonable range: got %d, current time: %d",
 			response.CurrentTime, now)
 	}
+}
+
+func TestCanceledOrServerErrorResponse(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	newRequest := func(ctx context.Context) (*httptest.ResponseRecorder, *http.Request) {
+		req := httptest.NewRequest(http.MethodGet, "/api/where/arrivals-and-departures-for-location.json", nil).WithContext(ctx)
+		return httptest.NewRecorder(), req
+	}
+
+	t.Run("client cancellation writes nothing", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		rec, req := newRequest(ctx)
+
+		api.canceledOrServerErrorResponse(rec, req, ctx, errors.New("boom"))
+
+		assert.Empty(t, rec.Body.String(), "no body should be written when the client cancels")
+	})
+
+	t.Run("expired deadline writes gateway timeout", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 0)
+		defer cancel()
+		rec, req := newRequest(ctx)
+
+		api.canceledOrServerErrorResponse(rec, req, ctx, errors.New("boom"))
+
+		assert.Equal(t, http.StatusGatewayTimeout, rec.Code)
+		assert.Contains(t, rec.Body.String(), "gateway timeout")
+	})
+
+	t.Run("genuine failure writes server error", func(t *testing.T) {
+		ctx := context.Background()
+		rec, req := newRequest(ctx)
+
+		api.canceledOrServerErrorResponse(rec, req, ctx, errors.New("boom"))
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
 }

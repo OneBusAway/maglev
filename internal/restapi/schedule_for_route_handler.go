@@ -80,20 +80,25 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// noTripsResponse distinguishes the two no-service cases for this route: if the
-	// route has no service on any date after the requested one, the reason is
-	// ServiceDateOutOfRange; otherwise the route simply has no service that day
-	// (NoServiceThatDay). Both return body code 200 with an empty-schedule body.
+	// noTripsResponse distinguishes the two empty-schedule cases for this route
+	// using the planned service span (wiki SD-01): outside [first, last] is
+	// ServiceDateOutOfRange; inside with no trips that day is NoServiceThatDay.
+	// Both return body code 200 with an empty-schedule body.
 	noTripsResponse := func() (models.ResponseModel, error) {
-		hasFuture, err := api.GtfsManager.GtfsDB.Queries.RouteHasFutureService(ctx, gtfsdb.RouteHasFutureServiceParams{
-			RouteID: routeID,
-			RefDate: targetDate,
-		})
+		span, err := api.GtfsManager.GtfsDB.Queries.GetRouteServiceSpan(ctx, routeID)
+		if err != nil {
+			return models.ResponseModel{}, err
+		}
+		first, err := gtfsdb.CoalesceYYYYMMDD(span.FirstDate)
+		if err != nil {
+			return models.ResponseModel{}, err
+		}
+		last, err := gtfsdb.CoalesceYYYYMMDD(span.LastDate)
 		if err != nil {
 			return models.ResponseModel{}, err
 		}
 		text := "NoServiceThatDay"
-		if hasFuture == 0 {
+		if first == "" || last == "" || targetDate < first || targetDate > last {
 			text = "ServiceDateOutOfRange"
 		}
 		return buildNoServiceResponse(agencyID, routeID, scheduleDate, agencyModel, routeModel, text, api.Clock), nil
@@ -301,12 +306,21 @@ func (api *RestAPI) scheduleForRouteHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(uniqueStopIDs) > 0 {
-		modelStops, _, err := stopModelsByIDs(api, ctx, agencyID, uniqueStopIDs)
+		modelStops, stopRoutes, err := stopModelsByIDs(api, ctx, agencyID, uniqueStopIDs)
 		if err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
 		}
 		references.Stops = append(references.Stops, modelStops...)
+
+		// Every routeId a stop reference lists must resolve in references.routes.
+		for combinedID, row := range stopRoutes {
+			if _, ok := routeRefs[combinedID]; ok {
+				continue
+			}
+			references.Routes = append(references.Routes, routeReferenceFromStopRow(row))
+			api.appendRouteAgencyReference(ctx, references, row.AgencyID, agencyID)
+		}
 		if err := api.mergeParentStopsIntoReferences(ctx, references, modelStops, agencyID); err != nil {
 			api.serverErrorResponse(w, r, err)
 			return
@@ -336,6 +350,7 @@ func buildNoServiceResponse(agencyID, routeID string, scheduleDate int64, agency
 	refs := models.NewEmptyReferences()
 	refs.Agencies = append(refs.Agencies, agencyModel)
 	refs.Routes = append(refs.Routes, routeModel)
+	refs.Normalize()
 	entry := models.ScheduleForRouteEntry{
 		RouteID:           utils.FormCombinedID(agencyID, routeID),
 		ScheduleDate:      scheduleDate,

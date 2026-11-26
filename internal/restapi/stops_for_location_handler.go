@@ -298,7 +298,10 @@ func (api *RestAPI) parentStationReferences(
 		return nil, nil, err
 	}
 
-	parentStops, routesByStop := api.stopReferences(ctx, parents, parentIDsByBareID)
+	parentStops, routesByStop, err := api.stopReferences(ctx, parents, parentIDsByBareID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build parent stop references: %w", err)
+	}
 	return parentStops, routesByStop, nil
 }
 

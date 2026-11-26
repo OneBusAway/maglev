@@ -246,6 +246,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getRouteIDsForStopsStmt, err = db.PrepareContext(ctx, getRouteIDsForStops); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRouteIDsForStops: %w", err)
 	}
+	if q.getRouteServiceSpanStmt, err = db.PrepareContext(ctx, getRouteServiceSpan); err != nil {
+		return nil, fmt.Errorf("error preparing query GetRouteServiceSpan: %w", err)
+	}
 	if q.getRoutesByIDsStmt, err = db.PrepareContext(ctx, getRoutesByIDs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetRoutesByIDs: %w", err)
 	}
@@ -389,9 +392,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.listTripsWithLimitStmt, err = db.PrepareContext(ctx, listTripsWithLimit); err != nil {
 		return nil, fmt.Errorf("error preparing query ListTripsWithLimit: %w", err)
-	}
-	if q.routeHasFutureServiceStmt, err = db.PrepareContext(ctx, routeHasFutureService); err != nil {
-		return nil, fmt.Errorf("error preparing query RouteHasFutureService: %w", err)
 	}
 	if q.shapeHasTripForAgencyStmt, err = db.PrepareContext(ctx, shapeHasTripForAgency); err != nil {
 		return nil, fmt.Errorf("error preparing query ShapeHasTripForAgency: %w", err)
@@ -783,6 +783,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getRouteIDsForStopsStmt: %w", cerr)
 		}
 	}
+	if q.getRouteServiceSpanStmt != nil {
+		if cerr := q.getRouteServiceSpanStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getRouteServiceSpanStmt: %w", cerr)
+		}
+	}
 	if q.getRoutesByIDsStmt != nil {
 		if cerr := q.getRoutesByIDsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getRoutesByIDsStmt: %w", cerr)
@@ -1023,11 +1028,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listTripsWithLimitStmt: %w", cerr)
 		}
 	}
-	if q.routeHasFutureServiceStmt != nil {
-		if cerr := q.routeHasFutureServiceStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing routeHasFutureServiceStmt: %w", cerr)
-		}
-	}
 	if q.shapeHasTripForAgencyStmt != nil {
 		if cerr := q.shapeHasTripForAgencyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing shapeHasTripForAgencyStmt: %w", cerr)
@@ -1166,6 +1166,7 @@ type Queries struct {
 	getRouteStmt                              *sql.Stmt
 	getRouteIDsForAgencyStmt                  *sql.Stmt
 	getRouteIDsForStopsStmt                   *sql.Stmt
+	getRouteServiceSpanStmt                   *sql.Stmt
 	getRoutesByIDsStmt                        *sql.Stmt
 	getRoutesForAgencyStmt                    *sql.Stmt
 	getRoutesForStopStmt                      *sql.Stmt
@@ -1214,7 +1215,6 @@ type Queries struct {
 	listStopsStmt                             *sql.Stmt
 	listTripsStmt                             *sql.Stmt
 	listTripsWithLimitStmt                    *sql.Stmt
-	routeHasFutureServiceStmt                 *sql.Stmt
 	shapeHasTripForAgencyStmt                 *sql.Stmt
 	updateFeedExpiresAtStmt                   *sql.Stmt
 	updateImportTimeStmt                      *sql.Stmt
@@ -1300,6 +1300,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getRouteStmt:                              q.getRouteStmt,
 		getRouteIDsForAgencyStmt:                  q.getRouteIDsForAgencyStmt,
 		getRouteIDsForStopsStmt:                   q.getRouteIDsForStopsStmt,
+		getRouteServiceSpanStmt:                   q.getRouteServiceSpanStmt,
 		getRoutesByIDsStmt:                        q.getRoutesByIDsStmt,
 		getRoutesForAgencyStmt:                    q.getRoutesForAgencyStmt,
 		getRoutesForStopStmt:                      q.getRoutesForStopStmt,
@@ -1348,7 +1349,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listStopsStmt:                             q.listStopsStmt,
 		listTripsStmt:                             q.listTripsStmt,
 		listTripsWithLimitStmt:                    q.listTripsWithLimitStmt,
-		routeHasFutureServiceStmt:                 q.routeHasFutureServiceStmt,
 		shapeHasTripForAgencyStmt:                 q.shapeHasTripForAgencyStmt,
 		updateFeedExpiresAtStmt:                   q.updateFeedExpiresAtStmt,
 		updateImportTimeStmt:                      q.updateImportTimeStmt,

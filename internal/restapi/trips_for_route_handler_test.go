@@ -321,12 +321,13 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 
 	t.Run("references contain combined stop IDs for queried and cross agencies", func(t *testing.T) {
 		refStops := model.Data.References.Stops
-		require.Len(t, refStops, 4, fmt.Sprintf("expected 4 stop references, got %d", len(refStops)))
+		require.Len(t, refStops, 3, fmt.Sprintf("expected 3 stop references, got %d", len(refStops)))
 
+		// At 17:30 PDT tfr-xb is halfway between its stops, so by Java's tie
+		// rule the status's closest and next stops are both its second stop.
 		expectedStopIDs := map[string]bool{
 			utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop1ID): true,
 			utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop2ID): true,
-			utils.FormCombinedID(tfrAgencyB, tripsForRouteStop1ID):            true,
 			utils.FormCombinedID(tfrAgencyB, tripsForRouteStop2ID):            true,
 		}
 		recvdStopsByID := make(map[string]models.Stop)
@@ -352,7 +353,7 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 
 		// combined stopIDs for both agencies on the same bare stop ID should have the same
 		// stop-specific data
-		for _, bareID := range []string{tripsForRouteStop1ID, tripsForRouteStop2ID} {
+		for _, bareID := range []string{tripsForRouteStop2ID} {
 			scheduledTripStopID := utils.FormCombinedID(tripsForRouteAgencyID, bareID)
 			activeTripStopID := utils.FormCombinedID(tfrAgencyB, bareID)
 			scheduledTripStop := recvdStopsByID[scheduledTripStopID]
@@ -2294,6 +2295,67 @@ func TestTripsForRouteHandler_BlockSequence_IncludeTripFalseKeepsScheduleTrips(t
 	assert.ElementsMatch(t, expectedTripIDs, refTripIDs)
 }
 
+// TestTripsForRouteHandler_RouteReferencesFollowTripReferences verifies that,
+// as in Java, a route and its agency reach references only through a trip
+// reference or a stop: with status and schedule off, includeTrip=false leaves
+// references.routes and references.agencies empty.
+func TestTripsForRouteHandler_RouteReferencesFollowTripReferences(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(blockSequenceClock),
+		"trips-for-route-block-seq.zip", blockSequenceFiles())
+	combinedRouteID := utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteRouteID)
+
+	tests := []struct {
+		name         string
+		includeTrip  bool
+		wantTripIDs  []string
+		wantRouteIDs []string
+		wantAgencies []string
+	}{
+		{
+			name:         "includeTrip=false",
+			includeTrip:  false,
+			wantTripIDs:  []string{},
+			wantRouteIDs: []string{},
+			wantAgencies: []string{},
+		},
+		{
+			name:         "includeTrip=true",
+			includeTrip:  true,
+			wantTripIDs:  []string{utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-2")},
+			wantRouteIDs: []string{combinedRouteID},
+			wantAgencies: []string{tripsForRouteAgencyID},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := fmt.Sprintf("/api/where/trips-for-route/%s.json?key=TEST&includeTrip=%t&includeStatus=false&includeSchedule=false&time=%d",
+				combinedRouteID, tt.includeTrip, blockSequenceClock.UnixMilli())
+
+			resp, model := callAPIHandler[TripsForRouteResponse](t, api, url)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			require.Len(t, model.Data.List, 1)
+
+			references := model.Data.References
+			tripIDs := make([]string, 0, len(references.Trips))
+			for _, trip := range references.Trips {
+				tripIDs = append(tripIDs, trip.ID)
+			}
+			routeIDs := make([]string, 0, len(references.Routes))
+			for _, route := range references.Routes {
+				routeIDs = append(routeIDs, route.ID)
+			}
+			agencyIDs := make([]string, 0, len(references.Agencies))
+			for _, agency := range references.Agencies {
+				agencyIDs = append(agencyIDs, agency.ID)
+			}
+			assert.ElementsMatch(t, tt.wantTripIDs, tripIDs)
+			assert.ElementsMatch(t, tt.wantRouteIDs, routeIDs)
+			assert.ElementsMatch(t, tt.wantAgencies, agencyIDs)
+		})
+	}
+}
+
 // NullBlockServiceDayGuard verifies a trip found in both the current-day and
 // previous-day null-block results keeps the current-day service date.
 func TestTripsForRouteHandler_NullBlockServiceDayGuard(t *testing.T) {
@@ -2443,11 +2505,12 @@ func TestBuildTripReferences_FetchesUnprefetchedTrips(t *testing.T) {
 		},
 	}
 
-	references := api.buildTripReferences(ctx, tripReferenceParams{
+	references, err := api.buildTripReferences(ctx, tripReferenceParams{
 		IncludeTrip:     true,
 		Trips:           entries,
 		PreFetchedTrips: []gtfsdb.Trip{preFetchedTrip},
 	})
+	require.NoError(t, err)
 
 	refTrips := make(map[string]models.Trip)
 	for _, ref := range references.Trips {

@@ -15,14 +15,15 @@ const buildStopAgencies = `-- name: BuildStopAgencies :exec
 INSERT INTO
     stop_agencies (stop_id, agency_id)
 SELECT DISTINCT
-    stop_times.stop_id,
+    stop_routes.stop_id,
     routes.agency_id
 FROM
-    stop_times
-    JOIN trips ON stop_times.trip_id = trips.id
-    JOIN routes ON trips.route_id = routes.id
+    stop_routes
+    JOIN routes ON stop_routes.route_id = routes.id
 `
 
+// Reads stop_routes, so build that first; it already holds every (stop, route) pair a
+// trip produces, which saves a second walk over stop_times.
 func (q *Queries) BuildStopAgencies(ctx context.Context) error {
 	_, err := q.exec(ctx, q.buildStopAgenciesStmt, buildStopAgencies)
 	return err
@@ -2875,6 +2876,46 @@ func (q *Queries) GetRouteIDsForStops(ctx context.Context, stopIds []string) ([]
 	return items, nil
 }
 
+const getRouteServiceSpan = `-- name: GetRouteServiceSpan :one
+WITH svc AS (
+    SELECT DISTINCT service_id
+    FROM trips
+    WHERE route_id = ?1
+)
+SELECT
+    COALESCE(CAST(MIN(first_date) AS TEXT), '') AS first_date,
+    COALESCE(CAST(MAX(last_date) AS TEXT), '') AS last_date
+FROM (
+    SELECT start_date AS first_date, end_date AS last_date
+    FROM calendar
+    WHERE id IN (SELECT service_id FROM svc)
+      AND (sunday + monday + tuesday + wednesday + thursday + friday + saturday) > 0
+    UNION ALL
+    SELECT date, date
+    FROM calendar_dates
+    WHERE exception_type = 1
+      AND service_id IN (SELECT service_id FROM svc)
+)
+`
+
+type GetRouteServiceSpanRow struct {
+	FirstDate interface{}
+	LastDate  interface{}
+}
+
+// Planned [first,last] YYYYMMDD service dates for a route. Used by
+// schedule-for-route to distinguish ServiceDateOutOfRange (outside the
+// span) from NoServiceThatDay (inside the span, no trips that day).
+// Weekday-all-zero calendars are excluded (they plan no regular days);
+// type-1 calendar_dates still expand the span. Type-2 removals do not
+// shrink it. Empty first/last means the route has no planned span.
+func (q *Queries) GetRouteServiceSpan(ctx context.Context, routeID string) (GetRouteServiceSpanRow, error) {
+	row := q.queryRow(ctx, q.getRouteServiceSpanStmt, getRouteServiceSpan, routeID)
+	var i GetRouteServiceSpanRow
+	err := row.Scan(&i.FirstDate, &i.LastDate)
+	return i, err
+}
+
 const getRoutesByIDs = `-- name: GetRoutesByIDs :many
 SELECT
     id, agency_id, short_name, long_name, "desc", type, url, color, text_color, continuous_pickup, continuous_drop_off
@@ -5579,94 +5620,6 @@ func (q *Queries) ListTripsWithLimit(ctx context.Context, limit int64) ([]Trip, 
 		return nil, err
 	}
 	return items, nil
-}
-
-const routeHasFutureService = `-- name: RouteHasFutureService :one
-WITH
-    -- Parse ref_date once; horizon = 2 years past MAX(ref_date, today).
-    -- CAST(... AS TEXT) once so sqlc infers RefDate as string, not
-    -- interface{}. YYYYMMDD strings sort lexicographically, so string
-    -- comparisons below are correct without any date() round-trip.
-    ref(ref_ymd, horizon_ymd) AS (
-        SELECT
-            ymd,
-            strftime('%Y%m%d', date(MAX(iso, date('now')), '+2 years'))
-        FROM (
-            SELECT
-                CAST(?2 AS TEXT) AS ymd,
-                substr(CAST(?2 AS TEXT), 1, 4) || '-' ||
-                substr(CAST(?2 AS TEXT), 5, 2) || '-' ||
-                substr(CAST(?2 AS TEXT), 7, 2) AS iso
-        )
-    )
-SELECT CAST((
-    -- Part 1: an exception-added service day strictly after ref_date,
-    -- within the horizon. Indexed via idx_calendar_dates_service_id.
-    EXISTS (
-        SELECT 1
-        FROM trips t
-        JOIN calendar_dates cd ON cd.service_id = t.service_id
-        WHERE t.route_id = ?1
-          AND cd.exception_type = 1
-          AND cd.date > (SELECT ref_ymd FROM ref)
-          AND cd.date <= (SELECT horizon_ymd FROM ref)
-    )
-    OR
-    -- Part 2: a calendar row for this route overlaps (ref_date, horizon]
-    -- with at least one enabled weekday. Indexed via
-    -- idx_trips_route_service; cal.end_date > ref_ymd preserves strict
-    -- ref_date exclusivity, cal.start_date <= horizon_ymd preserves the
-    -- upper bound.
-    EXISTS (
-        SELECT 1
-        FROM trips t
-        JOIN calendar cal ON cal.id = t.service_id
-        WHERE t.route_id = ?1
-          AND cal.end_date > (SELECT ref_ymd FROM ref)
-          AND cal.start_date <= (SELECT horizon_ymd FROM ref)
-          AND (cal.sunday + cal.monday + cal.tuesday + cal.wednesday
-             + cal.thursday + cal.friday + cal.saturday) > 0
-    )
-) AS INTEGER) AS has_future_service
-`
-
-type RouteHasFutureServiceParams struct {
-	RouteID string
-	RefDate string
-}
-
-// Returns 1 if the given route has at least one EFFECTIVE service date strictly
-// after the given date (YYYYMMDD), 0 otherwise. "Effective" means: the date
-// falls within a calendar row's [start_date, end_date] on an enabled weekday
-// and is not removed by a calendar_dates exception (type=2), OR the date has
-// a calendar_dates addition (type=1) for one of this route's services.
-//
-// Used to distinguish ServiceDateOutOfRange from NoServiceThatDay in the
-// schedule-for-route error path. Bounded to 2 years past the LATER of
-// ref_date and today (anchoring to today matters for historical ref_date
-// queries -- e.g. ref_date=1970 against a feed whose service starts in
-// 2024 -- so the check still reaches "today's" feed span).
-//
-// Implementation: two indexed range checks against calendar and
-// calendar_dates -- no day-by-day enumeration. Part 1 asks "is there any
-// exception_type=1 addition in the window?", Part 2 asks "does any
-// calendar row overlap the window on an enabled weekday?".
-//
-// Part 2 is a mild over-approximation: it does not verify that the
-// calendar row's intersection with the window actually contains an
-// enabled weekday, nor that every regular day in that intersection is
-// cancelled by an exception_type=2 row. Given the 2-year horizon, the
-// intersection is almost always >=7 days so every weekday appears; the
-// rare edge cases where this over-reports would only flip the caller's
-// error message from ServiceDateOutOfRange to NoServiceThatDay -- both
-// surface an empty schedule, so the miscategorization is benign.
-// CAST(... AS INTEGER) so sqlc infers int64 for has_future_service
-// instead of interface{}; callers rely on `== 0` / `== 1` comparisons.
-func (q *Queries) RouteHasFutureService(ctx context.Context, arg RouteHasFutureServiceParams) (int64, error) {
-	row := q.queryRow(ctx, q.routeHasFutureServiceStmt, routeHasFutureService, arg.RouteID, arg.RefDate)
-	var has_future_service int64
-	err := row.Scan(&has_future_service)
-	return has_future_service, err
 }
 
 const shapeHasTripForAgency = `-- name: ShapeHasTripForAgency :one

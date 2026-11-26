@@ -64,6 +64,44 @@ func TestInterpolateBlockDistance_LinearMidpoint(t *testing.T) {
 	assert.Equal(t, 250.0, interpolateBlockDistance(stops, 125, true))
 }
 
+// A vehicle dwelling at a stop stays at that stop until it departs, rather than
+// being placed behind it.
+func TestInterpolateBlockDistance_DwellAtFromStop(t *testing.T) {
+	tests := []struct {
+		name           string
+		stops          []blockStopMetric
+		currentSeconds int64
+		monotonic      bool
+	}{
+		{
+			name: "monotonic",
+			stops: []blockStopMetric{
+				{EffectiveStopSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+				{EffectiveStopSeconds: 100, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+				{EffectiveStopSeconds: 300, DepartureSeconds: 300, DistanceAlongBlock: 2000},
+			},
+			currentSeconds: 150,
+			monotonic:      true,
+		},
+		{
+			name: "non-monotonic at the stop's arrival",
+			stops: []blockStopMetric{
+				{EffectiveStopSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+				{EffectiveStopSeconds: 100, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+				{EffectiveStopSeconds: 300, DepartureSeconds: 300, DistanceAlongBlock: 2000},
+				{EffectiveStopSeconds: 250, DepartureSeconds: 250, DistanceAlongBlock: 3000},
+				{EffectiveStopSeconds: 400, DepartureSeconds: 400, DistanceAlongBlock: 4000},
+			},
+			currentSeconds: 100,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, 1000.0, interpolateBlockDistance(tt.stops, tt.currentSeconds, tt.monotonic))
+		})
+	}
+}
+
 // TestInterpolateBlockDistance_NonMonotonicUsesLinearScan pins the fallback
 // path: with monotonic=false, the function must find the correct bracketing
 // pair via linear scan even when EffectiveStopSeconds are out of order.
@@ -355,6 +393,30 @@ func TestMetricsForStop_NotInRangeRefusesClampedResults(t *testing.T) {
 	assert.False(t, ok, "!InRange must refuse the clamped snapshot")
 	assert.Equal(t, 0.0, d)
 	assert.Equal(t, 0, n)
+}
+
+func TestMetricsForStop_DwellAtFinalStop(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{TripID: "A", StopID: "first", StopSequenceInTrip: 1, BlockSequence: 0, EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{TripID: "A", StopID: "mid", StopSequenceInTrip: 2, BlockSequence: 1, EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 100, DistanceAlongBlock: 1000},
+		{TripID: "A", StopID: "final", StopSequenceInTrip: 3, BlockSequence: 2, EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 360, DistanceAlongBlock: 2000},
+	}
+
+	currentTime := serviceDate.Add(330 * time.Second)
+	snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+	// Target = final stop (Sequence 3). Bus is dwelling at this stop.
+	d, n, ok := snap.metricsForStop("A", 3)
+	require.True(t, ok)
+	assert.InDelta(t, 0.0, d, 0.001)
+	assert.Equal(t, 0, n)
+
+	// Target = first stop (Sequence 1). Bus has passed it.
+	d, n, ok = snap.metricsForStop("A", 1)
+	require.True(t, ok)
+	assert.InDelta(t, -2000.0, d, 0.001)
+	assert.Equal(t, -2, n)
 }
 
 func TestMetricsForStop_NextStopUnset(t *testing.T) {
@@ -1351,4 +1413,254 @@ func TestShapeGapDistance(t *testing.T) {
 	assert.InDelta(t, 1112, shapeGapDistance(withShape, nextShape), 1)
 	assert.Zero(t, shapeGapDistance(withShape, blockTripData{}))
 	assert.Zero(t, shapeGapDistance(blockTripData{}, nextShape))
+}
+
+// closestAndNextStops follows Java's ScheduledBlockLocationServiceImpl: the
+// next stop is the first not yet reached, and the closest is the nearer in
+// time of it and the stop before, ties going to the next stop.
+func TestScheduledBlockSnapshot_ClosestAndNextStops(t *testing.T) {
+	stops := []blockStopMetric{
+		{StopID: "first", EffectiveStopSeconds: 1000},
+		{StopID: "second", EffectiveStopSeconds: 1600},
+	}
+	tests := []struct {
+		name           string
+		currentSeconds int64
+		want           scheduledStops
+	}{
+		{"at the first stop", 1000, scheduledStops{"first", 0, "first", 0}},
+		{"nearer the stop before", 1200, scheduledStops{"first", -200, "second", 400}},
+		{"halfway goes to the next stop", 1300, scheduledStops{"second", 300, "second", 300}},
+		{"nearer the next stop", 1500, scheduledStops{"second", 100, "second", 100}},
+		{"before the block starts", 900, scheduledStops{"first", 100, "first", 100}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := buildSnapshotFromStops(stops, nil, time.Unix(0, 0).UTC().Add(time.Duration(tt.currentSeconds)*time.Second), time.Unix(0, 0).UTC())
+			got, ok := snap.closestAndNextStops()
+			require.True(t, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	// A stop with a dwell holds the bus from arrival to departure, and the run
+	// to the next stop is measured from the departure.
+	dwell := []blockStopMetric{
+		{StopID: "first", EffectiveStopSeconds: 1000, DepartureSeconds: 1300},
+		{StopID: "second", EffectiveStopSeconds: 1600},
+	}
+	for _, tt := range []struct {
+		name           string
+		currentSeconds int64
+		want           scheduledStops
+	}{
+		{"during the dwell", 1200, scheduledStops{"first", 0, "first", 0}},
+		{"just after departing", 1400, scheduledStops{"first", -100, "second", 200}},
+		{"halfway from the departure", 1450, scheduledStops{"second", 150, "second", 150}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := buildSnapshotFromStops(dwell, nil, time.Unix(tt.currentSeconds, 0).UTC(), time.Unix(0, 0).UTC())
+			got, ok := snap.closestAndNextStops()
+			require.True(t, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	outside := buildSnapshotFromStops(stops, nil, time.Unix(2000, 0).UTC(), time.Unix(0, 0).UTC())
+	_, ok := outside.closestAndNextStops()
+	assert.False(t, ok, "past the block's last stop")
+	var none *scheduledBlockSnapshot
+	_, ok = none.closestAndNextStops()
+	assert.False(t, ok)
+}
+
+// Java treats a vehicle between a stop's arrival and departure as at that stop
+// (ScheduledBlockLocationServiceImpl.java:218), and interpolates only from one
+// stop's departure to the next stop's arrival.
+func TestBuildSnapshotFromStops_DwellAtStop(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+		{EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 300, DistanceAlongBlock: 2000},
+	}
+
+	tests := []struct {
+		name         string
+		seconds      int64
+		wantNext     int
+		wantDistance float64
+	}{
+		{name: "travelling to the stop", seconds: 50, wantNext: 1, wantDistance: 500},
+		{name: "arriving at the stop", seconds: 100, wantNext: 1, wantDistance: 1000},
+		{name: "dwelling at the stop", seconds: 150, wantNext: 1, wantDistance: 1000},
+		{name: "departing the stop", seconds: 200, wantNext: 1, wantDistance: 1000},
+		{name: "travelling on after departure", seconds: 250, wantNext: 2, wantDistance: 1500},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			currentTime := serviceDate.Add(time.Duration(tt.seconds) * time.Second)
+
+			snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+			assert.Equal(t, tt.wantNext, snap.NextStopIndex)
+			assert.InDelta(t, tt.wantDistance, snap.DistanceAlongBlock, 0.001)
+		})
+	}
+}
+
+func TestBuildSnapshotFromStops_NonMonotonicDwell(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+		{EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 300, DistanceAlongBlock: 2000},
+		{EffectiveStopSeconds: 120, ArrivalSeconds: 120, DepartureSeconds: 120, DistanceAlongBlock: 3000},
+	}
+	currentTime := serviceDate.Add(150 * time.Second)
+
+	snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+	// The out-of-order final stop makes interpolation clamp to the block's
+	// end. The dwell at index 1 must not override that fallback position.
+	assert.Equal(t, 2, snap.NextStopIndex)
+	assert.Equal(t, float64(3000), snap.DistanceAlongBlock)
+}
+
+func TestBuildSnapshotFromStops_DwellAtFinalStop(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 100, DistanceAlongBlock: 1000},
+		{EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 360, DistanceAlongBlock: 2000},
+	}
+
+	tests := []struct {
+		name         string
+		seconds      int64
+		wantNext     int
+		wantDistance float64
+		wantInRange  bool
+	}{
+		{name: "arriving at final stop", seconds: 300, wantNext: 2, wantDistance: 2000, wantInRange: true},
+		{name: "dwelling at final stop", seconds: 330, wantNext: 2, wantDistance: 2000, wantInRange: true},
+		{name: "departing final stop", seconds: 360, wantNext: 2, wantDistance: 2000, wantInRange: true},
+		{name: "past final stop departure", seconds: 361, wantNext: -1, wantDistance: 2000, wantInRange: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			currentTime := serviceDate.Add(time.Duration(tt.seconds) * time.Second)
+
+			snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+			assert.Equal(t, tt.wantNext, snap.NextStopIndex)
+			assert.InDelta(t, tt.wantDistance, snap.DistanceAlongBlock, 0.001)
+			assert.Equal(t, tt.wantInRange, snap.InRange)
+		})
+	}
+}
+
+func TestBuildSnapshotFromStops_NonMonotonicFinalStopDwell(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 200, ArrivalSeconds: 200, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+		{EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 100, DistanceAlongBlock: 1500},
+		{EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 360, DistanceAlongBlock: 2000},
+	}
+
+	// 330 is inside final stop's arrival (300) to departure (360) window
+	currentTime := serviceDate.Add(330 * time.Second)
+	snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+	assert.Equal(t, 3, snap.NextStopIndex)
+	assert.Equal(t, float64(2000), snap.DistanceAlongBlock)
+	assert.True(t, snap.InRange)
+
+	// After departure (370s), dwell check should not apply
+	pastTime := serviceDate.Add(370 * time.Second)
+	pastSnap := buildSnapshotFromStops(stops, nil, pastTime, serviceDate)
+
+	assert.Equal(t, -1, pastSnap.NextStopIndex)
+	assert.False(t, pastSnap.InRange)
+}
+
+func TestApplySnapshotStops_DwellAtStop(t *testing.T) {
+	snap := &scheduledBlockSnapshot{
+		NextStopIndex:  1,
+		CurrentSeconds: 150,
+		Stops: []blockStopMetric{
+			{StopID: "before", ArrivalSeconds: 0, DepartureSeconds: 0},
+			{StopID: "dwell", EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 200},
+		},
+	}
+	status := models.NewTripStatus()
+
+	applySnapshotStops(status, snap, "1")
+
+	assert.Equal(t, "1_dwell", status.NextStop)
+	assert.Zero(t, status.NextStopTimeOffset)
+	assert.Equal(t, "1_dwell", status.ClosestStop)
+	assert.Zero(t, status.ClosestStopTimeOffset)
+}
+
+func TestApplySnapshotStops_DwellAtFinalStop(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{StopID: "first", EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{StopID: "mid", EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 100, DistanceAlongBlock: 1000},
+		{StopID: "final", EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 360, DistanceAlongBlock: 2000},
+	}
+
+	currentTime := serviceDate.Add(330 * time.Second)
+	snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+	status := models.NewTripStatus()
+	applySnapshotStops(status, snap, "1")
+
+	assert.Equal(t, "1_final", status.NextStop)
+	assert.Zero(t, status.NextStopTimeOffset)
+	assert.Equal(t, "1_final", status.ClosestStop)
+	assert.Zero(t, status.ClosestStopTimeOffset)
+}
+
+// Without a shape, scheduledPosition places the bus between stops by time, as
+// Java does: at a stop during its dwell, then from its departure to the next
+// stop's arrival.
+func TestScheduledBlockSnapshot_ScheduledPositionWithoutShape(t *testing.T) {
+	stops := []blockStopMetric{
+		{StopID: "first", EffectiveStopSeconds: 1000, DepartureSeconds: 1200, Location: &models.Location{Lat: 47.0, Lon: -122.0}},
+		{StopID: "second", EffectiveStopSeconds: 1600, Location: &models.Location{Lat: 47.4, Lon: -122.0}},
+	}
+	tests := []struct {
+		name           string
+		currentSeconds int64
+		wantLat        float64
+		wantAtStop     bool
+	}{
+		{"at the first stop", 1000, 47.0, true},
+		{"during the dwell", 1100, 47.0, true},
+		{"a quarter of the run after departing", 1300, 47.1, false},
+		{"at the next stop", 1600, 47.4, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := buildSnapshotFromStops(stops, nil, time.Unix(tt.currentSeconds, 0).UTC(), time.Unix(0, 0).UTC())
+			pos, orientation := snap.scheduledPosition()
+			require.NotNil(t, pos)
+			assert.InDelta(t, tt.wantLat, pos.Lat, 1e-9)
+			assert.InDelta(t, -122.0, pos.Lon, 1e-9)
+			if tt.wantAtStop {
+				assert.Zero(t, orientation)
+			} else {
+				assert.InDelta(t, 90, orientation, 1e-9, "due north")
+			}
+		})
+	}
+
+	outside := buildSnapshotFromStops(stops, nil, time.Unix(2000, 0).UTC(), time.Unix(0, 0).UTC())
+	pos, _ := outside.scheduledPosition()
+	assert.Nil(t, pos, "past the block's last stop")
 }

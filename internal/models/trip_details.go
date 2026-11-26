@@ -79,7 +79,10 @@ func (ts *TripStatus) SetPredicted(predicted bool) {
 	ts.Scheduled = !predicted
 }
 
-// SituationIDs and VehicleFeatures default to empty slices (never null in JSON).
+// NewTripStatus returns a TripStatus with its defaults set. SituationIDs and
+// VehicleFeatures are empty slices, so they are never null in JSON.
+// OccupancyCapacity and OccupancyCount are -1, the value Java's
+// TripStatusBeanServiceImpl reports when no occupancy data is available.
 func NewTripStatus() *TripStatus {
 	status := &TripStatus{
 		OccupancyCapacity: -1,

@@ -85,7 +85,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err == nil && (route.ID == "" || route.AgencyID != agencyID) {
-		api.sendEmptyTripsForRouteList(w, r, ctx, includeReferences, includeTrip)
+		if err := api.sendEmptyTripsForRouteList(w, r, ctx, includeReferences, includeTrip); err != nil {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -130,7 +132,9 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 
 	hasBlocks := slices.ContainsFunc(dayBlockIDs, func(blockIDs []string) bool { return len(blockIDs) > 0 })
 	if !hasBlocks && len(nullBlockTrips) == 0 {
-		api.sendEmptyTripsForRouteList(w, r, ctx, includeReferences, includeTrip)
+		if err := api.sendEmptyTripsForRouteList(w, r, ctx, includeReferences, includeTrip); err != nil {
+			api.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
@@ -456,7 +460,7 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		references = api.buildTripReferences(ctx, tripReferenceParams{
+		references, err = api.buildTripReferences(ctx, tripReferenceParams{
 			IncludeTrip:     includeTrip,
 			Trips:           result,
 			Stops:           stopsReferenced,
@@ -464,6 +468,10 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 			StopIDMap:       stopIDsMap,
 			Situations:      situations.refs,
 		})
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 	} else {
 		references = *models.NewEmptyReferences()
 	}
@@ -474,15 +482,20 @@ func (api *RestAPI) tripsForRouteHandler(w http.ResponseWriter, r *http.Request)
 // sendEmptyTripsForRouteList answers a route with nothing in service, including
 // a prefix that does not own the route. The list is empty and includeReferences
 // is honored, matching an unknown route rather than a 404.
-func (api *RestAPI) sendEmptyTripsForRouteList(w http.ResponseWriter, r *http.Request, ctx context.Context, includeReferences, includeTrip bool) {
+func (api *RestAPI) sendEmptyTripsForRouteList(w http.ResponseWriter, r *http.Request, ctx context.Context, includeReferences, includeTrip bool) error {
 	var references models.ReferencesModel
 	if includeReferences {
-		references = api.buildTripReferences(ctx, tripReferenceParams{IncludeTrip: includeTrip})
+		var err error
+		references, err = api.buildTripReferences(ctx, tripReferenceParams{IncludeTrip: includeTrip})
+		if err != nil {
+			return err
+		}
 	} else {
 		references = *models.NewEmptyReferences()
 	}
 	response := models.NewListResponse([]models.TripsForRouteListEntry{}, references, false, api.Clock)
 	api.sendResponse(w, r, response)
+	return nil
 }
 
 // resolveTripsForRouteBlocks returns the Java-style scheduled active trip for
@@ -1254,16 +1267,21 @@ type tripReferenceParams struct {
 	Situations      []situationRef
 }
 
-func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenceParams) models.ReferencesModel {
+func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenceParams) (models.ReferencesModel, error) {
 	sets := newTripReferenceSets()
 
 	sets.collectPreFetchedTrips(params.PreFetchedTrips)
 	sets.collectTripIDsFromEntries(params.Trips)
 	api.fillMissingTrips(ctx, sets)
+	sets.noteEmittedTripRoutes(params.IncludeTrip)
 
 	references := models.NewEmptyReferences()
 	var routesByStopID map[string][]stopRoute
-	references.Stops, routesByStopID = api.stopReferences(ctx, params.Stops, params.StopIDMap)
+	var err error
+	references.Stops, routesByStopID, err = api.stopReferences(ctx, params.Stops, params.StopIDMap)
+	if err != nil {
+		return models.ReferencesModel{}, err
+	}
 
 	for _, routes := range routesByStopID {
 		for _, r := range routes {
@@ -1279,7 +1297,7 @@ func (api *RestAPI) buildTripReferences(ctx context.Context, params tripReferenc
 	references.Routes = sets.routeList()
 	references.Trips = sets.tripReferenceList(params.IncludeTrip)
 	references.Situations = api.situationReferences(ctx, params.Situations)
-	return *references
+	return *references, nil
 }
 
 // tripSituationRefs resolves a trip's situations from data already loaded,
@@ -1304,7 +1322,7 @@ func (api *RestAPI) tripSituationRefs(
 		return api.situationRefsForTrip(ctx, tripID)
 	}
 
-	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, trip.RouteID, agencyID), agencyID)
+	return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(tripID, trip.RouteID, agencyID), api.GtfsManager.FirstStaticAgencyID())
 }
 
 // tripReferenceSets accumulates the entities a trips-for-route response refers
@@ -1358,7 +1376,6 @@ func (s *tripReferenceSets) noteAuxiliaryTripID(combinedID string) {
 func (s *tripReferenceSets) collectPreFetchedTrips(trips []gtfsdb.Trip) {
 	for _, trip := range trips {
 		s.trips[trip.ID] = newTripReference(trip)
-		s.routes[trip.RouteID] = models.Route{}
 		delete(s.missing, trip.ID)
 	}
 }
@@ -1449,6 +1466,23 @@ func (api *RestAPI) addAgencyReference(ctx context.Context, sets *tripReferenceS
 	}
 }
 
+// emitsTrip reports whether a collected trip belongs in references.trips: every
+// trip when includeTrip is true, otherwise only those schedule or status point at.
+func (s *tripReferenceSets) emitsTrip(tripID string, includeTrip bool) bool {
+	return includeTrip || s.auxiliaryTripIDs[tripID]
+}
+
+// noteEmittedTripRoutes notes the route of every trip that references.trips
+// will hold. As in Java, a route reaches references only through a trip
+// reference or a stop, so a trip that includeTrip=false leaves out adds none.
+func (s *tripReferenceSets) noteEmittedTripRoutes(includeTrip bool) {
+	for tripID, trip := range s.trips {
+		if trip.RouteID != "" && s.emitsTrip(tripID, includeTrip) {
+			s.routes[trip.RouteID] = models.Route{}
+		}
+	}
+}
+
 // tripReferenceList emits the collected trips in combined-ID form. A trip whose
 // route was never resolved is skipped, since its agency is unknown.
 // When includeTrip is false, only trips referenced by schedule or status are included.
@@ -1456,9 +1490,7 @@ func (s *tripReferenceSets) tripReferenceList(includeTrip bool) []models.Trip {
 	tripsRefList := make([]models.Trip, 0, len(s.trips))
 
 	for tripID, trip := range s.trips {
-		// When includeTrip=false, skip list entries' own trips unless they were
-		// also referenced by schedule or status.
-		if !includeTrip && !s.auxiliaryTripIDs[tripID] {
+		if !s.emitsTrip(tripID, includeTrip) {
 			continue
 		}
 

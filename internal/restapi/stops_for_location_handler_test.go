@@ -295,7 +295,7 @@ func TestStopsForLocationSortsByCombinedStopID(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	rebuildStopAgencyIndex(t, api)
+	rebuildStopIndexes(t, api)
 
 	endpoint := fmt.Sprintf("/api/where/stops-for-location.json?key=TEST&lat=%f&lon=%f&radius=2000", lat, lon)
 	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
@@ -390,8 +390,7 @@ func TestStopsForLocationReturnsParentStation(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	rebuildStopAgencyIndex(t, api)
-	rebuildStopRouteIndex(t, api)
+	rebuildStopIndexes(t, api)
 
 	endpoint := fmt.Sprintf("/api/where/stops-for-location.json?key=TEST&lat=%f&lon=%f&radius=100", lat, lon)
 	resp, model := callAPIHandler[StopsResponse](t, api, endpoint)
@@ -663,7 +662,7 @@ func TestStopsForLocationQueryTruncatesToMaxCount(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	rebuildStopAgencyIndex(t, api)
+	rebuildStopIndexes(t, api)
 
 	endpoint := fmt.Sprintf(
 		"/api/where/stops-for-location.json?key=TEST&lat=%f&lon=%f&radius=2000&query=%s&maxCount=1",

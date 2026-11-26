@@ -2,6 +2,7 @@ package appconf
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -9,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode"
 )
 
 // defaultStaticFeedURL is used when no static feed key is configured.
@@ -34,9 +37,8 @@ const RedactedValue = "***REDACTED***"
 // credentials and passwords, AuthHeaderValue, and every Headers value.
 // Update it when adding a field that can hold a secret.
 func (feed GtfsStaticFeed) Redacted() GtfsStaticFeed {
-	if IsHTTPURL(feed.URL) {
-		feed.URL = RedactURL(feed.URL)
-	}
+	feed.URL = RedactURL(feed.URL)
+
 	if feed.AuthHeaderValue != "" {
 		feed.AuthHeaderValue = RedactedValue
 	}
@@ -57,19 +59,138 @@ func RedactHeaderValues(headers map[string]string) map[string]string {
 	return redacted
 }
 
-// RedactURL hides the secrets a URL can carry, for logs and dumped
-// config: the query string, which holds a signed URL's signature, and a
-// userinfo password. A URL that does not parse is hidden whole, since its
-// secrets cannot be found.
+// RedactURL preserves ordinary local paths while hiding URL query values
+// and passwords in URL userinfo. URL references without a scheme are also
+// handled. Malformed URL candidates fail closed.
 func RedactURL(raw string) string {
-	parsed, err := url.Parse(raw)
+	trimmed := strings.TrimSpace(raw)
+	lower := strings.ToLower(trimmed)
+
+	isHTTPStyle := strings.HasPrefix(lower, "http:") ||
+		strings.HasPrefix(lower, "https:")
+
+	if isHTTPStyle {
+		// Fail closed for malformed HTTP schemes.
+		if !strings.HasPrefix(lower, "http://") &&
+			!strings.HasPrefix(lower, "https://") {
+			return RedactedValue
+		}
+
+		// Do not normalize malformed URLs into apparently valid ones.
+		if strings.IndexFunc(trimmed, unicode.IsSpace) >= 0 {
+			return RedactedValue
+		}
+	} else if !strings.ContainsAny(trimmed, "?@") &&
+		!strings.Contains(trimmed, "://") {
+		// Ordinary local paths do not have URL query or userinfo markers.
+		return raw
+	}
+
+	parsed, err := url.Parse(trimmed)
 	if err != nil {
 		return RedactedValue
 	}
+
 	if parsed.RawQuery != "" {
 		parsed.RawQuery = RedactedValue
 	}
+
 	return parsed.Redacted()
+}
+
+// replaceURLText replaces both the literal URL and its Go-quoted form. The
+// quoted form is used by url.Error.Error and parse errors for URLs containing
+// control characters.
+func replaceURLText(message, raw, safe string) string {
+	if raw == "" {
+		return message
+	}
+	message = strings.ReplaceAll(message, strconv.Quote(raw), strconv.Quote(safe))
+	return strings.ReplaceAll(message, raw, safe)
+}
+
+// redactErrorMessage sanitizes explicitly configured source URLs in diagnostic text.
+func redactErrorMessage(message string, sourceURLs ...string) string {
+	for _, source := range sourceURLs {
+		if source != "" {
+			message = replaceURLText(
+				message,
+				source,
+				RedactURL(source),
+			)
+		}
+	}
+
+	return message
+}
+
+// RedactURLError sanitizes source URLs in an error message while preserving
+// errors.Is matching without exposing the original cause through Unwrap.
+// sourceURLs covers errors from request construction, which may include the
+// raw URL without wrapping it in a *url.Error.
+func RedactURLError(err error, sourceURLs ...string) error {
+	if err == nil {
+		return nil
+	}
+
+	originalMessage := err.Error()
+	message := redactErrorMessage(originalMessage, sourceURLs...)
+
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.URL != "" {
+		safeURL := RedactURL(urlErr.URL)
+		message = replaceURLText(message, urlErr.URL, safeURL)
+
+		// Preserve errors.Is matching without exposing the original cause message.
+		causeSources := append(append([]string(nil), sourceURLs...), urlErr.URL)
+		var safeErr error
+		if urlErr.Err != nil {
+			safeErr = &redactedCauseError{
+				message: redactErrorMessage(
+					urlErr.Err.Error(),
+					causeSources...,
+				),
+				cause: urlErr.Err,
+			}
+		}
+		// Put a sanitized *url.Error in the unwrap chain as well. Returning the
+		// original one would let errors.As recover its secret-bearing URL field.
+		safeCause := &url.Error{Op: urlErr.Op, URL: safeURL, Err: safeErr}
+		return &redactedURLError{message: message, cause: safeCause}
+	}
+
+	if message != originalMessage {
+		return &redactedCauseError{
+			message: message,
+			cause:   err,
+		}
+	}
+	return err
+}
+
+type redactedURLError struct {
+	message string
+	cause   error
+}
+
+func (err *redactedURLError) Error() string { return err.message }
+func (err *redactedURLError) Unwrap() error { return err.cause }
+
+// redactedCauseError retains error matching without exposing the original
+// error through Unwrap. The original cause can contain sensitive diagnostic
+// text, so it must remain private.
+type redactedCauseError struct {
+	message string
+	cause   error
+}
+
+func (err *redactedCauseError) Error() string {
+	return err.message
+}
+
+// Is preserves errors.Is matching without exposing the original cause.
+func (err *redactedCauseError) Is(target error) bool {
+	return err.cause != nil && errors.Is(err.cause, target)
 }
 
 // GtfsRtFeed represents a single GTFS-RT feed configuration
@@ -651,6 +772,71 @@ func (j *JSONConfig) applyStaticAuthEnvOverrides() error {
 	return nil
 }
 
+// applyRealtimeAuthEnvOverrides sets the first realtime feed's legacy auth
+// header pair from GTFS_REALTIME_AUTH_NAME and GTFS_REALTIME_AUTH_VALUE.
+func (j *JSONConfig) applyRealtimeAuthEnvOverrides() {
+	rtName := os.Getenv("GTFS_REALTIME_AUTH_NAME")
+	rtValue := os.Getenv("GTFS_REALTIME_AUTH_VALUE")
+	if rtName == "" && rtValue == "" {
+		return
+	}
+	if len(j.GtfsRtFeeds) > 0 {
+		if rtName != "" {
+			j.GtfsRtFeeds[0].RealTimeAuthHeaderName = rtName
+		}
+		if rtValue != "" {
+			j.GtfsRtFeeds[0].RealTimeAuthHeaderValue = rtValue
+		}
+		return
+	}
+	slog.Warn("GTFS_REALTIME_AUTH env vars set but no Realtime feeds configured",
+		"component", "config_loader")
+}
+
+// EnvOverrideOptions controls which environment overrides ApplyEnvironmentOverrides applies.
+type EnvOverrideOptions struct {
+	// SkipAPIKeys leaves ApiKeys unchanged even when GTFS_API_KEYS is set.
+	// Used on the flag path when -api-keys was explicitly visited.
+	SkipAPIKeys bool
+	// SkipStaticAuth leaves static feed auth headers unchanged when
+	// GTFS_STATIC_AUTH_* is set. Used on the flag path when a static auth
+	// header flag was visited.
+	SkipStaticAuth bool
+	// SkipRealtimeAuth leaves realtime feed auth headers unchanged when
+	// GTFS_REALTIME_AUTH_* is set. Used on the flag path when a realtime auth
+	// header flag was visited.
+	SkipRealtimeAuth bool
+}
+
+// ApplyEnvironmentOverrides applies GTFS_API_KEYS and static/realtime feed-auth
+// environment variables. It does not touch protected API keys or MAGLEV_LOG_*.
+func (j *JSONConfig) ApplyEnvironmentOverrides(opts EnvOverrideOptions) error {
+	if !opts.SkipAPIKeys {
+		if envKeys := os.Getenv("GTFS_API_KEYS"); envKeys != "" {
+			rawKeys := strings.Split(envKeys, ",")
+			var cleanKeys []string
+			for _, k := range rawKeys {
+				if trimmed := strings.TrimSpace(k); trimmed != "" {
+					cleanKeys = append(cleanKeys, trimmed)
+				}
+			}
+			if len(cleanKeys) > 0 {
+				j.ApiKeys = cleanKeys
+			}
+		}
+	}
+
+	if !opts.SkipStaticAuth {
+		if err := j.applyStaticAuthEnvOverrides(); err != nil {
+			return err
+		}
+	}
+	if !opts.SkipRealtimeAuth {
+		j.applyRealtimeAuthEnvOverrides()
+	}
+	return nil
+}
+
 // rejectNullLegacyStaticFeed reports an error when the config sets
 // gtfs-static-feed to null. Decoding turns null into a nil pointer, which
 // would read as an absent key and load the default feed, so the raw
@@ -709,20 +895,6 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 	// Apply defaults
 	config.setDefaults()
 
-	// Override API Keys (Split by comma, trim spaces, ignore empty)
-	if envKeys := os.Getenv("GTFS_API_KEYS"); envKeys != "" {
-		rawKeys := strings.Split(envKeys, ",")
-		var cleanKeys []string
-		for _, k := range rawKeys {
-			if trimmed := strings.TrimSpace(k); trimmed != "" {
-				cleanKeys = append(cleanKeys, trimmed)
-			}
-		}
-		if len(cleanKeys) > 0 {
-			config.ApiKeys = cleanKeys
-		}
-	}
-
 	// Override logging level and format
 	if logLevel := strings.TrimSpace(os.Getenv("MAGLEV_LOG_LEVEL")); logLevel != "" {
 		config.LogLevel = strings.ToLower(logLevel)
@@ -736,27 +908,8 @@ func LoadFromFile(path string) (*JSONConfig, error) {
 		config.ProtectedApiKeys = envProtectedKeys
 	}
 
-	if err := config.applyStaticAuthEnvOverrides(); err != nil {
+	if err := config.ApplyEnvironmentOverrides(EnvOverrideOptions{}); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
-	}
-
-	// Override Realtime Feed Auth (Name + Value)
-	// Note: Currently only overrides the first configured realtime feed explicitly
-	rtName := os.Getenv("GTFS_REALTIME_AUTH_NAME")
-	rtValue := os.Getenv("GTFS_REALTIME_AUTH_VALUE")
-
-	if rtName != "" || rtValue != "" {
-		if len(config.GtfsRtFeeds) > 0 {
-			if rtName != "" {
-				config.GtfsRtFeeds[0].RealTimeAuthHeaderName = rtName
-			}
-			if rtValue != "" {
-				config.GtfsRtFeeds[0].RealTimeAuthHeaderValue = rtValue
-			}
-		} else {
-			slog.Warn("GTFS_REALTIME_AUTH env vars set but no Realtime feeds configured",
-				"component", "config_loader")
-		}
 	}
 
 	// Validate

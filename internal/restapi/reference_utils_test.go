@@ -231,8 +231,9 @@ func TestStopReferences(t *testing.T) {
 		malformedReferenceStop.ID: {"malformed-reference-id"},
 	}
 
-	refs, routeIDsByStop := api.stopReferences(ctx,
+	refs, routeIDsByStop, err := api.stopReferences(ctx,
 		[]gtfsdb.Stop{servedStop, routelessStop, defaultStop, malformedReferenceStop}, referringIDs)
+	require.NoError(t, err)
 	require.Len(t, refs, 4, "a stop with no resolvable routes still gets a reference")
 
 	assert.Equal(t, referringIDs[servedStopID][0], refs[0].ID, "the referring entry's ID labels the reference")
@@ -292,7 +293,8 @@ func TestStopReferences_DirectionAndCodeMatchBuildStopModel(t *testing.T) {
 				tt.stop.ID: {utils.FormCombinedID(referringAgencyID, tt.stop.ID)},
 			}
 
-			refs, _ := api.stopReferences(ctx, []gtfsdb.Stop{tt.stop}, referringIDs)
+			refs, _, err := api.stopReferences(ctx, []gtfsdb.Stop{tt.stop}, referringIDs)
+			require.NoError(t, err)
 			require.Len(t, refs, 1)
 
 			assert.Equal(t, tt.wantDirection, refs[0].Direction)
@@ -563,7 +565,7 @@ func TestBuildReferencedTrips_CrossAgencyRouteID(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "cross-agency-referenced-trips.zip", files)
 	ctx := context.Background()
 
-	trips, err := api.buildReferencedTrips(ctx, "A1", []string{"A1_t2"}, gtfsdb.Trip{ID: "t1"})
+	trips, err := api.buildReferencedTrips(ctx, "A1", []string{"A1_t2"})
 	require.NoError(t, err)
 	require.Len(t, trips, 1)
 
@@ -605,7 +607,8 @@ func TestStopReferences_AgencyWithUnderscore(t *testing.T) {
 		"s1": {"AGENCY_ONE_s1"},
 	}
 
-	refs, routesByStop := api.stopReferences(ctx, stops, referringIDs)
+	refs, routesByStop, err := api.stopReferences(ctx, stops, referringIDs)
+	require.NoError(t, err)
 	require.Len(t, refs, 1)
 	assert.Equal(t, []string{"AGENCY_ONE_ROUTE_100"}, refs[0].RouteIDs)
 
@@ -871,31 +874,36 @@ func TestEndpoints_ReferencesNeverContainNullArrays(t *testing.T) {
 	server := httptest.NewServer(api.SetupAPIRoutes())
 	defer server.Close()
 
-	// Endpoints identified in #2121 and related issues, tested with
-	// empty, missing, or standard queries to verify reference arrays.
+	// Endpoints tested with empty, missing, or standard queries to verify reference arrays.
+	// Uses key=org.onebusaway.iphone because it is exempt from rate limits (the "TEST" key
+	// is capped at 5 requests/sec).
 	endpoints := []struct {
 		name string
 		url  string
 	}{
 		{
 			name: "search/route with no matches",
-			url:  "/api/where/search/route.json?key=TEST&input=nomatchxyz999",
+			url:  "/api/where/search/route.json?key=org.onebusaway.iphone&input=nomatchxyz999",
 		},
 		{
 			name: "search/stop with no matches",
-			url:  "/api/where/search/stop.json?key=TEST&input=nomatchxyz999",
+			url:  "/api/where/search/stop.json?key=org.onebusaway.iphone&input=nomatchxyz999",
 		},
 		{
 			name: "stops-for-location empty area",
-			url:  "/api/where/stops-for-location.json?key=TEST&lat=0.0&lon=0.0&latSpan=0.01&lonSpan=0.01",
+			url:  "/api/where/stops-for-location.json?key=org.onebusaway.iphone&lat=0.0&lon=0.0&latSpan=0.01&lonSpan=0.01",
 		},
 		{
 			name: "stops-for-agency",
-			url:  "/api/where/stops-for-agency/25.json?key=TEST",
+			url:  "/api/where/stops-for-agency/25.json?key=org.onebusaway.iphone",
 		},
 		{
 			name: "routes-for-agency",
-			url:  "/api/where/routes-for-agency/25.json?key=TEST",
+			url:  "/api/where/routes-for-agency/25.json?key=org.onebusaway.iphone",
+		},
+		{
+			name: "agency by ID",
+			url:  "/api/where/agency/25.json?key=org.onebusaway.iphone",
 		},
 	}
 
