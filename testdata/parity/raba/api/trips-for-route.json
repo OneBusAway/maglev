@@ -195,7 +195,7 @@
         "status": {
           "activeTripId": "25_dcd9e9b6-e261-4020-87f7-b65bf6b34e87",
           "blockTripSequence": 4,
-          "closestStop": "25_1036",
+          "closestStop": "25_1045",
           "closestStopTimeOffset": -60,
           "distanceAlongTrip": 0,
           "lastKnownDistanceAlongTrip": 0,
