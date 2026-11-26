@@ -253,9 +253,9 @@ func TestArrivalsAndDeparturesForStopHandler_StopCodeFallback(t *testing.T) {
 }
 
 // TestArrivalsAndDeparturesForStopHandler_RouteStopAlertOnMatchingArrival verifies
-// that a {routeID+stopID} alert appears on arrivals for that route at that stop,
-// keeps arrival.SituationIDs equal to TripStatus.SituationIDs, and resolves in
-// references — without landing on the entry via GetAlertsForStop alone.
+// that a {routeID+stopID} alert appears on arrivals for that route at that stop
+// and resolves in references. TripStatus keeps the vehicle-journey set, so the
+// composite is not copied onto it.
 func TestArrivalsAndDeparturesForStopHandler_RouteStopAlertOnMatchingArrival(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
@@ -297,10 +297,10 @@ func TestArrivalsAndDeparturesForStopHandler_RouteStopAlertOnMatchingArrival(t *
 	}
 	require.NotNil(t, affectedArrival, "expected an arrival on the alerted route")
 	require.NotNil(t, affectedArrival.TripStatus)
-	assert.Equal(t, affectedArrival.TripStatus.SituationIDs, affectedArrival.SituationIDs,
-		"arrival situationIds must stay equal to TripStatus after stop-scoped merge")
 	assert.Contains(t, affectedArrival.SituationIDs, wantSituationID,
 		"matching arrival must include the route+stop alert")
+	assert.NotContains(t, affectedArrival.TripStatus.SituationIDs, wantSituationID,
+		"route+stop stays off TripStatus; that set is the vehicle journey")
 
 	for _, arrival := range model.Data.Entry.ArrivalsAndDepartures {
 		if arrival.RouteID == target.RouteID {
@@ -365,8 +365,9 @@ func TestArrivalsAndDeparturesForStopHandler_TripStopAlertOnMatchingArrival(t *t
 	}
 	require.NotNil(t, affectedArrival, "expected the alerted trip arrival")
 	require.NotNil(t, affectedArrival.TripStatus)
-	assert.Equal(t, affectedArrival.TripStatus.SituationIDs, affectedArrival.SituationIDs)
 	assert.Contains(t, affectedArrival.SituationIDs, wantSituationID)
+	assert.NotContains(t, affectedArrival.TripStatus.SituationIDs, wantSituationID,
+		"trip+stop stays off TripStatus; that set is the vehicle journey")
 
 	for _, arrival := range model.Data.Entry.ArrivalsAndDepartures {
 		if arrival.TripID == target.TripID {

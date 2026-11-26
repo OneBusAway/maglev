@@ -165,24 +165,6 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 	if out.tripUpdatesByAgency == nil {
 		out.tripUpdatesByAgency = map[string]AgencyTripUpdates{}
 	}
-	if out.alerts.byTrip == nil {
-		out.alerts.byTrip = map[string][]FeedAlert{}
-	}
-	if out.alerts.byRoute == nil {
-		out.alerts.byRoute = map[string][]FeedAlert{}
-	}
-	if out.alerts.byAgency == nil {
-		out.alerts.byAgency = map[string][]FeedAlert{}
-	}
-	if out.alerts.byStop == nil {
-		out.alerts.byStop = map[string][]FeedAlert{}
-	}
-	if out.alerts.byRouteStop == nil {
-		out.alerts.byRouteStop = map[routeStopKey][]FeedAlert{}
-	}
-	if out.alerts.byTripStop == nil {
-		out.alerts.byTripStop = map[tripStopKey][]FeedAlert{}
-	}
 	return out
 }
 
@@ -1501,6 +1483,72 @@ func (indices *vehicleIndices) indexDuplicatedVehicle(vehicle gtfs.Vehicle, trip
 	}
 }
 
+// alertEntitySeen dedups one alert across its informed entities. The maps are
+// per alert, so the caller creates them and passes the same pointer for every
+// entity of that alert.
+type alertEntitySeen struct {
+	trip      map[string]bool
+	route     map[string]bool
+	agency    map[string]bool
+	stop      map[string]bool
+	routeStop map[routeStopKey]bool
+	tripStop  map[tripStopKey]bool
+}
+
+// indexAlertEntity files one informed entity into the alert index. A trip_id is
+// the only trip key arrivals look up. go-gtfs also keeps a Trip descriptor with
+// an empty ID when route, direction, and start time/date identify a trip;
+// Maglev does not resolve those, so they stay in byStop instead of byTripStop.
+func indexAlertEntity(idx *alertIndex, feedAlert FeedAlert, entity gtfs.AlertInformedEntity, seen *alertEntitySeen) {
+	hasTripID := entity.TripID != nil && entity.TripID.ID != ""
+	// Trip+stop is stop-specific for that trip: Java's AffectsTripKeyFactory
+	// skips combined selectors, and getServiceAlertsForStopCall resolves them
+	// via the trip+stop index instead.
+	if hasTripID && entity.StopID != nil {
+		key := tripStopKey{tripID: entity.TripID.ID, stopID: *entity.StopID}
+		if !seen.tripStop[key] {
+			seen.tripStop[key] = true
+			idx.byTripStop[key] = append(idx.byTripStop[key], feedAlert)
+		}
+	} else if entity.TripID != nil && entity.StopID == nil && !seen.trip[entity.TripID.ID] {
+		seen.trip[entity.TripID.ID] = true
+		idx.byTrip[entity.TripID.ID] = append(idx.byTrip[entity.TripID.ID], feedAlert)
+	}
+	// Route-wide only when there is no stop or trip restriction. Route+stop
+	// (no trip) goes to byRouteStop; Java's AffectsRouteKeyFactory skips it.
+	if entity.RouteID != nil && entity.StopID == nil && entity.TripID == nil && !seen.route[*entity.RouteID] {
+		seen.route[*entity.RouteID] = true
+		idx.byRoute[*entity.RouteID] = append(idx.byRoute[*entity.RouteID], feedAlert)
+	}
+	if entity.RouteID != nil && entity.StopID != nil && entity.TripID == nil {
+		key := routeStopKey{routeID: *entity.RouteID, stopID: *entity.StopID}
+		if !seen.routeStop[key] {
+			seen.routeStop[key] = true
+			idx.byRouteStop[key] = append(idx.byRouteStop[key], feedAlert)
+		}
+	}
+	// Agency-wide only: no route, trip, or stop. {agencyId+stopId} is
+	// stop-specific and filed in byStop, matching AffectsAgencyKeyFactory.
+	isAgencyWide := entity.AgencyID != nil &&
+		entity.RouteID == nil &&
+		entity.TripID == nil &&
+		entity.StopID == nil
+	if isAgencyWide && !seen.agency[*entity.AgencyID] {
+		seen.agency[*entity.AgencyID] = true
+		idx.byAgency[*entity.AgencyID] = append(idx.byAgency[*entity.AgencyID], feedAlert)
+	}
+	// Pure stop (and agency+stop): no route and no resolvable trip.
+	// A Trip descriptor with an empty trip_id still names the stop, so it
+	// stays in byStop instead of an unreadable byTripStop key.
+	unresolvedTrip := entity.TripID != nil && entity.TripID.ID == ""
+	isStopOnly := entity.StopID != nil &&
+		(unresolvedTrip || (entity.RouteID == nil && entity.TripID == nil))
+	if isStopOnly && !seen.stop[*entity.StopID] {
+		seen.stop[*entity.StopID] = true
+		idx.byStop[*entity.StopID] = append(idx.byStop[*entity.StopID], feedAlert)
+	}
+}
+
 func (manager *Manager) rebuildMergedRealtimeLocked() {
 	builtAt := time.Now()
 	previous := manager.mergedRealtime()
@@ -1575,65 +1623,16 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 			// referencing the same key (e.g. two entities both pointing to stop "S1").
 			// Capacity is set to the entity count so the map never needs to grow.
 			n := len(alert.InformedEntities)
-			seenTrip := make(map[string]bool, n)
-			seenRoute := make(map[string]bool, n)
-			seenAgency := make(map[string]bool, n)
-			seenStop := make(map[string]bool, n)
-			seenRouteStop := make(map[routeStopKey]bool, n)
-			seenTripStop := make(map[tripStopKey]bool, n)
+			seen := &alertEntitySeen{
+				trip:      make(map[string]bool, n),
+				route:     make(map[string]bool, n),
+				agency:    make(map[string]bool, n),
+				stop:      make(map[string]bool, n),
+				routeStop: make(map[routeStopKey]bool, n),
+				tripStop:  make(map[tripStopKey]bool, n),
+			}
 			for _, entity := range alert.InformedEntities {
-				// A trip_id is the only trip key arrivals look up. go-gtfs also
-				// keeps a Trip descriptor with an empty ID when route, direction,
-				// and start time/date identify a trip; Maglev does not resolve
-				// those, so they must not occupy byTripStop.
-				hasTripID := entity.TripID != nil && entity.TripID.ID != ""
-				// Trip+stop is stop-specific for that trip: Java's AffectsTripKeyFactory
-				// skips combined selectors, and getServiceAlertsForStopCall resolves
-				// them via the trip+stop index instead.
-				if hasTripID && entity.StopID != nil {
-					key := tripStopKey{tripID: entity.TripID.ID, stopID: *entity.StopID}
-					if !seenTripStop[key] {
-						seenTripStop[key] = true
-						idx.byTripStop[key] = append(idx.byTripStop[key], feedAlert)
-					}
-				} else if entity.TripID != nil && entity.StopID == nil && !seenTrip[entity.TripID.ID] {
-					seenTrip[entity.TripID.ID] = true
-					idx.byTrip[entity.TripID.ID] = append(idx.byTrip[entity.TripID.ID], feedAlert)
-				}
-				// Route-wide only when there is no stop or trip restriction. Route+stop
-				// (no trip) goes to byRouteStop; Java's AffectsRouteKeyFactory skips it.
-				if entity.RouteID != nil && entity.StopID == nil && entity.TripID == nil && !seenRoute[*entity.RouteID] {
-					seenRoute[*entity.RouteID] = true
-					idx.byRoute[*entity.RouteID] = append(idx.byRoute[*entity.RouteID], feedAlert)
-				}
-				if entity.RouteID != nil && entity.StopID != nil && entity.TripID == nil {
-					key := routeStopKey{routeID: *entity.RouteID, stopID: *entity.StopID}
-					if !seenRouteStop[key] {
-						seenRouteStop[key] = true
-						idx.byRouteStop[key] = append(idx.byRouteStop[key], feedAlert)
-					}
-				}
-				// Agency-wide only: no route, trip, or stop. {agencyId+stopId} is
-				// stop-specific and filed in byStop, matching AffectsAgencyKeyFactory.
-				isAgencyWide := entity.AgencyID != nil &&
-					entity.RouteID == nil &&
-					entity.TripID == nil &&
-					entity.StopID == nil
-				if isAgencyWide && !seenAgency[*entity.AgencyID] {
-					seenAgency[*entity.AgencyID] = true
-					idx.byAgency[*entity.AgencyID] = append(idx.byAgency[*entity.AgencyID], feedAlert)
-				}
-				// Pure stop (and agency+stop): no route and no resolvable trip.
-				// A Trip descriptor with an empty trip_id still names the stop, so
-				// it stays in byStop instead of an unreadable byTripStop key.
-				// Combined route+stop / trip+stop live in their composite buckets.
-				unresolvedTrip := entity.TripID != nil && entity.TripID.ID == ""
-				isStopOnly := entity.StopID != nil &&
-					(unresolvedTrip || (entity.RouteID == nil && entity.TripID == nil))
-				if isStopOnly && !seenStop[*entity.StopID] {
-					seenStop[*entity.StopID] = true
-					idx.byStop[*entity.StopID] = append(idx.byStop[*entity.StopID], feedAlert)
-				}
+				indexAlertEntity(&idx, feedAlert, entity, seen)
 			}
 		}
 	}

@@ -394,18 +394,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	blockTripSequence := api.calculateBlockTripSequence(ctx, tripID, serviceMidnight)
 
 	lastUpdateTime := api.GtfsManager.GetVehicleLastUpdateTime(vehicle)
-	var baseSituations []situationRef
-	if statusExtras != nil {
-		baseSituations = statusExtras.situations
-	}
-	mergedSituations := api.appendStopScopedSituationRefs(baseSituations, tripID, route.ID, stopCode)
-	if statusExtras != nil {
-		statusExtras.situations = mergedSituations
-	}
+	// Composites go on the arrival only. TripStatus.SituationIDs stays the
+	// vehicle-journey set BuildTripStatus stored.
+	mergedSituations := api.appendStopScopedSituationRefs(statusExtras.situations, tripID, route.ID, stopCode)
 	situationIDs, situationRefs := api.situationsFromRefs(ctx, mergedSituations)
-	if status != nil {
-		status.SituationIDs = situationIDs
-	}
 
 	arrival := models.NewArrivalAndDeparture(
 		utils.FormCombinedID(route.AgencyID, route.ID), // routeID

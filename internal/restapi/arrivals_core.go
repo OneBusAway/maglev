@@ -1083,14 +1083,12 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 	// Already computed by BuildTripStatus; reuse rather than redoing the block
 	// lookup for every arrival row.
 	arrival.BlockTripSequence = statusExtras.tripBlockSequence
-	// Same merged slice → collector, TripStatus, and extras so SituationIDs stay
-	// equal and references.situations resolves every emitted ID.
+	// Route+stop and trip+stop belong on the arrival (Java's
+	// getServiceAlertsForStopCall). TripStatus keeps the vehicle-journey set
+	// BuildTripStatus already stored. addRefs records the merged refs so
+	// references.situations still resolves every arrival situation id.
 	merged := api.appendStopScopedSituationRefs(statusExtras.situations, in.stopTime.TripID, in.route.ID, in.stopCode)
-	statusExtras.situations = merged
 	arrival.SituationIDs = acc.situations.addRefs(merged)
-	if tripStatus != nil {
-		tripStatus.SituationIDs = situationIDsFromRefs(merged)
-	}
 }
 
 // applyTripStatusPrediction fills an unpredicted arrival's predicted times
