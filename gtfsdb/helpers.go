@@ -165,17 +165,61 @@ func createDB(config Config) (*sql.DB, error) {
 	return db, nil
 }
 
+const schemaVersion = 1
+
 func performDatabaseMigration(ctx context.Context, db *sql.DB) error {
-	statements := strings.Split(ddl, "-- migrate") // Split DDL into individual statements
-	for _, stmt := range statements {
-		trimmedStmt := strings.TrimSpace(stmt)
-		if trimmedStmt == "" {
-			continue // Skip empty statements
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin migration transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var currentVersion int
+	err = tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&currentVersion)
+	if err != nil {
+		return fmt.Errorf("failed to get current schema version: %w", err)
+	}
+
+	// Do not attempt to downgrade a newer database.
+	if currentVersion > schemaVersion {
+		return fmt.Errorf(
+			"database schema version (%d) is newer than supported version (%d)",
+			currentVersion,
+			schemaVersion,
+		)
+	}
+
+	if currentVersion < schemaVersion {
+		statements := strings.Split(ddl, "-- migrate")
+
+		for _, stmt := range statements {
+			trimmedStmt := strings.TrimSpace(stmt)
+			if trimmedStmt == "" {
+				continue
+			}
+
+			if _, err := tx.ExecContext(ctx, trimmedStmt); err != nil {
+				return fmt.Errorf(
+					"error executing DDL statement [%s]: %w",
+					trimmedStmt,
+					err,
+				)
+			}
 		}
-		if _, err := db.ExecContext(ctx, trimmedStmt); err != nil {
-			return fmt.Errorf("error executing DDL statement [%s]: %w", trimmedStmt, err)
+
+		_, err = tx.ExecContext(
+			ctx,
+			fmt.Sprintf("PRAGMA user_version = %d", schemaVersion),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to update schema version: %w", err)
 		}
 	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit database migration: %w", err)
+	}
+
 	return nil
 }
 
@@ -260,7 +304,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 		logging.LogOperation(logger, "gtfs_data_import_completed",
 			slog.Duration("duration_ms", c.importRuntime),
-			slog.String("source", data.Source))
+			slog.String("source", appconf.RedactURL(data.Source)))
 	}()
 
 	// 1. Check if we already have this data imported
@@ -497,7 +541,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 	logging.LogOperation(logger, "updating_import_metadata",
 		slog.String("hash", data.Hash[:8]),
-		slog.String("source", data.Source))
+		slog.String("source", appconf.RedactURL(data.Source)))
 
 	_, err = qtx.UpsertImportMetadata(ctx, UpsertImportMetadataParams{
 		FileHash:   data.Hash,
@@ -555,19 +599,12 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		return false, fmt.Errorf("failed to bulk update trip time bounds: %w", err)
 	}
 
-	logging.LogOperation(logger, "building_stop_agency_index")
-	if err := buildStopAgencyIndex(ctx, qtx); err != nil {
-		logging.LogError(logger, "Unable to build stop agency index", err)
+	logging.LogOperation(logger, "building_stop_indexes")
+	if err := buildStopIndexes(ctx, qtx); err != nil {
+		logging.LogError(logger, "Unable to build stop indexes", err)
 		return false, err
 	}
-	logging.LogOperation(logger, "stop_agency_index_built")
-
-	logging.LogOperation(logger, "building_stop_route_index")
-	if err := buildStopRouteIndex(ctx, qtx); err != nil {
-		logging.LogError(logger, "Unable to build stop route index", err)
-		return false, err
-	}
-	logging.LogOperation(logger, "stop_route_index_built")
+	logging.LogOperation(logger, "stop_indexes_built")
 
 	logging.LogOperation(logger, "building_block_layover_index")
 	if err := c.buildBlockLayoverIndex(ctx, allTripEnds, tx); err != nil {
@@ -631,9 +668,19 @@ func shapePointParams(shapeID string, idx int, pt gtfs.ShapePoint) CreateShapePa
 	}
 }
 
+// buildStopIndexes rebuilds the stop indexes derived from stop_times: stop_routes, then
+// stop_agencies, which is built from it.
+func buildStopIndexes(ctx context.Context, qtx *Queries) error {
+	if err := buildStopRouteIndex(ctx, qtx); err != nil {
+		return err
+	}
+	return buildStopAgencyIndex(ctx, qtx)
+}
+
 // buildStopAgencyIndex repopulates stop_agencies from the routes currently serving each
-// stop. The table is rebuilt rather than updated in place because an import replaces the
-// whole feed, and a stop can change agency or lose its routes between feed versions.
+// stop, read from stop_routes, which must already be built. The table is rebuilt rather
+// than updated in place because an import replaces the whole feed, and a stop can change
+// agency or lose its routes between feed versions.
 func buildStopAgencyIndex(ctx context.Context, qtx *Queries) error {
 	if err := qtx.ClearStopAgencies(ctx); err != nil {
 		return fmt.Errorf("failed to clear stop agencies: %w", err)
@@ -656,6 +703,21 @@ func buildStopRouteIndex(ctx context.Context, qtx *Queries) error {
 	return nil
 }
 
+// CoalesceYYYYMMDD normalizes a sqlc interface{} SQLite TEXT date column
+// (string, []byte, or NULL) to a YYYYMMDD string. Empty means no value.
+func CoalesceYYYYMMDD(v interface{}) (string, error) {
+	switch d := v.(type) {
+	case nil:
+		return "", nil
+	case string:
+		return d, nil
+	case []byte:
+		return string(d), nil
+	default:
+		return "", fmt.Errorf("unexpected type for YYYYMMDD column: %T", v)
+	}
+}
+
 // updateFeedExpiresAtFromCalendar persists the end of the latest service date
 // in the latest-expiring agency timezone. Call within a transaction so expiry
 // is atomic with the calendar and agency data it was derived from.
@@ -665,16 +727,9 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 		return fmt.Errorf("failed to get feed end date: %w", err)
 	}
 
-	var dateStr string
-	switch v := val.(type) {
-	case nil:
-		// No calendar data — feed_expires_at will be NULL.
-	case string:
-		dateStr = v
-	case []byte:
-		dateStr = string(v)
-	default:
-		return fmt.Errorf("unexpected type from GetFeedEndDate: %T", val)
+	dateStr, err := CoalesceYYYYMMDD(val)
+	if err != nil {
+		return fmt.Errorf("GetFeedEndDate: %w", err)
 	}
 
 	var expires sql.NullInt64
@@ -1235,9 +1290,14 @@ const minStopTimesPerTrip = 2
 // minStopTimesPerTrip.
 const tooFewStopTimesProblem = "trip has fewer than two stop times"
 
+// tooFewStopTimesAtStopsProblem describes a Flex trip whose stop times at
+// stops (excluding location/location-group rows) are fewer than
+// minStopTimesPerTrip.
+const tooFewStopTimesAtStopsProblem = "trip has fewer than two stop times at stops"
+
 // inMemoryStopTimesProblem checks the stop times of a trip held in memory,
-// which may have been built by hand. A parsed feed never has a stop time
-// without a stop: go-gtfs drops the rows whose stop is unknown.
+// which may have been built by hand. A streamed feed's GTFS-Flex stop times
+// without a stop are dropped by stopTimesAtStops instead.
 func inMemoryStopTimesProblem(stopTimes []gtfs.ScheduledStopTime) string {
 	if len(stopTimes) < minStopTimesPerTrip {
 		return tooFewStopTimesProblem

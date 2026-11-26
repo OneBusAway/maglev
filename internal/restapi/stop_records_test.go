@@ -258,5 +258,5 @@ func seedStopRecordFixture(t *testing.T, api *RestAPI) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, q.BulkUpdateTripTimeBounds(ctx))
-	rebuildStopRouteIndex(t, api)
+	rebuildStopIndexes(t, api)
 }

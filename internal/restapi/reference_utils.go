@@ -482,12 +482,12 @@ func (api *RestAPI) BuildSituationReferences(ctx context.Context, alerts []inter
 			for _, id := range agencyIDs {
 				knownAgencies[id] = struct{}{}
 			}
-			if len(agencyIDs) > 0 {
-				firstStaticAgencyID = agencyIDs[0]
-			}
 		} else {
 			logQueryError(logger, "failed to fetch agencies for situation reference", err)
 		}
+		// The cached value does not depend on the query above, so a failed query
+		// still leaves the fallback agency available.
+		firstStaticAgencyID = api.GtfsManager.FirstStaticAgencyID()
 
 		if len(routeCandidateIDs) > 0 {
 			slices.Sort(routeCandidateIDs)
@@ -970,8 +970,11 @@ type stopRoute struct {
 // The routes each stop serves are returned alongside the references, for callers
 // that collect route references from them. idsByBareId is a map of a bare stop id
 // to combined agencyId_stopId
-func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, idsByBareID map[string][]string) ([]models.Stop, map[string][]stopRoute) {
-	routesByStop := api.routeIDsForStops(ctx, stops)
+func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, idsByBareID map[string][]string) ([]models.Stop, map[string][]stopRoute, error) {
+	routesByStop, err := api.routeIDsForStops(ctx, stops)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	stopList := make([]models.Stop, 0, len(stops))
 	for _, stop := range stops {
@@ -1004,10 +1007,9 @@ func (api *RestAPI) stopReferences(ctx context.Context, stops []gtfsdb.Stop, ids
 
 	added, err := api.appendResolvedParents(ctx, stopList, routesByStop)
 	if err != nil {
-		logging.ForComponent(ctx, "http_server").Error("failed to resolve parent stop references", "error", err)
-		return stopList, routesByStop
+		return nil, nil, fmt.Errorf("failed to resolve parent stop references: %w", err)
 	}
-	return append(stopList, added...), routesByStop
+	return append(stopList, added...), routesByStop, nil
 }
 
 // appendResolvedParents adds parent-station records that stopList names but does
@@ -1027,13 +1029,12 @@ func (api *RestAPI) appendResolvedParents(ctx context.Context, stopList []models
 }
 
 // routeIDsForStops maps each stop to the routes serving it.
-func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) map[string][]stopRoute {
+func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) (map[string][]stopRoute, error) {
 	routeIDsByStop := make(map[string][]stopRoute)
 	if len(stops) == 0 {
-		return routeIDsByStop
+		return routeIDsByStop, nil
 	}
 
-	reqLogger := logging.ForComponent(ctx, "http_server")
 	stopIDs := make([]string, len(stops))
 	for i, stop := range stops {
 		stopIDs[i] = stop.ID
@@ -1041,8 +1042,7 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 
 	rows, err := utils.QueryInBatches(ctx, stopIDs, api.GtfsManager.GtfsDB.Queries.GetRouteIDsForStops)
 	if err != nil {
-		reqLogger.Error("failed to fetch routes for stop references", "error", err)
-		return routeIDsByStop
+		return nil, fmt.Errorf("fetch routes for stop references: %w", err)
 	}
 	utils.SortRouteIDsForStopsRowsByName(rows)
 	for _, row := range rows {
@@ -1051,7 +1051,7 @@ func (api *RestAPI) routeIDsForStops(ctx context.Context, stops []gtfsdb.Stop) m
 			routeID:  row.RouteID,
 		})
 	}
-	return routeIDsByStop
+	return routeIDsByStop, nil
 }
 
 // Situation references
@@ -1068,13 +1068,13 @@ type situationRef struct {
 
 // situationRefsFromAlerts drops alerts with no ID and pairs the rest with the
 // situation ID used to refer to them.
-func situationRefsFromAlerts(alerts []internalgtfs.FeedAlert, agencyID string) []situationRef {
+func situationRefsFromAlerts(alerts []internalgtfs.FeedAlert, firstStaticAgencyID string) []situationRef {
 	refs := make([]situationRef, 0, len(alerts))
 	for _, alert := range alerts {
 		if alert.ID == "" {
 			continue
 		}
-		refs = append(refs, situationRef{ID: internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert.Alert, agencyID)), Alert: alert})
+		refs = append(refs, situationRef{ID: internalgtfs.SituationID(alert.ID, agencyIDForAlert(alert, firstStaticAgencyID)), Alert: alert})
 	}
 	return refs
 }
@@ -1096,19 +1096,21 @@ func dedupeSituationRefs(refs []situationRef) []situationRef {
 }
 
 // agencyIDForAlert returns the agency whose prefix an alert's situation ID
-// carries, preferring the alert's own informed entity over the caller's agency.
+// carries. It prefers the alert's own informed entity, then the feed's first
+// configured agency, which is what Java's createId uses. For a feed with no
+// agency-ids, Java defaults to the full agency set, so the first static agency
+// is the fallback.
 //
-// One alert is reachable by more than one path: a stop served by another
-// agency's route matches the same alert through both the route and the stop, and
-// each path knows a different agency. Scoping the ID to the caller's agency
-// would then publish that alert twice under two IDs, and an entry's
-// situationIds would resolve to whichever one it happened to be built from.
-// The informed entity is the only source that does not vary by lookup path.
-func agencyIDForAlert(alert gtfs.Alert, fallbackAgencyID string) string {
-	if agencyID := internalgtfs.AlertAgencyID(alert); agencyID != "" {
+// The result depends only on the alert and the feed, never on the request, so
+// one alert is published under one ID whichever path reaches it.
+func agencyIDForAlert(alert internalgtfs.FeedAlert, firstStaticAgencyID string) string {
+	if agencyID := internalgtfs.AlertAgencyID(alert.Alert); agencyID != "" {
 		return agencyID
 	}
-	return fallbackAgencyID
+	if alert.FeedAgencyID != "" {
+		return alert.FeedAgencyID
+	}
+	return firstStaticAgencyID
 }
 
 // situationCollector deduplicates the alerts referenced by list entries so the
@@ -1123,8 +1125,8 @@ func newSituationCollector() *situationCollector {
 }
 
 // add records the alerts affecting one trip and returns their situation IDs.
-func (c *situationCollector) add(alerts []internalgtfs.FeedAlert, agencyID string) []string {
-	return c.addRefs(situationRefsFromAlerts(alerts, agencyID))
+func (c *situationCollector) add(alerts []internalgtfs.FeedAlert, firstStaticAgencyID string) []string {
+	return c.addRefs(situationRefsFromAlerts(alerts, firstStaticAgencyID))
 }
 
 // addRefs records already-resolved situation references and returns their IDs.

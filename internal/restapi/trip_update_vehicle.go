@@ -561,9 +561,9 @@ func (api *RestAPI) statusBlockSnapshot(
 	beforeBlockStart := effectiveTime.Before(blockStart) && !runsOwnSchedule(input.vehicle)
 
 	hasNoPosition := input.vehicle == nil || input.vehicle.Position == nil
-	if record.present || (beforeBlockStart && hasNoPosition) {
-		effectiveSeconds := utils.CalculateSecondsSinceServiceDate(effectiveTime, input.serviceDate)
-		applySnapshotStops(status, snap, effectiveSeconds, input.agencyID)
+	followsBlockSchedule := hasNoPosition && !runsOwnSchedule(input.vehicle)
+	if record.present || followsBlockSchedule {
+		applySnapshotStops(status, snap, input.agencyID)
 	}
 	if beforeBlockStart {
 		return api.computeScheduledBlockSnapshot(ctx, input.dbTripID, blockStart, input.serviceDate)
@@ -659,26 +659,15 @@ func runsOwnSchedule(vehicle *gtfs.Vehicle) bool {
 	return relationship == gtfsrt.TripDescriptor_ADDED || relationship == gtfsrt.TripDescriptor_DUPLICATED
 }
 
-// applySnapshotStops mirrors Java's getScheduledBlockLocationBetweenStopTimes
-// for a vehicle placed by its record: the next stop is the snapshot's, and the
-// closest stop is whichever of it and the previous stop is nearer in time. A
-// vehicle dwelling at the next stop is at it, with both offsets zero.
-func applySnapshotStops(status *models.TripStatus, snap *scheduledBlockSnapshot, effectiveSeconds int64, agencyID string) {
-	if snap.NextStopIndex < 0 {
+// applySnapshotStops copies the block's scheduled stops to the status, using
+// the same dwell and closest-stop rules with or without a trip-update record.
+func applySnapshotStops(status *models.TripStatus, snap *scheduledBlockSnapshot, agencyID string) {
+	stops, ok := snap.closestAndNextStops()
+	if !ok {
 		return
 	}
-	next := snap.Stops[snap.NextStopIndex]
-	nextOffset := max(next.ArrivalSeconds-effectiveSeconds, 0)
-	status.NextStop = utils.FormCombinedID(agencyID, next.StopID)
-	status.NextStopTimeOffset = int(nextOffset)
-
-	closestStopID, closestOffset := next.StopID, nextOffset
-	if snap.NextStopIndex > 0 {
-		previous := snap.Stops[snap.NextStopIndex-1]
-		if previousOffset := previous.DepartureSeconds - effectiveSeconds; absInt64(previousOffset) < absInt64(nextOffset) {
-			closestStopID, closestOffset = previous.StopID, previousOffset
-		}
-	}
-	status.ClosestStop = utils.FormCombinedID(agencyID, closestStopID)
-	status.ClosestStopTimeOffset = int(closestOffset)
+	status.NextStop = utils.FormCombinedID(agencyID, stops.nextStopID)
+	status.NextStopTimeOffset = stops.nextOffset
+	status.ClosestStop = utils.FormCombinedID(agencyID, stops.closestStopID)
+	status.ClosestStopTimeOffset = stops.closestOffset
 }

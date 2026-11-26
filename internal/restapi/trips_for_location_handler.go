@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -21,7 +22,9 @@ import (
 // tripsForLocationHandler returns active trips near a geographic location, specified by
 // lat/lon coordinates with latSpan/lonSpan bounds, including real-time status and schedule data.
 func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	// Trip status for trips on one block repeats the block's trip and service
+	// lookups; the read memo fetches each once.
+	ctx := gtfsdb.WithReadMemo(r.Context())
 
 	parsedReq, fieldErrors, err := api.parseAndValidateRequest(r)
 	if len(fieldErrors) > 0 {
@@ -160,13 +163,17 @@ func (api *RestAPI) tripsForLocationHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		references = api.BuildReference(w, r, ctx, ReferenceParams{
+		references, err = api.BuildReference(ctx, ReferenceParams{
 			IncludeTrip:     parsedReq.IncludeTrip,
 			Stops:           referencedStops,
 			StopIDsByBareID: stopIDsByBareID,
 			Trips:           result,
 			Situations:      situations,
 		})
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 	}
 
 	// The search clamped its bounds, so outOfRange has to be reported against
@@ -632,8 +639,7 @@ func (api *RestAPI) activeTripInBoundsForAnchor(
 		return "", false
 	}
 
-	pos, _ := positionAndOrientationAtDistance(
-		snap.ActiveTripShape, snap.ActiveTripCumulativeDistances, snap.ActiveTripScheduledDistance)
+	pos, _ := snap.scheduledPosition()
 	if pos == nil || !utils.BoundsContain(scan.bounds, pos.Lat, pos.Lon) {
 		return "", false
 	}
@@ -951,7 +957,7 @@ func (api *RestAPI) buildTripsForLocationEntries(
 			Schedule:     schedule,
 			Status:       status,
 			ServiceDate:  servicedate.OffsetBase(serviceDate).UnixMilli(),
-			SituationIds: situations.add(alerts, agencyID),
+			SituationIds: situations.add(alerts, api.GtfsManager.FirstStaticAgencyID()),
 			TripId:       utils.FormCombinedID(agencyID, tripID),
 		}
 		result = append(result, entry)
@@ -1100,7 +1106,7 @@ type ReferenceParams struct {
 	Situations      []situationRef
 }
 
-func (api *RestAPI) BuildReference(w http.ResponseWriter, r *http.Request, ctx context.Context, params ReferenceParams) models.ReferencesModel {
+func (api *RestAPI) BuildReference(ctx context.Context, params ReferenceParams) (models.ReferencesModel, error) {
 	refs := &referenceBuilder{
 		api:           api,
 		ctx:           ctx,
@@ -1109,11 +1115,10 @@ func (api *RestAPI) BuildReference(w http.ResponseWriter, r *http.Request, ctx c
 	}
 
 	if err := refs.build(params); err != nil {
-		api.serverErrorResponse(w, r, err)
-		return models.ReferencesModel{}
+		return models.ReferencesModel{}, err
 	}
 
-	return refs.toReferencesModel(r.Context())
+	return refs.toReferencesModel(ctx), nil
 }
 
 type referenceBuilder struct {
@@ -1130,9 +1135,13 @@ type referenceBuilder struct {
 func (rb *referenceBuilder) build(params ReferenceParams) error {
 	rb.situations = params.Situations
 	rb.collectTripIDs(params.Trips)
-	rb.buildStopList(params.Stops, params.StopIDsByBareID)
+	if err := rb.buildStopList(params.Stops, params.StopIDsByBareID); err != nil {
+		return err
+	}
 
-	rb.enrichTripsData()
+	if err := rb.enrichTripsData(); err != nil {
+		return err
+	}
 
 	if err := rb.collectAgenciesAndRoutes(); err != nil {
 		return err
@@ -1173,8 +1182,11 @@ func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEn
 }
 
 // buildStopList emits the stop references and registers the routes serving them.
-func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID map[string][]string) {
-	stopList, routesByStop := rb.api.stopReferences(rb.ctx, stops, stopIDsByBareID)
+func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID map[string][]string) error {
+	stopList, routesByStop, err := rb.api.stopReferences(rb.ctx, stops, stopIDsByBareID)
+	if err != nil {
+		return err
+	}
 	rb.stopList = stopList
 
 	// Register the raw route ID (e.g. "100479") rather than the combined one, so
@@ -1185,23 +1197,22 @@ func (rb *referenceBuilder) buildStopList(stops []gtfsdb.Stop, stopIDsByBareID m
 			rb.presentRoutes[r.routeID] = models.Route{}
 		}
 	}
+	return nil
 }
 
-func (rb *referenceBuilder) enrichTripsData() {
+func (rb *referenceBuilder) enrichTripsData() error {
 	var tripIDs []string
 	for id := range rb.presentTrips {
 		tripIDs = append(tripIDs, id)
 	}
 
 	if len(tripIDs) == 0 {
-		return
+		return nil
 	}
 
-	reqLogger := logging.ForComponent(rb.ctx, "http_server")
 	trips, err := rb.api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(rb.ctx, tripIDs)
 	if err != nil {
-		reqLogger.Error("failed to batch fetch trips for references", "error", err)
-		return
+		return fmt.Errorf("failed to batch fetch trips for references: %w", err)
 	}
 
 	for _, trip := range trips {
@@ -1210,6 +1221,7 @@ func (rb *referenceBuilder) enrichTripsData() {
 			rb.presentRoutes[trip.RouteID] = models.Route{}
 		}
 	}
+	return nil
 }
 
 func (rb *referenceBuilder) createTrip(trip gtfsdb.Trip) models.Trip {
@@ -1317,23 +1329,13 @@ func (rb *referenceBuilder) createTripReference(trip models.Trip, currentAgency 
 }
 
 func (rb *referenceBuilder) toReferencesModel(ctx context.Context) models.ReferencesModel {
-	trips := rb.tripsRefList
-	if trips == nil {
-		trips = []models.Trip{}
+	return models.ReferencesModel{
+		Agencies:   rb.getAgenciesList(),
+		Routes:     rb.getRoutesList(),
+		Stops:      rb.stopList,
+		Trips:      rb.tripsRefList,
+		Situations: rb.getSituationsList(ctx),
 	}
-	stops := rb.stopList
-	if stops == nil {
-		stops = []models.Stop{}
-	}
-
-	references := models.NewEmptyReferences()
-	references.Agencies = rb.getAgenciesList()
-	references.Routes = rb.getRoutesList()
-	references.Stops = stops
-	references.Trips = trips
-	references.Situations = rb.getSituationsList(ctx)
-
-	return *references
 }
 
 func (rb *referenceBuilder) getSituationsList(ctx context.Context) []models.Situation {

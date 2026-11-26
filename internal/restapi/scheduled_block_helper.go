@@ -31,6 +31,9 @@ type blockStopMetric struct {
 	// AccumulatedSlack is the scheduled time, in seconds, a late vehicle can
 	// make up before reaching this stop: see accumulateBlockSlack.
 	AccumulatedSlack int64
+	// Location is the stop's position, or nil when its coordinates could not
+	// be loaded.
+	Location *models.Location
 }
 
 // dwellSeconds is the stop's scheduled time between arrival and departure.
@@ -43,13 +46,16 @@ func (s blockStopMetric) dwellSeconds() int64 {
 type scheduledBlockSnapshot struct {
 	Stops         []blockStopMetric
 	StopIndex     map[scheduledStopKey]int
-	NextStopIndex int // -1 when currentTime is past the block's last stop
+	NextStopIndex int // -1 once currentTime is past the last stop's departure
+
+	// CurrentSeconds is the snapshot's time, in seconds since service-date midnight.
+	CurrentSeconds int64
 
 	// Block-level interpolated distance at currentTime.
 	DistanceAlongBlock float64
 
 	// InRange is true when currentTime falls within the shift's [firstStop,
-	// lastStop] scheduled span. When false, DistanceAlongBlock is clamped to
+	// lastStop] scheduled span (through the last stop's departure). When false, DistanceAlongBlock is clamped to
 	// a block boundary and downstream code must NOT treat the derived
 	// per-trip fields (ActiveTripScheduledDistance, distanceFromStop) as
 	// meaningful. Mirrors Java's null-BlockLocation semantics
@@ -289,21 +295,142 @@ func buildSnapshotFromStops(
 	distanceAlongBlock := interpolateBlockDistance(stops, currentSeconds, monotonic)
 	// Only ordered stop times make the adjacent stop a safe dwell candidate;
 	// otherwise preserve the non-monotonic interpolation fallback.
+	firstStopSec := stops[0].EffectiveStopSeconds
+	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
 	if monotonic && dwellingAtPreviousStop(stops, nextStopIndex, currentSeconds) {
 		nextStopIndex--
 		distanceAlongBlock = stops[nextStopIndex].DistanceAlongBlock
+	} else if dwellingAtLastStop(stops, nextStopIndex, currentSeconds) {
+		nextStopIndex = len(stops) - 1
+		distanceAlongBlock = stops[nextStopIndex].DistanceAlongBlock
+		lastStopSec = max(lastStopSec, stops[len(stops)-1].DepartureSeconds)
 	}
-
-	firstStopSec := stops[0].EffectiveStopSeconds
-	lastStopSec := stops[len(stops)-1].EffectiveStopSeconds
 	return &scheduledBlockSnapshot{
 		Stops:              stops,
 		StopIndex:          stopIndex,
 		NextStopIndex:      nextStopIndex,
+		CurrentSeconds:     currentSeconds,
 		DistanceAlongBlock: distanceAlongBlock,
 		InRange:            currentSeconds >= firstStopSec && currentSeconds <= lastStopSec,
 		ShiftTripIDs:       shiftTripIDs,
 	}
+}
+
+// scheduledStops is a block's closest and next stop at one moment, with each
+// stop's offset from that moment in seconds.
+type scheduledStops struct {
+	closestStopID string
+	closestOffset int
+	nextStopID    string
+	nextOffset    int
+}
+
+// scheduledStopIndex finds the snapshot's time among the block's stops as
+// Java's ScheduledBlockLocationServiceImpl does: the first stop whose departure
+// is at or after it. atStop reports that the time falls in that stop's dwell,
+// between its arrival and departure. ok is false past the last departure.
+func (s *scheduledBlockSnapshot) scheduledStopIndex() (index int, atStop bool, ok bool) {
+	for i, stop := range s.Stops {
+		if stop.departureSeconds() >= s.CurrentSeconds {
+			return i, stop.EffectiveStopSeconds <= s.CurrentSeconds, true
+		}
+	}
+	return 0, false, false
+}
+
+// departureSeconds is the stop's departure, or its arrival when none is set.
+func (m blockStopMetric) departureSeconds() int64 {
+	return max(m.DepartureSeconds, m.EffectiveStopSeconds)
+}
+
+// closestAndNextStops picks the block's closest and next stops the way Java's
+// ScheduledBlockLocationServiceImpl does:
+//   - during a stop's dwell, both are that stop, with offsets 0;
+//   - before the block starts, both are its first stop;
+//   - between stops, the next is the stop ahead and the closest is the nearer
+//     in time of it and the stop behind, measured from that stop's departure,
+//     with ties going to the stop ahead.
+//
+// ok is false when the snapshot is nil or its time is past the block's end.
+func (s *scheduledBlockSnapshot) closestAndNextStops() (stops scheduledStops, ok bool) {
+	if s == nil {
+		return scheduledStops{}, false
+	}
+	index, atStop, ok := s.scheduledStopIndex()
+	if !ok {
+		return scheduledStops{}, false
+	}
+	next := s.Stops[index]
+	if atStop {
+		return scheduledStops{closestStopID: next.StopID, nextStopID: next.StopID}, true
+	}
+	toOffset := int(next.EffectiveStopSeconds - s.CurrentSeconds)
+	stops = scheduledStops{closestStopID: next.StopID, closestOffset: toOffset, nextStopID: next.StopID, nextOffset: toOffset}
+	if index == 0 {
+		return stops, true
+	}
+	previous := s.Stops[index-1]
+	fromOffset := int(previous.departureSeconds() - s.CurrentSeconds)
+	if absInt(fromOffset) < absInt(toOffset) {
+		stops.closestStopID, stops.closestOffset = previous.StopID, fromOffset
+	}
+	return stops, true
+}
+
+// scheduledPosition places the block's active trip at the snapshot's time:
+// along the active trip's shape when it has one, otherwise, as Java's
+// ScheduledBlockLocationServiceImpl does, on the straight line between the
+// stops before and after, by time. Returns (nil, -1) when the snapshot is nil,
+// its time falls outside the block, or the stops have no coordinates.
+func (s *scheduledBlockSnapshot) scheduledPosition() (*models.Location, float64) {
+	if s == nil || !s.InRange {
+		return nil, -1
+	}
+	if position, orientation := positionAndOrientationAtDistance(
+		s.ActiveTripShape, s.ActiveTripCumulativeDistances, s.ActiveTripScheduledDistance,
+	); position != nil {
+		return position, orientation
+	}
+	return s.positionBetweenStops()
+}
+
+// positionBetweenStops interpolates between the stops the snapshot's time falls
+// between, from the earlier stop's departure to the later one's arrival.
+// During a stop's dwell, or at the block's first stop, Java reports the stop
+// itself with orientation 0.
+func (s *scheduledBlockSnapshot) positionBetweenStops() (*models.Location, float64) {
+	index, atStop, ok := s.scheduledStopIndex()
+	if !ok || s.Stops[index].Location == nil {
+		return nil, -1
+	}
+	next := s.Stops[index]
+	if atStop || index == 0 {
+		return next.Location, 0
+	}
+	previous := s.Stops[index-1]
+	departed := previous.departureSeconds()
+	span := next.EffectiveStopSeconds - departed
+	if previous.Location == nil || span <= 0 {
+		return next.Location, 0
+	}
+	ratio := float64(s.CurrentSeconds-departed) / float64(span)
+	from, to := *previous.Location, *next.Location
+	position := &models.Location{
+		Lat: from.Lat + ratio*(to.Lat-from.Lat),
+		Lon: from.Lon + ratio*(to.Lon-from.Lon),
+	}
+	orientation := segmentOrientation(
+		gtfs.ShapePoint{Latitude: from.Lat, Longitude: from.Lon},
+		gtfs.ShapePoint{Latitude: to.Lat, Longitude: to.Lon},
+	)
+	return position, orientation
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // assignActiveTrip fills snap.ActiveTrip* fields by picking the latest trip
@@ -397,6 +524,10 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 			tripStopDistances, tripLength = haversineStopDistances(stopIDsByTrip[i], stopByID)
 		}
 		for k, st := range t.stopTimes {
+			var location *models.Location
+			if stop, ok := stopByID[st.StopID]; ok {
+				location = &models.Location{Lat: stop.Lat, Lon: stop.Lon}
+			}
 			stops = append(stops, blockStopMetric{
 				TripID:               t.id,
 				StopID:               st.StopID,
@@ -407,6 +538,7 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 				DistanceAlongTrip:    tripStopDistances[k],
 				ArrivalSeconds:       utils.NanosToSeconds(st.ArrivalTime),
 				DepartureSeconds:     utils.NanosToSeconds(st.DepartureTime),
+				Location:             location,
 			})
 			blockSeq++
 		}
@@ -1009,6 +1141,16 @@ func dwellingAtPreviousStop(stops []blockStopMetric, nextStopIndex int, currentS
 	}
 	previous := stops[nextStopIndex-1]
 	return previous.ArrivalSeconds <= currentSeconds && currentSeconds <= previous.DepartureSeconds
+}
+
+// dwellingAtLastStop reports whether nextStopIndex is -1 (currentTime past all stops)
+// and currentSeconds falls between the arrival and departure of the block's last stop.
+func dwellingAtLastStop(stops []blockStopMetric, nextStopIndex int, currentSeconds int64) bool {
+	if nextStopIndex != -1 || len(stops) == 0 {
+		return false
+	}
+	last := stops[len(stops)-1]
+	return last.ArrivalSeconds <= currentSeconds && currentSeconds <= last.DepartureSeconds
 }
 
 // interpolateBlockDistance linearly interpolates the block's distance-along-block

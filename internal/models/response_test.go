@@ -264,3 +264,58 @@ func TestResponseModelJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestResponseConstructors_NormalizeZeroValueReferences(t *testing.T) {
+	c := clock.RealClock{}
+	var zeroRefs ReferencesModel
+
+	tests := []struct {
+		name string
+		resp ResponseModel
+	}{
+		{
+			name: "NewListResponse",
+			resp: NewListResponse([]string{}, zeroRefs, false, c),
+		},
+		{
+			name: "NewListResponseWithRange",
+			resp: NewListResponseWithRange([]string{}, zeroRefs, false, c, false),
+		},
+		{
+			name: "NewEntryResponse",
+			resp: NewEntryResponse(map[string]string{}, zeroRefs, c),
+		},
+		{
+			name: "NewArrivalsAndDepartureResponse",
+			resp: NewArrivalsAndDepartureResponse(nil, zeroRefs, nil, nil, "stop1", c),
+		},
+		{
+			name: "NewArrivalsAndDeparturesForLocationResponse",
+			resp: NewArrivalsAndDeparturesForLocationResponse(nil, zeroRefs, nil, nil, nil, false, c),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jsonData, err := json.Marshal(tt.resp)
+			require.NoError(t, err)
+
+			var unmarshaled struct {
+				Data struct {
+					References map[string]any `json:"references"`
+				} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(jsonData, &unmarshaled))
+
+			refs := unmarshaled.Data.References
+			require.NotNil(t, refs, "references must be present")
+
+			expectedLists := []string{"agencies", "routes", "situations", "stopTimes", "stops", "trips"}
+			for _, listName := range expectedLists {
+				val, exists := refs[listName]
+				assert.True(t, exists, "references.%s should exist", listName)
+				assert.NotNil(t, val, "references.%s must serialize as [] and not null", listName)
+			}
+		})
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/restapi/testdata"
 	"maglev.onebusaway.org/internal/utils"
@@ -129,6 +130,59 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 		assert.NotEmpty(t, stop.Name)
 		assert.NotZero(t, stop.Lat)
 		assert.NotZero(t, stop.Lon)
+	}
+}
+
+func TestTripForVehicleHandler_KeepsRequestedVehicleOnSharedTrip(t *testing.T) {
+	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	t.Cleanup(api.Shutdown)
+	trip := mustGetTrip(t, api)
+	tripID := utils.FormCombinedID(testdata.Raba.ID, trip.ID)
+	vehicles := []struct {
+		id       string
+		lat, lon float32
+	}{
+		{"shared-trip-v1", 40.58, -122.39},
+		{"shared-trip-v2", 40.60, -122.37},
+	}
+	const feedA, feedZ = "shared-trip-a", "shared-trip-z"
+	for _, order := range []struct {
+		name  string
+		feeds [2]string
+	}{
+		{"V1 in first feed", [2]string{feedA, feedZ}},
+		{"V2 in first feed", [2]string{feedZ, feedA}},
+	} {
+		t.Run(order.name, func(t *testing.T) {
+			for i, v := range vehicles {
+				feed := order.feeds[i]
+				api.GtfsManager.MockSetAgencyVehicles(feed, testdata.Raba.ID, []gtfs.Vehicle{{
+					ID:        &gtfs.VehicleID{ID: v.id},
+					Trip:      &gtfs.Trip{ID: gtfs.TripID{ID: trip.ID, RouteID: trip.RouteID}},
+					Timestamp: &now,
+					Position:  &gtfs.Position{Latitude: &v.lat, Longitude: &v.lon},
+				}})
+				t.Cleanup(func() { api.GtfsManager.MockSetAgencyVehicles(feed, testdata.Raba.ID, nil) })
+			}
+
+			for _, v := range vehicles {
+				t.Run(v.id, func(t *testing.T) {
+					vehicleID := utils.FormCombinedID(testdata.Raba.ID, v.id)
+					endpoint := tripForVehicleURL(vehicleID, url.Values{"includeStatus": {"true"}})
+					resp, model := callAPIHandler[TripDetailsResponse](t, api, endpoint)
+
+					require.Equal(t, http.StatusOK, resp.StatusCode)
+					assert.Equal(t, tripID, model.Data.Entry.TripID)
+					status := model.Data.Entry.Status
+					require.NotNil(t, status)
+					assert.Equal(t, vehicleID, status.VehicleID)
+					require.NotNil(t, status.LastKnownLocation)
+					assert.InDelta(t, float64(v.lat), status.LastKnownLocation.Lat, 0.00001)
+					assert.InDelta(t, float64(v.lon), status.LastKnownLocation.Lon, 0.00001)
+				})
+			}
+		})
 	}
 }
 
