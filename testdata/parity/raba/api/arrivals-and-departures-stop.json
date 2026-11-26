@@ -9,7 +9,7 @@
           "arrivalEnabled": true,
           "blockTripSequence": 4,
           "departureEnabled": true,
-          "distanceFromStop": -9844.37928,
+          "distanceFromStop": -9845.138801,
           "frequency": null,
           "historicalOccupancy": "",
           "lastUpdateTime": 0,
@@ -55,13 +55,13 @@
             "orientation": 283.392498,
             "phase": "scheduled",
             "position": {
-              "lat": 40.625129,
-              "lon": -122.405007
+              "lat": 40.62512,
+              "lon": -122.405005
             },
             "predicted": false,
             "scheduleDeviation": 0,
             "scheduled": true,
-            "scheduledDistanceAlongTrip": 10980.635866,
+            "scheduledDistanceAlongTrip": 10981.623921,
             "serviceDate": 1749711600000,
             "situationIds": [],
             "status": "default",
@@ -76,7 +76,7 @@
           "arrivalEnabled": true,
           "blockTripSequence": 6,
           "departureEnabled": true,
-          "distanceFromStop": 25832.276632,
+          "distanceFromStop": 25831.517111,
           "frequency": null,
           "historicalOccupancy": "",
           "lastUpdateTime": 0,
@@ -122,13 +122,13 @@
             "orientation": 283.392498,
             "phase": "scheduled",
             "position": {
-              "lat": 40.625129,
-              "lon": -122.405007
+              "lat": 40.62512,
+              "lon": -122.405005
             },
             "predicted": false,
             "scheduleDeviation": 0,
             "scheduled": true,
-            "scheduledDistanceAlongTrip": 10980.635866,
+            "scheduledDistanceAlongTrip": 10981.623921,
             "serviceDate": 1749711600000,
             "situationIds": [],
             "status": "default",

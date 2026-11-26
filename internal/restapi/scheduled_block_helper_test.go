@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"slices"
 	"testing"
 	"time"
@@ -1723,9 +1724,10 @@ func TestBoundedProjectionMatchesFullScan(t *testing.T) {
 		for i, p := range shape {
 			for _, offset := range []float64{0, .00005, .00042, .002} {
 				stop := gtfsdb.Stop{Lat: p.Latitude + offset, Lon: p.Longitude - offset}
-				want := closestProjection(appendStopShapeProjections(nil, stop, shape, cum))
+				geometry := stopProjectionGeometry{lat: stop.Lat, lon: stop.Lon, lonMetres: metresPerDegree * math.Cos(stop.Lat*math.Pi/180)}
+				want := scanStopProjection(geometry, shape, cum)
 				for _, radius := range []float64{50, 500} {
-					got, ok := closestInBounds(boxes, stop, shape, cum, nil, radius)
+					got, ok := closestInBounds(boxes, geometry, shape, cum, radius)
 					if !ok {
 						if math.Abs(stop.Lat) <= 85 && math.Abs(stop.Lon) <= 179 {
 							require.Greater(t, want.cost, radius)
@@ -1733,7 +1735,7 @@ func TestBoundedProjectionMatchesFullScan(t *testing.T) {
 						continue
 					}
 					hits++
-					require.InDelta(t, want.distanceAlong, got.distanceAlong, 1e-7, "point %d", i)
+					require.InDelta(t, want.position, got.position, 1e-7, "point %d", i)
 					require.InDelta(t, want.cost, got.cost, 1e-7)
 				}
 			}
@@ -1797,4 +1799,81 @@ func TestBlockProjectionReuseSeparatesStopPatternsAndShapes(t *testing.T) {
 		}
 	}
 	require.Len(t, batch, index)
+}
+
+func TestProjectionCanMoveEarlierStopsBack(t *testing.T) {
+	const unit = 1.0 / 512
+	shape := []gtfs.ShapePoint{{Longitude: 0}, {Longitude: 8 * unit}}
+	cumulative := preCalculateCumulativeDistances(shape)
+	stops := map[string]gtfsdb.Stop{
+		"A": {Lon: 4 * unit}, "B": {Lon: 2 * unit}, "C": {Lon: unit},
+	}
+	distances := projectStopsInSequence([]string{"A", "B", "C"}, stops, shape, cumulative)
+	for _, distance := range distances {
+		require.InDelta(t, cumulative[1]/4, distance, .001)
+	}
+}
+
+func TestProjectionKeepsCloserHighLatitudeVertex(t *testing.T) {
+	shape := []gtfs.ShapePoint{
+		{Latitude: 79.99, Longitude: .01},
+		{Latitude: 80},
+		{Latitude: 80.01, Longitude: -.01},
+	}
+	cumulative := preCalculateCumulativeDistances(shape)
+	stop := gtfsdb.Stop{Lat: 80.001, Lon: -.01}
+	distances := projectStopsInSequence([]string{"A"}, map[string]gtfsdb.Stop{"A": stop}, shape, cumulative)
+	position, _ := positionAndOrientationAtDistance(shape, cumulative, distances[0])
+	require.Less(t, utils.Distance(stop.Lat, stop.Lon, position.Lat, position.Lon),
+		utils.Distance(stop.Lat, stop.Lon, shape[1].Latitude, shape[1].Longitude))
+}
+
+func TestProjectionFindsSharedInteriorMinimum(t *testing.T) {
+	shape := []gtfs.ShapePoint{{Longitude: 0}, {Longitude: .01}}
+	cumulative := preCalculateCumulativeDistances(shape)
+	stops := map[string]gtfsdb.Stop{
+		"A": {Lat: .001, Lon: .006}, "B": {Lat: .001, Lon: .004},
+	}
+	distances := projectStopsInSequence([]string{"A", "B"}, stops, shape, cumulative)
+	for _, distance := range distances {
+		require.InDelta(t, cumulative[1]/2, distance, .001)
+	}
+}
+
+// Exhaustively check non-decreasing assignments on a fine grid. The
+// continuous solver must do at least as well as the best grid assignment.
+func TestOrderedProjectionBeatsGridSearch(t *testing.T) {
+	random := rand.New(rand.NewPCG(1, 17))
+	shape := []gtfs.ShapePoint{
+		{Latitude: 45}, {Latitude: 45.003, Longitude: .008},
+		{Latitude: 45.002, Longitude: -.002}, {Latitude: 45.005, Longitude: .01},
+	}
+	cumulative := preCalculateCumulativeDistances(shape)
+	const samples = 300
+	for trial := range 80 {
+		ids := []string{"A", "B", "C", "D", "E"}
+		stops := make(map[string]gtfsdb.Stop, len(ids))
+		for _, id := range ids {
+			stops[id] = gtfsdb.Stop{Lat: 45 + random.Float64()*.005, Lon: random.Float64() * .01}
+		}
+		projected := projectStopsInSequence(ids, stops, shape, cumulative)
+		require.True(t, slices.IsSorted(projected))
+		var cost float64
+		var grid [samples + 1]float64
+		for i, id := range ids {
+			stop := stops[id]
+			score := func(distance float64) float64 {
+				point, _ := positionAndOrientationAtDistance(shape, cumulative, distance)
+				dx := (point.Lon - stop.Lon) * math.Cos(stop.Lat*math.Pi/180)
+				return metresPerDegree * math.Hypot(dx, point.Lat-stop.Lat)
+			}
+			cost += score(projected[i])
+			best := math.Inf(1)
+			for j := range grid {
+				best = min(best, grid[j])
+				grid[j] = best + score(cumulative[len(cumulative)-1]*float64(j)/samples)
+			}
+		}
+		require.LessOrEqual(t, cost, slices.Min(grid[:])+1e-5, "trial %d", trial)
+	}
 }
