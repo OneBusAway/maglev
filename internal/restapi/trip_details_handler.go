@@ -440,7 +440,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 	orderedEntries := make([]tripEntry, 0, len(tripsToInclude))
 
 	for _, tripID := range tripsToInclude {
-		_, refTripID, err := utils.ExtractAgencyIDAndCodeID(tripID)
+		_, refTripID, err := api.extractAgencyIDAndCodeID(ctx, tripID)
 		if err != nil {
 			continue
 		}

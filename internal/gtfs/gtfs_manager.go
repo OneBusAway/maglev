@@ -211,7 +211,6 @@ func InitGTFSManager(ctx context.Context, config Config) (*Manager, error) {
 		feedTripAgency:       make(map[string]map[string]string),
 		feedTripDataTime:     make(map[string]time.Time),
 		Metrics:              config.Metrics,
-		agencyCache:          atomic.Pointer[[]gtfsdb.Agency]{},
 	}
 
 	var attemptsMade int
@@ -360,16 +359,19 @@ func (manager *Manager) setCachedAgencies(agencies []gtfsdb.Agency) {
 	manager.agencyCache.Store(&agencies)
 }
 
-func (manager *Manager) GetCachedAgencies(ctx context.Context) ([]gtfsdb.Agency, error) {
+// GetCachedAgencies returns agencies from the static reload cache sorted by
+// ID length ascending, loading and caching them from the database if needed.
+func (manager *Manager) GetCachedAgencies(ctx context.Context) []gtfsdb.Agency {
 	if ptr := manager.agencyCache.Load(); ptr != nil {
-		return *ptr, nil
+		return *ptr
 	}
 	agencies, err := manager.GtfsDB.Queries.ListAgencies(ctx)
 	if err != nil {
-		return nil, err
+		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+		logging.LogError(logger, "failed to fetch agencies for cache", err)
 	}
 	manager.setCachedAgencies(agencies)
-	return agencies, nil
+	return agencies
 }
 
 // GetTrips returns up to limit trips from the database.

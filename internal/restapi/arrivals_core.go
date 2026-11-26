@@ -1189,12 +1189,12 @@ func (api *RestAPI) tripStatusForArrival(
 func (api *RestAPI) recordTripStatusReferences(ctx context.Context, status *models.TripStatus, scheduledTripID string, acc *arrivalsAccumulator) {
 	reqLogger := logging.ForComponent(ctx, "http_server")
 	if status.NextStop != "" {
-		if _, nextStopID, err := utils.ExtractAgencyIDAndCodeID(status.NextStop); err == nil {
+		if _, nextStopID, err := api.extractAgencyIDAndCodeID(ctx, status.NextStop); err == nil {
 			acc.stopIDs[nextStopID] = true
 		}
 	}
 	if status.ClosestStop != "" {
-		if _, closestStopID, err := utils.ExtractAgencyIDAndCodeID(status.ClosestStop); err == nil {
+		if _, closestStopID, err := api.extractAgencyIDAndCodeID(ctx, status.ClosestStop); err == nil {
 			acc.stopIDs[closestStopID] = true
 		}
 	}
@@ -1202,7 +1202,7 @@ func (api *RestAPI) recordTripStatusReferences(ctx context.Context, status *mode
 	if status.ActiveTripID == "" {
 		return
 	}
-	_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
+	_, activeTripID, err := api.extractAgencyIDAndCodeID(ctx, status.ActiveTripID)
 	if err != nil || activeTripID == scheduledTripID {
 		return
 	}

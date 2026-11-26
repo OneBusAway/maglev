@@ -152,6 +152,8 @@ func TestExtractAndValidateAgencyCodeID(t *testing.T) {
 	}
 }
 
+// Longest matching agency ID wins ties when one agency ID is a prefix of
+// another (e.g. with agencies "a" and "a_b", "a_b_x" resolves to "a_b" and "x").
 func TestExtractAgencyCodeIDOnAgencyWithUnderscore(t *testing.T) {
 	api := &RestAPI{
 		Application: &app.Application{
@@ -160,9 +162,9 @@ func TestExtractAgencyCodeIDOnAgencyWithUnderscore(t *testing.T) {
 		},
 	}
 
-	_, err := api.GtfsManager.GtfsDB.Queries.CreateAgency(context.Background(), gtfsdb.CreateAgencyParams{ID: "agency_one"})
+	_, err := api.GtfsManager.GtfsDB.Queries.CreateAgency(context.Background(), gtfsdb.CreateAgencyParams{ID: "a_b"})
 	require.NoError(t, err)
-	_, err = api.GtfsManager.GtfsDB.Queries.CreateAgency(context.Background(), gtfsdb.CreateAgencyParams{ID: "agency"})
+	_, err = api.GtfsManager.GtfsDB.Queries.CreateAgency(context.Background(), gtfsdb.CreateAgencyParams{ID: "a"})
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -173,18 +175,18 @@ func TestExtractAgencyCodeIDOnAgencyWithUnderscore(t *testing.T) {
 		idParam  string
 	}{
 		{
-			name:     "Combined ID agency_one_123",
-			url:      "/api/where/route/agency_one_123.json",
-			agencyID: "agency_one",
-			codeID:   "123",
-			idParam:  "agency_one_123",
+			name:     "Combined ID a_b_x",
+			url:      "/api/where/route/a_b_x.json",
+			agencyID: "a_b",
+			codeID:   "x",
+			idParam:  "a_b_x",
 		},
 		{
-			name:     "Combined ID agency_123",
-			url:      "/api/where/route/agency_123json",
-			agencyID: "agency",
-			codeID:   "123",
-			idParam:  "agency_123",
+			name:     "Combined ID a_x",
+			url:      "/api/where/route/a_x.json",
+			agencyID: "a",
+			codeID:   "x",
+			idParam:  "a_x",
 		},
 	}
 

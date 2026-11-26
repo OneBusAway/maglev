@@ -175,7 +175,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
-	_, tripID, err := utils.ExtractAgencyIDAndCodeID(params.TripID)
+	_, tripID, err := api.extractAgencyIDAndCodeID(ctx, params.TripID)
 	if err != nil {
 		fieldErrors := map[string][]string{
 			"tripId": {err.Error()},
@@ -460,7 +460,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 	// Include active trip if it's different from the parameter trip and trip status is not null
 	if tripStatus != nil && tripStatus.ActiveTripID != "" {
-		_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ActiveTripID)
+		_, activeTripID, err := api.extractAgencyIDAndCodeID(ctx, tripStatus.ActiveTripID)
 		if err == nil && activeTripID != tripID {
 			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
 			if err == nil {
@@ -493,7 +493,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// Include the next and closest stops if trip status is not null to stops reference
 	if tripStatus != nil {
 		if tripStatus.NextStop != "" {
-			_, nextStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.NextStop)
+			_, nextStopID, err := api.extractAgencyIDAndCodeID(ctx, tripStatus.NextStop)
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return
@@ -502,7 +502,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			stopIDSet[nextStopID] = true
 		}
 		if tripStatus.ClosestStop != "" {
-			_, closestStopID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ClosestStop)
+			_, closestStopID, err := api.extractAgencyIDAndCodeID(ctx, tripStatus.ClosestStop)
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return

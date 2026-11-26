@@ -1,9 +1,11 @@
 package restapi
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -54,25 +56,34 @@ func (api *RestAPI) extractAgencyCodeID(w http.ResponseWriter, r *http.Request, 
 		return "", "", false
 	}
 
-	agencies, err := api.GtfsManager.GetCachedAgencies(r.Context())
+	agencyID, codeID, err := api.extractAgencyIDAndCodeID(r.Context(), id)
 	if err != nil {
-		api.serverErrorResponse(w, r, err)
+		api.validationErrorResponse(w, r, map[string][]string{field: {err.Error()}})
 		return "", "", false
-	}
-	var agencyID, codeID string
-	for _, agency := range agencies {
-		if len(id) > len(agency.ID)+1 && strings.HasPrefix(id, agency.ID) && id[len(agency.ID)] == '_' {
-			agencyID = agency.ID
-			codeID = id[len(agency.ID)+1:]
-		}
-	}
-	if agencyID == "" || codeID == "" {
-		agencyID, codeID, err = utils.ExtractAgencyIDAndCodeID(id)
-		if err != nil {
-			api.validationErrorResponse(w, r, map[string][]string{field: {err.Error()}})
-			return "", "", false
-		}
 	}
 
 	return agencyID, codeID, true
+}
+
+func (api *RestAPI) extractAgencyIDAndCodeID(ctx context.Context, combinedID string) (string, string, error) {
+	agencies := api.GtfsManager.GetCachedAgencies(ctx)
+	return extractAgencyIDAndCodeID(combinedID, agencies)
+}
+
+func extractAgencyIDAndCodeID(combinedID string, agencies []gtfsdb.Agency) (string, string, error) {
+	var agencyID, codeID string
+	for _, agency := range agencies {
+		if len(combinedID) > len(agency.ID)+1 && strings.HasPrefix(combinedID, agency.ID) && combinedID[len(agency.ID)] == '_' {
+			agencyID = agency.ID
+			codeID = combinedID[len(agency.ID)+1:]
+		}
+	}
+	if agencyID == "" || codeID == "" {
+		var err error
+		agencyID, codeID, err = utils.ExtractAgencyIDAndCodeID(combinedID)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return agencyID, codeID, nil
 }

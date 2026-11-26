@@ -121,7 +121,7 @@ func (api *RestAPI) buildTripStatusForVehicle(
 
 	// Frequencies are reported even for CANCELED trips, so resolve the DB
 	// trip ID before the early-return.
-	_, activeTripRawID, err := utils.ExtractAgencyIDAndCodeID(status.ActiveTripID)
+	_, activeTripRawID, err := api.extractAgencyIDAndCodeID(ctx, status.ActiveTripID)
 	if err != nil {
 		return status, extras, err
 	}
