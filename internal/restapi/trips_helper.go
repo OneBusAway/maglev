@@ -1155,27 +1155,18 @@ func preCalculateCumulativeDistances(shapePoints []gtfs.ShapePoint) []float64 {
 func projectOntoSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio float64, projLat, projLon float64) {
 	dx := x2 - x1
 	dy := y2 - y1
-
-	if dx == 0 && dy == 0 {
-		// Line segment is a point
-		return utils.Distance(px, py, x1, y1), 0, x1, y1
-	}
-
-	// Calculate the parameter t for the projection of point onto the line
-	t := ((px-x1)*dx + (py-y1)*dy) / (dx*dx + dy*dy)
-
-	// Clamp t to [0, 1] to stay within the line segment
-	if t < 0 {
-		t = 0
-	} else if t > 1 {
-		t = 1
-	}
-
-	// Find the closest point on the line segment
+	t := segmentProjectionRatio(px-x1, py-y1, dx, dy)
 	closestX := x1 + t*dx
 	closestY := y1 + t*dy
-
 	return utils.Distance(px, py, closestX, closestY), t, closestX, closestY
+}
+
+// segmentProjectionRatio projects a point relative to the start of a segment.
+func segmentProjectionRatio(x, y, dx, dy float64) float64 {
+	if dx == 0 && dy == 0 {
+		return 0
+	}
+	return max(0, min(1, (x*dx+y*dy)/(dx*dx+dy*dy)))
 }
 
 // distanceToLineSegment returns the distance from a point to the closest point on a line segment

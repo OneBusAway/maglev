@@ -54,7 +54,7 @@
             {
               "arrivalTime": 28740,
               "departureTime": 28740,
-              "distanceAlongTrip": 2785.407495,
+              "distanceAlongTrip": 2787.558099,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_1036"
@@ -70,7 +70,7 @@
             {
               "arrivalTime": 28740,
               "departureTime": 28740,
-              "distanceAlongTrip": 4928.436206,
+              "distanceAlongTrip": 4931.197958,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_1038"
@@ -78,7 +78,7 @@
             {
               "arrivalTime": 28740,
               "departureTime": 28740,
-              "distanceAlongTrip": 5371.91452,
+              "distanceAlongTrip": 5372.335316,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_1039"
@@ -86,7 +86,7 @@
             {
               "arrivalTime": 28740,
               "departureTime": 28740,
-              "distanceAlongTrip": 5741.729995,
+              "distanceAlongTrip": 5745.099012,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_1040"
@@ -94,7 +94,7 @@
             {
               "arrivalTime": 28740,
               "departureTime": 28740,
-              "distanceAlongTrip": 6972.250585,
+              "distanceAlongTrip": 6973.563172,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_1041"
@@ -102,7 +102,7 @@
             {
               "arrivalTime": 28740,
               "departureTime": 28740,
-              "distanceAlongTrip": 7730.290045,
+              "distanceAlongTrip": 7733.40735,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_1042"
@@ -110,7 +110,7 @@
             {
               "arrivalTime": 28740,
               "departureTime": 28740,
-              "distanceAlongTrip": 9385.468177,
+              "distanceAlongTrip": 9386.543655,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_1043"
@@ -126,7 +126,7 @@
             {
               "arrivalTime": 28740,
               "departureTime": 28740,
-              "distanceAlongTrip": 10875.973436,
+              "distanceAlongTrip": 10875.212433,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_1045"
@@ -134,7 +134,7 @@
             {
               "arrivalTime": 29160,
               "departureTime": 29160,
-              "distanceAlongTrip": 11615.480798,
+              "distanceAlongTrip": 11613.176464,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_1046"
@@ -142,7 +142,7 @@
             {
               "arrivalTime": 29160,
               "departureTime": 29160,
-              "distanceAlongTrip": 11966.819279,
+              "distanceAlongTrip": 11964.689469,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_1047"
@@ -150,7 +150,7 @@
             {
               "arrivalTime": 29160,
               "departureTime": 29160,
-              "distanceAlongTrip": 12461.964583,
+              "distanceAlongTrip": 12461.784747,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_1048"
@@ -158,7 +158,7 @@
             {
               "arrivalTime": 29160,
               "departureTime": 29160,
-              "distanceAlongTrip": 13137.700032,
+              "distanceAlongTrip": 13136.027683,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_1049"
@@ -166,7 +166,7 @@
             {
               "arrivalTime": 29400,
               "departureTime": 29400,
-              "distanceAlongTrip": 13588.877677,
+              "distanceAlongTrip": 13587.45362,
               "historicalOccupancy": "",
               "stopHeadsign": "",
               "stopId": "25_7017"
@@ -210,13 +210,13 @@
           "orientation": 283.392498,
           "phase": "scheduled",
           "position": {
-            "lat": 40.62512,
-            "lon": -122.405005
+            "lat": 40.625129,
+            "lon": -122.405007
           },
           "predicted": false,
           "scheduleDeviation": 0,
           "scheduled": true,
-          "scheduledDistanceAlongTrip": 10981.617345,
+          "scheduledDistanceAlongTrip": 10980.635866,
           "serviceDate": 1749711600000,
           "situationIds": [],
           "status": "default",

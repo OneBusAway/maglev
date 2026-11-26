@@ -848,14 +848,9 @@ func stopIDsOf(stopTimes []gtfsdb.StopTime) []string {
 // wrong (bad units, corrupt data on some feeds), so both codebases treat
 // projection as authoritative.
 //
-// Our projection uses a monotonic cursor so loop routes (same lat/lon at
-// multiple shape segments) get distinct distances per occurrence; a naive
-// global-minimum search picks the same segment for both occurrences,
-// producing the catastrophic distanceFromStop outliers we saw on the Q
-// route. Java's DistanceAlongShapeLibrary uses a more sophisticated
-// UTM-based multi-assignment algorithm — matching Java's exact numbers
-// would require porting that library; our simpler projection produces
-// values within ~90-250m of Java's, which is acceptable drift for our use.
+// Choose the lowest combined projection error among matches that follow the
+// trip's stop order. A slightly closer match on a return leg can otherwise
+// advance the search past the correct locations of subsequent stops.
 func projectStopsInSequence(
 	stopIDs []string,
 	stopByID map[string]gtfsdb.Stop,
@@ -867,16 +862,133 @@ func projectStopsInSequence(
 		return distances
 	}
 
-	lastMatchedIndex := 0
+	var scratch [32]stopShapeProjection
+	projections := scratch[:0]
+	// If each stop's closest match is already in order, their combined error
+	// is a lower bound that the ordered search cannot improve on.
+	if projectClosestStopsInOrder(distances, stopIDs, stopByID, shapePoints, cumulativeDistances, projections) {
+		return distances
+	}
+
+	previousStart := 0
+	for _, stopID := range stopIDs {
+		stop, ok := stopByID[stopID]
+		if !ok {
+			continue
+		}
+		start := len(projections)
+		projections = appendStopShapeProjections(projections, stop, shapePoints, cumulativeDistances)
+		if start > 0 {
+			// Both rows follow shape order and start at the same shape distance.
+			// Extend the previous row's cheapest eligible path as distance grows.
+			bestPrevious := previousStart
+			nextPrevious := previousStart + 1
+			for i := start; i < len(projections); i++ {
+				for nextPrevious < start && projections[nextPrevious].distanceAlong <= projections[i].distanceAlong {
+					if projections[nextPrevious].cost < projections[bestPrevious].cost {
+						bestPrevious = nextPrevious
+					}
+					nextPrevious++
+				}
+				projections[i].cost += projections[bestPrevious].cost
+				projections[i].previous = bestPrevious
+			}
+		}
+		previousStart = start
+	}
+	best := previousStart
+	for i := previousStart + 1; i < len(projections); i++ {
+		if projections[i].cost < projections[best].cost {
+			best = i
+		}
+	}
+	for i := len(stopIDs) - 1; i >= 0; i-- {
+		if _, ok := stopByID[stopIDs[i]]; ok {
+			distances[i] = projections[best].distanceAlong
+			best = projections[best].previous
+		}
+	}
+	return distances
+}
+
+func projectClosestStopsInOrder(
+	distances []float64,
+	stopIDs []string,
+	stopByID map[string]gtfsdb.Stop,
+	shape []gtfs.ShapePoint,
+	cumulative []float64,
+	projections []stopShapeProjection,
+) bool {
+	previousDistance := cumulative[0]
 	for i, stopID := range stopIDs {
 		stop, ok := stopByID[stopID]
 		if !ok {
-			distances[i] = 0
 			continue
 		}
-		distances[i], lastMatchedIndex = projectStopGeometric(stop, shapePoints, cumulativeDistances, lastMatchedIndex)
+		projections = appendStopShapeProjections(projections[:0], stop, shape, cumulative)
+		best := projections[0]
+		for _, candidate := range projections[1:] {
+			if candidate.cost < best.cost {
+				best = candidate
+			}
+		}
+		if best.distanceAlong < previousDistance {
+			return false
+		}
+		distances[i] = best.distanceAlong
+		previousDistance = best.distanceAlong
 	}
-	return distances
+	return true
+}
+
+type stopShapeProjection struct {
+	distanceAlong float64
+	cost          float64 // Sum of distances from the stops matched so far.
+	previous      int     // Index of the chosen match for the previous stop.
+}
+
+// appendStopShapeProjections collects local minima and both shape endpoints in
+// increasing distance order. Including the endpoints keeps a non-decreasing
+// assignment possible when the stop order and shape disagree.
+func appendStopShapeProjections(projections []stopShapeProjection, stop gtfsdb.Stop, shape []gtfs.ShapePoint, cumulative []float64) []stopShapeProjection {
+	start := shape[0]
+	projections = append(projections, stopShapeProjection{
+		distanceAlong: cumulative[0],
+		cost:          utils.Distance(stop.Lat, stop.Lon, start.Latitude, start.Longitude),
+	})
+	last := len(shape) - 1
+	if cumulative[last] == cumulative[0] {
+		return projections
+	}
+
+	previousRatio := 0.0
+	for i := 0; i < last; i++ {
+		segmentLength := cumulative[i+1] - cumulative[i]
+		if segmentLength == 0 {
+			continue
+		}
+		from, to := shape[i], shape[i+1]
+		latDelta := to.Latitude - from.Latitude
+		lonDelta := to.Longitude - from.Longitude
+		ratio := segmentProjectionRatio(stop.Lat-from.Latitude, stop.Lon-from.Longitude, latDelta, lonDelta)
+		if ratio > 0 && ratio < 1 || ratio == 0 && previousRatio == 1 {
+			// Interior projections are local minima. A shared vertex is a
+			// minimum when both adjoining segments project onto that vertex.
+			lat := from.Latitude + ratio*latDelta
+			lon := from.Longitude + ratio*lonDelta
+			projections = append(projections, stopShapeProjection{
+				distanceAlong: cumulative[i] + ratio*segmentLength,
+				cost:          utils.Distance(stop.Lat, stop.Lon, lat, lon),
+			})
+		}
+		previousRatio = ratio
+	}
+
+	end := shape[last]
+	return append(projections, stopShapeProjection{
+		distanceAlong: cumulative[last],
+		cost:          utils.Distance(stop.Lat, stop.Lon, end.Latitude, end.Longitude),
+	})
 }
 
 // haversineStopDistances is the fallback used when a trip has no shape
@@ -912,54 +1024,6 @@ func haversineStopDistances(stopIDs []string, stopByID map[string]gtfsdb.Stop) (
 		prev, prevOK = curr, currOK
 	}
 	return distances, cumulative
-}
-
-// projectStopGeometric projects a stop's lat/lon onto the shape, scanning
-// forward from `cursor` to preserve monotonicity on loop routes. Returns
-// the projected distance and the updated cursor.
-func projectStopGeometric(stop gtfsdb.Stop, shapePoints []gtfs.ShapePoint, cumulativeDistances []float64, cursor int) (float64, int) {
-	const earlyExitThresholdMeters = 100.0
-	// A sparse shape can pass hundreds of meters from a stop before returning to it.
-	const goodMatchThreshold = 50.0
-
-	if cursor >= len(shapePoints)-1 {
-		cursor = len(shapePoints) - 2
-	}
-	minDistance := math.Inf(1)
-	closestSegmentIndex := cursor
-	var projectionRatio float64
-	for j := cursor; j < len(shapePoints)-1; j++ {
-		d, ratio := distanceToLineSegment(
-			stop.Lat, stop.Lon,
-			shapePoints[j].Latitude, shapePoints[j].Longitude,
-			shapePoints[j+1].Latitude, shapePoints[j+1].Longitude,
-		)
-		if d < minDistance {
-			minDistance = d
-			closestSegmentIndex = j
-			projectionRatio = ratio
-			cursor = j
-		} else if minDistance < goodMatchThreshold && d > minDistance+earlyExitThresholdMeters {
-			break
-		}
-	}
-	// Loop-route correctness: when the best match lands at the END of a
-	// segment (ratio ≈ 1.0), advance the cursor past that segment so the
-	// next stop doesn't snap back to it. Without this, a stop whose coords
-	// repeat earlier on the shape (figure-eight, lasso, Q-route loop) finds
-	// the same zero-distance match at the original segment and gets
-	// distance 0 instead of progressing along the loop.
-	if projectionRatio > 0.95 && cursor < len(shapePoints)-2 {
-		cursor++
-	}
-	var segmentLength float64
-	if closestSegmentIndex < len(shapePoints)-1 {
-		segmentLength = utils.Distance(
-			shapePoints[closestSegmentIndex].Latitude, shapePoints[closestSegmentIndex].Longitude,
-			shapePoints[closestSegmentIndex+1].Latitude, shapePoints[closestSegmentIndex+1].Longitude,
-		)
-	}
-	return interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio), cursor
 }
 
 // stopsAreMonotonic reports whether every stop's EffectiveStopSeconds is

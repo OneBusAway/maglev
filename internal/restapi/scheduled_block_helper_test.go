@@ -1022,6 +1022,49 @@ func TestProjectStopsInSequence_FindsCloserMatchAfterSparseDetour(t *testing.T) 
 	assert.InDelta(t, cumulativeDistances[4], distances[0], 1.0)
 }
 
+func TestProjectStopsInSequence_KeepsStopsOnOutboundLeg(t *testing.T) {
+	shape, stops := outAndBackProjectionFixture()
+
+	distances := projectStopsInSequence([]string{"A", "B"}, stops, shape, preCalculateCumulativeDistances(shape))
+
+	require.Len(t, distances, 2)
+	assert.InDelta(t, 222.4, distances[0], 0.5)
+	assert.InDelta(t, 1799.1, distances[1], 0.5)
+}
+
+func outAndBackProjectionFixture() ([]gtfs.ShapePoint, map[string]gtfsdb.Stop) {
+	shape := []gtfs.ShapePoint{
+		{Latitude: 0, Longitude: 0},
+		{Latitude: 0, Longitude: 0.006},
+		{Latitude: 0, Longitude: 0.018},
+		{Latitude: 0.00118, Longitude: 0.018},
+		{Latitude: 0.00118, Longitude: 0},
+	}
+	stops := map[string]gtfsdb.Stop{
+		"A": {Lat: 0.00060, Lon: 0.002}, // About 67 m from outbound, 64 m from return.
+		"B": {Lat: 0, Lon: 0.01618},     // On the outbound leg before the turn.
+	}
+	return shape, stops
+}
+
+func TestProjectStopsInSequence_HandlesRepeatedVerticesAndMissingStops(t *testing.T) {
+	shape := []gtfs.ShapePoint{
+		{Longitude: 0},
+		{Longitude: 0.001},
+		{Longitude: 0.001},
+		{Longitude: 0.002},
+	}
+	stops := map[string]gtfsdb.Stop{
+		"A": {Lon: 0.001},
+		"B": {Lon: 0.002},
+	}
+	cumulative := preCalculateCumulativeDistances(shape)
+
+	distances := projectStopsInSequence([]string{"A", "missing", "A", "B"}, stops, shape, cumulative)
+
+	assert.Equal(t, []float64{cumulative[1], 0, cumulative[1], cumulative[3]}, distances)
+}
+
 // TestProjectStopsInSequence_ProjectsAllStopsGeometrically pins the
 // Java-parity port: projectStopsInSequence must IGNORE the publisher's
 // shape_dist_traveled entirely and always project each stop's lat/lon
@@ -1083,12 +1126,8 @@ func TestProjectStopsInSequence_ProjectsAllStopsGeometrically(t *testing.T) {
 // stops, producing equal distances and ultimately the catastrophic
 // distanceFromStop outliers documented at scheduled_block_helper.go:388.
 //
-// We build a figure-eight shape that revisits (0, 0) at the midpoint:
-// stop_A at sequence 1 is at the start (shape segment 0); stop_B at
-// sequence 4 is at the same (0, 0) coords but should project to the
-// LATER segment near point[3]. With the monotonic cursor advancing,
-// distances[3] must be strictly greater than distances[0] — both
-// physical coordinates are identical, only the cursor tells them apart.
+// Stops A and C share coordinates. Stop B, at the first lobe's far point,
+// disambiguates the visit by placing C after B along the shape.
 func TestProjectStopsInSequence_LoopRouteRevisitsSameCoords(t *testing.T) {
 	// Figure-eight shape that passes through (0, 0) twice:
 	//   point 0: (0, 0)       — start, where stop_A lives
@@ -1128,19 +1167,55 @@ func TestProjectStopsInSequence_LoopRouteRevisitsSameCoords(t *testing.T) {
 	distances := projectStopsInSequence(stopIDsOf(stopTimes), stopByID, shape, cumDist)
 	require.Len(t, distances, 4)
 
-	// Monotonicity is THE invariant. If lastMatchedIndex didn't advance
-	// through the figure-eight, stop_C (same coords as stop_A) would
-	// project back to segment 0 and distances[2] < distances[1].
+	// Stop C must project to the midpoint crossing after stop B.
 	for i := 1; i < len(distances); i++ {
 		assert.GreaterOrEqual(t, distances[i], distances[i-1],
 			"loop-route monotonicity: distances[%d]=%.2f must be ≥ distances[%d]=%.2f even when coords repeat",
 			i, distances[i], i-1, distances[i-1])
 	}
-	// stop_C revisits stop_A's exact coords but is at sequence 3 — it
-	// MUST project to a later shape distance, not back to 0.
-	assert.Greater(t, distances[2], distances[0],
-		"stop_C shares coords with stop_A but appears later in sequence; "+
-			"must project to a later shape segment, not the first one")
+	assert.InDelta(t, cumDist[2], distances[2], 0.001)
+}
+
+func BenchmarkProjectStopsInSequence(b *testing.B) {
+	b.Run("OutAndBack", func(b *testing.B) {
+		shape, stops := outAndBackProjectionFixture()
+		benchmarkStopProjection(b, []string{"A", "B"}, stops, shape, preCalculateCumulativeDistances(shape))
+	})
+
+	api := createTestApi(b)
+	defer api.Shutdown()
+	ctx := b.Context()
+	trips := []struct {
+		name string
+		id   string
+	}{
+		{name: "RABA_38Stops_287Points", id: "00cc471e-fb35-4cdd-8c48-7c465793fe68"},
+		{name: "RABA_10Stops_1050Points", id: "t_404_b_18260_tn_0"},
+	}
+	for _, trip := range trips {
+		b.Run(trip.name, func(b *testing.B) {
+			data := api.loadBlockTripData(ctx, blockTripRefsFor(b, api, trip.id))
+			require.Len(b, data, 1)
+			tripData := data[0]
+			stopIDs := tripData.stopIDs()
+			stops, err := api.fetchStopCoords(ctx, stopIDs)
+			require.NoError(b, err)
+			require.NotEmpty(b, stops)
+			require.GreaterOrEqual(b, len(tripData.shapePoints), 2)
+
+			benchmarkStopProjection(b, stopIDs, stops, tripData.shapePoints, tripData.cumDistances)
+		})
+	}
+}
+
+func benchmarkStopProjection(b *testing.B, stopIDs []string, stops map[string]gtfsdb.Stop, shape []gtfs.ShapePoint, cumulative []float64) {
+	b.Helper()
+	b.ReportAllocs()
+	for b.Loop() {
+		projectStopsInSequence(stopIDs, stops, shape, cumulative)
+	}
+	b.ReportMetric(float64(len(stopIDs)), "stops/trip")
+	b.ReportMetric(float64(len(shape)), "shape-points/trip")
 }
 
 func TestApplyScheduledTripPositionToStatus_PopulatesFields(t *testing.T) {
