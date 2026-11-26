@@ -2504,11 +2504,12 @@ func TestBuildTripReferences_FetchesUnprefetchedTrips(t *testing.T) {
 		},
 	}
 
-	references := api.buildTripReferences(ctx, tripReferenceParams{
+	references, err := api.buildTripReferences(ctx, tripReferenceParams{
 		IncludeTrip:     true,
 		Trips:           entries,
 		PreFetchedTrips: []gtfsdb.Trip{preFetchedTrip},
 	})
+	require.NoError(t, err)
 
 	refTrips := make(map[string]models.Trip)
 	for _, ref := range references.Trips {
