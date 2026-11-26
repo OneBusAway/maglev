@@ -77,6 +77,7 @@ func TestProblemReportsForStopSubmitThenRetrieve(t *testing.T) {
 	require.NotNil(t, report.UserLon)
 	assert.InDelta(t, 38.5678, *report.UserLat, 0.001)
 	assert.InDelta(t, -121.4321, *report.UserLon, 0.001)
+	assert.Nil(t, report.UserLocationAccuracy)
 }
 
 func TestProblemReportsForStopZeroCoordinates(t *testing.T) {

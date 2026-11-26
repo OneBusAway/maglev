@@ -77,6 +77,7 @@ func TestProblemReportsForTripSubmitThenRetrieve(t *testing.T) {
 	require.NotNil(t, report.UserLon)
 	assert.InDelta(t, 47.6097, *report.UserLat, 0.001)
 	assert.InDelta(t, -122.3331, *report.UserLon, 0.001)
+	assert.Nil(t, report.UserLocationAccuracy)
 }
 
 func TestProblemReportsForTripZeroCoordinates(t *testing.T) {
