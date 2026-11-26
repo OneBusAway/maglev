@@ -1069,8 +1069,8 @@ func (api *RestAPI) buildScheduledArrival(ctx context.Context, in arrivalInput, 
 }
 
 // attachTripStatus fills the block-derived fields buildScheduledArrival left
-// empty. BuildTripStatus already resolved this trip's situations; those are
-// reused so the arrival does not repeat the alert lookup.
+// empty. Trip-scoped situations come from BuildTripStatus; route+stop and
+// trip+stop alerts are merged on here for this arrival's stop.
 func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.ArrivalAndDeparture, in arrivalInput, vehicle *gtfs.Vehicle, acc *arrivalsAccumulator) {
 	tripStatus, statusExtras, distanceFromStop, numberOfStopsAway := api.tripStatusForArrival(ctx, in, vehicle, acc)
 
@@ -1083,7 +1083,14 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 	// Already computed by BuildTripStatus; reuse rather than redoing the block
 	// lookup for every arrival row.
 	arrival.BlockTripSequence = statusExtras.tripBlockSequence
-	arrival.SituationIDs = acc.situations.addRefs(statusExtras.situations)
+	// Same merged slice → collector, TripStatus, and extras so SituationIDs stay
+	// equal and references.situations resolves every emitted ID.
+	merged := api.appendStopScopedSituationRefs(statusExtras.situations, in.stopTime.TripID, in.route.ID, in.stopCode)
+	statusExtras.situations = merged
+	arrival.SituationIDs = acc.situations.addRefs(merged)
+	if tripStatus != nil {
+		tripStatus.SituationIDs = situationIDsFromRefs(merged)
+	}
 }
 
 // applyTripStatusPrediction fills an unpredicted arrival's predicted times

@@ -1826,11 +1826,10 @@ func TestGetAlertsForStop_IncludesStopAgencyAlerts(t *testing.T) {
 	}
 }
 
-// TestAlertIndex_RouteStopEntityAlsoIndexedByStop verifies the positive half
-// of the route+stop scoping rule: an entity with both routeID and stopID is
-// excluded from byRoute (covered by TestGetAlertsByIDs_RouteScoping) but must
-// still appear in byStop for stop-scoped lookups.
-func TestAlertIndex_RouteStopEntityAlsoIndexedByStop(t *testing.T) {
+// TestAlertIndex_RouteStopEntityIndexedByRouteStop verifies that a {routeID+stopID}
+// entity is filed only under byRouteStop — not byRoute (route-wide) and not byStop
+// (pure-stop / agency+stop). Arrivals resolve it via GetAlertsForRouteStop.
+func TestAlertIndex_RouteStopEntityIndexedByRouteStop(t *testing.T) {
 	routeID := "route40"
 	stopID := "stop99"
 
@@ -1847,12 +1846,43 @@ func TestAlertIndex_RouteStopEntityAlsoIndexedByStop(t *testing.T) {
 	}
 	manager.rebuildMergedRealtimeLocked()
 
-	stopAlerts := manager.GetAlertsForStop(stopID, "")
-	assert.Len(t, stopAlerts, 1, "route+stop entity should appear in byStop")
-	assert.Equal(t, "alert1", stopAlerts[0].ID)
+	routeStopAlerts := manager.GetAlertsForRouteStop(routeID, stopID)
+	assert.Len(t, routeStopAlerts, 1, "route+stop entity should appear in byRouteStop")
+	assert.Equal(t, "alert1", routeStopAlerts[0].ID)
 
-	routeAlerts := manager.GetAlertsByIDs("", routeID, "")
-	assert.Empty(t, routeAlerts, "route+stop entity must NOT appear in byRoute")
+	assert.Empty(t, manager.GetAlertsForStop(stopID, ""), "route+stop entity must NOT appear in byStop")
+	assert.Empty(t, manager.GetAlertsByIDs("", routeID, ""), "route+stop entity must NOT appear in byRoute")
+	assert.Empty(t, manager.GetAlertsForRouteStop(routeID, "other-stop"))
+	assert.Empty(t, manager.GetAlertsForRouteStop("", stopID))
+}
+
+// TestAlertIndex_TripStopEntityIndexedByTripStop verifies that a {tripID+stopID}
+// entity is filed only under byTripStop — not byTrip (trip-wide) and not byStop.
+func TestAlertIndex_TripStopEntityIndexedByTripStop(t *testing.T) {
+	tripID := gtfs.TripID{ID: "trip99"}
+	stopID := "stop99"
+
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID:               "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{{TripID: &tripID, StopID: &stopID}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	tripStopAlerts := manager.GetAlertsForTripStop(tripID.ID, stopID)
+	assert.Len(t, tripStopAlerts, 1, "trip+stop entity should appear in byTripStop")
+	assert.Equal(t, "alert1", tripStopAlerts[0].ID)
+
+	assert.Empty(t, manager.GetAlertsByIDs(tripID.ID, "", ""), "trip+stop entity must NOT appear in byTrip")
+	assert.Empty(t, manager.GetAlertsForStop(stopID, ""), "trip+stop entity must NOT appear in byStop")
+	assert.Empty(t, manager.GetAlertsForTripStop(tripID.ID, "other-stop"))
+	assert.Empty(t, manager.GetAlertsForTripStop("", stopID))
 }
 
 // TestAlertIndex_AllEmptyArgsReturnsNil verifies that GetAlertsByIDs returns nil

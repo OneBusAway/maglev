@@ -252,6 +252,131 @@ func TestArrivalsAndDeparturesForStopHandler_StopCodeFallback(t *testing.T) {
 		"stop code should fall back to the raw stop ID when stop_code is not defined in the feed")
 }
 
+// TestArrivalsAndDeparturesForStopHandler_RouteStopAlertOnMatchingArrival verifies
+// that a {routeID+stopID} alert appears on arrivals for that route at that stop,
+// keeps arrival.SituationIDs equal to TripStatus.SituationIDs, and resolves in
+// references — without landing on the entry via GetAlertsForStop alone.
+func TestArrivalsAndDeparturesForStopHandler_RouteStopAlertOnMatchingArrival(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	requestURL := arrivalsAndDeparturesURL(arrivalsTestStopID,
+		url.Values{"minutesBefore": {"60"}, "minutesAfter": {"240"}})
+	_, initial := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.NotEmpty(t, initial.Data.Entry.ArrivalsAndDepartures,
+		"fixture stop should have an arrival in the test window")
+
+	target := initial.Data.Entry.ArrivalsAndDepartures[0]
+	agencyID, routeID, err := utils.ExtractAgencyIDAndCodeID(target.RouteID)
+	require.NoError(t, err)
+	_, stopCode, err := utils.ExtractAgencyIDAndCodeID(arrivalsTestStopID)
+	require.NoError(t, err)
+
+	const alertID = "plural-arrivals-route-stop-alert"
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID: alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			RouteID: &routeID,
+			StopID:  &stopCode,
+		}},
+		Header: []gtfs.AlertText{{Text: "Route+stop alert", Language: "en"}},
+	})
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+	var affectedArrival *models.ArrivalAndDeparture
+	for i := range model.Data.Entry.ArrivalsAndDepartures {
+		arrival := &model.Data.Entry.ArrivalsAndDepartures[i]
+		if arrival.RouteID == target.RouteID {
+			affectedArrival = arrival
+			break
+		}
+	}
+	require.NotNil(t, affectedArrival, "expected an arrival on the alerted route")
+	require.NotNil(t, affectedArrival.TripStatus)
+	assert.Equal(t, affectedArrival.TripStatus.SituationIDs, affectedArrival.SituationIDs,
+		"arrival situationIds must stay equal to TripStatus after stop-scoped merge")
+	assert.Contains(t, affectedArrival.SituationIDs, wantSituationID,
+		"matching arrival must include the route+stop alert")
+
+	for _, arrival := range model.Data.Entry.ArrivalsAndDepartures {
+		if arrival.RouteID == target.RouteID {
+			continue
+		}
+		assert.NotContains(t, arrival.SituationIDs, wantSituationID,
+			"arrivals on other routes at this stop must not get the route+stop alert")
+	}
+
+	var referenced bool
+	for _, situation := range model.Data.References.Situations {
+		if situation.ID == wantSituationID {
+			referenced = true
+			break
+		}
+	}
+	assert.True(t, referenced,
+		"arrival situationId %q must resolve in references.situations", wantSituationID)
+}
+
+// TestArrivalsAndDeparturesForStopHandler_TripStopAlertOnMatchingArrival verifies
+// that a {tripID+stopID} alert appears on the matching arrival and not on other
+// trips at the same stop. Index unit tests cover exclusion from byTrip/byStop.
+func TestArrivalsAndDeparturesForStopHandler_TripStopAlertOnMatchingArrival(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	requestURL := arrivalsAndDeparturesURL(arrivalsTestStopID,
+		url.Values{"minutesBefore": {"60"}, "minutesAfter": {"240"}})
+	_, initial := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.NotEmpty(t, initial.Data.Entry.ArrivalsAndDepartures,
+		"fixture stop should have an arrival in the test window")
+
+	target := initial.Data.Entry.ArrivalsAndDepartures[0]
+	agencyID, tripID, err := utils.ExtractAgencyIDAndCodeID(target.TripID)
+	require.NoError(t, err)
+	_, stopCode, err := utils.ExtractAgencyIDAndCodeID(arrivalsTestStopID)
+	require.NoError(t, err)
+
+	const alertID = "plural-arrivals-trip-stop-alert"
+	api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+		ID: alertID,
+		InformedEntities: []gtfs.AlertInformedEntity{{
+			TripID: &gtfs.TripID{ID: tripID},
+			StopID: &stopCode,
+		}},
+		Header: []gtfs.AlertText{{Text: "Trip+stop alert", Language: "en"}},
+	})
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	wantSituationID := utils.FormCombinedID(agencyID, alertID)
+	var affectedArrival *models.ArrivalAndDeparture
+	for i := range model.Data.Entry.ArrivalsAndDepartures {
+		arrival := &model.Data.Entry.ArrivalsAndDepartures[i]
+		if arrival.TripID == target.TripID {
+			affectedArrival = arrival
+			break
+		}
+	}
+	require.NotNil(t, affectedArrival, "expected the alerted trip arrival")
+	require.NotNil(t, affectedArrival.TripStatus)
+	assert.Equal(t, affectedArrival.TripStatus.SituationIDs, affectedArrival.SituationIDs)
+	assert.Contains(t, affectedArrival.SituationIDs, wantSituationID)
+
+	for _, arrival := range model.Data.Entry.ArrivalsAndDepartures {
+		if arrival.TripID == target.TripID {
+			continue
+		}
+		assert.NotContains(t, arrival.SituationIDs, wantSituationID,
+			"other trips at this stop must not get the trip+stop alert")
+	}
+}
+
 // TestArrivalsAndDeparturesForStopHandler_RouteAlertReferences verifies that a
 // route-level alert appears on the affected arrival and that its situation ID
 // resolves in references.situations.
