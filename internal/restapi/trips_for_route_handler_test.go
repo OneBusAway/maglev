@@ -321,12 +321,13 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 
 	t.Run("references contain combined stop IDs for queried and cross agencies", func(t *testing.T) {
 		refStops := model.Data.References.Stops
-		require.Len(t, refStops, 4, fmt.Sprintf("expected 4 stop references, got %d", len(refStops)))
+		require.Len(t, refStops, 3, fmt.Sprintf("expected 3 stop references, got %d", len(refStops)))
 
+		// At 17:30 PDT tfr-xb is halfway between its stops, so by Java's tie
+		// rule the status's closest and next stops are both its second stop.
 		expectedStopIDs := map[string]bool{
 			utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop1ID): true,
 			utils.FormCombinedID(tripsForRouteAgencyID, tripsForRouteStop2ID): true,
-			utils.FormCombinedID(tfrAgencyB, tripsForRouteStop1ID):            true,
 			utils.FormCombinedID(tfrAgencyB, tripsForRouteStop2ID):            true,
 		}
 		recvdStopsByID := make(map[string]models.Stop)
@@ -352,7 +353,7 @@ func TestTripsForRouteHandler_CrossAgencyInterlinedBlock(t *testing.T) {
 
 		// combined stopIDs for both agencies on the same bare stop ID should have the same
 		// stop-specific data
-		for _, bareID := range []string{tripsForRouteStop1ID, tripsForRouteStop2ID} {
+		for _, bareID := range []string{tripsForRouteStop2ID} {
 			scheduledTripStopID := utils.FormCombinedID(tripsForRouteAgencyID, bareID)
 			activeTripStopID := utils.FormCombinedID(tfrAgencyB, bareID)
 			scheduledTripStop := recvdStopsByID[scheduledTripStopID]
