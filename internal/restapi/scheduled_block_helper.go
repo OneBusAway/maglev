@@ -379,6 +379,17 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 	// snapshot; the helper logs the cause.
 	stopByID, _ := api.fetchStopCoords(ctx, unionStopIDs)
 
+	type projectionEntry struct {
+		stopIDs   []string
+		distances []float64
+	}
+	// loadBlockShapes shares immutable slices for a block's trips. Include the
+	// slice length so a prefix of the same backing array remains distinct.
+	type shapeKey struct {
+		first  *gtfs.ShapePoint
+		length int
+	}
+	projectionsByShape := make(map[shapeKey][]projectionEntry)
 	var cumulativeBlockDist float64
 	var blockSeq int
 	for i, t := range trips {
@@ -386,7 +397,18 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 		var tripStopDistances []float64
 		var tripLength float64
 		if len(t.shapePoints) >= 2 {
-			tripStopDistances = projectStopsInSequence(stopIDsByTrip[i], stopByID, t.shapePoints, t.cumDistances)
+			key := shapeKey{first: &t.shapePoints[0], length: len(t.shapePoints)}
+			stopIDs := stopIDsByTrip[i]
+			for _, entry := range projectionsByShape[key] {
+				if slices.Equal(entry.stopIDs, stopIDs) {
+					tripStopDistances = entry.distances
+					break
+				}
+			}
+			if tripStopDistances == nil {
+				tripStopDistances = projectStopsInSequence(stopIDs, stopByID, t.shapePoints, t.cumDistances)
+				projectionsByShape[key] = append(projectionsByShape[key], projectionEntry{stopIDs: stopIDs, distances: tripStopDistances})
+			}
 			tripLength = t.totalDist
 		} else {
 			// Shapeless trip (missing shape_id, unresolvable shape, or shape
@@ -874,6 +896,7 @@ func projectStopsInSequence(
 	}
 
 	previousStart := 0
+	var previousClosest float64
 	for _, stopID := range stopIDs {
 		stop, ok := stopByID[stopID]
 		if !ok {
@@ -881,6 +904,7 @@ func projectStopsInSequence(
 		}
 		start := len(projections)
 		projections = appendStopShapeProjections(projections, stop, shapePoints, cumulativeDistances)
+		projections, previousClosest = includePreviousPosition(projections, start, previousClosest, stop, shapePoints, cumulativeDistances)
 		if start > 0 {
 			// Both rows follow shape order and start at the same shape distance.
 			// Extend the previous row's cheapest eligible path as distance grows.
@@ -914,6 +938,34 @@ func projectStopsInSequence(
 	return distances
 }
 
+// Adjacent stops that project in reverse order can share an interior
+// position. Without this candidate the ordered search
+// can move a stop all the way to a shape endpoint. Carry the shared position
+// forward for a run of reversed stops.
+func includePreviousPosition(projections []stopShapeProjection, start int, previous float64, stop gtfsdb.Stop, shape []gtfs.ShapePoint, cumulative []float64) ([]stopShapeProjection, float64) {
+	row := projections[start:]
+	closest := closestProjection(row).distanceAlong
+	if start == 0 || closest >= previous {
+		return projections, closest
+	}
+	end, _ := slices.BinarySearch(cumulative, previous)
+	if end == 0 {
+		return projections, closest
+	}
+	index, found := slices.BinarySearchFunc(row, previous, func(p stopShapeProjection, d float64) int {
+		return cmp.Compare(p.distanceAlong, d)
+	})
+	if found {
+		return projections, previous
+	}
+	ratio := (previous - cumulative[end-1]) / (cumulative[end] - cumulative[end-1])
+	from, to := shape[end-1], shape[end]
+	lat := from.Latitude + ratio*(to.Latitude-from.Latitude)
+	lon := from.Longitude + ratio*(to.Longitude-from.Longitude)
+	candidate := stopShapeProjection{distanceAlong: previous, cost: utils.Distance(stop.Lat, stop.Lon, lat, lon)}
+	return slices.Insert(projections, start+index, candidate), previous
+}
+
 func projectClosestStopsInOrder(
 	distances []float64,
 	stopIDs []string,
@@ -922,18 +974,20 @@ func projectClosestStopsInOrder(
 	cumulative []float64,
 	projections []stopShapeProjection,
 ) bool {
+	bounds := projectionBounds(shape, len(stopIDs))
 	previousDistance := cumulative[0]
 	for i, stopID := range stopIDs {
 		stop, ok := stopByID[stopID]
 		if !ok {
 			continue
 		}
-		projections = appendStopShapeProjections(projections[:0], stop, shape, cumulative)
-		best := projections[0]
-		for _, candidate := range projections[1:] {
-			if candidate.cost < best.cost {
-				best = candidate
-			}
+		best, found := closestInBounds(bounds, stop, shape, cumulative, projections, 50)
+		if !found && len(bounds) > 0 {
+			best, found = closestInBounds(bounds, stop, shape, cumulative, projections, 500)
+		}
+		if !found {
+			projections = appendStopShapeProjections(projections[:0], stop, shape, cumulative)
+			best = closestProjection(projections)
 		}
 		if best.distanceAlong < previousDistance {
 			return false
@@ -942,6 +996,70 @@ func projectClosestStopsInOrder(
 		previousDistance = best.distanceAlong
 	}
 	return true
+}
+
+func closestProjection(projections []stopShapeProjection) stopShapeProjection {
+	best := projections[0]
+	for _, p := range projections[1:] {
+		if p.cost < best.cost {
+			best = p
+		}
+	}
+	return best
+}
+
+const segmentsPerProjectionBox = 32
+
+// Each box includes both ends of every segment it covers. Adjacent boxes
+// share one vertex. Small inputs are cheaper to scan directly.
+func projectionBounds(shape []gtfs.ShapePoint, stops int) []utils.CoordinateBounds {
+	if len(shape) < 128 || stops < 4 {
+		return nil
+	}
+	boxes := make([]utils.CoordinateBounds, 0, (len(shape)-2)/segmentsPerProjectionBox+1)
+	for start := 0; start < len(shape)-1; start += segmentsPerProjectionBox {
+		p := shape[start]
+		box := utils.CoordinateBounds{MinLat: p.Latitude, MaxLat: p.Latitude, MinLon: p.Longitude, MaxLon: p.Longitude}
+		for _, q := range shape[start+1 : min(start+segmentsPerProjectionBox+1, len(shape))] {
+			box.MinLat = min(box.MinLat, q.Latitude)
+			box.MaxLat = max(box.MaxLat, q.Latitude)
+			box.MinLon = min(box.MinLon, q.Longitude)
+			box.MaxLon = max(box.MaxLon, q.Longitude)
+		}
+		boxes = append(boxes, box)
+	}
+	return boxes
+}
+
+// Search every run of segments that could contain a match within the radius.
+// The doubled window covers longitude scale variation over these short
+// distances. At high latitudes and near the date line, use the full scan.
+// An artificial run endpoint borders an excluded box, so cannot win within
+// the accepted radius. Ties retain the first occurrence in shape order.
+func closestInBounds(boxes []utils.CoordinateBounds, stop gtfsdb.Stop, shape []gtfs.ShapePoint, cumulative []float64, scratch []stopShapeProjection, radius float64) (stopShapeProjection, bool) {
+	best := stopShapeProjection{cost: math.Inf(1)}
+	if len(boxes) == 0 || math.Abs(stop.Lat) > 85 || math.Abs(stop.Lon) > 179 {
+		return best, false
+	}
+	window := utils.CalculateBounds(stop.Lat, stop.Lon, 2*radius)
+	for i := 0; i < len(boxes); {
+		if utils.IsOutOfBounds(boxes[i], window) {
+			i++
+			continue
+		}
+		start := i * segmentsPerProjectionBox
+		i++
+		for i < len(boxes) && !utils.IsOutOfBounds(boxes[i], window) {
+			i++
+		}
+		end := min(i*segmentsPerProjectionBox+1, len(shape))
+		scratch = appendStopShapeProjections(scratch[:0], stop, shape[start:end], cumulative[start:end])
+		candidate := closestProjection(scratch)
+		if candidate.cost < best.cost {
+			best = candidate
+		}
+	}
+	return best, best.cost <= radius
 }
 
 type stopShapeProjection struct {

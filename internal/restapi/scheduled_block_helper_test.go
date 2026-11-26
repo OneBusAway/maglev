@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"slices"
 	"testing"
 	"time"
@@ -1660,4 +1661,140 @@ func TestApplySnapshotStops_DwellAtFinalStop(t *testing.T) {
 	assert.Zero(t, status.NextStopTimeOffset)
 	assert.Equal(t, "1_final", status.ClosestStop)
 	assert.Zero(t, status.ClosestStopTimeOffset)
+}
+
+func TestProjectionKeepsReversedStopsNearTheirPositions(t *testing.T) {
+	stops := map[string]gtfsdb.Stop{"A": {Lon: .0051}, "B": {Lon: .0049}, "C": {Lon: .0048}}
+	for _, shape := range [][]gtfs.ShapePoint{
+		{{Longitude: 0}, {Longitude: .01}},
+		{{Longitude: 0}, {Longitude: .005}, {Longitude: .005}, {Longitude: .01}},
+	} {
+		d := projectStopsInSequence([]string{"A", "B", "C"}, stops, shape, preCalculateCumulativeDistances(shape))
+		for _, distance := range d {
+			require.InDelta(t, 550, distance, 25)
+		}
+		require.True(t, slices.IsSorted(d))
+	}
+}
+
+func TestProjectionLaterCloseParallelPass(t *testing.T) {
+	// Put the parallel passes in different bounding boxes. Both passes
+	// are within 50 m, and the later one is closer for all four stops.
+	vertices := []gtfs.ShapePoint{
+		{Latitude: .0002}, {Latitude: .0002, Longitude: .01},
+		{Latitude: .02, Longitude: .01}, {Latitude: .02, Longitude: -.01},
+		{Longitude: -.01}, {Longitude: .01},
+	}
+	const segmentsPerLeg = 40
+	shape := []gtfs.ShapePoint{vertices[0]}
+	for i, from := range vertices[:len(vertices)-1] {
+		to := vertices[i+1]
+		for j := 1; j <= segmentsPerLeg; j++ {
+			ratio := float64(j) / segmentsPerLeg
+			shape = append(shape, gtfs.ShapePoint{
+				Latitude:  from.Latitude + ratio*(to.Latitude-from.Latitude),
+				Longitude: from.Longitude + ratio*(to.Longitude-from.Longitude),
+			})
+		}
+	}
+	stops := map[string]gtfsdb.Stop{
+		"A": {Lon: .002}, "B": {Lon: .004}, "C": {Lon: .006}, "D": {Lon: .008},
+	}
+	cumulative := preCalculateCumulativeDistances(shape)
+	distances := projectStopsInSequence([]string{"A", "B", "C", "D"}, stops, shape, cumulative)
+	for i, distance := range distances {
+		require.InDelta(t, cumulative[4*segmentsPerLeg]+utils.Distance(0, -.01, 0, .002*float64(i+1)), distance, .01)
+	}
+}
+
+func TestBoundedProjectionMatchesFullScan(t *testing.T) {
+	for _, origin := range []struct{ lat, lon float64 }{{0, 0}, {70, 20}, {84.9, -120}, {85.1, 10}, {5, 179.99}} {
+		shape := make([]gtfs.ShapePoint, 320)
+		for i := range shape {
+			angle := float64(i) * 0.054
+			shape[i] = gtfs.ShapePoint{Latitude: origin.lat + 0.006*math.Sin(2*angle), Longitude: origin.lon + 0.009*math.Sin(angle)}
+			if i > 0 && i%5 == 0 {
+				shape[i] = shape[i-1]
+			}
+		}
+		cum := preCalculateCumulativeDistances(shape)
+		boxes := projectionBounds(shape, 12)
+		hits := 0
+		for i, p := range shape {
+			for _, offset := range []float64{0, .00005, .00042, .002} {
+				stop := gtfsdb.Stop{Lat: p.Latitude + offset, Lon: p.Longitude - offset}
+				want := closestProjection(appendStopShapeProjections(nil, stop, shape, cum))
+				for _, radius := range []float64{50, 500} {
+					got, ok := closestInBounds(boxes, stop, shape, cum, nil, radius)
+					if !ok {
+						if math.Abs(stop.Lat) <= 85 && math.Abs(stop.Lon) <= 179 {
+							require.Greater(t, want.cost, radius)
+						}
+						continue
+					}
+					hits++
+					require.InDelta(t, want.distanceAlong, got.distanceAlong, 1e-7, "point %d", i)
+					require.InDelta(t, want.cost, got.cost, 1e-7)
+				}
+			}
+		}
+		if origin.lat <= 85 && origin.lon <= 179 {
+			require.Positive(t, hits)
+		}
+	}
+}
+
+// Includes index construction on every iteration, with no warm projection cache.
+func BenchmarkStopProjectionLarge(b *testing.B) {
+	for _, scenario := range []string{"NearShape", "OffShape", "OrderConflict"} {
+		b.Run(scenario, func(b *testing.B) {
+			shape := make([]gtfs.ShapePoint, 4000)
+			for i := range shape {
+				shape[i] = gtfs.ShapePoint{Latitude: 40 + .002*math.Sin(float64(i)/35), Longitude: -121 + float64(i)*.00002}
+			}
+			stops := make(map[string]gtfsdb.Stop)
+			ids := make([]string, 100)
+			for i := range ids {
+				p := shape[20+39*i]
+				ids[i] = fmt.Sprint(i)
+				lat := p.Latitude + .00004
+				if scenario == "OffShape" {
+					lat += .003
+				}
+				stops[ids[i]] = gtfsdb.Stop{Lat: lat, Lon: p.Longitude}
+			}
+			if scenario == "OrderConflict" {
+				ids[50], ids[51] = ids[51], ids[50]
+			}
+			benchmarkStopProjection(b, ids, stops, shape, preCalculateCumulativeDistances(shape))
+		})
+	}
+}
+
+func TestBlockProjectionReuseSeparatesStopPatternsAndShapes(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := t.Context()
+	trips := api.loadBlockTripData(ctx, blockTripRefsFor(t, api, benchTripManyStops))
+	require.Len(t, trips, 1)
+	full := trips[0]
+	require.Greater(t, len(full.stopTimes), 3)
+	require.Greater(t, len(full.shapePoints), 3)
+	skip := full
+	skip.stopTimes = slices.Delete(slices.Clone(full.stopTimes), 1, 2)
+	short := full
+	short.shapePoints = full.shapePoints[:2]
+	short.cumDistances = full.cumDistances[:2]
+	short.totalDist = short.cumDistances[1]
+	patterns := []blockTripData{full, skip, short, full}
+	batch, _ := api.emitBlockStops(ctx, patterns)
+	index := 0
+	for _, trip := range patterns {
+		single, _ := api.emitBlockStops(ctx, []blockTripData{trip})
+		for _, stop := range single {
+			require.Equal(t, stop.DistanceAlongTrip, batch[index].DistanceAlongTrip)
+			index++
+		}
+	}
+	require.Len(t, batch, index)
 }
