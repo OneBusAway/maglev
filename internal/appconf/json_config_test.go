@@ -587,6 +587,69 @@ func TestValidate_PartialAuthHeaders(t *testing.T) {
 	}
 }
 
+// A realtime feed with half of its auth header pair would be fetched without
+// auth, so it fails validation like a static feed (#2239).
+func TestValidate_PartialRealtimeAuthHeaders(t *testing.T) {
+	tests := []struct {
+		name        string
+		authName    string
+		authValue   string
+		shouldError bool
+	}{
+		{"both provided", "Authorization", "Bearer token", false},
+		{"both empty", "", "", false},
+		{"only name provided", "Authorization", "", true},
+		{"only value provided", "", "Bearer token", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &JSONConfig{
+				Port:             4000,
+				Env:              "development",
+				ApiKeys:          []string{"test"},
+				ProtectedApiKeys: []string{"test"},
+				RateLimit:        100,
+				GtfsStaticFeeds:  []GtfsStaticFeed{{URL: "https://example.com/gtfs.zip"}},
+				GtfsRtFeeds: []GtfsRtFeed{{
+					TripUpdatesURL:          "https://example.com/tu",
+					RealTimeAuthHeaderName:  tt.authName,
+					RealTimeAuthHeaderValue: tt.authValue,
+				}},
+				DataPath:  "./gtfs.db",
+				Role:      "all",
+				LogLevel:  "info",
+				LogFormat: "text",
+			}
+			err := config.Validate()
+			if tt.shouldError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "gtfs-rt-feeds[0]: both realtime-auth-header-name and realtime-auth-header-value must be provided together")
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// GTFS_REALTIME_AUTH_NAME without GTFS_REALTIME_AUTH_VALUE leaves the first
+// realtime feed with half a pair, so loading the config fails (#2239).
+func TestLoadFromFile_HalfSetRealtimeAuthEnv(t *testing.T) {
+	path := writeConfigFile(t, `{
+        "port": 4000,
+        "env": "development",
+        "gtfs-static-feed": {"url": "https://example.com/gtfs.zip"},
+        "gtfs-rt-feeds": [{"trip-updates-url": "https://example.com/tu"}]
+    }`)
+	t.Setenv("GTFS_REALTIME_AUTH_NAME", "X-Api-Key")
+	t.Setenv("GTFS_REALTIME_AUTH_VALUE", "")
+
+	_, err := LoadFromFile(path)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "both realtime-auth-header-name and realtime-auth-header-value must be provided together")
+}
+
 func TestLoadFromFile_FileSizeLimit(t *testing.T) {
 	// Create a test config file that's too large (> 10MB)
 	// We'll just test the error case with a mock by checking file size validation works

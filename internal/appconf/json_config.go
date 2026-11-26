@@ -207,6 +207,16 @@ type GtfsRtFeed struct {
 	Enabled                 *bool             `json:"enabled"`
 }
 
+// validate checks a realtime feed's settings. Half of the legacy auth header
+// pair is an error, as it is for a static feed: dropping it would fetch the
+// feed without auth.
+func (feed GtfsRtFeed) validate() error {
+	if (feed.RealTimeAuthHeaderName != "") != (feed.RealTimeAuthHeaderValue != "") {
+		return fmt.Errorf("both realtime-auth-header-name and realtime-auth-header-value must be provided together")
+	}
+	return nil
+}
+
 // JSONConfig represents the JSON configuration file structure
 type JSONConfig struct {
 	Role             string   `json:"role"`
@@ -459,6 +469,12 @@ func (j *JSONConfig) Validate() error {
 	}
 	if err := validatePath(j.TLSKeyPath, "tls-key-path"); err != nil {
 		return err
+	}
+
+	for i, feed := range j.GtfsRtFeeds {
+		if err := feed.validate(); err != nil {
+			return fmt.Errorf("gtfs-rt-feeds[%d]: %w", i, err)
+		}
 	}
 
 	if j.isManifestMode() {

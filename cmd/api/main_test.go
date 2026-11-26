@@ -184,6 +184,17 @@ func TestMain_FlagPathEnvironmentOverrides(t *testing.T) {
 			},
 		},
 		{
+			// The visited flag skips the env pair, leaving half a pair (#2239).
+			name: "half-set realtime auth flag pair fails validation",
+			args: "-env development -data-path :memory: -realtime-auth-header-name Cli-RT",
+			env:  map[string]string{"GTFS_REALTIME_AUTH_VALUE": "env-rt-secret"},
+			check: func(t *testing.T, exitCode int, output string) {
+				assert.Equal(t, 1, exitCode, output)
+				assert.Contains(t, output, "both realtime-auth-header-name and realtime-auth-header-value must be provided together")
+				assert.NotContains(t, output, "env-rt-secret")
+			},
+		},
+		{
 			name: "static and realtime auth env appear in dump",
 			args: "-env development -data-path :memory:",
 			env: map[string]string{
