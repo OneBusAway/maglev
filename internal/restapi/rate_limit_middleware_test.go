@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/appconf"
 	"maglev.onebusaway.org/internal/clock"
@@ -272,6 +273,30 @@ func TestRateLimitMiddleware_RateLimitedResponseFormat(t *testing.T) {
 
 	assert.Contains(t, responseBody["text"].(string), "Rate limit")
 
+	currentTime := int64(responseBody["currentTime"].(float64))
+	assert.GreaterOrEqual(t, currentTime, before)
+	assert.LessOrEqual(t, currentTime, after)
+}
+
+func TestRateLimitMiddleware_NilClockUsesRealClock(t *testing.T) {
+	middleware := NewRateLimitMiddleware(1, time.Second, nil, nil)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	limitedHandler := middleware.Handler()(handler)
+
+	limitedHandler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/test?key=test-key", nil))
+
+	before := time.Now().UnixMilli()
+	w := httptest.NewRecorder()
+	limitedHandler.ServeHTTP(w, httptest.NewRequest("GET", "/test?key=test-key", nil))
+	after := time.Now().UnixMilli()
+
+	require.Equal(t, http.StatusTooManyRequests, w.Code)
+
+	var responseBody map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
 	currentTime := int64(responseBody["currentTime"].(float64))
 	assert.GreaterOrEqual(t, currentTime, before)
 	assert.LessOrEqual(t, currentTime, after)

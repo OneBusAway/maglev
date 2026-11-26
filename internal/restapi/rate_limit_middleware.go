@@ -27,7 +27,7 @@ type RateLimitMiddleware struct {
 // NewRateLimitMiddleware creates a new rate limiting middleware.
 // ratePerSecond: number of requests allowed per second (0 blocks all, negative is unlimited)
 // burstSize: equal to ratePerSecond
-// clk: the app clock, used for the currentTime field of a 429 response
+// clk: the app clock, used for the currentTime field of a 429 response; nil means the real clock
 func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKeys []string, clk clock.Clock) *RateLimitMiddleware {
 	var rateLimit rate.Limit
 	switch {
@@ -48,6 +48,10 @@ func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKey
 		if trimmedKey != "" {
 			exemptMap[trimmedKey] = true
 		}
+	}
+
+	if clk == nil {
+		clk = clock.RealClock{}
 	}
 
 	return &RateLimitMiddleware{
