@@ -429,18 +429,20 @@ func tripSpanCovers(trip gtfsdb.Trip, freqs []gtfsdb.Frequency, offset time.Dura
 	return false
 }
 
-func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, tripsToInclude []string) ([]*models.Trip, error) {
-	referencedTrips := []*models.Trip{}
+// referencedTripEntry pairs a trip reference's response ID with the bare trip
+// ID used to look it up.
+type referencedTripEntry struct {
+	combinedID string
+	refTripID  string
+}
 
-	// Preserve the first occurrence of each response ID and batch fetch by bare trip ID.
+// uniqueReferencedTrips keeps the first occurrence of each combined trip ID in
+// request order and returns the bare IDs to batch fetch.
+func uniqueReferencedTrips(tripsToInclude []string) ([]referencedTripEntry, []string) {
+	orderedEntries := make([]referencedTripEntry, 0, len(tripsToInclude))
 	uniqueTripIDs := make([]string, 0, len(tripsToInclude))
 	seenCombinedIDs := make(map[string]bool)
 	seenBareIDs := make(map[string]bool)
-	type tripEntry struct {
-		combinedID string
-		refTripID  string
-	}
-	orderedEntries := make([]tripEntry, 0, len(tripsToInclude))
 
 	for _, tripID := range tripsToInclude {
 		if seenCombinedIDs[tripID] {
@@ -451,12 +453,18 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 			continue
 		}
 		seenCombinedIDs[tripID] = true
-		orderedEntries = append(orderedEntries, tripEntry{combinedID: tripID, refTripID: refTripID})
+		orderedEntries = append(orderedEntries, referencedTripEntry{combinedID: tripID, refTripID: refTripID})
 		if !seenBareIDs[refTripID] {
 			seenBareIDs[refTripID] = true
 			uniqueTripIDs = append(uniqueTripIDs, refTripID)
 		}
 	}
+	return orderedEntries, uniqueTripIDs
+}
+
+func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, tripsToInclude []string) ([]*models.Trip, error) {
+	referencedTrips := []*models.Trip{}
+	orderedEntries, uniqueTripIDs := uniqueReferencedTrips(tripsToInclude)
 
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
