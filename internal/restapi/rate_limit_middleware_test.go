@@ -266,9 +266,9 @@ func TestRateLimitMiddleware_RateLimitedResponseFormat(t *testing.T) {
 
 	var responseBody map[string]any
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &responseBody))
+	assert.Equal(t, "rate limit exceeded", responseBody["text"])
 
-	assert.Contains(t, responseBody["text"].(string), "Rate limit")
-
+	assert.NotContains(t, responseBody, "data", "data field should be absent")
 	currentTime := int64(responseBody["currentTime"].(float64))
 	assert.GreaterOrEqual(t, currentTime, before)
 	assert.LessOrEqual(t, currentTime, after)
