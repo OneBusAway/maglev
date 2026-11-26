@@ -754,7 +754,7 @@ func (api *RestAPI) loadBlockShiftTripIDs(ctx context.Context, targetTripID stri
 	}
 	for _, id := range rawTripIDs {
 		if _, ok := presentIDs[id]; !ok {
-			return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs), true
+			return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs), false
 		}
 	}
 	slices.SortFunc(minimal, func(a, b blockTripData) int {

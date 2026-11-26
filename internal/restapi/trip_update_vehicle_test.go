@@ -1555,6 +1555,13 @@ func TestBlockShiftTripIDs_SharedWithShiftSiblings(t *testing.T) {
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 	stopID := addDownstreamStop(t, api, tripID)
 	laterTripID := addLaterBlockTrip(t, api, stopID, tripID)
+	// Populate cached bounds (normally written by GTFS import) so shift resolution completes cleanly.
+	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(context.Background(), `
+		UPDATE trips
+		SET min_arrival_time = (SELECT MIN(arrival_time) FROM stop_times WHERE stop_times.trip_id = trips.id),
+		    max_departure_time = (SELECT MAX(departure_time) FROM stop_times WHERE stop_times.trip_id = trips.id)
+		WHERE id IN (?, ?)`, tripID, laterTripID)
+	require.NoError(t, err)
 	ctx := WithSnapshotCache(context.Background(), newSnapshotCache())
 
 	first := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)

@@ -49,47 +49,53 @@ func TestReadMemo_RepeatsHitTheMemo(t *testing.T) {
 
 	tests := []struct {
 		name string
+		warm func(ctx context.Context, reader MemoReader) error
 		read func(ctx context.Context, reader MemoReader) (any, error)
 	}{
-		{"GetTrip", func(ctx context.Context, r MemoReader) (any, error) { return r.GetTrip(ctx, memoTestTripID) }},
-		{"GetRoute", func(ctx context.Context, r MemoReader) (any, error) { return r.GetRoute(ctx, memoTestRouteID) }},
-		{"GetActiveServiceIDsForDate", func(ctx context.Context, r MemoReader) (any, error) {
+		{name: "GetTrip", read: func(ctx context.Context, r MemoReader) (any, error) { return r.GetTrip(ctx, memoTestTripID) }},
+		{name: "GetRoute", read: func(ctx context.Context, r MemoReader) (any, error) { return r.GetRoute(ctx, memoTestRouteID) }},
+		{name: "GetActiveServiceIDsForDate", read: func(ctx context.Context, r MemoReader) (any, error) {
 			return r.GetActiveServiceIDsForDate(ctx, memoTestDate)
 		}},
-		{"GetTripsByBlockID", func(ctx context.Context, r MemoReader) (any, error) { return r.GetTripsByBlockID(ctx, blockID) }},
-		{"GetStopTimesForTrip", func(ctx context.Context, r MemoReader) (any, error) {
+		{name: "GetTripsByBlockID", read: func(ctx context.Context, r MemoReader) (any, error) { return r.GetTripsByBlockID(ctx, blockID) }},
+		{name: "GetStopTimesForTrip", read: func(ctx context.Context, r MemoReader) (any, error) {
 			return r.GetStopTimesForTrip(ctx, memoTestTripID)
 		}},
-		{"GetShapePointsByTripID", func(ctx context.Context, r MemoReader) (any, error) {
+		{name: "GetShapePointsByTripID", read: func(ctx context.Context, r MemoReader) (any, error) {
 			return r.GetShapePointsByTripID(ctx, memoTestTripID)
 		}},
-		{"GetFrequenciesForTrip", func(ctx context.Context, r MemoReader) (any, error) {
+		{name: "GetFrequenciesForTrip", read: func(ctx context.Context, r MemoReader) (any, error) {
 			return r.GetFrequenciesForTrip(ctx, memoTestTripID)
 		}},
-		{"GetBlockTripSequence", func(ctx context.Context, r MemoReader) (any, error) {
-			serviceIDs, err := r.GetActiveServiceIDsForDate(ctx, memoTestDate)
-			if err != nil {
-				return nil, err
-			}
-			return r.GetBlockTripSequence(ctx, GetBlockTripSequenceParams{
-				TripID:     memoTestTripID,
-				BlockID:    blockID,
-				ServiceIds: serviceIDs,
-			})
-		}},
+		{
+			name: "GetBlockTripSequence",
+			warm: func(ctx context.Context, r MemoReader) error {
+				// Pre-warm GetActiveServiceIDsForDate so db.count only measures GetBlockTripSequence itself.
+				_, err := r.GetActiveServiceIDsForDate(ctx, memoTestDate)
+				return err
+			},
+			read: func(ctx context.Context, r MemoReader) (any, error) {
+				serviceIDs, err := r.GetActiveServiceIDsForDate(ctx, memoTestDate)
+				if err != nil {
+					return nil, err
+				}
+				return r.GetBlockTripSequence(ctx, GetBlockTripSequenceParams{
+					TripID:     memoTestTripID,
+					BlockID:    blockID,
+					ServiceIds: serviceIDs,
+				})
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := WithReadMemo(context.Background())
+			if tt.warm != nil {
+				require.NoError(t, tt.warm(ctx, queries.Memo(ctx)))
+			}
 			db.count = 0
 
-			if ttName := tt.name; ttName == "GetBlockTripSequence" {
-				// Pre-warm GetActiveServiceIDsForDate so db.count only measures GetBlockTripSequence itself.
-				_, err := queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, memoTestDate)
-				require.NoError(t, err)
-				db.count = 0
-			}
 			first, err := tt.read(ctx, queries.Memo(ctx))
 			require.NoError(t, err)
 			second, err := tt.read(ctx, queries.Memo(ctx))
