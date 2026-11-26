@@ -1582,16 +1582,21 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 			seenRouteStop := make(map[routeStopKey]bool, n)
 			seenTripStop := make(map[tripStopKey]bool, n)
 			for _, entity := range alert.InformedEntities {
+				// A trip_id is the only trip key arrivals look up. go-gtfs also
+				// keeps a Trip descriptor with an empty ID when route, direction,
+				// and start time/date identify a trip; Maglev does not resolve
+				// those, so they must not occupy byTripStop.
+				hasTripID := entity.TripID != nil && entity.TripID.ID != ""
 				// Trip+stop is stop-specific for that trip: Java's AffectsTripKeyFactory
 				// skips combined selectors, and getServiceAlertsForStopCall resolves
 				// them via the trip+stop index instead.
-				if entity.TripID != nil && entity.StopID != nil {
+				if hasTripID && entity.StopID != nil {
 					key := tripStopKey{tripID: entity.TripID.ID, stopID: *entity.StopID}
 					if !seenTripStop[key] {
 						seenTripStop[key] = true
 						idx.byTripStop[key] = append(idx.byTripStop[key], feedAlert)
 					}
-				} else if entity.TripID != nil && !seenTrip[entity.TripID.ID] {
+				} else if entity.TripID != nil && entity.StopID == nil && !seenTrip[entity.TripID.ID] {
 					seenTrip[entity.TripID.ID] = true
 					idx.byTrip[entity.TripID.ID] = append(idx.byTrip[entity.TripID.ID], feedAlert)
 				}
@@ -1618,9 +1623,13 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 					seenAgency[*entity.AgencyID] = true
 					idx.byAgency[*entity.AgencyID] = append(idx.byAgency[*entity.AgencyID], feedAlert)
 				}
-				// Pure stop (and agency+stop): no route or trip on the entity.
+				// Pure stop (and agency+stop): no route and no resolvable trip.
+				// A Trip descriptor with an empty trip_id still names the stop, so
+				// it stays in byStop instead of an unreadable byTripStop key.
 				// Combined route+stop / trip+stop live in their composite buckets.
-				isStopOnly := entity.StopID != nil && entity.RouteID == nil && entity.TripID == nil
+				unresolvedTrip := entity.TripID != nil && entity.TripID.ID == ""
+				isStopOnly := entity.StopID != nil &&
+					(unresolvedTrip || (entity.RouteID == nil && entity.TripID == nil))
 				if isStopOnly && !seenStop[*entity.StopID] {
 					seenStop[*entity.StopID] = true
 					idx.byStop[*entity.StopID] = append(idx.byStop[*entity.StopID], feedAlert)

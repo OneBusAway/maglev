@@ -1885,6 +1885,47 @@ func TestAlertIndex_TripStopEntityIndexedByTripStop(t *testing.T) {
 	assert.Empty(t, manager.GetAlertsForTripStop("", stopID))
 }
 
+// TestAlertIndex_EmptyTripIDWithStopStaysInByStop verifies that a Trip descriptor
+// go-gtfs keeps with an empty trip_id (route, direction, and start time/date)
+// is not filed under byTripStop. Arrivals look up a raw trip_id, so the stop
+// match main already served has to stay in byStop.
+func TestAlertIndex_EmptyTripIDWithStopStaysInByStop(t *testing.T) {
+	stopID := "stop99"
+	routeID := "route40"
+	trip := gtfs.TripID{
+		ID:           "",
+		RouteID:      "route1",
+		DirectionID:  gtfs.DirectionID_True,
+		HasStartTime: true,
+		HasStartDate: true,
+	}
+
+	manager := &Manager{
+		realTimeMutex: sync.RWMutex{},
+		feedAlerts: map[string][]gtfs.Alert{
+			"feed-0": {
+				{
+					ID: "alert1",
+					InformedEntities: []gtfs.AlertInformedEntity{{
+						TripID:  &trip,
+						RouteID: &routeID,
+						StopID:  &stopID,
+					}},
+				},
+			},
+		},
+	}
+	manager.rebuildMergedRealtimeLocked()
+
+	stopAlerts := manager.GetAlertsForStop(stopID, "")
+	assert.Len(t, stopAlerts, 1, "empty trip_id with a stop stays stop-scoped")
+	assert.Equal(t, "alert1", stopAlerts[0].ID)
+	assert.Empty(t, manager.GetAlertsForTripStop("", stopID))
+	assert.Empty(t, manager.GetAlertsForTripStop("route1", stopID))
+	assert.Empty(t, manager.GetAlertsForRouteStop(routeID, stopID), "unresolved trip descriptor is not a route+stop selector")
+	assert.Empty(t, manager.GetAlertsByIDs("", routeID, ""))
+}
+
 // TestAlertIndex_AllEmptyArgsReturnsNil verifies that GetAlertsByIDs returns nil
 // (not an allocated empty slice) when all three arguments are empty strings.
 func TestAlertIndex_AllEmptyArgsReturnsNil(t *testing.T) {
