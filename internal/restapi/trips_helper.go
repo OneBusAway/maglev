@@ -522,6 +522,12 @@ func vehicleHasCoordinates(vehicle *gtfs.Vehicle) bool {
 		vehicle.Position.Latitude != nil && vehicle.Position.Longitude != nil
 }
 
+// vehicleHasLiveCoordinates reports whether the vehicle sent coordinates recent
+// enough to place it. A stale vehicle counts as absent, as Java drops its record.
+func vehicleHasLiveCoordinates(input tripStatusInput) bool {
+	return vehicleHasCoordinates(input.vehicle) && !defaultStaleDetector.Check(input.vehicle, input.currentTime)
+}
+
 // applyShapeToStatus does the target-shape-dependent work: TotalDistanceAlongTrip
 // default, live-vehicle position projection onto target's shape, orientation
 // inference, and within-target interpolation fallback.
@@ -536,7 +542,7 @@ func (api *RestAPI) applyShapeToStatus(
 	if len(shapeRows) <= 1 {
 		// A trip with no shape still gets the block's scheduled position,
 		// between stops when no block trip has a shape either.
-		if !vehicleHasCoordinates(input.vehicle) {
+		if !vehicleHasLiveCoordinates(input) {
 			applySnapshotPosition(status, snap)
 		}
 		return
@@ -550,7 +556,7 @@ func (api *RestAPI) applyShapeToStatus(
 	}
 
 	switch {
-	case vehicleHasCoordinates(input.vehicle) && !defaultStaleDetector.Check(input.vehicle, input.currentTime):
+	case vehicleHasLiveCoordinates(input):
 		applyVehiclePositionOnShape(status, input.vehicle, shapePoints)
 	case snapshotLocatesActiveTrip(snap):
 		applySnapshotPosition(status, snap)
