@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -240,11 +241,10 @@ func TestTripDetailsHandlerWithIncludeTrip(t *testing.T) {
 	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 
 	resp, model := callAPIHandler[TripDetailsResponse](t, api,
-		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=false")
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=false&includeStatus=false")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	// Verify includeTrip=false omits the main trip but keeps related block and active trips.
 	for _, refTrip := range model.Data.References.Trips {
 		assert.NotEqual(t, tripID, refTrip.ID,
 			"main trip should not be included in references when includeTrip=false")
@@ -260,10 +260,10 @@ func TestTripDetailsHandlerIncludeTripFalseKeepsBlockTrips(t *testing.T) {
 	tripID := utils.FormCombinedID(agency.ID, trip.ID)
 
 	_, withTrip := callAPIHandler[TripDetailsResponse](t, api,
-		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=true&includeSchedule=true")
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=true&includeSchedule=true&includeStatus=false")
 
 	resp, withoutTrip := callAPIHandler[TripDetailsResponse](t, api,
-		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=false&includeSchedule=true")
+		"/api/where/trip-details/"+tripID+".json?key=TEST&includeTrip=false&includeSchedule=true&includeStatus=false")
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -288,6 +288,90 @@ func TestTripDetailsHandlerIncludeTripFalseKeepsBlockTrips(t *testing.T) {
 	for blockTripID := range expectedBlockTrips {
 		assert.True(t, gotTrips[blockTripID],
 			"block trip %s should still be referenced when includeTrip=false", blockTripID)
+	}
+}
+
+func TestTripDetailsHandlerActiveTripReference(t *testing.T) {
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(blockSequenceClock),
+		"trip-details-block-sequence.zip", blockSequenceFiles())
+	router := api.SetupAPIRoutes()
+
+	previousTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-1")
+	activeTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-2")
+	nextTripID := utils.FormCombinedID(tripsForRouteAgencyID, "tfr-trip-3")
+	tests := []struct {
+		name            string
+		includeTrip     bool
+		includeSchedule bool
+		includeStatus   bool
+		wantTripIDs     []string
+	}{
+		{
+			name:            "schedule and status without requested trip",
+			includeSchedule: true,
+			includeStatus:   true,
+			wantTripIDs:     []string{nextTripID, previousTripID, activeTripID},
+		},
+		{
+			name:          "status only",
+			includeStatus: true,
+			wantTripIDs:   []string{activeTripID},
+		},
+		{
+			name:            "requested trip with schedule and status",
+			includeTrip:     true,
+			includeSchedule: true,
+			includeStatus:   true,
+			wantTripIDs:     []string{activeTripID, nextTripID, previousTripID},
+		},
+		{
+			name:            "schedule only",
+			includeSchedule: true,
+			wantTripIDs:     []string{nextTripID, previousTripID},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			query := url.Values{
+				"key":             {"TEST"},
+				"time":            {strconv.FormatInt(blockSequenceClock.UnixMilli(), 10)},
+				"serviceDate":     {blockSequenceClock.Format(serviceDateLayout)},
+				"includeTrip":     {strconv.FormatBool(tt.includeTrip)},
+				"includeSchedule": {strconv.FormatBool(tt.includeSchedule)},
+				"includeStatus":   {strconv.FormatBool(tt.includeStatus)},
+			}
+			endpoint := "/api/where/trip-details/" + activeTripID + ".json?" + query.Encode()
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, endpoint, nil))
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+
+			var model TripDetailsResponse
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &model))
+			entry := model.Data.Entry
+			if tt.includeSchedule {
+				require.NotNil(t, entry.Schedule)
+				assert.Equal(t, previousTripID, entry.Schedule.PreviousTripID)
+				assert.Equal(t, nextTripID, entry.Schedule.NextTripID)
+			} else {
+				assert.Nil(t, entry.Schedule)
+			}
+			if tt.includeStatus {
+				require.NotNil(t, entry.Status)
+				assert.Equal(t, activeTripID, entry.Status.ActiveTripID)
+			} else {
+				assert.Nil(t, entry.Status)
+			}
+
+			trips := model.Data.References.Trips
+			gotTripIDs := make([]string, 0, len(trips))
+			for _, trip := range trips {
+				gotTripIDs = append(gotTripIDs, trip.ID)
+				if trip.ID == activeTripID {
+					assert.Equal(t, "Headsign 2", trip.TripHeadsign)
+				}
+			}
+			assert.Equal(t, tt.wantTripIDs, gotTripIDs)
+		})
 	}
 }
 

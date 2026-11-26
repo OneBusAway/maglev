@@ -563,7 +563,7 @@ func TestBuildReferencedTrips_CrossAgencyRouteID(t *testing.T) {
 	api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "cross-agency-referenced-trips.zip", files)
 	ctx := context.Background()
 
-	trips, err := api.buildReferencedTrips(ctx, "A1", []string{"A1_t2"}, gtfsdb.Trip{ID: "t1"})
+	trips, err := api.buildReferencedTrips(ctx, "A1", []string{"A1_t2"})
 	require.NoError(t, err)
 	require.Len(t, trips, 1)
 

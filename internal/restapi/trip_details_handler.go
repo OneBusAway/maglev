@@ -323,8 +323,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 	if includeReferences {
 		tripsToInclude := []string{}
 
-		// Only include the main trip if includeTrip=true.
-		// Related trips (preceding/following/active) are appended independently.
+		// Schedule and status add their trip references independently of includeTrip.
 		if params.IncludeTrip {
 			tripsToInclude = append(tripsToInclude, utils.FormCombinedID(agencyID, trip.ID))
 		}
@@ -338,7 +337,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if len(tripsToInclude) > 0 {
-			referencedTrips, err := api.buildReferencedTrips(ctx, agencyID, tripsToInclude, trip)
+			referencedTrips, err := api.buildReferencedTrips(ctx, agencyID, tripsToInclude)
 			if err != nil {
 				api.serverErrorResponse(w, r, err)
 				return
@@ -430,29 +429,42 @@ func tripSpanCovers(trip gtfsdb.Trip, freqs []gtfsdb.Frequency, offset time.Dura
 	return false
 }
 
-func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, tripsToInclude []string, mainTrip gtfsdb.Trip) ([]*models.Trip, error) {
-	referencedTrips := []*models.Trip{}
+// referencedTripEntry pairs a trip reference's response ID with the bare trip
+// ID used to look it up.
+type referencedTripEntry struct {
+	combinedID string
+	refTripID  string
+}
 
-	// extract unique trip IDs for the batch fetch
+// uniqueReferencedTrips keeps the first occurrence of each combined trip ID in
+// request order and returns the bare IDs to batch fetch.
+func uniqueReferencedTrips(tripsToInclude []string) ([]referencedTripEntry, []string) {
+	orderedEntries := make([]referencedTripEntry, 0, len(tripsToInclude))
 	uniqueTripIDs := make([]string, 0, len(tripsToInclude))
-	seen := make(map[string]bool)
-	type tripEntry struct {
-		combinedID string
-		refTripID  string
-	}
-	orderedEntries := make([]tripEntry, 0, len(tripsToInclude))
+	seenCombinedIDs := make(map[string]bool)
+	seenBareIDs := make(map[string]bool)
 
 	for _, tripID := range tripsToInclude {
+		if seenCombinedIDs[tripID] {
+			continue
+		}
 		_, refTripID, err := utils.ExtractAgencyIDAndCodeID(tripID)
 		if err != nil {
 			continue
 		}
-		orderedEntries = append(orderedEntries, tripEntry{combinedID: tripID, refTripID: refTripID})
-		if !seen[refTripID] {
-			seen[refTripID] = true
+		seenCombinedIDs[tripID] = true
+		orderedEntries = append(orderedEntries, referencedTripEntry{combinedID: tripID, refTripID: refTripID})
+		if !seenBareIDs[refTripID] {
+			seenBareIDs[refTripID] = true
 			uniqueTripIDs = append(uniqueTripIDs, refTripID)
 		}
 	}
+	return orderedEntries, uniqueTripIDs
+}
+
+func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, tripsToInclude []string) ([]*models.Trip, error) {
+	referencedTrips := []*models.Trip{}
+	orderedEntries, uniqueTripIDs := uniqueReferencedTrips(tripsToInclude)
 
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -488,10 +500,6 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 	}
 
 	for _, entry := range orderedEntries {
-		if entry.refTripID == mainTrip.ID && len(referencedTrips) > 0 {
-			continue
-		}
-
 		refTrip, tripExists := tripMap[entry.refTripID]
 		if !tripExists {
 			continue
