@@ -1158,22 +1158,22 @@ func (rb *referenceBuilder) build(params ReferenceParams) error {
 
 func (rb *referenceBuilder) collectTripIDs(trips []models.TripsForLocationListEntry) {
 	for _, trip := range trips {
-		_, tripID, err := rb.api.extractAgencyIDAndCodeID(rb.ctx, trip.TripId)
+		_, tripID, err := utils.ExtractAgencyIDAndCodeID(trip.TripId)
 		if err == nil {
 			rb.presentTrips[tripID] = models.Trip{}
 		}
 
 		if trip.Schedule != nil {
-			if _, nextID, err := rb.api.extractAgencyIDAndCodeID(rb.ctx, trip.Schedule.NextTripId); err == nil {
+			if _, nextID, err := utils.ExtractAgencyIDAndCodeID(trip.Schedule.NextTripId); err == nil {
 				rb.presentTrips[nextID] = models.Trip{}
 			}
-			if _, prevID, err := rb.api.extractAgencyIDAndCodeID(rb.ctx, trip.Schedule.PreviousTripId); err == nil {
+			if _, prevID, err := utils.ExtractAgencyIDAndCodeID(trip.Schedule.PreviousTripId); err == nil {
 				rb.presentTrips[prevID] = models.Trip{}
 			}
 		}
 
 		if trip.Status != nil && trip.Status.ActiveTripID != "" {
-			if _, activeID, err := rb.api.extractAgencyIDAndCodeID(rb.ctx, trip.Status.ActiveTripID); err == nil {
+			if _, activeID, err := utils.ExtractAgencyIDAndCodeID(trip.Status.ActiveTripID); err == nil {
 				rb.presentTrips[activeID] = models.Trip{}
 			}
 		}

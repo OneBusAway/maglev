@@ -445,8 +445,8 @@ func uniqueReferencedTrips(tripsToInclude []string) ([]referencedTripEntry, []st
 	seenBareIDs := make(map[string]bool)
 
 	for _, tripID := range tripsToInclude {
-		_, refTripID, err := api.extractAgencyIDAndCodeID(ctx, tripID)
-    if seenCombinedIDs[tripID] {
+		_, refTripID, err := utils.ExtractAgencyIDAndCodeID(tripID)
+		if seenCombinedIDs[tripID] {
 			continue
 		}
 		if err != nil {

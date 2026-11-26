@@ -375,6 +375,7 @@ func (manager *Manager) GetCachedAgencies(ctx context.Context) []gtfsdb.Agency {
 	if err != nil {
 		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
 		logging.LogError(logger, "failed to fetch agencies for cache", err)
+		return nil
 	}
 	manager.setCachedAgencies(agencies)
 	return agencies
