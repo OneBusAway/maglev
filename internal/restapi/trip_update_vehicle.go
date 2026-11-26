@@ -561,7 +561,8 @@ func (api *RestAPI) statusBlockSnapshot(
 	beforeBlockStart := effectiveTime.Before(blockStart) && !runsOwnSchedule(input.vehicle)
 
 	hasNoPosition := input.vehicle == nil || input.vehicle.Position == nil
-	if record.present || hasNoPosition {
+	followsBlockSchedule := hasNoPosition && !runsOwnSchedule(input.vehicle)
+	if record.present || followsBlockSchedule {
 		applySnapshotStops(status, snap, input.agencyID)
 	}
 	if beforeBlockStart {

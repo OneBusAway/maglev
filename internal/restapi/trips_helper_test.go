@@ -2493,6 +2493,33 @@ func TestBuildTripStatus_TripUpdateWithoutVehicleUsesShiftedBlockStops(t *testin
 	assert.Equal(t, 240, status.NextStopTimeOffset)
 }
 
+// An ADDED or DUPLICATED trip leaves the static block schedule, so with no
+// vehicle position it keeps its own stops instead of reading another trip's
+// stops off the block.
+func TestBuildTripStatus_DynamicTripWithoutPositionKeepsOwnStops(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	currentTime := time.Date(2025, 1, 1, 10, 4, 0, 0, time.UTC)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(currentTime), "block-status.zip", blockStatusFiles())
+
+	for _, relationship := range []gtfsrt.TripDescriptor_ScheduleRelationship{
+		gtfsrt.TripDescriptor_ADDED,
+		gtfsrt.TripDescriptor_DUPLICATED,
+	} {
+		t.Run(relationship.String(), func(t *testing.T) {
+			vehicle := &gtfs.Vehicle{
+				ID:   &gtfs.VehicleID{ID: "bus-1"},
+				Trip: &gtfs.Trip{ID: gtfs.TripID{ID: "trip-09", ScheduleRelationship: relationship}},
+			}
+
+			status, _, err := api.BuildTripStatus(context.Background(), "blk", "trip-09", vehicle, serviceDate, currentTime, nil)
+			require.NoError(t, err)
+
+			assert.Equal(t, "blk_B", status.NextStop)
+			assert.Equal(t, 360, status.NextStopTimeOffset, "trip-09's own B at 10:10, not trip-08's B at 10:05")
+		})
+	}
+}
+
 // segmentOrientation measures the angle counter-clockwise from east on raw
 // latitude and longitude degrees, as Java's SphericalGeometryLibrary.
 // getOrientation does, with no correction for latitude.
