@@ -521,7 +521,7 @@ func (api *RestAPI) buildReferencedTrips(ctx context.Context, agencyID string, t
 			TripShortName:  nulls.StringOrEmpty(refTrip.TripShortName),
 			DirectionID:    strconv.FormatInt(refTrip.DirectionID.Int64, 10),
 			BlockID:        blockID,
-			RouteShortName: nulls.StringOrEmpty(refRoute.ShortName),
+			RouteShortName: "",
 			TimeZone:       "",
 			PeakOffPeak:    0,
 		}

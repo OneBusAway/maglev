@@ -31,7 +31,7 @@ func NewTripReference(id, routeID, serviceID, headSign, shortName string, direct
 		ID:             id,
 		PeakOffPeak:    0,
 		RouteID:        routeID,
-		RouteShortName: shortName,
+		RouteShortName: "",
 		ServiceID:      serviceID,
 		ShapeID:        shapeID,
 		TimeZone:       "",

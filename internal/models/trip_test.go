@@ -27,7 +27,7 @@ func TestNewTripReference(t *testing.T) {
 	assert.Equal(t, directionID, trip.DirectionID)
 	assert.Equal(t, blockID, trip.BlockID)
 	assert.Equal(t, shapeID, trip.ShapeID)
-	assert.Equal(t, shortName, trip.RouteShortName)
+	assert.Equal(t, "", trip.RouteShortName)
 	assert.Equal(t, int64(0), trip.PeakOffPeak)
 	assert.Equal(t, "", trip.TimeZone)
 }
