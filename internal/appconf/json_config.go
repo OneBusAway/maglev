@@ -546,9 +546,13 @@ func validateSource(source, fieldName string) error {
 }
 
 // IsHTTPURL reports whether source is an http:// or https:// URL rather
-// than a local path.
+// than a local path. Scheme matching is case-insensitive per RFC 3986.
 func IsHTTPURL(source string) bool {
-	return strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://")
+	if source == "" {
+		return false
+	}
+	lower := strings.ToLower(source)
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
 }
 
 // validatePath checks a file path for security issues

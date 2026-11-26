@@ -400,18 +400,23 @@ func TestToGtfsConfigData_WarnsAboutIgnoredStaticFeeds(t *testing.T) {
 
 func TestIsHTTPURL(t *testing.T) {
 	tests := []struct {
+		name   string
 		source string
 		want   bool
 	}{
-		{source: "https://example.com/a.zip", want: true},
-		{source: "http://example.com/a.zip", want: true},
-		{source: "./a.zip", want: false},
-		{source: "/data/a.zip", want: false},
-		{source: "file:///data/a.zip", want: false},
-		{source: "HTTPS://example.com/a.zip", want: false},
+		{name: "empty string", source: "", want: false},
+		{name: "lowercase https", source: "https://example.com/a.zip", want: true},
+		{name: "lowercase http", source: "http://example.com/a.zip", want: true},
+		{name: "uppercase HTTP", source: "HTTP://example.com/a.zip", want: true},
+		{name: "uppercase HTTPS", source: "HTTPS://example.com/a.zip", want: true},
+		{name: "mixed case Https", source: "Https://example.com/a.zip", want: true},
+		{name: "mixed case Http", source: "Http://example.com/a.zip", want: true},
+		{name: "relative local path", source: "./a.zip", want: false},
+		{name: "absolute local path", source: "/data/a.zip", want: false},
+		{name: "file URL", source: "file:///data/a.zip", want: false},
 	}
 	for _, tt := range tests {
-		t.Run(tt.source, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, IsHTTPURL(tt.source))
 		})
 	}
