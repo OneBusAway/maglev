@@ -2624,3 +2624,40 @@ func TestBuildTripStatus_VehicleWithRecordUsesScheduleDistance(t *testing.T) {
 		})
 	}
 }
+
+// A shapeless trip takes the block's scheduled position, between stops, when
+// it has no live vehicle. A vehicle whose GPS is older than the stale window
+// counts as no vehicle, as Java drops its record, so it gets the same position.
+func TestBuildTripStatus_ShapelessTripScheduledPosition(t *testing.T) {
+	now := time.Date(2025, 1, 1, 10, 10, 0, 0, time.UTC)
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	staleGPSTime := now.Add(-20 * time.Minute)
+	gpsLat, gpsLon := float32(37.80), float32(-122.40)
+
+	tests := []struct {
+		name       string
+		addVehicle bool
+	}{
+		{name: "without a vehicle"},
+		{name: "with a stale vehicle", addVehicle: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now), "agency-prefix.zip", agencyPrefixFiles())
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+			if tt.addVehicle {
+				api.GtfsManager.MockAddVehicleWithOptions("bus", "other-trip", "other-route", internalgtfs.MockVehicleOptions{
+					Position:  &gtfs.Position{Latitude: &gpsLat, Longitude: &gpsLon},
+					Timestamp: &staleGPSTime,
+				})
+			}
+
+			status, _, err := api.BuildTripStatus(context.Background(), "other", "other-trip", nil, serviceDate, now, nil)
+			require.NoError(t, err)
+
+			// A third of the way from stop-1 (37.7749,-122.4194) to stop-2 (37.7849,-122.4094).
+			assert.InDelta(t, 37.7749+0.01/3, status.Position.Lat, 1e-6)
+			assert.InDelta(t, -122.4194+0.01/3, status.Position.Lon, 1e-6)
+		})
+	}
+}

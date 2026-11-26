@@ -639,8 +639,7 @@ func (api *RestAPI) activeTripInBoundsForAnchor(
 		return "", false
 	}
 
-	pos, _ := positionAndOrientationAtDistance(
-		snap.ActiveTripShape, snap.ActiveTripCumulativeDistances, snap.ActiveTripScheduledDistance)
+	pos, _ := snap.scheduledPosition()
 	if pos == nil || !utils.BoundsContain(scan.bounds, pos.Lat, pos.Lon) {
 		return "", false
 	}
