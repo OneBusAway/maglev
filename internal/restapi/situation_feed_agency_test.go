@@ -133,3 +133,44 @@ func TestSituationFeedAgency_NoSiblingEntityFallback(t *testing.T) {
 	assert.Equal(t, "25_unknown-stop", model.Data.Entry.AllAffects[1].StopID,
 		"the agency-less entity uses the first static agency, not its sibling's 40")
 }
+
+// TestSituationHandler_NoAgencyAlertUsesFeedPrefix pins #1823: an alert whose
+// informed entities name no agency gets the feed's first configured agency as its
+// prefix, as Java's createId does. A feed with no agency-ids falls back to the
+// first static agency. The prefix no longer depends on the request, so
+// only that agency's prefix resolves and any other returns 404.
+func TestSituationHandler_NoAgencyAlertUsesFeedPrefix(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.RealClock{})
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	api.GtfsManager.MockSetFeedAgencyIDs("feed-with-agencies", "25")
+	routeID := "1"
+	api.GtfsManager.MockAddAlert("feed-with-agencies", gtfs.Alert{
+		ID:               "detour",
+		InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}},
+	})
+	// A feed with no agency-ids falls back to the static feed's first agency, 25.
+	api.GtfsManager.MockAddAlert("feed-without-agencies", gtfs.Alert{
+		ID:               "no-agency-detour",
+		InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}},
+	})
+
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+	}{
+		{"the feed's agency prefix resolves", "/api/where/situation/25_detour.json?key=TEST", http.StatusOK},
+		{"an agency that is not the feed's gets 404", "/api/where/situation/zzz_detour.json?key=TEST", http.StatusNotFound},
+		{"another configured agency's prefix gets 404", "/api/where/situation/40_detour.json?key=TEST", http.StatusNotFound},
+		{"a feed with no agency-ids uses the static first agency", "/api/where/situation/25_no-agency-detour.json?key=TEST", http.StatusOK},
+		{"a feed with no agency-ids rejects other prefixes", "/api/where/situation/zzz_no-agency-detour.json?key=TEST", http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, _ := callAPIHandler[SituationResponse](t, api, tt.path)
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+		})
+	}
+}

@@ -161,6 +161,25 @@ func main() {
 			TLSKeyPath:  cfg.TLSKeyPath,
 		}
 
+		// Apply GTFS_API_KEYS and feed-auth env vars (same as -f). Skip a
+		// group when its CLI flag was visited so an explicit flag beats env;
+		// unset defaults (including -api-keys=test) are not Visited.
+		if err := cliConfig.ApplyEnvironmentOverrides(appconf.EnvOverrideOptions{
+			SkipAPIKeys: apiKeysFlagExplicit(),
+			SkipStaticAuth: flagVisited(
+				"gtfs-static-auth-header-name",
+				"gtfs-static-auth-header-value",
+			),
+			SkipRealtimeAuth: flagVisited(
+				"realtime-auth-header-name",
+				"realtime-auth-header-value",
+			),
+		}); err != nil {
+			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+			logger.Error("invalid command-line configuration", "error", err)
+			os.Exit(1)
+		}
+
 		// Run the shared validation logic
 		if err := cliConfig.Validate(); err != nil {
 			logger := slog.New(slog.NewTextHandler(os.Stdout, nil))

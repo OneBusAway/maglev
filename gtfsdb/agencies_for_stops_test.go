@@ -92,5 +92,5 @@ func addSecondAgencyAtStop(t *testing.T, client *Client) {
 	`, stopID)
 	require.NoError(t, err)
 
-	require.NoError(t, buildStopAgencyIndex(ctx, client.Queries))
+	require.NoError(t, buildStopIndexes(ctx, client.Queries))
 }
