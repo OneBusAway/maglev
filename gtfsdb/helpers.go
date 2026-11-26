@@ -165,17 +165,61 @@ func createDB(config Config) (*sql.DB, error) {
 	return db, nil
 }
 
+const schemaVersion = 1
+
 func performDatabaseMigration(ctx context.Context, db *sql.DB) error {
-	statements := strings.Split(ddl, "-- migrate") // Split DDL into individual statements
-	for _, stmt := range statements {
-		trimmedStmt := strings.TrimSpace(stmt)
-		if trimmedStmt == "" {
-			continue // Skip empty statements
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin migration transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var currentVersion int
+	err = tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&currentVersion)
+	if err != nil {
+		return fmt.Errorf("failed to get current schema version: %w", err)
+	}
+
+	// Do not attempt to downgrade a newer database.
+	if currentVersion > schemaVersion {
+		return fmt.Errorf(
+			"database schema version (%d) is newer than supported version (%d)",
+			currentVersion,
+			schemaVersion,
+		)
+	}
+
+	if currentVersion < schemaVersion {
+		statements := strings.Split(ddl, "-- migrate")
+
+		for _, stmt := range statements {
+			trimmedStmt := strings.TrimSpace(stmt)
+			if trimmedStmt == "" {
+				continue
+			}
+
+			if _, err := tx.ExecContext(ctx, trimmedStmt); err != nil {
+				return fmt.Errorf(
+					"error executing DDL statement [%s]: %w",
+					trimmedStmt,
+					err,
+				)
+			}
 		}
-		if _, err := db.ExecContext(ctx, trimmedStmt); err != nil {
-			return fmt.Errorf("error executing DDL statement [%s]: %w", trimmedStmt, err)
+
+		_, err = tx.ExecContext(
+			ctx,
+			fmt.Sprintf("PRAGMA user_version = %d", schemaVersion),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to update schema version: %w", err)
 		}
 	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit database migration: %w", err)
+	}
+
 	return nil
 }
 
