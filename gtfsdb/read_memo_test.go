@@ -3,6 +3,7 @@ package gtfsdb
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -65,6 +66,17 @@ func TestReadMemo_RepeatsHitTheMemo(t *testing.T) {
 		{"GetFrequenciesForTrip", func(ctx context.Context, r MemoReader) (any, error) {
 			return r.GetFrequenciesForTrip(ctx, memoTestTripID)
 		}},
+		{"GetBlockTripSequence", func(ctx context.Context, r MemoReader) (any, error) {
+			serviceIDs, err := r.GetActiveServiceIDsForDate(ctx, memoTestDate)
+			if err != nil {
+				return nil, err
+			}
+			return r.GetBlockTripSequence(ctx, GetBlockTripSequenceParams{
+				TripID:     memoTestTripID,
+				BlockID:    blockID,
+				ServiceIds: serviceIDs,
+			})
+		}},
 	}
 
 	for _, tt := range tests {
@@ -72,6 +84,12 @@ func TestReadMemo_RepeatsHitTheMemo(t *testing.T) {
 			ctx := WithReadMemo(context.Background())
 			db.count = 0
 
+			if ttName := tt.name; ttName == "GetBlockTripSequence" {
+				// Pre-warm GetActiveServiceIDsForDate so db.count only measures GetBlockTripSequence itself.
+				_, err := queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, memoTestDate)
+				require.NoError(t, err)
+				db.count = 0
+			}
 			first, err := tt.read(ctx, queries.Memo(ctx))
 			require.NoError(t, err)
 			second, err := tt.read(ctx, queries.Memo(ctx))
@@ -157,4 +175,50 @@ func TestWithReadMemo_KeepsAnInstalledMemo(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, db.count)
+}
+
+// TestReadMemo_GetBlockTripSequenceServiceIDSet verifies service ID set canonicalization and error non-caching.
+func TestReadMemo_GetBlockTripSequenceServiceIDSet(t *testing.T) {
+	queries, db := newMemoTestQueries(t)
+	ctx := WithReadMemo(context.Background())
+	blockID := sql.NullString{String: memoTestBlockID, Valid: true}
+
+	serviceIDs, err := queries.Memo(ctx).GetActiveServiceIDsForDate(ctx, memoTestDate)
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs)
+	db.count = 0
+
+	first, err := queries.Memo(ctx).GetBlockTripSequence(ctx, GetBlockTripSequenceParams{
+		TripID:     memoTestTripID,
+		BlockID:    blockID,
+		ServiceIds: serviceIDs,
+	})
+	require.NoError(t, err)
+
+	// Reordered and duplicated service IDs represent the same set and must hit the memo.
+	reordered := append([]string{serviceIDs[0]}, serviceIDs...)
+	slices.Reverse(reordered)
+	second, err := queries.Memo(ctx).GetBlockTripSequence(ctx, GetBlockTripSequenceParams{
+		TripID:     memoTestTripID,
+		BlockID:    blockID,
+		ServiceIds: reordered,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, db.count)
+	assert.Equal(t, first, second)
+
+	// Missing rows must not be cached.
+	_, err = queries.Memo(ctx).GetBlockTripSequence(ctx, GetBlockTripSequenceParams{
+		TripID:     "no-such-trip",
+		BlockID:    blockID,
+		ServiceIds: serviceIDs,
+	})
+	require.ErrorIs(t, err, sql.ErrNoRows)
+	_, err = queries.Memo(ctx).GetBlockTripSequence(ctx, GetBlockTripSequenceParams{
+		TripID:     "no-such-trip",
+		BlockID:    blockID,
+		ServiceIds: serviceIDs,
+	})
+	require.ErrorIs(t, err, sql.ErrNoRows)
+	assert.Equal(t, 3, db.count)
 }

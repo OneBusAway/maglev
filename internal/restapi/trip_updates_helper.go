@@ -698,27 +698,35 @@ func (api *RestAPI) blockTripIDsSortedByStartTime(ctx context.Context, tripIDs [
 func (api *RestAPI) blockShiftTripIDsSortedByStartTime(ctx context.Context, targetTripID string, serviceDate time.Time) []string {
 	cache := snapshotCacheFrom(ctx)
 	if cache == nil {
-		return api.loadBlockShiftTripIDs(ctx, targetTripID, serviceDate)
+		tripIDs, _ := api.loadBlockShiftTripIDs(ctx, targetTripID, serviceDate)
+		return tripIDs
 	}
-	key := blockShiftKey{tripID: targetTripID, serviceDateUnix: serviceDate.UnixNano()}
+	serviceDateUnix := serviceDate.UnixNano()
+	key := blockShiftKey{tripID: targetTripID, serviceDateUnix: serviceDateUnix}
 	tripIDs, cached := cache.blockShiftTripIDs[key]
 	if !cached {
-		tripIDs = api.loadBlockShiftTripIDs(ctx, targetTripID, serviceDate)
+		var resolved bool
+		tripIDs, resolved = api.loadBlockShiftTripIDs(ctx, targetTripID, serviceDate)
 		cache.blockShiftTripIDs[key] = tripIDs
+		if resolved {
+			for _, id := range tripIDs {
+				cache.blockShiftTripIDs[blockShiftKey{tripID: id, serviceDateUnix: serviceDateUnix}] = tripIDs
+			}
+		}
 	}
 	return slices.Clone(tripIDs)
 }
 
-func (api *RestAPI) loadBlockShiftTripIDs(ctx context.Context, targetTripID string, serviceDate time.Time) []string {
+func (api *RestAPI) loadBlockShiftTripIDs(ctx context.Context, targetTripID string, serviceDate time.Time) ([]string, bool) {
 	rawTripIDs := api.blockTripIDsForServiceDate(ctx, targetTripID, serviceDate)
 	if len(rawTripIDs) <= 1 {
-		return rawTripIDs
+		return rawTripIDs, true
 	}
 	rows, err := api.GtfsManager.GtfsDB.Queries.GetTripTimeBoundsByIDs(ctx, rawTripIDs)
 	if err != nil {
 		warnIfRealDBError(err, "blockShiftTripIDsSortedByStartTime: GetTripTimeBoundsByIDs failed, falling back to unfiltered sort",
 			slog.Int("trip_count", len(rawTripIDs)))
-		return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs)
+		return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs), false
 	}
 	// Build minimal blockTripData rows — keepShiftContainingTrip needs only
 	// id, firstSeconds, lastSeconds. Any trip missing a cached bound is
@@ -746,7 +754,7 @@ func (api *RestAPI) loadBlockShiftTripIDs(ctx context.Context, targetTripID stri
 	}
 	for _, id := range rawTripIDs {
 		if _, ok := presentIDs[id]; !ok {
-			return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs)
+			return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs), true
 		}
 	}
 	slices.SortFunc(minimal, func(a, b blockTripData) int {
@@ -757,13 +765,13 @@ func (api *RestAPI) loadBlockShiftTripIDs(ctx context.Context, targetTripID stri
 		// Target isn't in the block-trip list (shouldn't happen — target's
 		// own trip drives the lookup — but keepShiftContainingTrip returns
 		// nil rather than panic if it slips). Preserve current behaviour.
-		return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs)
+		return api.blockTripIDsSortedByStartTime(ctx, rawTripIDs), false
 	}
 	out := make([]string, len(shift))
 	for i, t := range shift {
 		out[i] = t.id
 	}
-	return out
+	return out, true
 }
 
 // StopDelays holds the per-stop-visit delays from a TripUpdate. Entries are

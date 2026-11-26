@@ -1548,6 +1548,25 @@ func TestBlockShiftTripIDs_CachedPerRequest(t *testing.T) {
 	assert.Equal(t, first, again)
 }
 
+func TestBlockShiftTripIDs_SharedWithShiftSiblings(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(8*time.Hour)))
+	defer api.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	stopID := addDownstreamStop(t, api, tripID)
+	laterTripID := addLaterBlockTrip(t, api, stopID, tripID)
+	ctx := WithSnapshotCache(context.Background(), newSnapshotCache())
+
+	first := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
+	first[0] = "mutated" // Verify returned slice is cloned.
+
+	counter := countQueries(t, api)
+	siblingResult := api.blockShiftTripIDsSortedByStartTime(ctx, laterTripID, serviceDate)
+
+	assert.Zero(t, counter.count.Load())
+	assert.Equal(t, []string{tripID, laterTripID}, siblingResult)
+}
+
 // A block's updates expire together as one record, so a trip's own stale update
 // still predicts its stops while a later update keeps the record fresh.
 func TestArrivals_StaleUpdateInFreshRecordStillPredicts(t *testing.T) {
