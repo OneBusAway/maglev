@@ -886,7 +886,7 @@ func TestGtfsStaticFeedRedacted(t *testing.T) {
 	}
 	assert.Equal(
 		t,
-		"ftp://user:xxxxx@host/x",
+		"ftp://xxxxx@host/x",
 		ftpFeed.Redacted().URL,
 	)
 }
