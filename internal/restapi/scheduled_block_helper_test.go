@@ -1768,12 +1768,39 @@ func TestProjectionLaterCloseParallelPass(t *testing.T) {
 	}
 }
 
+func TestProjectionAtAntimeridian(t *testing.T) {
+	t.Run("stop across the date line", func(t *testing.T) {
+		shape := []gtfs.ShapePoint{
+			{Longitude: 179.999},
+			{Latitude: .001, Longitude: 179.999},
+			{Latitude: .001, Longitude: 179.990},
+		}
+		stops := map[string]gtfsdb.Stop{"A": {Lon: -179.999}}
+		distances := projectStopsInSequence([]string{"A"}, stops, shape, preCalculateCumulativeDistances(shape))
+		require.Equal(t, []float64{0}, distances)
+	})
+	t.Run("stop on a crossing segment", func(t *testing.T) {
+		shape := []gtfs.ShapePoint{{Longitude: 179.999}, {Longitude: -179.997}}
+		cumulative := preCalculateCumulativeDistances(shape)
+		stop := gtfsdb.Stop{Lon: -179.999}
+		distances := projectStopsInSequence([]string{"A"}, map[string]gtfsdb.Stop{"A": stop}, shape, cumulative)
+		require.InDelta(t, cumulative[1]/2, distances[0], .001)
+
+		position, orientation := positionAndOrientationAtDistance(shape, cumulative, distances[0])
+		require.InDelta(t, stop.Lon, position.Lon, 1e-9)
+		require.Zero(t, orientation)
+	})
+}
+
 func TestBoundedProjectionMatchesFullScan(t *testing.T) {
-	for _, origin := range []struct{ lat, lon float64 }{{0, 0}, {70, 20}, {84.9, -120}, {85.1, 10}, {5, 179.99}} {
+	for _, origin := range []struct{ lat, lon float64 }{{0, 0}, {70, 20}, {84.9, -120}, {85.1, 10}, {5, 179.999}} {
 		shape := make([]gtfs.ShapePoint, 320)
 		for i := range shape {
 			angle := float64(i) * 0.054
-			shape[i] = gtfs.ShapePoint{Latitude: origin.lat + 0.006*math.Sin(2*angle), Longitude: origin.lon + 0.009*math.Sin(angle)}
+			shape[i] = gtfs.ShapePoint{
+				Latitude:  origin.lat + 0.006*math.Sin(2*angle),
+				Longitude: wrapLongitude(origin.lon + 0.009*math.Sin(angle)),
+			}
 			if i > 0 && i%5 == 0 {
 				shape[i] = shape[i-1]
 			}
@@ -1783,13 +1810,13 @@ func TestBoundedProjectionMatchesFullScan(t *testing.T) {
 		hits := 0
 		for i, p := range shape {
 			for _, offset := range []float64{0, .00005, .00042, .002} {
-				stop := gtfsdb.Stop{Lat: p.Latitude + offset, Lon: p.Longitude - offset}
+				stop := gtfsdb.Stop{Lat: p.Latitude + offset, Lon: wrapLongitude(p.Longitude - offset)}
 				geometry := stopProjectionGeometry{lat: stop.Lat, lon: stop.Lon, lonMetres: metresPerDegree * math.Cos(stop.Lat*math.Pi/180)}
 				want := scanStopProjection(geometry, shape, cum)
 				for _, radius := range []float64{50, 500} {
 					got, ok := closestInBounds(boxes, geometry, shape, cum, radius)
 					if !ok {
-						if math.Abs(stop.Lat) <= 85 && math.Abs(stop.Lon) <= 179 {
+						if math.Abs(stop.Lat) <= 85 {
 							require.Greater(t, want.cost, radius)
 						}
 						continue
@@ -1800,9 +1827,92 @@ func TestBoundedProjectionMatchesFullScan(t *testing.T) {
 				}
 			}
 		}
-		if origin.lat <= 85 && origin.lon <= 179 {
+		if origin.lat <= 85 {
 			require.Positive(t, hits)
 		}
+	}
+}
+
+func TestProjectionSeparatesConsecutiveVisitsToSameStop(t *testing.T) {
+	const stopLongitude = 127.0 / 65536
+	shape := []gtfs.ShapePoint{
+		{},
+		{Longitude: 128.0 / 65536},
+		{Latitude: .0006, Longitude: 128.0 / 65536},
+		{Longitude: stopLongitude},
+	}
+	cumulative := preCalculateCumulativeDistances(shape)
+	stops := map[string]gtfsdb.Stop{
+		"A": {Lon: stopLongitude},
+		"B": {Lat: shape[2].Latitude, Lon: shape[2].Longitude},
+		"C": {Lon: stopLongitude},
+	}
+	first := utils.Distance(0, 0, 0, stopLongitude)
+	for _, tt := range []struct {
+		name string
+		ids  []string
+		want []float64
+	}{
+		{"return visit", []string{"A", "A"}, []float64{first, cumulative[3]}},
+		{"more visits than matches", []string{"A", "A", "A"}, []float64{first, cumulative[3], cumulative[3]}},
+		{"return lies after the next stop", []string{"A", "A", "B"}, []float64{first, first, cumulative[2]}},
+		{"different stops at the same coordinates", []string{"A", "C"}, []float64{first, first}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			distances := projectStopsInSequence(tt.ids, stops, shape, cumulative)
+			require.InDeltaSlice(t, tt.want, distances, .001)
+		})
+	}
+}
+
+func TestProjectionOrdersShuttleStops(t *testing.T) {
+	t.Run("all stops can use a closest match", func(t *testing.T) {
+		shape, ids, stops := shuttleProjectionFixture(7, 6)
+		cumulative := preCalculateCumulativeDistances(shape)
+		distances := projectStopsInSequence(ids, stops, shape, cumulative)
+		require.InDeltaSlice(t, cumulative[1:], distances, .001)
+	})
+	t.Run("one traversal is missing", func(t *testing.T) {
+		shape, ids, stops := shuttleProjectionFixture(6, 6)
+		cumulative := preCalculateCumulativeDistances(shape)
+		distances := projectStopsInSequence(ids, stops, shape, cumulative)
+		require.True(t, slices.IsSorted(distances))
+		var cost float64
+		for i, id := range ids {
+			position, _ := positionAndOrientationAtDistance(shape, cumulative, distances[i])
+			cost += utils.Distance(position.Lat, position.Lon, stops[id].Lat, stops[id].Lon)
+		}
+		require.InDelta(t, cumulative[1], cost, .001)
+	})
+}
+
+func shuttleProjectionFixture(shapePoints, stopCount int) ([]gtfs.ShapePoint, []string, map[string]gtfsdb.Stop) {
+	const terminalLongitude = .002
+	shape := make([]gtfs.ShapePoint, shapePoints)
+	for i := 1; i < len(shape); i += 2 {
+		shape[i].Longitude = terminalLongitude
+	}
+	ids := make([]string, stopCount)
+	for i := range ids {
+		// The trip begins at B, opposite the shape's first traversal.
+		ids[i] = [...]string{"B", "A"}[i%2]
+	}
+	return shape, ids, map[string]gtfsdb.Stop{"A": {}, "B": {Lon: terminalLongitude}}
+}
+
+func BenchmarkStopProjectionRepeatedTraversals(b *testing.B) {
+	const stopsPerTrip = 200
+	for _, scenario := range []struct {
+		name        string
+		shapePoints int
+	}{
+		{"TiedMinima", stopsPerTrip + 1},
+		{"OrderConflict", stopsPerTrip},
+	} {
+		b.Run(scenario.name, func(b *testing.B) {
+			shape, ids, stops := shuttleProjectionFixture(scenario.shapePoints, stopsPerTrip)
+			benchmarkStopProjection(b, ids, stops, shape, preCalculateCumulativeDistances(shape))
+		})
 	}
 }
 
@@ -1848,7 +1958,16 @@ func TestBlockProjectionReuseSeparatesStopPatternsAndShapes(t *testing.T) {
 	short.shapePoints = full.shapePoints[:2]
 	short.cumDistances = full.cumDistances[:2]
 	short.totalDist = short.cumDistances[1]
-	patterns := []blockTripData{full, skip, short, full}
+	permuted := full
+	permuted.stopTimes = slices.Clone(full.stopTimes)
+	last := len(permuted.stopTimes) - 1
+	permuted.stopTimes[0], permuted.stopTimes[last] = permuted.stopTimes[last], permuted.stopTimes[0]
+	original, _ := api.emitBlockStops(ctx, []blockTripData{full})
+	reordered, _ := api.emitBlockStops(ctx, []blockTripData{permuted})
+	require.False(t, slices.EqualFunc(original, reordered, func(a, b blockStopMetric) bool {
+		return a.DistanceAlongTrip == b.DistanceAlongTrip
+	}), "the permutation must change at least one uncached projection")
+	patterns := []blockTripData{full, skip, short, permuted, full}
 	batch, _ := api.emitBlockStops(ctx, patterns)
 	index := 0
 	for _, trip := range patterns {

@@ -10,7 +10,10 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
-const metresPerDegree = utils.RadiusOfEarthInMeters * math.Pi / 180
+const (
+	metresPerDegree         = utils.RadiusOfEarthInMeters * math.Pi / 180
+	stopProjectionTolerance = 1e-6 // metres
+)
 
 type stopProjection struct {
 	position float64
@@ -25,9 +28,10 @@ type stopProjectionGeometry struct {
 }
 
 type orderedStop struct {
-	index    int
-	geometry stopProjectionGeometry
-	nearest  stopProjection
+	index           int
+	geometry        stopProjectionGeometry
+	nearest         stopProjection
+	repeatsPrevious bool
 }
 
 // Along a segment the distance to a stop is the hypotenuse of the cross-track
@@ -37,9 +41,17 @@ type segmentStopDistance struct {
 }
 
 func (stop stopProjectionGeometry) segment(from, to gtfs.ShapePoint) segmentStopDistance {
-	dx := (to.Longitude - from.Longitude) * stop.lonMetres
+	deltaLon := to.Longitude - from.Longitude
+	stopLon := stop.lon - from.Longitude
+	if math.Abs(deltaLon) > 180 || math.Abs(stopLon) > 90 {
+		// Use the copy of the whole segment whose midpoint is nearest the stop.
+		// Wrapping the two endpoints independently can split a segment in two.
+		deltaLon = wrapLongitude(deltaLon)
+		stopLon = wrapLongitude(stopLon-deltaLon/2) + deltaLon/2
+	}
+	dx := deltaLon * stop.lonMetres
 	dy := (to.Latitude - from.Latitude) * metresPerDegree
-	x := (stop.lon - from.Longitude) * stop.lonMetres
+	x := stopLon * stop.lonMetres
 	y := (stop.lat - from.Latitude) * metresPerDegree
 	lengthSquared := dx*dx + dy*dy
 	if lengthSquared == 0 {
@@ -57,8 +69,25 @@ func (d segmentStopDistance) cost(ratio float64) float64 {
 	return math.Sqrt(along*along + d.crossTrack*d.crossTrack)
 }
 
+func (d segmentStopDistance) hasLinearCost() bool {
+	return d.length == 0 || (d.crossTrack == 0 && (d.centre <= 0 || d.centre >= 1))
+}
+
+func (d segmentStopDistance) closestRatio() float64 {
+	return min(1, max(0, d.centre))
+}
+
+func (d segmentStopDistance) excessAtRatio(ratio, nearestCost float64) float64 {
+	return max(0, d.cost(ratio)-nearestCost)
+}
+
 func (stop stopProjectionGeometry) bounds(radius float64) utils.CoordinateBounds {
-	return utils.CalculateBoundsFromSpan(stop.lat, stop.lon, radius/metresPerDegree, radius/math.Abs(stop.lonMetres))
+	window := utils.CalculateBoundsFromSpan(stop.lat, stop.lon, radius/metresPerDegree, radius/math.Abs(stop.lonMetres))
+	if window.MinLon <= -180 || window.MaxLon >= 180 {
+		// A window straddling the date line can only prune by latitude.
+		window.MinLon, window.MaxLon = -180, 180
+	}
+	return window
 }
 
 // projectStopsInSequence returns each stop's distance-along-trip in metres,
@@ -71,8 +100,8 @@ func (stop stopProjectionGeometry) bounds(radius float64) utils.CoordinateBounds
 // projection as authoritative.
 //
 // Choose the lowest combined projection error among matches that follow the
-// trip's stop order. A slightly closer match on a return leg can otherwise
-// advance the search past the correct locations of subsequent stops.
+// trip's stop order. For consecutive visits to the same stop, prefer distinct
+// positions when an equally close match fits the surrounding assignments.
 func projectStopsInSequence(
 	stopIDs []string,
 	stopByID map[string]gtfsdb.Stop,
@@ -100,14 +129,20 @@ func projectStopsInSequence(
 		if len(stops) > 0 && best.position < stops[len(stops)-1].nearest.position {
 			inOrder = false
 		}
-		stops = append(stops, orderedStop{index: i, geometry: geometry, nearest: best})
+		stops = append(stops, orderedStop{
+			index:           i,
+			geometry:        geometry,
+			nearest:         best,
+			repeatsPrevious: i > 0 && stopID == stopIDs[i-1],
+		})
 		positions[i] = best.position
 	}
 	// Independently closest positions already achieve the lower bound when
 	// they follow trip order.
-	if !inOrder {
+	if !inOrder && !matchNearestStops(positions, stops, shapePoints, cumulativeDistances) {
 		matchOrderedStops(positions, stops, shapePoints, cumulativeDistances, bounds)
 	}
+	separateRepeatedStopVisits(positions, stops, shapePoints, cumulativeDistances)
 	return positions
 }
 
@@ -129,6 +164,10 @@ func projectionBounds(shape []gtfs.ShapePoint, stops int) []utils.CoordinateBoun
 			box.MinLon = min(box.MinLon, q.Longitude)
 			box.MaxLon = max(box.MaxLon, q.Longitude)
 		}
+		if box.MaxLon-box.MinLon > 180 || box.MinLon < -180 || box.MaxLon > 180 {
+			// A segment crossing the date line can leave the raw longitude bounds.
+			box.MinLon, box.MaxLon = -180, 180
+		}
 		boxes = append(boxes, box)
 	}
 	return boxes
@@ -136,11 +175,10 @@ func projectionBounds(shape []gtfs.ShapePoint, stops int) []utils.CoordinateBoun
 
 // Search every run of segments that could contain a match within the radius.
 // The window uses the same longitude scale as the projection. At high
-// latitudes and near the date line, use the full scan. Ties retain the
-// first occurrence in shape order.
+// latitudes, use the full scan. Ties retain the first occurrence in shape order.
 func closestInBounds(boxes []utils.CoordinateBounds, stop stopProjectionGeometry, shape []gtfs.ShapePoint, cumulative []float64, radius float64) (stopProjection, bool) {
 	best := stopProjection{cost: math.Inf(1)}
-	if len(boxes) == 0 || math.Abs(stop.lat) > 85 || math.Abs(stop.lon) > 179 {
+	if len(boxes) == 0 || math.Abs(stop.lat) > 85 {
 		return best, false
 	}
 	window := stop.bounds(radius)
@@ -178,14 +216,87 @@ func closestStopProjection(bounds []utils.CoordinateBounds, stop stopProjectionG
 func scanStopProjection(stop stopProjectionGeometry, shape []gtfs.ShapePoint, cumulative []float64) stopProjection {
 	best := stopProjection{cost: math.Inf(1)}
 	for i, from := range shape[:len(shape)-1] {
-		d := stop.segment(from, shape[i+1])
-		ratio := min(1, max(0, d.centre))
-		cost := d.cost(ratio)
-		if cost < best.cost {
+		segment := stop.segment(from, shape[i+1])
+		ratio := segment.closestRatio()
+		if cost := segment.cost(ratio); cost < best.cost {
 			best = stopProjection{position: cumulative[i] + ratio*(cumulative[i+1]-cumulative[i]), cost: cost}
 		}
 	}
 	return best
+}
+
+// Taking the earliest feasible minimum leaves the most room for the next stop.
+// A complete sequence of independent minima attains the error lower bound.
+func matchNearestStops(positions []float64, stops []orderedStop, shape []gtfs.ShapePoint, cumulative []float64) bool {
+	previous, end := cumulative[0], cumulative[len(cumulative)-1]
+	tolerance := stopProjectionTolerance / float64(len(stops))
+	for _, stop := range stops {
+		position := stop.nearest.position
+		if position < previous {
+			var ok bool
+			position, ok = firstMatchingProjection(stop.geometry, shape, cumulative, previous, end, stop.nearest.cost+tolerance)
+			if !ok {
+				return false
+			}
+		}
+		positions[stop.index] = position
+		previous = position
+	}
+	return true
+}
+
+// Search each segment's closest point in shape order. Repeated visits start
+// beyond the preceding position so a shared vertex counts only once.
+func firstMatchingProjection(stop stopProjectionGeometry, shape []gtfs.ShapePoint, cumulative []float64, minPosition, maxPosition, maxCost float64) (float64, bool) {
+	start, _ := slices.BinarySearch(cumulative, minPosition)
+	for i := max(0, start-1); i < len(shape)-1 && cumulative[i] <= maxPosition; i++ {
+		segment := stop.segment(shape[i], shape[i+1])
+		ratio := segment.closestRatio()
+		position := cumulative[i] + ratio*(cumulative[i+1]-cumulative[i])
+		if position >= minPosition && position <= maxPosition && segment.cost(ratio) <= maxCost {
+			return position, true
+		}
+	}
+	return 0, false
+}
+
+func separateRepeatedStopVisits(positions []float64, stops []orderedStop, shape []gtfs.ShapePoint, cumulative []float64) {
+	for i := 1; i < len(stops); {
+		position := positions[stops[i].index]
+		if !stops[i].repeatsPrevious || position != positions[stops[i-1].index] {
+			i++
+			continue
+		}
+		end := i + 1
+		for end < len(stops) && stops[end].repeatsPrevious && positions[stops[end].index] == position {
+			end++
+		}
+		limit := cumulative[len(cumulative)-1]
+		if end < len(stops) {
+			limit = positions[stops[end].index]
+			if stops[end].repeatsPrevious {
+				limit -= stopProjectionTolerance
+			}
+		}
+		spreadRepeatedStopVisits(positions, stops[i:end], shape, cumulative, position, limit)
+		i = end
+	}
+}
+
+func spreadRepeatedStopVisits(positions []float64, repeats []orderedStop, shape []gtfs.ShapePoint, cumulative []float64, position, limit float64) {
+	stop := repeats[0]
+	maxCost := projectionCostAtPosition(stop, position, shape, cumulative) + stopProjectionTolerance
+	for i, visit := range repeats {
+		next, ok := firstMatchingProjection(stop.geometry, shape, cumulative, position+stopProjectionTolerance, limit, maxCost)
+		if !ok {
+			for _, remaining := range repeats[i:] {
+				positions[remaining.index] = position
+			}
+			return
+		}
+		positions[visit.index] = next
+		position = next
+	}
 }
 
 type stopGroup struct {
@@ -204,137 +315,29 @@ type stopAssignment struct {
 // assignments. Process these possibilities in shape order, retaining the
 // cheapest assignment of each prefix of stops.
 func matchOrderedStops(positions []float64, stops []orderedStop, shape []gtfs.ShapePoint, cumulative []float64, boxes []utils.CoordinateBounds) {
-	// A feasible upper bound limits how far any stop can deviate from its
-	// independent minimum. Try adjusting in each direction.
-	var forwardError, backwardError float64
-	forward, backward := cumulative[0], cumulative[len(cumulative)-1]
-	for i, stop := range stops {
-		last := stops[len(stops)-1-i]
-		forward = max(forward, stop.nearest.position)
-		backward = min(backward, last.nearest.position)
-		forwardError += excessProjectionCost(stop, forward, shape, cumulative)
-		backwardError += excessProjectionCost(last, backward, shape, cumulative)
-	}
-	const tolerance = 1e-6 // metres
-	maxExcess := min(forwardError, backwardError) + tolerance
-
+	forwardError, backwardError := orderedProjectionErrorBounds(stops, shape, cumulative)
+	maxExcess := min(forwardError, backwardError) + stopProjectionTolerance
+	search := newStopGroupSearch(stops, maxExcess)
 	assignments := []stopAssignment{{}}
 	best := make([]int, len(stops)+1)
 	for i := 1; i < len(best); i++ {
 		best[i] = -1
 	}
-	segment := make([]segmentStopDistance, len(stops))
-	excess := make([]float64, len(stops))
-	windows := make([]utils.CoordinateBounds, len(stops))
-	for i, stop := range stops {
-		windows[i] = stop.geometry.bounds(stop.nearest.cost + maxExcess)
-	}
-	eligible := make([]int, 0, len(stops))
-	var groups []stopGroup
 	for i, from := range shape[:len(shape)-1] {
 		if i%segmentsPerProjectionBox == 0 {
-			eligible = eligible[:0]
-			for j, window := range windows {
-				if len(boxes) == 0 || !utils.IsOutOfBounds(boxes[i/segmentsPerProjectionBox], window) {
-					eligible = append(eligible, j)
-				}
-			}
+			search.selectStops(boxes, i/segmentsPerProjectionBox)
 		}
 		length := cumulative[i+1] - cumulative[i]
-		if length == 0 || len(eligible) == 0 {
+		if length == 0 {
 			continue
 		}
-		to := shape[i+1]
-		for _, j := range eligible {
-			d := stops[j].geometry.segment(from, to)
-			segment[j] = d
-			excess[j] = excessAtRatio(d, min(1, max(0, d.centre)), stops[j])
-		}
-		groups = groups[:0]
-		for index, first := range eligible {
-			if excess[first] > maxExcess {
-				continue
-			}
-			d := segment[first]
-			minimum := min(1, max(0, d.centre))
-			groups = append(groups, stopGroup{first, first + 1, minimum, excess[first]})
-			if minimum > 0 {
-				if cost := excessAtRatio(d, 0, stops[first]); cost <= maxExcess {
-					groups = append(groups, stopGroup{first, first + 1, 0, cost})
-				}
-			}
-			if minimum < 1 {
-				if cost := excessAtRatio(d, 1, stops[first]); cost <= maxExcess {
-					groups = append(groups, stopGroup{first, first + 1, 1, cost})
-				}
-			}
-			lower := excess[first]
-			differentCentres := false
-			for next := index + 1; next < len(eligible); next++ {
-				last := eligible[next]
-				if last-first != next-index {
-					break
-				}
-				lower += excess[last]
-				if lower > maxExcess {
-					break
-				}
-				differentCentres = differentCentres || segment[last].centre != d.centre
-				// An interior group must lie between the last and first
-				// unconstrained minima. Otherwise one end stop could move
-				// independently and reduce the group's error.
-				lo := max(0, segment[last].centre)
-				hi := min(1, d.centre)
-				if !differentCentres || lo > hi || lo >= 1 || hi <= 0 {
-					continue
-				}
-				ratio := closestStopGroup(segment[first:last+1], lo, hi)
-				var cost float64
-				for j := first; j <= last; j++ {
-					cost += excessAtRatio(segment[j], ratio, stops[j])
-				}
-				if cost <= maxExcess {
-					groups = append(groups, stopGroup{first, last + 1, ratio, cost})
-				}
-			}
-		}
-		slices.SortFunc(groups, func(a, b stopGroup) int {
-			if a.ratio != b.ratio {
-				return cmp.Compare(a.ratio, b.ratio)
-			}
-			return cmp.Compare(a.first, b.first)
-		})
-		for _, group := range groups {
-			previous := best[group.first]
-			if previous < 0 {
-				continue
-			}
-			cost := assignments[previous].cost + group.cost
-			if cost > maxExcess {
-				continue
-			}
-			current := best[group.end]
-			if current < 0 || cost+tolerance < assignments[current].cost {
-				best[group.end] = len(assignments)
-				assignments = append(assignments, stopAssignment{
-					previous: previous, first: group.first, end: group.end,
-					position: cumulative[i] + group.ratio*length, cost: cost,
-				})
-			}
-		}
+		groups := search.candidates(stops, from, shape[i+1])
+		assignments = updateStopPrefixes(best, assignments, groups, cumulative[i], length, maxExcess)
 	}
 	if best[len(stops)] < 0 {
 		// Keep the feasible upper-bound assignment if roundoff prevents a
 		// complete path from passing the pruning bounds.
-		if forwardError <= backwardError {
-			for i := 1; i < len(stops); i++ {
-				positions[stops[i].index] = max(positions[stops[i-1].index], positions[stops[i].index])
-			}
-		} else {
-			for i := len(stops) - 2; i >= 0; i-- {
-				positions[stops[i].index] = min(positions[stops[i+1].index], positions[stops[i].index])
-			}
-		}
+		clampNearestStopPositions(positions, stops, forwardError <= backwardError)
 		return
 	}
 	for index := best[len(stops)]; index > 0; {
@@ -346,13 +349,172 @@ func matchOrderedStops(positions []float64, stops []orderedStop, shape []gtfs.Sh
 	}
 }
 
-func excessAtRatio(d segmentStopDistance, ratio float64, stop orderedStop) float64 {
-	return max(0, d.cost(ratio)-stop.nearest.cost)
+func updateStopPrefixes(best []int, assignments []stopAssignment, groups []stopGroup, start, length, maxExcess float64) []stopAssignment {
+	for _, group := range groups {
+		previous := best[group.first]
+		if previous < 0 {
+			continue
+		}
+		cost := assignments[previous].cost + group.cost
+		if cost > maxExcess {
+			continue
+		}
+		current := best[group.end]
+		if current < 0 || cost+stopProjectionTolerance < assignments[current].cost {
+			best[group.end] = len(assignments)
+			assignments = append(assignments, stopAssignment{
+				previous: previous, first: group.first, end: group.end,
+				position: start + group.ratio*length, cost: cost,
+			})
+		}
+	}
+	return assignments
 }
 
-func excessProjectionCost(stop orderedStop, position float64, shape []gtfs.ShapePoint, cumulative []float64) float64 {
+// Upper bounds from clamping independent minima forward and backward limit
+// how far any stop can deviate from its independent minimum in the solver.
+func orderedProjectionErrorBounds(stops []orderedStop, shape []gtfs.ShapePoint, cumulative []float64) (float64, float64) {
+	var forwardError, backwardError float64
+	forward, backward := cumulative[0], cumulative[len(cumulative)-1]
+	for i, stop := range stops {
+		last := stops[len(stops)-1-i]
+		forward = max(forward, stop.nearest.position)
+		backward = min(backward, last.nearest.position)
+		forwardError += max(0, projectionCostAtPosition(stop, forward, shape, cumulative)-stop.nearest.cost)
+		backwardError += max(0, projectionCostAtPosition(last, backward, shape, cumulative)-last.nearest.cost)
+	}
+	return forwardError, backwardError
+}
+
+func clampNearestStopPositions(positions []float64, stops []orderedStop, forward bool) {
+	if forward {
+		position := stops[0].nearest.position
+		for _, stop := range stops {
+			position = max(position, stop.nearest.position)
+			positions[stop.index] = position
+		}
+		return
+	}
+	position := stops[len(stops)-1].nearest.position
+	for i := len(stops) - 1; i >= 0; i-- {
+		stop := stops[i]
+		position = min(position, stop.nearest.position)
+		positions[stop.index] = position
+	}
+}
+
+// Stop group generation reuses scratch space as the solver advances along the shape.
+type stopGroupSearch struct {
+	maxExcess float64
+	windows   []utils.CoordinateBounds
+	eligible  []int
+	segments  []segmentStopDistance
+	excess    []float64
+	groups    []stopGroup
+}
+
+func newStopGroupSearch(stops []orderedStop, maxExcess float64) stopGroupSearch {
+	windows := make([]utils.CoordinateBounds, len(stops))
+	for i, stop := range stops {
+		windows[i] = stop.geometry.bounds(stop.nearest.cost + maxExcess)
+	}
+	return stopGroupSearch{
+		maxExcess: maxExcess,
+		windows:   windows,
+		eligible:  make([]int, 0, len(stops)),
+		segments:  make([]segmentStopDistance, len(stops)),
+		excess:    make([]float64, len(stops)),
+	}
+}
+
+func (search *stopGroupSearch) selectStops(boxes []utils.CoordinateBounds, boxIndex int) {
+	search.eligible = search.eligible[:0]
+	for i, window := range search.windows {
+		if len(boxes) == 0 || !utils.IsOutOfBounds(boxes[boxIndex], window) {
+			search.eligible = append(search.eligible, i)
+		}
+	}
+}
+
+func (search *stopGroupSearch) candidates(stops []orderedStop, from, to gtfs.ShapePoint) []stopGroup {
+	search.groups = search.groups[:0]
+	hasNonlinearCost := false
+	for _, i := range search.eligible {
+		segment := stops[i].geometry.segment(from, to)
+		search.segments[i] = segment
+		search.excess[i] = segment.excessAtRatio(segment.closestRatio(), stops[i].nearest.cost)
+		hasNonlinearCost = hasNonlinearCost || !segment.hasLinearCost()
+	}
+	for index, first := range search.eligible {
+		if search.excess[first] > search.maxExcess {
+			continue
+		}
+		search.addSingleStopGroups(first, stops[first].nearest.cost)
+		// If every cost is linear on this segment, an ordered minimum
+		// exists at the endpoints. Single-stop groups already cover it.
+		if hasNonlinearCost && index+1 < len(search.eligible) {
+			search.addSharedStopGroups(stops, search.eligible[index:])
+		}
+	}
+	slices.SortFunc(search.groups, func(a, b stopGroup) int {
+		return cmp.Or(cmp.Compare(a.ratio, b.ratio), cmp.Compare(a.first, b.first))
+	})
+	return search.groups
+}
+
+func (search *stopGroupSearch) addSingleStopGroups(index int, nearestCost float64) {
+	segment := search.segments[index]
+	minimum := segment.closestRatio()
+	search.groups = append(search.groups, stopGroup{index, index + 1, minimum, search.excess[index]})
+	for _, ratio := range [...]float64{0, 1} {
+		if ratio == minimum {
+			continue
+		}
+		if cost := segment.excessAtRatio(ratio, nearestCost); cost <= search.maxExcess {
+			search.groups = append(search.groups, stopGroup{index, index + 1, ratio, cost})
+		}
+	}
+}
+
+func (search *stopGroupSearch) addSharedStopGroups(stops []orderedStop, indices []int) {
+	first := indices[0]
+	firstCentre := search.segments[first].centre
+	lowerBound := search.excess[first]
+	differentCentres := false
+	for offset, last := range indices[1:] {
+		if last != first+offset+1 {
+			break
+		}
+		lowerBound += search.excess[last]
+		if lowerBound > search.maxExcess {
+			break
+		}
+		lastCentre := search.segments[last].centre
+		differentCentres = differentCentres || lastCentre != firstCentre
+		// An interior group must lie between the last and first minima.
+		// Outside that range, one end stop could move to reduce the error.
+		lo, hi := max(0, lastCentre), min(1, firstCentre)
+		if !differentCentres || lo > hi || lo >= 1 || hi <= 0 {
+			continue
+		}
+		ratio := closestStopGroup(search.segments[first:last+1], lo, hi)
+		if cost := search.groupCost(stops, first, last+1, ratio); cost <= search.maxExcess {
+			search.groups = append(search.groups, stopGroup{first, last + 1, ratio, cost})
+		}
+	}
+}
+
+func (search *stopGroupSearch) groupCost(stops []orderedStop, first, end int, ratio float64) float64 {
+	var cost float64
+	for i := first; i < end; i++ {
+		cost += search.segments[i].excessAtRatio(ratio, stops[i].nearest.cost)
+	}
+	return cost
+}
+
+func projectionCostAtPosition(stop orderedStop, position float64, shape []gtfs.ShapePoint, cumulative []float64) float64 {
 	if position == stop.nearest.position {
-		return 0
+		return stop.nearest.cost
 	}
 	end, _ := slices.BinarySearch(cumulative, position)
 	end = max(1, end)
@@ -361,7 +523,7 @@ func excessProjectionCost(stop orderedStop, position float64, shape []gtfs.Shape
 	if length > 0 {
 		ratio = (position - cumulative[end-1]) / length
 	}
-	return excessAtRatio(stop.geometry.segment(shape[end-1], shape[end]), ratio, stop)
+	return stop.geometry.segment(shape[end-1], shape[end]).cost(ratio)
 }
 
 // The sum of distances on a segment is convex. Bisect its derivative to
