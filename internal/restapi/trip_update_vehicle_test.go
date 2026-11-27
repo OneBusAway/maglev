@@ -1721,7 +1721,7 @@ func TestRequestedVehicleForTrip_AgencyIDWithUnderscore(t *testing.T) {
 		otherVehicleID = "busB"
 	}
 
-	vehicle := api.requestedVehicleForTrip(ctx, "AGENCY_ONE_"+otherVehicleID, "AGENCY_ONE", tripID, serviceDate)
+	vehicle := api.requestedVehicleForTrip(ctx, "AGENCY_ONE_"+otherVehicleID, "AGENCY_ONE", tripID, serviceDate, positionOnTrip)
 
 	require.NotNil(t, vehicle)
 	assert.Equal(t, otherVehicleID, vehicle.ID.ID)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -371,6 +372,118 @@ func TestTripDetailsHandlerActiveTripReference(t *testing.T) {
 				}
 			}
 			assert.Equal(t, tt.wantTripIDs, gotTripIDs)
+		})
+	}
+}
+
+func TestTripDetailsHandlerVehicleFilterMatchesBlockInstance(t *testing.T) {
+	const (
+		previousTrip = "tfr-trip-1"
+		activeTrip   = "tfr-trip-2"
+		busID        = "hunt-bus"
+		serviceDay   = "2025-06-12"
+	)
+	files := blockSequenceFiles()
+	files["trips.txt"] += "tfr-route,tfr-svc,other-block-trip,Other block,0,other-block\n" +
+		"tfr-route,tfr-svc,other-shift-trip,Other shift,0,tfr-seq-block\n"
+	files["stop_times.txt"] += "other-block-trip,09:40:00,09:40:00,tfr-stop1,1\n" +
+		"other-block-trip,10:10:00,10:10:00,tfr-stop2,2\n" +
+		"other-shift-trip,10:00:00,10:00:00,tfr-stop1,1\n" +
+		"other-shift-trip,10:08:00,10:08:00,tfr-stop2,2\n"
+
+	tests := []struct {
+		name          string
+		tripID        string
+		filter        string
+		serviceDate   string
+		omitStatus    bool
+		competingBus  bool
+		namedUpdate   bool
+		missingBounds bool
+		relationship  gtfs.TripScheduleRelationship
+		wantCode      int
+	}{
+		{name: "previous trip without filter", tripID: previousTrip, serviceDate: serviceDay, wantCode: http.StatusOK},
+		{name: "previous trip with returned vehicle", tripID: previousTrip, filter: busID, serviceDate: serviceDay, wantCode: http.StatusOK},
+		{name: "current trip with vehicle", tripID: activeTrip, filter: busID, serviceDate: serviceDay, wantCode: http.StatusOK},
+		{name: "previous trip without explicit service date", tripID: previousTrip, filter: busID, wantCode: http.StatusOK},
+		{name: "previous trip without status", tripID: previousTrip, filter: busID, serviceDate: serviceDay, omitStatus: true, wantCode: http.StatusOK},
+		{name: "requested vehicle differs from automatic selection", tripID: previousTrip, filter: busID, serviceDate: serviceDay, competingBus: true, wantCode: http.StatusOK},
+		{name: "requested trip update names a different vehicle", tripID: previousTrip, filter: busID, serviceDate: serviceDay, competingBus: true, namedUpdate: true, wantCode: http.StatusNotFound},
+		{name: "different block", tripID: "other-block-trip", filter: busID, serviceDate: serviceDay, wantCode: http.StatusNotFound},
+		{name: "overlapping shift in same block", tripID: "other-shift-trip", filter: busID, serviceDate: serviceDay, wantCode: http.StatusNotFound},
+		{name: "different service date", tripID: previousTrip, filter: busID, serviceDate: "2025-06-13", wantCode: http.StatusNotFound},
+		{name: "added trip runs its own schedule", tripID: previousTrip, filter: busID, serviceDate: serviceDay, relationship: gtfsrt.TripDescriptor_ADDED, wantCode: http.StatusNotFound},
+		{name: "shift cannot be resolved with missing trip bounds", tripID: previousTrip, filter: busID, serviceDate: serviceDay, missingBounds: true, wantCode: http.StatusNotFound},
+		{name: "unknown vehicle", tripID: previousTrip, filter: "unknown", serviceDate: serviceDay, wantCode: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := blockSequenceClock
+			startDate := servicedate.Of(now).Midnight(time.UTC)
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(now), "trip-details-vehicle-block.zip", files)
+			lat, lon := float32(37.78), float32(-122.415)
+			api.GtfsManager.MockSetAgencyVehicles("_test", tripsForRouteAgencyID, []gtfs.Vehicle{{
+				ID: &gtfs.VehicleID{ID: busID},
+				Trip: &gtfs.Trip{ID: gtfs.TripID{
+					ID: activeTrip, RouteID: tripsForRouteRouteID, HasStartDate: true, StartDate: startDate,
+					ScheduleRelationship: tt.relationship,
+				}},
+				Timestamp:         &now,
+				Position:          &gtfs.Position{Latitude: &lat, Longitude: &lon},
+				IsEntityInMessage: true,
+			}})
+			if tt.competingBus {
+				api.GtfsManager.MockAddVehicleWithOptions("other-bus", previousTrip, tripsForRouteRouteID,
+					internalgtfs.MockVehicleOptions{Timestamp: &now})
+			}
+			if tt.namedUpdate {
+				api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+					ID:        gtfs.TripID{ID: previousTrip, HasStartDate: true, StartDate: startDate},
+					Vehicle:   &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "other-bus"}},
+					Timestamp: &now,
+				})
+			}
+			if tt.missingBounds {
+				_, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(context.Background(), gtfsdb.CreateTripParams{
+					ID: "no-stop-times", RouteID: tripsForRouteRouteID, ServiceID: "tfr-svc", BlockID: nulls.String("tfr-seq-block"),
+				})
+				require.NoError(t, err)
+			}
+
+			tripID := utils.FormCombinedID(tripsForRouteAgencyID, tt.tripID)
+			query := url.Values{"key": {"TEST"}, "time": {strconv.FormatInt(now.UnixMilli(), 10)}}
+			if tt.serviceDate != "" {
+				query.Set("serviceDate", tt.serviceDate)
+			}
+			if tt.filter != "" {
+				query.Set("vehicleId", utils.FormCombinedID(tripsForRouteAgencyID, tt.filter))
+			}
+			if tt.omitStatus {
+				query.Set("includeStatus", "false")
+			}
+			endpoint := "/api/where/trip-details/" + tripID + ".json?" + query.Encode()
+			resp, model := callAPIHandler[TripDetailsResponse](t, api, endpoint)
+			require.Equal(t, tt.wantCode, resp.StatusCode)
+			require.Equal(t, tt.wantCode, model.Code)
+			if tt.wantCode != http.StatusOK {
+				return
+			}
+
+			entry := model.Data.Entry
+			assert.Equal(t, tripID, entry.TripID)
+			assert.Equal(t, startDate.UnixMilli(), entry.ServiceDate.UnixMilli())
+			require.NotNil(t, entry.Schedule)
+			if tt.tripID == previousTrip {
+				assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, activeTrip), entry.Schedule.NextTripID)
+			}
+			if tt.omitStatus {
+				assert.Nil(t, entry.Status)
+				return
+			}
+			require.NotNil(t, entry.Status)
+			assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, busID), entry.Status.VehicleID)
+			assert.Equal(t, utils.FormCombinedID(tripsForRouteAgencyID, activeTrip), entry.Status.ActiveTripID)
 		})
 	}
 }
@@ -804,10 +917,7 @@ func TestTripDetailsHandlerWithVehicleId(t *testing.T) {
 		assert.Equal(t, tripID, model.Data.Entry.TripID)
 	})
 
-	t.Run("vehicleId on a different trip returns 404", func(t *testing.T) {
-		// Java's TripDetailsBeanService rejects a vehicle whose current trip
-		// isn't the trip being described, so the response can't conflate two
-		// unrelated trips. See trip_details_handler.go:220-223.
+	t.Run("vehicleId on an unrelated trip returns 404", func(t *testing.T) {
 		api.GtfsManager.MockAddVehicle("mismatched-vehicle", "some-other-trip-id", trip.RouteID)
 
 		resp, model := callAPIHandler[TripDetailsResponse](t, api,

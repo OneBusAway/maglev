@@ -288,37 +288,56 @@ func (api *RestAPI) tripUpdateVehicleOnServiceDate(ctx context.Context, tripID s
 	return today, nil
 }
 
-// requestedVehicleForTrip applies the automatic lookup's record checks before
-// matching an explicit vehicle ID. A position vehicle must report this trip;
-// trip-update-only vehicles can describe another trip on the same block. Several
-// position vehicles can report one trip ID, as on a frequency trip, while the
-// automatic lookup picks one, so another of them is looked up by its ID.
-func (api *RestAPI) requestedVehicleForTrip(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+type positionVehicleScope uint8
+
+const (
+	positionOnTrip positionVehicleScope = iota
+	positionOnBlockInstance
+)
+
+// requestedVehicleForTrip applies record checks and matches the explicit ID.
+// A position vehicle can be selected by ID when the automatic lookup finds
+// another one, as can happen with multiple vehicles on a frequency trip.
+func (api *RestAPI) requestedVehicleForTrip(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time, scope positionVehicleScope) *gtfs.Vehicle {
 	vehicle := api.vehicleForTrip(ctx, tripID, serviceDate)
 	if vehicle == nil || vehicle.ID == nil || vehicle.Trip == nil || responseVehicleID(agencyID, vehicle) != requestedID {
-		return api.requestedPositionVehicle(ctx, requestedID, agencyID, tripID, serviceDate)
+		return api.requestedPositionVehicle(ctx, requestedID, agencyID, tripID, serviceDate, scope)
 	}
-	if !isTripUpdateVehicle(vehicle) && vehicle.Trip.ID.ID != tripID {
+	if !isTripUpdateVehicle(vehicle) && !api.positionMatchesRequestedTrip(ctx, vehicle, tripID, serviceDate, scope) {
 		return nil
 	}
 	return vehicle
 }
 
-// requestedPositionVehicle finds a position vehicle reporting tripID by its
+// requestedPositionVehicle finds an eligible position vehicle by its
 // agency-qualified ID and applies its record, or returns nil. The ID is read after
 // agencyID's prefix, since an agency ID can itself contain an underscore.
-func (api *RestAPI) requestedPositionVehicle(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time) *gtfs.Vehicle {
+func (api *RestAPI) requestedPositionVehicle(ctx context.Context, requestedID, agencyID, tripID string, serviceDate time.Time, scope positionVehicleScope) *gtfs.Vehicle {
 	rawVehicleID, hasAgencyPrefix := strings.CutPrefix(requestedID, agencyID+"_")
 	if !hasAgencyPrefix {
 		return nil
 	}
 	vehicle, err := api.GtfsManager.GetVehicleByID(agencyID, rawVehicleID)
-	reportsTrip := err == nil && vehicle != nil && !isTripUpdateVehicle(vehicle) &&
-		vehicle.Trip != nil && vehicle.Trip.ID.ID == tripID
-	if !reportsTrip {
+	if err != nil || vehicle == nil || vehicle.Trip == nil || isTripUpdateVehicle(vehicle) {
+		return nil
+	}
+	if !api.positionMatchesRequestedTrip(ctx, vehicle, tripID, serviceDate, scope) ||
+		!api.vehicleMatchesTripRecord(ctx, vehicle, tripID, serviceDate) {
 		return nil
 	}
 	return api.positionVehicleWithRecord(ctx, vehicle, serviceDate)
+}
+
+func (api *RestAPI) positionMatchesRequestedTrip(ctx context.Context, vehicle *gtfs.Vehicle, tripID string, serviceDate time.Time, scope positionVehicleScope) bool {
+	reportedTripID := vehicle.Trip.ID.ID
+	if reportedTripID == tripID {
+		return true
+	}
+	if scope != positionOnBlockInstance || runsOwnSchedule(vehicle) || !tripUpdateOnServiceDate(*vehicle.Trip, serviceDate) {
+		return false
+	}
+	shiftTripIDs, resolved := api.loadBlockShiftTripIDs(ctx, tripID, serviceDate)
+	return resolved && slices.Contains(shiftTripIDs, tripID) && slices.Contains(shiftTripIDs, reportedTripID)
 }
 
 func (api *RestAPI) vehicleFromTripUpdate(ctx context.Context, tripUpdate gtfs.Trip, tripID string, blockUpdates []tripUpdateForTrip, serviceDate time.Time) (*gtfs.Vehicle, []tripUpdateForTrip) {

@@ -310,7 +310,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// If vehicleId is provided, validate it matches the trip
 	var vehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
-		vehicle = api.requestedVehicleForTrip(ctx, params.VehicleID, route.AgencyID, tripID, serviceMidnight)
+		vehicle = api.requestedVehicleForTrip(ctx, params.VehicleID, route.AgencyID, tripID, serviceMidnight, positionOnTrip)
 		if vehicle == nil {
 			api.sendNotFound(w, r)
 			return
