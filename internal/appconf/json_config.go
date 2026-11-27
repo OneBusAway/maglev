@@ -33,10 +33,7 @@ type GtfsStaticFeed struct {
 // RedactedValue replaces secret values in redacted config output.
 const RedactedValue = "***REDACTED***"
 
-// redactedURLUserinfo is the placeholder written into the userinfo position of
-// a redacted URL. It uses the same spelling as Go's standard library
-// (net/url.URL.Redacted uses "xxxxx" for the password) so the output looks
-// familiar and doesn't need percent-encoding.
+// redactedURLUserinfo matches net/url.URL.Redacted's password placeholder so the output is familiar.
 const redactedURLUserinfo = "xxxxx"
 
 // Redacted returns a copy of the feed with its secrets hidden: URL query
