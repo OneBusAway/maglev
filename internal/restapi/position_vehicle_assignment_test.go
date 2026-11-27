@@ -17,7 +17,7 @@ import (
 func TestPreferredPositionVehicle_IgnoresRetainedVehicles(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	stopID, _, firstID, _ := setupDelayPropTestData(t, api, 1)
@@ -52,7 +52,7 @@ func TestPreferredPositionVehicle_IgnoresRetainedVehicles(t *testing.T) {
 func TestPreferredPositionVehicle_SeparateShifts(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	stopID, _, firstID, _ := setupDelayPropTestData(t, api, 1)
@@ -116,7 +116,7 @@ func TestPreferredPositionVehicle_SeparateShifts(t *testing.T) {
 
 func TestPreferredPositionVehicle_SeparateServiceDates(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -143,7 +143,7 @@ func TestPreferredPositionVehicle_SeparateServiceDates(t *testing.T) {
 
 func TestPreferredPositionVehicle_BlockAssignment(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	stopID, _, firstID, _ := setupDelayPropTestData(t, api, 1)

@@ -794,7 +794,7 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgency_Regression(t *testing.T
 
 func TestArrivalsAndDeparturesReturnsResultsNearMidnight(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2025, 6, 13, 11, 0, 0, 0, time.UTC))
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 
 	agency := mustGetAgencies(t, api)[0]

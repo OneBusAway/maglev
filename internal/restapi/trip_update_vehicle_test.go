@@ -33,7 +33,7 @@ func plannedVehicleTripUpdate(tripID string, timestamp time.Time) gtfs.Trip {
 func TestTripUpdateVehicleForTrip(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(7 * time.Hour) // setupDelayPropTestData's block starts at 08:00
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 
@@ -93,7 +93,7 @@ func TestTripUpdateVehicleForTrip(t *testing.T) {
 func TestVehicleForTrip_LibraryTripUpdateVehicle(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(7 * time.Hour) // setupDelayPropTestData's block starts at 08:00
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 
@@ -133,7 +133,7 @@ func TestVehicleForTrip_LibraryTripUpdateVehicle(t *testing.T) {
 func TestPluralArrivals_TripUpdateVehicleBeforeBlockStart(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(7*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -198,7 +198,7 @@ func TestPluralArrivals_BeforeBlockStartMeasuresFromFirstStop(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(7*time.Hour)))
+			api := createIsolatedTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(7*time.Hour)))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -229,7 +229,7 @@ func TestPluralArrivals_BeforeBlockStartMeasuresFromFirstStop(t *testing.T) {
 func TestStatusBlockSnapshot_UsesSuppliedRecord(t *testing.T) {
 	serviceDate := time.Date(2026, time.March, 7, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(11 * time.Hour)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	firstStopID, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 	addDownstreamStop(t, api, tripID)
@@ -265,7 +265,7 @@ func TestStatusBlockSnapshot_BeforeStartUsesWallClock(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			serviceDate := time.Date(2026, tt.month, tt.day, 0, 0, 0, 0, location)
 			now := time.Date(2026, tt.month, tt.day, 0, 0, int((tt.firstStop-30*time.Minute)/time.Second), 0, location)
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 			defer api.Shutdown()
 			firstStopID, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 			addDownstreamStop(t, api, tripID)
@@ -299,7 +299,7 @@ func TestStatusBlockSnapshot_BeforeStartUsesWallClock(t *testing.T) {
 
 func TestPluralArrivals_AfterBlockEndReportsNoDistance(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
-	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(9*time.Hour+30*time.Minute)))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(9*time.Hour+30*time.Minute)))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -318,7 +318,7 @@ func TestPluralArrivals_AfterBlockEndReportsNoDistance(t *testing.T) {
 func TestSingularArrival_TripUpdateVehicle(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(7*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -369,7 +369,7 @@ func TestResponseVehicleID_PositionVehicleAlwaysGetsAgency(t *testing.T) {
 func TestPluralArrivals_TripUpdateWithoutVehicleUsesBlock(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -398,7 +398,7 @@ func TestPluralArrivals_TripUpdateWithoutVehicleUsesBlock(t *testing.T) {
 func TestTripForVehicleHandler_TripUpdateVehicle(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	setupAPI := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer setupAPI.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
 	addDownstreamStop(t, setupAPI, tripID) // runs the block to 09:05, past now
@@ -430,7 +430,7 @@ func TestTripForVehicleHandler_TripUpdateVehicle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Each subtest gets its own rate limiter: the mock clock never refills one.
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createTestApiOnDatabaseOf(setupAPI, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			api.GtfsManager.MockAddFullTripUpdate(tt.tripUpdate)
@@ -452,7 +452,7 @@ func TestTripForVehicleHandler_TripUpdateVehicle(t *testing.T) {
 func TestTripForVehicleHandler_BlockVehicleReportsActiveTrip(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(10*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -476,7 +476,7 @@ func TestPluralArrivals_RealBusStaysAtRecordPosition(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	recordTime := serviceDate.Add(8*time.Hour + 30*time.Minute)
 	mockClock := clock.NewMockClock(recordTime)
-	api := createTestApiWithClock(t, mockClock)
+	api := createIsolatedTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -518,7 +518,7 @@ func TestPluralArrivals_RealBusStaysAtRecordPosition(t *testing.T) {
 func TestVehicleForTrip_DropsVehicleWithExpiredRecord(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8 * time.Hour)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 
@@ -580,7 +580,7 @@ func addLaterBlockTrip(t *testing.T, api *RestAPI, stopID, tripID string) string
 func TestBuildTripStatus_TripUpdateVehicleWithoutTimestamp(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8 * time.Hour)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 	vehicle := &gtfs.Vehicle{
@@ -619,7 +619,7 @@ func TestArrivals_CanceledTripIsHidden(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -654,7 +654,7 @@ func assertNoArrivalForTrip(t *testing.T, arrivals []models.ArrivalAndDeparture,
 func TestBlockTripUpdates_ExpireTogether(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8 * time.Hour)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	stopID, _, firstTripID, _ := setupDelayPropTestData(t, api, 1)
 	laterTripID := addLaterBlockTrip(t, api, stopID, firstTripID)
@@ -698,7 +698,7 @@ func TestBlockTripUpdates_ExpireTogether(t *testing.T) {
 func TestReportedTripUpdateVehicleIDRoundTrips(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(7*time.Hour + 30*time.Minute)
-	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	setupAPI := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer setupAPI.Shutdown()
 	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
 	combinedTripID := utils.FormCombinedID("dp-agency", tripID)
@@ -717,7 +717,7 @@ func TestReportedTripUpdateVehicleIDRoundTrips(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createTestApiOnDatabaseOf(setupAPI, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			tripUpdate := plannedVehicleTripUpdate(tripID, now)
@@ -744,7 +744,7 @@ func TestReportedTripUpdateVehicleIDRoundTrips(t *testing.T) {
 func TestExplicitVehicleIDUsesRecordChecks(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + time.Minute)
-	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	setupAPI := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer setupAPI.Shutdown()
 	_, stopID, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
 	tests := []struct {
@@ -765,7 +765,7 @@ func TestExplicitVehicleIDUsesRecordChecks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createTestApiOnDatabaseOf(setupAPI, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
@@ -811,7 +811,7 @@ func TestExplicitVehicleIDUsesRecordChecks(t *testing.T) {
 func TestTripForVehicleHandler_NamedVehicleReportsActiveTrip(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(10*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -864,7 +864,7 @@ func TestActiveTripOfTripUpdateVehicle_RecordExpiry(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			_, _, firstTripID, _ := setupDelayPropTestData(t, api, 1)
@@ -921,7 +921,7 @@ func TestTripForVehicleHandler_ActiveTripUsesRecordScheduleTime(t *testing.T) {
 	for _, anonymous := range []bool{false, true} {
 		for _, tt := range tests {
 			t.Run(fmt.Sprintf("%s/anonymous=%t", tt.name, anonymous), func(t *testing.T) {
-				api := createTestApiWithClock(t, clock.NewMockClock(now))
+				api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 				defer api.Shutdown()
 				t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 				_, _, firstTripID, _ := setupDelayPropTestData(t, api, 1)
@@ -980,7 +980,7 @@ func TestTripForVehicleHandler_TripUpdateVehicleAfterMidnight(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			ctx := context.Background()
@@ -1029,7 +1029,7 @@ func countQueries(t *testing.T, api *RestAPI) *queryCountingDB {
 
 func TestTripUpdateVehicleForTrip_NoQueriesWithoutTripUpdates(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
-	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(8*time.Hour)))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(8*time.Hour)))
 	defer api.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 	counter := countQueries(t, api)
@@ -1043,7 +1043,7 @@ func TestTripUpdateVehicleForTrip_NoQueriesWithoutTripUpdates(t *testing.T) {
 func TestTripUpdateVehicleTrip_UnknownVehicleSkipsTripLookups(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8 * time.Hour)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -1062,7 +1062,7 @@ func TestTripUpdateVehicleTrip_UnknownVehicleSkipsTripLookups(t *testing.T) {
 func TestTripUpdateVehicleHandlers_ShareBlockSnapshots(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(7*time.Hour + 30*time.Minute) // before the block's 08:00 start, so the record is kept
-	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	setupAPI := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer setupAPI.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
 
@@ -1078,7 +1078,7 @@ func TestTripUpdateVehicleHandlers_ShareBlockSnapshots(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Each subtest gets its own rate limiter: the mock clock never refills one.
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createTestApiOnDatabaseOf(setupAPI, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			api.GtfsManager.MockAddFullTripUpdate(plannedVehicleTripUpdate(tripID, now))
@@ -1099,7 +1099,7 @@ func ptrTime(t time.Time) *time.Time { return &t }
 func TestArrivals_TripUpdateVehicleUsesBlockRecordTime(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -1147,7 +1147,7 @@ func TestTripUpdateVehicleForTrip_DropsRecordsJavaDiscards(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			now := serviceDate.Add(tt.at)
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -1170,7 +1170,7 @@ func TestTripUpdateVehicleForTrip_DropsRecordsJavaDiscards(t *testing.T) {
 func TestCanceledTripUpdateOutranksRealBus(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	setupAPI := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer setupAPI.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
 	stopID := addDownstreamStop(t, setupAPI, tripID)
@@ -1188,7 +1188,7 @@ func TestCanceledTripUpdateOutranksRealBus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createTestApiOnDatabaseOf(setupAPI, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			api.GtfsManager.MockAddVehicleWithOptions("bus", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
@@ -1220,7 +1220,7 @@ func TestCanceledTripUpdateOutranksRealBus(t *testing.T) {
 func TestTripDetailsHandler_ReportedVehicleAfterMidnight(t *testing.T) {
 	previousServiceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := previousServiceDate.Add(25*time.Hour + 10*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	ctx := context.Background()
@@ -1272,7 +1272,7 @@ func TestArrivals_CancellationScopedToTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			_, _, tripA, _ := setupDelayPropTestData(t, api, 1)
@@ -1329,7 +1329,7 @@ func TestArrivals_CancellationScopedToTrip(t *testing.T) {
 func TestTripForVehicleHandler_RecordRefreshOwnership(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -1369,7 +1369,7 @@ func TestTripForVehicleHandler_RecordRefreshOwnership(t *testing.T) {
 func TestArrivals_CancellationForAnotherServiceDate(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -1405,7 +1405,7 @@ func separateBlockStops(t *testing.T, api *RestAPI, stopID string) {
 func TestTripUpdateVehicleForTrip_IgnoresAnotherVehiclesCancellation(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(9*time.Hour + 30*time.Minute) // between trip A's end and trip B's start
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	_, _, tripA, _ := setupDelayPropTestData(t, api, 1)
@@ -1433,7 +1433,7 @@ func TestTripUpdateVehicleForTrip_IgnoresAnotherVehiclesCancellation(t *testing.
 func TestTripDetails_TripUpdateVehicleDescribesRunningTrip(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(10*time.Hour + 30*time.Minute) // during trip B
-	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	setupAPI := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer setupAPI.Shutdown()
 	_, _, tripA, _ := setupDelayPropTestData(t, setupAPI, 1)
 	stopID := addDownstreamStop(t, setupAPI, tripA)
@@ -1442,7 +1442,7 @@ func TestTripDetails_TripUpdateVehicleDescribesRunningTrip(t *testing.T) {
 
 	for _, relationship := range []gtfsrt.TripDescriptor_ScheduleRelationship{gtfsrt.TripDescriptor_SCHEDULED, gtfsrt.TripDescriptor_CANCELED} {
 		t.Run(relationship.String(), func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createTestApiOnDatabaseOf(setupAPI, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			firstUpdate := plannedVehicleTripUpdate(tripA, now)
@@ -1479,7 +1479,7 @@ func TestTripDetails_TripUpdateVehicleDescribesRunningTrip(t *testing.T) {
 func TestExplicitVehicleIDForSecondVehicleOnTrip(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	setupAPI := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer setupAPI.Shutdown()
 	_, stopID, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
 	addDownstreamStop(t, setupAPI, tripID)
@@ -1497,7 +1497,7 @@ func TestExplicitVehicleIDForSecondVehicleOnTrip(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createTestApiOnDatabaseOf(setupAPI, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			api.GtfsManager.MockAddVehicleWithOptions("busA", tripID, "dp-route", internalgtfs.MockVehicleOptions{Timestamp: &now})
@@ -1532,7 +1532,7 @@ func TestExplicitVehicleIDForSecondVehicleOnTrip(t *testing.T) {
 // once per trip and service date.
 func TestBlockShiftTripIDs_CachedPerRequest(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
-	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(8*time.Hour)))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(8*time.Hour)))
 	defer api.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 	stopID := addDownstreamStop(t, api, tripID)
@@ -1553,7 +1553,7 @@ func TestBlockShiftTripIDs_CachedPerRequest(t *testing.T) {
 func TestArrivals_StaleUpdateInFreshRecordStillPredicts(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	setupAPI := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer setupAPI.Shutdown()
 	_, _, tripA, _ := setupDelayPropTestData(t, setupAPI, 1)
 	stopID := addDownstreamStop(t, setupAPI, tripA)
@@ -1581,7 +1581,7 @@ func TestArrivals_StaleUpdateInFreshRecordStillPredicts(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createTestApiOnDatabaseOf(setupAPI, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			staleUpdate := plannedVehicleTripUpdate(tripA, now.Add(-6*time.Minute))
@@ -1607,7 +1607,7 @@ func TestArrivals_StaleUpdateInFreshRecordStillPredicts(t *testing.T) {
 func TestTripUpdateVehicleForTrip_PositionVehicleAtAnotherAgency(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	setupAPI := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer setupAPI.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
 	addDownstreamStop(t, setupAPI, tripID)
@@ -1622,7 +1622,7 @@ func TestTripUpdateVehicleForTrip_PositionVehicleAtAnotherAgency(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createTestApiOnDatabaseOf(setupAPI, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			latitude, longitude := float32(40.0), float32(-120.0)
@@ -1650,7 +1650,7 @@ func TestTripUpdateVehicleForTrip_PositionVehicleAtAnotherAgency(t *testing.T) {
 func TestTripForVehicleHandler_RawIDWithUnrelatedPositionSuffix(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(7*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	_, stopID, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -1680,7 +1680,7 @@ func TestTripForVehicleHandler_RawIDWithUnrelatedPositionSuffix(t *testing.T) {
 func TestRequestedVehicleForTrip_AgencyIDWithUnderscore(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	tripID := "underscore-agency-trip"
@@ -1705,7 +1705,7 @@ func TestRequestedVehicleForTrip_AgencyIDWithUnderscore(t *testing.T) {
 // arrival row's vehicle, so a request looks each trip's agency up once.
 func TestTripAgencyID_CachedPerRequest(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
-	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(8*time.Hour)))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(8*time.Hour)))
 	defer api.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
 	ctx := WithSnapshotCache(context.Background(), newSnapshotCache())
@@ -1727,7 +1727,7 @@ func TestTripAgencyID_CachedPerRequest(t *testing.T) {
 func TestTripForVehicleHandler_RecordChecks(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + time.Minute)
-	setupAPI := createTestApiWithClock(t, clock.NewMockClock(now))
+	setupAPI := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer setupAPI.Shutdown()
 	_, _, tripID, _ := setupDelayPropTestData(t, setupAPI, 1)
 
@@ -1752,7 +1752,7 @@ func TestTripForVehicleHandler_RecordChecks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createTestApiOnDatabaseOf(setupAPI, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			tripUpdate := plannedVehicleTripUpdate(tripID, now.Add(-tt.recordAge))
@@ -1785,7 +1785,7 @@ func TestBuildTripStatus_PassedVehicleWithExpiredRecord(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -1836,7 +1836,7 @@ func TestBuildTripStatus_PassedTripUpdateVehicleRequiresFreshRecord(t *testing.T
 	for _, anonymous := range []bool{false, true} {
 		t.Run(fmt.Sprintf("anonymous=%t", anonymous), func(t *testing.T) {
 			mockClock := clock.NewMockClock(now)
-			api := createTestApiWithClock(t, mockClock)
+			api := createIsolatedTestApiWithClock(t, mockClock)
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -1875,7 +1875,7 @@ func TestBuildTripStatus_PassedTripUpdateVehicleRequiresFreshRecord(t *testing.T
 func TestVehiclesForAgency_ExpiredRecordKeepsLiveVehicleStatus(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -1908,7 +1908,7 @@ func TestVehiclesForAgency_ExpiredRecordKeepsLiveVehicleStatus(t *testing.T) {
 func TestVehicleRecordOwnership_DeviationSamples(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	stopID, _, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -1961,7 +1961,7 @@ func TestVehicleRecordOwnership_RetentionAndDeviation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -2014,7 +2014,7 @@ func TestVehicleRecordOwnership_OnePositionVehiclePerBlock(t *testing.T) {
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
 	for _, anonymousFirst := range []bool{false, true} {
 		t.Run(fmt.Sprintf("anonymousFirst=%t", anonymousFirst), func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			stopID, _, firstID, _ := setupDelayPropTestData(t, api, 1)
@@ -2082,7 +2082,7 @@ func TestVehicleRecordTime_ScopedToVehicle(t *testing.T) {
 	now := time.Date(2010, 1, 1, 8, 30, 0, 0, time.UTC)
 	ownTime := now.Add(-time.Minute)
 	expiredTime := now.Add(-10 * time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	stopID, _, firstID, _ := setupDelayPropTestData(t, api, 1)
 	nextID := addLaterBlockTrip(t, api, stopID, firstID)
@@ -2167,7 +2167,7 @@ func TestArrivals_AnonymousBlockUpdatesKeepPositionVehicle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			stopID, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -2256,7 +2256,7 @@ func TestArrivals_RecordTimeIgnoresOtherBlockVehicle(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	recordTime := serviceDate.Add(8*time.Hour + 30*time.Minute)
 	otherRecordTime := recordTime.Add(4 * time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(otherRecordTime))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(otherRecordTime))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -2293,7 +2293,7 @@ func TestArrivals_RecordTimeIgnoresOtherBlockVehicle(t *testing.T) {
 func TestArrivals_StalePositionWithFreshRecord(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -2346,7 +2346,7 @@ func TestBuildTripStatus_StalePositionRecordControls(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApiWithClock(t, clock.NewMockClock(now))
+			api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 			defer api.Shutdown()
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
@@ -2384,7 +2384,7 @@ func TestSingularArrival_RealBusReportsRecordTime(t *testing.T) {
 	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
 	recordTime := serviceDate.Add(8*time.Hour + 30*time.Minute)
 	positionTime := recordTime.Add(-20 * time.Second)
-	api := createTestApiWithClock(t, clock.NewMockClock(recordTime))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(recordTime))
 	defer api.Shutdown()
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)

@@ -151,6 +151,19 @@ func createIsolatedTestApi(t testing.TB) *RestAPI {
 	return createIsolatedTestApiWithClock(t, clock.RealClock{})
 }
 
+// createTestApiOnDatabaseOf builds a fresh API over base's database, for
+// subtests that need the fixture rows base was given. A new isolated API
+// would get a copy without them.
+func createTestApiOnDatabaseOf(base *RestAPI, c clock.Clock) *RestAPI {
+	return NewRestAPI(&app.Application{
+		Config:              sharedTestAppConfig(),
+		GtfsConfig:          base.GtfsConfig,
+		GtfsManager:         base.GtfsManager,
+		DirectionCalculator: base.DirectionCalculator,
+		Clock:               c,
+	})
+}
+
 // newIsolatedTestManager opens a private copy of the freshly imported RABA
 // database. The copy already holds the feed, so the manager skips the import
 // and the whole setup costs a file copy.
