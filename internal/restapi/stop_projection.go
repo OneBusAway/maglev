@@ -230,12 +230,16 @@ func scanStopProjection(stop stopProjectionGeometry, shape []gtfs.ShapePoint, cu
 func matchNearestStops(positions []float64, stops []orderedStop, shape []gtfs.ShapePoint, cumulative []float64) bool {
 	previous, end := cumulative[0], cumulative[len(cumulative)-1]
 	tolerance := stopProjectionTolerance / float64(len(stops))
-	for _, stop := range stops {
+	for i, stop := range stops {
 		position := stop.nearest.position
 		if position < previous {
 			var ok bool
 			position, ok = firstMatchingProjection(stop.geometry, shape, cumulative, previous, end, stop.nearest.cost+tolerance)
 			if !ok {
+				// Finish the feasible prefix at its last position to bound the solver.
+				for _, remaining := range stops[i:] {
+					positions[remaining.index] = previous
+				}
 				return false
 			}
 		}
@@ -278,14 +282,25 @@ func separateRepeatedStopVisits(positions []float64, stops []orderedStop, shape 
 				limit -= stopProjectionTolerance
 			}
 		}
-		spreadRepeatedStopVisits(positions, stops[i:end], shape, cumulative, position, limit)
+		start := cumulative[0]
+		if i >= 2 {
+			start = positions[stops[i-2].index]
+			if stops[i-1].repeatsPrevious {
+				start += stopProjectionTolerance
+			}
+		}
+		maxCost := projectionCostAtPosition(stops[i], position, shape, cumulative) + stopProjectionTolerance
+		if earlier, ok := firstMatchingProjection(stops[i].geometry, shape, cumulative, start, position-stopProjectionTolerance, maxCost); ok {
+			position = earlier
+			positions[stops[i-1].index] = earlier
+		}
+		spreadRepeatedStopVisits(positions, stops[i:end], shape, cumulative, position, limit, maxCost)
 		i = end
 	}
 }
 
-func spreadRepeatedStopVisits(positions []float64, repeats []orderedStop, shape []gtfs.ShapePoint, cumulative []float64, position, limit float64) {
+func spreadRepeatedStopVisits(positions []float64, repeats []orderedStop, shape []gtfs.ShapePoint, cumulative []float64, position, limit, maxCost float64) {
 	stop := repeats[0]
-	maxCost := projectionCostAtPosition(stop, position, shape, cumulative) + stopProjectionTolerance
 	for i, visit := range repeats {
 		next, ok := firstMatchingProjection(stop.geometry, shape, cumulative, position+stopProjectionTolerance, limit, maxCost)
 		if !ok {
@@ -316,7 +331,11 @@ type stopAssignment struct {
 // cheapest assignment of each prefix of stops.
 func matchOrderedStops(positions []float64, stops []orderedStop, shape []gtfs.ShapePoint, cumulative []float64, boxes []utils.CoordinateBounds) {
 	forwardError, backwardError := orderedProjectionErrorBounds(stops, shape, cumulative)
-	maxExcess := min(forwardError, backwardError) + stopProjectionTolerance
+	var prefixError float64
+	for _, stop := range stops {
+		prefixError += max(0, projectionCostAtPosition(stop, positions[stop.index], shape, cumulative)-stop.nearest.cost)
+	}
+	maxExcess := min(prefixError, forwardError, backwardError) + stopProjectionTolerance
 	search := newStopGroupSearch(stops, maxExcess)
 	assignments := []stopAssignment{{}}
 	best := make([]int, len(stops)+1)
@@ -337,7 +356,9 @@ func matchOrderedStops(positions []float64, stops []orderedStop, shape []gtfs.Sh
 	if best[len(stops)] < 0 {
 		// Keep the feasible upper-bound assignment if roundoff prevents a
 		// complete path from passing the pruning bounds.
-		clampNearestStopPositions(positions, stops, forwardError <= backwardError)
+		if min(forwardError, backwardError) < prefixError {
+			clampNearestStopPositions(positions, stops, forwardError <= backwardError)
+		}
 		return
 	}
 	for index := best[len(stops)]; index > 0; {
@@ -486,6 +507,14 @@ func (search *stopGroupSearch) addSharedStopGroups(stops []orderedStop, indices 
 			break
 		}
 		lowerBound += search.excess[last]
+		if (last-first)%2 == 1 {
+			// At a shared ratio, the sum of two along-track errors is at
+			// least the distance between their centres at the smaller scale.
+			// Disjoint pairs can contribute independent lower bounds.
+			a, b := search.segments[last-1], search.segments[last]
+			pair := math.Abs(a.centre-b.centre)*min(a.length, b.length) - stops[last-1].nearest.cost - stops[last].nearest.cost
+			lowerBound += max(0, pair-search.excess[last-1]-search.excess[last])
+		}
 		if lowerBound > search.maxExcess {
 			break
 		}

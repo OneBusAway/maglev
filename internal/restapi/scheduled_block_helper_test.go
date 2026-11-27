@@ -1884,6 +1884,23 @@ func TestProjectionOrdersShuttleStops(t *testing.T) {
 		}
 		require.InDelta(t, cumulative[1], cost, .001)
 	})
+	t.Run("off-shape conflict shares the midpoint", func(t *testing.T) {
+		shape, ids, stops := shuttleProjectionFixture(6, 6)
+		offsetShuttleStops(stops)
+		cumulative := preCalculateCumulativeDistances(shape)
+		positions := projectStopsInSequence(ids, stops, shape, cumulative)
+		require.True(t, slices.IsSorted(positions))
+		var cost float64
+		for i, id := range ids {
+			location, _ := positionAndOrientationAtDistance(shape, cumulative, positions[i])
+			stop := stops[id]
+			cost += math.Hypot((location.Lon-stop.Lon)*metresPerDegree*math.Cos(stop.Lat*math.Pi/180), stop.Lat*metresPerDegree)
+		}
+		height := stops["A"].Lat * metresPerDegree
+		halfWidth := stops["B"].Lon * metresPerDegree * math.Cos(stops["A"].Lat*math.Pi/180) / 2
+		require.InDelta(t, 4*height+2*math.Hypot(halfWidth, height), cost, .001)
+	})
+
 }
 
 func shuttleProjectionFixture(shapePoints, stopCount int) ([]gtfs.ShapePoint, []string, map[string]gtfsdb.Stop) {
@@ -1900,6 +1917,13 @@ func shuttleProjectionFixture(shapePoints, stopCount int) ([]gtfs.ShapePoint, []
 	return shape, ids, map[string]gtfsdb.Stop{"A": {}, "B": {Lon: terminalLongitude}}
 }
 
+func offsetShuttleStops(stops map[string]gtfsdb.Stop) {
+	for id, stop := range stops {
+		stop.Lat = .00005
+		stops[id] = stop
+	}
+}
+
 func BenchmarkStopProjectionRepeatedTraversals(b *testing.B) {
 	const stopsPerTrip = 200
 	for _, scenario := range []struct {
@@ -1911,6 +1935,9 @@ func BenchmarkStopProjectionRepeatedTraversals(b *testing.B) {
 	} {
 		b.Run(scenario.name, func(b *testing.B) {
 			shape, ids, stops := shuttleProjectionFixture(scenario.shapePoints, stopsPerTrip)
+			if scenario.name == "OrderConflict" {
+				offsetShuttleStops(stops)
+			}
 			benchmarkStopProjection(b, ids, stops, shape, preCalculateCumulativeDistances(shape))
 		})
 	}
@@ -2094,4 +2121,11 @@ func TestScheduledBlockSnapshot_ScheduledPositionWithoutShape(t *testing.T) {
 	outside := buildSnapshotFromStops(stops, nil, time.Unix(2000, 0).UTC(), time.Unix(0, 0).UTC())
 	pos, _ := outside.scheduledPosition()
 	assert.Nil(t, pos, "past the block's last stop")
+}
+
+func TestRepeatedVisitsUseEarlierEquivalentPass(t *testing.T) {
+	shape := []gtfs.ShapePoint{{Longitude: .45e-6 / metresPerDegree}, {Longitude: .002}, {}}
+	cumulative := preCalculateCumulativeDistances(shape)
+	distances := projectStopsInSequence([]string{"A", "A"}, map[string]gtfsdb.Stop{"A": {}}, shape, cumulative)
+	require.Equal(t, []float64{0, cumulative[2]}, distances)
 }
