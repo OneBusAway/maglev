@@ -13,6 +13,7 @@ import (
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/servicedate"
 )
 
 func CalculateServiceDate(currentTime time.Time) time.Time {
@@ -422,30 +423,38 @@ func ParseEpochMillis(value string) (int64, bool) {
 	return epochMillis, true
 }
 
-// ParseDate parses date strings in YYYY-MM-DD format or as a Unix millisecond integer.
-// It returns a time.Time set to midnight (start of day) in the provided location.
-func ParseDate(date string, loc *time.Location) (time.Time, error) {
+// ParseServiceDate parses date strings in YYYY-MM-DD format or as a Unix millisecond integer.
+// It returns a servicedate.Date representing the calendar date in the provided location,
+// avoiding local midnight construction on DST transition days.
+func ParseServiceDate(date string, loc *time.Location) (servicedate.Date, error) {
 	if date == "" {
-		return time.Time{}, errors.New("date cannot be empty")
+		return servicedate.Date{}, errors.New("date cannot be empty")
 	}
 
 	// Parsing as an integer (Unix milliseconds)
 	if v, err := strconv.ParseInt(date, 10, 64); err == nil {
 		if strings.HasPrefix(date, "+") || strings.HasPrefix(date, "-") || v < minUnixMillis || v > maxUnixMillis {
-			return time.Time{}, errors.New("unix millisecond timestamp out of reasonable bounds")
+			return servicedate.Date{}, errors.New("unix millisecond timestamp out of reasonable bounds")
 		}
-		// Convert to the provided timezone and explicitly set to midnight
-		t := time.UnixMilli(v).In(loc)
-		y, m, d := t.Date()
-		return time.Date(y, m, d, 0, 0, 0, 0, loc), nil
+		return servicedate.Of(time.UnixMilli(v).In(loc)), nil
 	}
 
 	// Parsing in YYYY-MM-DD format
-	if parsedDate, err := time.ParseInLocation("2006-01-02", date, loc); err == nil {
-		return parsedDate, nil
+	if parsedDate, err := time.Parse("2006-01-02", date); err == nil {
+		return servicedate.Of(parsedDate), nil
 	}
 
-	return time.Time{}, errors.New("invalid date format, use YYYY-MM-DD or a Unix millisecond integer")
+	return servicedate.Date{}, errors.New("invalid date format, use YYYY-MM-DD or a Unix millisecond integer")
+}
+
+// ParseDate parses date strings in YYYY-MM-DD format or as a Unix millisecond integer.
+// It returns a time.Time set to midnight (start of day) in the provided location.
+func ParseDate(date string, loc *time.Location) (time.Time, error) {
+	sd, err := ParseServiceDate(date, loc)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return sd.Midnight(loc), nil
 }
 
 // ParseRequiredStringParam retrieves a required string parameter.

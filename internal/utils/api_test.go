@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/servicedate"
 )
 
 // TestCalculateSecondsSinceServiceDate verifies that the function returns wall-clock
@@ -1350,6 +1351,125 @@ func TestParseEpochMillis(t *testing.T) {
 			epochMillis, ok := ParseEpochMillis(tt.value)
 			assert.Equal(t, tt.wantOK, ok)
 			assert.Equal(t, tt.wantEpoch, epochMillis)
+		})
+	}
+}
+
+func TestParseServiceDate(t *testing.T) {
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	santiago, err := time.LoadLocation("America/Santiago")
+	require.NoError(t, err)
+	havana, err := time.LoadLocation("America/Havana")
+	require.NoError(t, err)
+
+	expectedErrMsg := "invalid date format, use YYYY-MM-DD or a Unix millisecond integer"
+
+	tests := []struct {
+		name     string
+		date     string
+		loc      *time.Location
+		wantErr  bool
+		errMsg   string
+		wantDate servicedate.Date
+	}{
+		{
+			name:     "valid date YYYY-MM-DD",
+			date:     "2023-12-25",
+			loc:      loc,
+			wantDate: servicedate.New(2023, time.December, 25),
+		},
+		{
+			name:     "valid unix timestamp noon",
+			date:     "1703534400000", // Dec 25, 2023 12:00:00 PM PST
+			loc:      loc,
+			wantDate: servicedate.New(2023, time.December, 25),
+		},
+		{
+			name:     "America/Santiago spring forward skipped midnight YYYY-MM-DD",
+			date:     "2026-09-06",
+			loc:      santiago,
+			wantDate: servicedate.New(2026, time.September, 6),
+		},
+		{
+			name:     "America/Santiago spring forward Sunday noon unix millis",
+			date:     "1788706800000",
+			loc:      santiago,
+			wantDate: servicedate.New(2026, time.September, 6),
+		},
+		{
+			name:     "America/Santiago Saturday 23:00 before skipped midnight",
+			date:     "1788663600000",
+			loc:      santiago,
+			wantDate: servicedate.New(2026, time.September, 5),
+		},
+		{
+			name:     "America/Havana spring forward skipped midnight YYYY-MM-DD",
+			date:     "2026-03-08",
+			loc:      havana,
+			wantDate: servicedate.New(2026, time.March, 8),
+		},
+		{
+			name:    "empty date",
+			date:    "",
+			loc:     loc,
+			wantErr: true,
+			errMsg:  "date cannot be empty",
+		},
+		{
+			name:    "negative timestamp",
+			date:    "-1000",
+			loc:     loc,
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "negative zero timestamp",
+			date:    "-0",
+			loc:     loc,
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "negative zero padded timestamp",
+			date:    "-00",
+			loc:     loc,
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "positive signed timestamp",
+			date:    "+5",
+			loc:     loc,
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "extremely large timestamp",
+			date:    "999999999999999999",
+			loc:     loc,
+			wantErr: true,
+			errMsg:  "unix millisecond timestamp out of reasonable bounds",
+		},
+		{
+			name:    "invalid date format",
+			date:    "12/25/2023",
+			loc:     loc,
+			wantErr: true,
+			errMsg:  expectedErrMsg,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseServiceDate(tt.date, tt.loc)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantDate, got)
+			}
 		})
 	}
 }

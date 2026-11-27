@@ -100,10 +100,10 @@ func ValidateSpan(span float64) error {
 }
 
 // ValidateServiceDate reports whether a service date parameter is parseable, in either
-// of the forms ParseDate accepts. Handlers use it to reject a malformed date before
-// looking up the agency whose timezone ParseDate then resolves the date against.
+// of the forms ParseServiceDate accepts. Handlers use it to reject a malformed date before
+// looking up the agency whose timezone ParseServiceDate then resolves the date against.
 func ValidateServiceDate(date string) error {
-	_, err := ParseDate(date, time.UTC)
+	_, err := ParseServiceDate(date, time.UTC)
 	return err
 }
 
