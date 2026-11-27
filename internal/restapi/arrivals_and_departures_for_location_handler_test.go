@@ -930,7 +930,7 @@ func TestBuildNearbyResultsDropsStopsInactiveOnDate(t *testing.T) {
 // combined agency_code route id would treat the first segment as the agency
 // and look up alerts under the wrong route.
 func TestAddRouteAlertsForStopsKeepsAgencyUnderscore(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	db := api.GtfsManager.GtfsDB.DB
 
 	const (
@@ -942,20 +942,6 @@ func TestAddRouteAlertsForStopsKeepsAgencyUnderscore(t *testing.T) {
 	)
 	_, stopID, err := utils.ExtractAgencyIDAndCodeID(testdata.Stop4062.ID)
 	require.NoError(t, err)
-	// The package shares one GTFS database. These rows have to come back out
-	// before the next test reads stop 4062 or the agency list.
-	t.Cleanup(func() {
-		api.GtfsManager.MockResetRealTimeData()
-		_, _ = db.Exec(`DELETE FROM stop_routes WHERE route_id = ?`, routeID)
-		_, _ = db.Exec(`DELETE FROM stop_agencies WHERE agency_id = ?`, agencyID)
-		// createTestApi shares one manager across tests, so clear the agency-ids this test set.
-		api.GtfsManager.MockSetFeedAgencyIDs("feed-0")
-		_, _ = db.Exec(`DELETE FROM stop_times WHERE trip_id = ?`, tripID)
-		_, _ = db.Exec(`DELETE FROM trips WHERE id = ?`, tripID)
-		_, _ = db.Exec(`DELETE FROM routes WHERE id = ?`, routeID)
-		_, _ = db.Exec(`DELETE FROM calendar WHERE id = ?`, service)
-		_, _ = db.Exec(`DELETE FROM agencies WHERE id = ?`, agencyID)
-	})
 	_, err = db.Exec(`INSERT INTO agencies (id, name, url, timezone) VALUES (?, 'Underscore Agency', 'http://example.com', 'America/Los_Angeles')`, agencyID)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO routes (id, agency_id, short_name, type) VALUES (?, ?, 'Under', 3)`, routeID, agencyID)
