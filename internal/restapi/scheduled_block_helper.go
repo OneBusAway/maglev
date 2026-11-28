@@ -417,14 +417,10 @@ func (s *scheduledBlockSnapshot) positionBetweenStops() (*models.Location, float
 	from, to := *previous.Location, *next.Location
 	// Unwrap the destination so both interpolation and orientation follow
 	// the short segment when the stops straddle the antimeridian.
-	if to.Lon-from.Lon > 180 {
-		to.Lon -= 360
-	} else if to.Lon-from.Lon < -180 {
-		to.Lon += 360
-	}
+	to.Lon = from.Lon + wrapLongitude(to.Lon-from.Lon)
 	position := &models.Location{
 		Lat: from.Lat + ratio*(to.Lat-from.Lat),
-		Lon: math.Remainder(from.Lon+ratio*(to.Lon-from.Lon), 360),
+		Lon: wrapLongitude(from.Lon + ratio*(to.Lon-from.Lon)),
 	}
 	orientation := segmentOrientation(
 		gtfs.ShapePoint{Latitude: from.Lat, Longitude: from.Lon},
@@ -1247,9 +1243,10 @@ func positionAndOrientationAtDistance(
 			}
 			ratio := (distance - segStart) / span
 			from, to := shapePoints[i], shapePoints[i+1]
+			longitudeDelta := wrapLongitude(to.Longitude - from.Longitude)
 			return &models.Location{
 					Lat: from.Latitude + ratio*(to.Latitude-from.Latitude),
-					Lon: from.Longitude + ratio*(to.Longitude-from.Longitude),
+					Lon: wrapLongitude(from.Longitude + ratio*longitudeDelta),
 				},
 				segmentOrientation(from, to)
 		}
