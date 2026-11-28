@@ -156,6 +156,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// Capture parsing errors (syntax validation only — localization happens below
 	// once we know the agency timezone).
 	params, fieldErrors := parseArrivalAndDepartureParams(r)
+	includeReferences, fieldErrors := ShouldIncludeReferences(r, fieldErrors)
 	if len(fieldErrors) > 0 {
 		api.validationErrorResponse(w, r, fieldErrors)
 		return
@@ -606,6 +607,10 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	references.Routes = utils.MapValues(routeRefs)
 
 	references.Situations = append(references.Situations, situationRefs...)
+
+	if !includeReferences {
+		references = models.NewEmptyReferences()
+	}
 
 	response := models.NewEntryResponse(arrival, *references, api.Clock)
 	api.sendResponse(w, r, response)
