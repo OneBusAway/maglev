@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -1171,6 +1172,11 @@ func TestPluralArrivals_BlockNotActiveDoesNotShiftEffectiveTime(t *testing.T) {
 	require.NotNil(t, subject, "subject arrival missing for trip %s", expectedTripID)
 	require.NotNil(t, subject.TripStatus, "tripStatus must still be emitted even when RT is discarded")
 
+	assert.False(t, subject.Predicted, "a deviation beyond one hour drops the record, so the arrival is not predicted")
+	assert.False(t, subject.TripStatus.Predicted)
+	assert.True(t, subject.PredictedArrivalTime.IsZero())
+	assert.True(t, subject.PredictedDepartureTime.IsZero())
+
 	// Java's blockNotActive: deviation surfaces as 0.
 	assert.Equal(t, 0, subject.TripStatus.ScheduleDeviation,
 		"|delay| > 1h must be discarded; tripStatus.scheduleDeviation should be 0, not %d", subject.TripStatus.ScheduleDeviation)
@@ -1294,9 +1300,9 @@ func TestPluralArrivals_NoRealTimeDataUsesZeroPredictionTimes(t *testing.T) {
 	t.Fatalf("expected to find arrival for trip %s", expectedTripID)
 }
 
-// TestPluralArrivals_VehiclePositionAloneDoesNotPredict verifies that a fresh
-// vehicle position without any TripUpdate does NOT mark the arrival as
-// predicted: there is no resolved schedule deviation to apply.
+// TestPluralArrivals_VehiclePositionAloneDoesNotPredict verifies that a
+// fresh vehicle position without a TripUpdate leaves the arrival unpredicted.
+// Java never builds a VehicleLocationRecord from a position alone.
 func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
@@ -1312,7 +1318,8 @@ func TestPluralArrivals_VehiclePositionAloneDoesNotPredict(t *testing.T) {
 	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, arrivalsAndDeparturesURL(combinedStopID))
 
 	a := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
-	assert.False(t, a.Predicted, "vehicle position alone should not mark arrival as predicted")
+	require.NotNil(t, a.TripStatus)
+	assert.False(t, a.Predicted, "a vehicle position alone does not predict the arrival")
 	assert.True(t, a.PredictedArrivalTime.IsZero())
 	assert.True(t, a.PredictedDepartureTime.IsZero())
 }
@@ -1451,6 +1458,89 @@ func addEarlierBlockTripSTU(t *testing.T, api *RestAPI, delay time.Duration) {
 			Arrival: &gtfs.StopTimeEvent{Delay: &delay},
 		},
 	})
+}
+
+// A delay past one hour is discarded, so a predicted time inside the window
+// must not keep a row whose scheduled time is outside it. The window follows
+// the row's record, so a long block delay drops a shorter stop update, and a
+// stop update past one hour stays when the record itself is inside the hour.
+// A shorter delay, and a DUPLICATED trip, still use the predicted time.
+func TestPluralArrivals_DiscardedLongDelayLeavesTheWindow(t *testing.T) {
+	when := time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		arrival    time.Duration
+		delay      time.Duration
+		stopDelay  time.Duration
+		useStop    bool
+		duplicated bool
+		wantRow    bool
+	}{
+		{name: "sixty one minutes is outside once the prediction is dropped", arrival: 7*time.Hour + 28*time.Minute, delay: 61 * time.Minute, wantRow: false},
+		{name: "thirty minutes stays on the predicted time", arrival: 7*time.Hour + 40*time.Minute, delay: 30 * time.Minute, wantRow: true},
+		{name: "a duplicated trip keeps the long delay", arrival: 7*time.Hour + 28*time.Minute, delay: 61 * time.Minute, duplicated: true, wantRow: true},
+		{name: "a late record drops a stop fifty minutes late", arrival: 7*time.Hour + 28*time.Minute, delay: 65 * time.Minute, stopDelay: 50 * time.Minute, useStop: true, wantRow: false},
+		{name: "a stop past one hour stays when the record does", arrival: 7*time.Hour + 28*time.Minute, delay: 50 * time.Minute, stopDelay: 61 * time.Minute, useStop: true, wantRow: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApiWithClock(t, clock.NewMockClock(when))
+			defer api.Shutdown()
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			_, combinedStopID, _, _ := setupDelayPropTestData(t, api, 1)
+			ctx := context.Background()
+			q := api.GtfsManager.GtfsDB.Queries
+			tripID := "window-trip-" + t.Name()
+			_, err := q.CreateTrip(ctx, gtfsdb.CreateTripParams{
+				ID: tripID, RouteID: "dp-route", ServiceID: "dp-svc",
+				BlockID: nulls.String("window-block-" + t.Name()),
+			})
+			require.NoError(t, err)
+			_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+				TripID: tripID, StopID: "dp-stop", StopSequence: 2,
+				ArrivalTime: int64(tc.arrival), DepartureTime: int64(tc.arrival),
+			})
+			require.NoError(t, err)
+
+			delay := tc.delay
+			var updates []gtfs.StopTimeUpdate
+			if tc.useStop {
+				stopID := "dp-stop"
+				seq := uint32(2)
+				stopDelay := tc.stopDelay
+				updates = []gtfs.StopTimeUpdate{{
+					StopID: &stopID, StopSequence: &seq,
+					Arrival: &gtfs.StopTimeEvent{Delay: &stopDelay},
+				}}
+			}
+			if tc.duplicated {
+				api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+					ID:        gtfs.TripID{ID: tripID, ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED},
+					Delay:     &delay,
+					Timestamp: &when,
+				})
+			} else {
+				api.GtfsManager.MockAddTripUpdate(tripID, &delay, updates)
+			}
+
+			endpoint := arrivalsAndDeparturesURL(combinedStopID, url.Values{
+				"time":          {fmt.Sprintf("%d", when.UnixMilli())},
+				"minutesBefore": {"5"},
+				"minutesAfter":  {"30"},
+			})
+			_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
+			combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+			var found bool
+			for _, arrival := range model.Data.Entry.ArrivalsAndDepartures {
+				if arrival.TripID == combinedTripID {
+					found = true
+					break
+				}
+			}
+			assert.Equal(t, tc.wantRow, found)
+		})
+	}
 }
 
 // findArrivalForTrip returns the arrival for tripID, failing the test when

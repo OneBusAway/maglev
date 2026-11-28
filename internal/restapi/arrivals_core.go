@@ -803,8 +803,23 @@ func (api *RestAPI) stopTimeInArrivalWindow(ctx context.Context, ast activeStopT
 	if inRange(arrival) || inRange(departure) {
 		return true
 	}
-	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, ast.ServiceDate.Midnight(location), ast.StopID, int64(ast.StopSequence), arrival, departure)
-	return predicted && (inRange(predictedArrival) || inRange(predictedDeparture))
+	serviceMidnight := ast.ServiceDate.Midnight(location)
+	predictedArrival, predictedDeparture, predicted := api.getPredictedTimes(ctx, ast.TripID, serviceMidnight, ast.StopID, int64(ast.StopSequence), arrival, departure)
+	if !predicted || (!inRange(predictedArrival) && !inRange(predictedDeparture)) {
+		return false
+	}
+	// The row drops a discarded record and shows the scheduled time, which is
+	// already outside the window. Use that record, not this stop's own gap: a
+	// block 65 minutes late with a stop update 50 minutes late would otherwise
+	// stay, and the reverse would drop a row the record still predicts.
+	vehicle := api.vehicleForTrip(ctx, ast.TripID, serviceMidnight)
+	_, _, _, discarded := api.statusRecordDeviation(ctx, tripStatusInput{
+		dbTripID:    ast.TripID,
+		vehicle:     vehicle,
+		serviceDate: serviceMidnight,
+		currentTime: queryTime,
+	}, api.blockShiftTripIDsSortedByStartTime(ctx, ast.TripID, serviceMidnight))
+	return !discarded
 }
 
 // convertStopsInWindowRow adapts the multi-stop window row to the single-stop
@@ -1090,6 +1105,12 @@ func (api *RestAPI) attachTripStatus(ctx context.Context, arrival *models.Arriva
 // from its trip status's schedule deviation when getPredictedTimes found no
 // per-stop prediction.
 func (api *RestAPI) applyTripStatusPrediction(ctx context.Context, arrival *models.ArrivalAndDeparture, tripStatus *models.TripStatus, statusExtras *tripStatusExtras, in arrivalInput, sampleCache deviationSampleCache) {
+	if statusExtras != nil && statusExtras.recordDiscarded {
+		arrival.Predicted = false
+		arrival.PredictedArrivalTime = models.ModelTime{}
+		arrival.PredictedDepartureTime = models.ModelTime{}
+		return
+	}
 	if arrival.Predicted {
 		return
 	}

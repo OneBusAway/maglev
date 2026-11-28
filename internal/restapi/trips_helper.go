@@ -30,9 +30,12 @@ type tripStatusExtras struct {
 	snapshot   *scheduledBlockSnapshot
 	situations []situationRef
 	// deviationResolved reports that status.ScheduleDeviation came from a
-	// TripUpdate inside Java's blockNotActive window, rather than defaulting
-	// to 0.
+	// TripUpdate inside Java's blockNotActive window. A vehicle position
+	// alone does not resolve a deviation.
 	deviationResolved bool
+	// recordDiscarded reports that the TripUpdate's deviation exceeded one
+	// hour, so Java drops the VehicleLocationRecord and predicted stays false.
+	recordDiscarded bool
 	// blockTripIDs are the block's trips in start order, from which Java
 	// builds its per-stop deviation samples.
 	blockTripIDs  []string
@@ -274,13 +277,13 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 	// buses under one block) leak the last shift's delay into the first
 	// shift's scheduleDeviation, and status.ScheduleDeviation flows onward
 	// into effectiveTime / stop-offset math for every arrival on this trip.
-	updates := api.statusRecordUpdates(ctx, input, extras.blockTripIDs)
-	scheduleDeviation, hasRealtimeTripUpdate, _ := api.recordDeviation(ctx, updates, input.serviceDate, input.currentTime)
+	updates, scheduleDeviation, hasRealtimeTripUpdate, discarded := api.statusRecordDeviation(ctx, input, extras.blockTripIDs)
 
 	if hasRealtimeTripUpdate {
 		status.ScheduleDeviation = scheduleDeviation
 	}
 	extras.deviationResolved = hasRealtimeTripUpdate
+	extras.recordDiscarded = discarded
 	extras.recordUpdates = updates
 	extras.recordKey = deviationRecordKey{agencyID: input.agencyID, tripID: input.dbTripID}
 	if input.vehicle != nil && input.vehicle.ID != nil {
@@ -291,8 +294,27 @@ func (api *RestAPI) applyBlockDeviation(ctx context.Context, status *models.Trip
 	}
 
 	hasVehicleRealtimeData := input.vehicle != nil && !defaultStaleDetector.Check(input.vehicle, input.currentTime)
-	status.SetPredicted(extras.record.present || hasVehicleRealtimeData || hasRealtimeTripUpdate)
+	if discarded {
+		status.SetPredicted(false)
+	} else {
+		status.SetPredicted(extras.record.present || hasVehicleRealtimeData || hasRealtimeTripUpdate)
+	}
 	return scheduleDeviation
+}
+
+// statusRecordDeviation is the deviation applyBlockDeviation publishes, and the
+// decision stopTimeInArrivalWindow uses to drop a row. ADDED and DUPLICATED
+// vehicles leave the static block, so Java does not apply blockNotActive to
+// them (GtfsRealtimeSource.handleCombinedUpdates). recordDeviation has already
+// dropped a deviation past one hour, so this only keeps the predicted flag.
+// Java would also keep the 90 minutes.
+func (api *RestAPI) statusRecordDeviation(ctx context.Context, input tripStatusInput, blockTripIDs []string) (updates []tripUpdateForTrip, deviation int, ok, discarded bool) {
+	updates = api.statusRecordUpdates(ctx, input, blockTripIDs)
+	deviation, ok, discarded = api.recordDeviation(ctx, updates, input.serviceDate, input.currentTime)
+	if runsOwnSchedule(input.vehicle) {
+		discarded = false
+	}
+	return updates, deviation, ok, discarded
 }
 
 // statusRecordUpdates uses one vehicle's fresh record. Without a vehicle there
@@ -877,8 +899,10 @@ type scheduleDeviationFallback struct {
 // and applyBlockLocationToBean:
 //
 //   - Canceled trips are never predicted.
-//   - Without a resolved deviation there is nothing to apply: either no
-//     TripUpdate exists, or Java's blockNotActive guard discarded it.
+//   - A TripUpdate whose deviation exceeds one hour does not resolve a
+//     deviation, so the usable-deviation check leaves it unpredicted.
+//   - A fresh vehicle position with no TripUpdate is not an arrival
+//     record, so predicted stays false and both predicted times stay zero.
 //   - When the block's StopTimeUpdates yield deviation samples,
 //     getBestScheduleDeviation takes the last sample at or before the stop
 //     and refuses to propagate upstream, so a stop before every sample is
@@ -888,10 +912,10 @@ type scheduleDeviationFallback struct {
 //   - The deviation is applied less any scheduled slack the vehicle can
 //     absorb before reaching the stop.
 func (api *RestAPI) predictedTimesFromScheduleDeviation(ctx context.Context, in scheduleDeviationFallback) (predictedArrival, predictedDeparture time.Time, predicted bool) {
-	hasUsableDeviation := in.status != nil &&
-		in.extras != nil &&
-		in.status.Status != "CANCELED" &&
-		in.extras.deviationResolved
+	if in.status != nil && in.status.Status == "CANCELED" {
+		return time.Time{}, time.Time{}, false
+	}
+	hasUsableDeviation := in.status != nil && in.extras != nil && in.extras.deviationResolved
 	if !hasUsableDeviation {
 		return time.Time{}, time.Time{}, false
 	}

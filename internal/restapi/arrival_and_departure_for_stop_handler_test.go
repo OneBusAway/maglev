@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
+	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -590,6 +591,125 @@ func TestArrivalAndDepartureForStop_NoRealTimeDataUsesZeroPredictionTimes(t *tes
 	assert.True(t, entry.PredictedDepartureTime.IsZero(),
 		"schedule-only departure must not expose its scheduled time as a prediction")
 	assert.True(t, entry.LastUpdateTime.IsZero())
+}
+
+func TestArrivalAndDepartureForStop_VehiclePositionAloneIsNotPredicted(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	vehicleTimestamp := mockClock.Now()
+	api.GtfsManager.MockAddVehicleWithOptions("v1", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+		Timestamp: &vehicleTimestamp,
+	})
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID("dp-agency", tripID),
+		serviceMidnight.UnixMilli(),
+	)
+
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	entry := model.Data.Entry
+	require.NotNil(t, entry.TripStatus)
+	assert.False(t, entry.Predicted, "a vehicle position alone does not predict the arrival")
+	assert.True(t, entry.PredictedArrivalTime.IsZero())
+	assert.True(t, entry.PredictedDepartureTime.IsZero())
+}
+
+func TestArrivalAndDepartureForStop_BlockNotActiveIsNotPredicted(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	vehicleTimestamp := mockClock.Now()
+	api.GtfsManager.MockAddVehicleWithOptions("v1", tripID, "dp-route", internalgtfs.MockVehicleOptions{
+		Timestamp: &vehicleTimestamp,
+	})
+	delay := 2 * time.Hour
+	api.GtfsManager.MockAddTripUpdate(tripID, &delay, nil)
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID,
+		utils.FormCombinedID("dp-agency", tripID),
+		serviceMidnight.UnixMilli(),
+	)
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	entry := model.Data.Entry
+	require.NotNil(t, entry.TripStatus)
+	assert.False(t, entry.Predicted)
+	assert.False(t, entry.TripStatus.Predicted)
+	assert.True(t, entry.PredictedArrivalTime.IsZero())
+	assert.True(t, entry.PredictedDepartureTime.IsZero())
+}
+
+func TestArrivalAndDepartureForStop_StopTimeUpdatePastAnHourIsNotPredicted(t *testing.T) {
+	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
+	api := createTestApiWithClock(t, mockClock)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	delay := 90 * time.Minute
+	seq := uint32(1)
+	stopID := "dp-stop"
+	api.GtfsManager.MockAddTripUpdate(tripID, nil, []gtfs.StopTimeUpdate{{
+		StopID: &stopID, StopSequence: &seq, Arrival: &gtfs.StopTimeEvent{Delay: &delay},
+	}})
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	endpoint := fmt.Sprintf(
+		"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1",
+		combinedStopID, utils.FormCombinedID("dp-agency", tripID), serviceMidnight.UnixMilli(),
+	)
+	resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	entry := model.Data.Entry
+	require.NotNil(t, entry.TripStatus)
+	assert.False(t, entry.Predicted)
+	assert.False(t, entry.TripStatus.Predicted)
+	assert.True(t, entry.PredictedArrivalTime.IsZero())
+	assert.True(t, entry.PredictedDepartureTime.IsZero())
+}
+
+func TestBuildTripStatus_DuplicatedTripStaysPredicted(t *testing.T) {
+	when := time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(when))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	delay := 90 * time.Minute
+	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+		ID:        gtfs.TripID{ID: tripID, ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED},
+		Delay:     &delay,
+		Timestamp: &when,
+		Vehicle:   &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: "v1"}},
+	})
+	vehicle := &gtfs.Vehicle{
+		ID:        &gtfs.VehicleID{ID: "v1"},
+		Timestamp: &when,
+		Trip: &gtfs.Trip{ID: gtfs.TripID{
+			ID: tripID, ScheduleRelationship: gtfsrt.TripDescriptor_DUPLICATED,
+		}},
+	}
+
+	status, _, err := api.BuildTripStatus(context.Background(), "dp-agency", tripID, vehicle, time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC), when, nil)
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	assert.True(t, status.Predicted, "a DUPLICATED trip past one hour stays predicted")
+	assert.Equal(t, 0, status.ScheduleDeviation, "only the predicted flag is kept; the deviation is still dropped")
 }
 
 // TestArrivalAndDepartureForStop_DownstreamOnlySTUPredictedWithoutTimes
