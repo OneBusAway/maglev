@@ -18,6 +18,7 @@ import (
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/restapi/testdata"
+	"maglev.onebusaway.org/internal/servicedate"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -557,7 +558,7 @@ func TestGetPredictedTimes_NoRealTimeData(t *testing.T) {
 	scheduledArrival := time.Now()
 	scheduledDeparture := scheduledArrival.Add(2 * time.Minute)
 
-	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), "nonexistent_trip", predictionServiceDate, "nonexistent_stop", 1, scheduledArrival, scheduledDeparture)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), "nonexistent_trip", "nonexistent_stop", 1, scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture}, predictionClock{})
 
 	assert.True(t, predArrival.IsZero())
 	assert.True(t, predDeparture.IsZero())
@@ -694,7 +695,7 @@ func TestGetPredictedTimes_EqualArrivalDeparture(t *testing.T) {
 
 	scheduledTime := time.Now()
 
-	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), "test_trip", predictionServiceDate, "test_stop", 1, scheduledTime, scheduledTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), "test_trip", "test_stop", 1, scheduledTimes{arrival: scheduledTime, departure: scheduledTime}, predictionClock{})
 
 	assert.True(t, predArrival.IsZero())
 	assert.True(t, predDeparture.IsZero())
@@ -956,7 +957,7 @@ func TestGetPredictedTimes_DelayPropagationLogic(t *testing.T) {
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
 
 	scheduledTime := time.Now()
-	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), tripID, predictionServiceDate, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), tripID, "test_stop", targetStopSequence, scheduledTimes{arrival: scheduledTime, departure: scheduledTime}, predictionClock{})
 
 	expectedTime := scheduledTime.Add(delayDuration)
 	assert.Equal(t, expectedTime, predArrival, "Arrival time should include 120s delay")
@@ -991,7 +992,7 @@ func TestGetPredictedTimes_TripLevelDelayFallback(t *testing.T) {
 	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{mockTrip})
 
 	scheduledTime := time.Now()
-	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), tripID, predictionServiceDate, "test_stop", targetStopSequence, scheduledTime, scheduledTime)
+	predArrival, predDeparture, predicted := api.getPredictedTimes(context.Background(), tripID, "test_stop", targetStopSequence, scheduledTimes{arrival: scheduledTime, departure: scheduledTime}, predictionClock{})
 
 	expectedTime := scheduledTime.Add(delayDuration)
 	assert.True(t, predicted, "Should be predicted when trip-level delay is available")
@@ -1098,7 +1099,7 @@ func TestGetPredictedTimes_DelayVariants(t *testing.T) {
 			scheduledTime := time.Now()
 			predArrival, predDeparture, predicted := api.getPredictedTimes(
 				context.Background(),
-				tc.tripID, predictionServiceDate, tc.lookupStopID, tc.lookupStopSeq, scheduledTime, scheduledTime,
+				tc.tripID, tc.lookupStopID, tc.lookupStopSeq, scheduledTimes{arrival: scheduledTime, departure: scheduledTime}, predictionClock{},
 			)
 
 			expected := scheduledTime.Add(tc.delay)
@@ -1181,10 +1182,8 @@ func TestGetPredictedTimes_UnequalArrivalAndDepartureDeviation(t *testing.T) {
 		},
 		{
 			// The feed contradicts itself here: departure lands before arrival.
-			// We serve it as given, which is what Java does. It only floors
-			// departure on the synthesized path (arrival + slack, slack >= 0)
-			// and passes both sides through untouched when the feed supplies
-			// them. See ArrivalAndDepartureServiceImpl.java:726-741.
+			// A departure the feed actually sent passes through. Dwell slack
+			// applies only when the departure is synthesized.
 			name:               "contradictory feed passes through unchanged",
 			tripID:             "dwell_contradictory",
 			stopTimeUpdates:    []gtfs.StopTimeUpdate{targetUpdate(6*time.Minute, 30*time.Second)},
@@ -1214,7 +1213,7 @@ func TestGetPredictedTimes_UnequalArrivalAndDepartureDeviation(t *testing.T) {
 			scheduledDeparture := scheduledArrival.Add(tc.scheduledDwell)
 			predArrival, predDeparture, predicted := api.getPredictedTimes(
 				context.Background(),
-				tc.tripID, predictionServiceDate, targetStopID, int64(targetSeq), scheduledArrival, scheduledDeparture,
+				tc.tripID, targetStopID, int64(targetSeq), scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture}, predictionClock{},
 			)
 
 			assert.True(t, predicted, "predicted flag must be true")
@@ -1224,6 +1223,665 @@ func TestGetPredictedTimes_UnequalArrivalAndDepartureDeviation(t *testing.T) {
 				"departure must use the feed's Departure.Delay")
 		})
 	}
+}
+
+// Dwell absorbs lateness only when Java has no timepoint record for the stop:
+// a prior-stop delay across two or more updates, a trip delay with no updates,
+// or a trip delay whose stop is after the earliest of two or more updates.
+// An arrival-only update, a single update, and a trip delay for a stop before
+// the earliest update keep the full delay on the departure. A query time past
+// the scheduled departure keeps the full delay, and a query time inside the
+// dwell spends only the slack that is left.
+func TestGetPredictedTimes_DwellSlack(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	scheduledArrival := time.Date(2025, 3, 14, 12, 0, 0, 0, time.UTC)
+	targetStop := "layover_stop"
+	targetSeq := uint32(4)
+	priorStop := "prior_stop"
+	priorSeq := uint32(1)
+
+	cases := []struct {
+		name          string
+		kind          string
+		dwell         time.Duration
+		delay         time.Duration
+		queryTime     time.Time
+		wantArrival   time.Duration
+		wantDeparture time.Duration
+	}{
+		{
+			name:          "trip delay fully absorbed by dwell",
+			kind:          "trip",
+			dwell:         5 * time.Minute,
+			delay:         2 * time.Minute,
+			wantArrival:   2 * time.Minute,
+			wantDeparture: 0,
+		},
+		{
+			name:          "trip delay larger than dwell leaves a remainder",
+			kind:          "trip",
+			dwell:         5 * time.Minute,
+			delay:         8 * time.Minute,
+			wantArrival:   8 * time.Minute,
+			wantDeparture: 3 * time.Minute,
+		},
+		{
+			name:          "early trip delay is not spent against dwell",
+			kind:          "trip",
+			dwell:         5 * time.Minute,
+			delay:         -2 * time.Minute,
+			wantArrival:   -2 * time.Minute,
+			wantDeparture: -2 * time.Minute,
+		},
+		{
+			name:          "negative scheduled dwell does not increase the delay",
+			kind:          "trip",
+			dwell:         -time.Minute,
+			delay:         4 * time.Minute,
+			wantArrival:   4 * time.Minute,
+			wantDeparture: 4 * time.Minute,
+		},
+		{
+			name:          "arrival-only delay keeps the full delay on departure",
+			kind:          "arrival",
+			dwell:         6 * time.Minute,
+			delay:         3 * time.Minute,
+			wantArrival:   3 * time.Minute,
+			wantDeparture: 3 * time.Minute,
+		},
+		{
+			name:          "arrival-only delay larger than dwell still keeps the full delay",
+			kind:          "arrival",
+			dwell:         6 * time.Minute,
+			delay:         10 * time.Minute,
+			wantArrival:   10 * time.Minute,
+			wantDeparture: 10 * time.Minute,
+		},
+		{
+			name:          "single prior update keeps the full delay",
+			kind:          "prior",
+			dwell:         4 * time.Minute,
+			delay:         9 * time.Minute,
+			wantArrival:   9 * time.Minute,
+			wantDeparture: 9 * time.Minute,
+		},
+		{
+			name:          "prior delay across two updates is absorbed by dwell",
+			kind:          "prior-two",
+			dwell:         4 * time.Minute,
+			delay:         9 * time.Minute,
+			wantArrival:   9 * time.Minute,
+			wantDeparture: 5 * time.Minute,
+		},
+		{
+			name:          "trip delay with a later update keeps the full delay",
+			kind:          "trip-with-later-stu",
+			dwell:         5 * time.Minute,
+			delay:         8 * time.Minute,
+			wantArrival:   8 * time.Minute,
+			wantDeparture: 8 * time.Minute,
+		},
+		{
+			name:          "trip delay with two later updates keeps the full delay",
+			kind:          "trip-with-two-later-stus",
+			dwell:         5 * time.Minute,
+			delay:         8 * time.Minute,
+			wantArrival:   8 * time.Minute,
+			wantDeparture: 8 * time.Minute,
+		},
+		{
+			name:          "feed-supplied departure is not rewritten",
+			kind:          "departure",
+			dwell:         5 * time.Minute,
+			delay:         7 * time.Minute,
+			wantArrival:   7 * time.Minute,
+			wantDeparture: 7 * time.Minute,
+		},
+		{
+			name:          "request after the vehicle has left keeps the full delay",
+			kind:          "trip",
+			dwell:         5 * time.Minute,
+			delay:         4 * time.Minute,
+			queryTime:     scheduledArrival.Add(10 * time.Minute),
+			wantArrival:   4 * time.Minute,
+			wantDeparture: 4 * time.Minute,
+		},
+		{
+			name:          "request during the layover keeps the remaining slack",
+			kind:          "trip",
+			dwell:         5 * time.Minute,
+			delay:         4 * time.Minute,
+			queryTime:     scheduledArrival.Add(7 * time.Minute),
+			wantArrival:   4 * time.Minute,
+			wantDeparture: 2 * time.Minute,
+		},
+		{
+			name:          "trip delay after the earliest updates is absorbed by dwell",
+			kind:          "trip-with-earlier-stus",
+			dwell:         4 * time.Minute,
+			delay:         9 * time.Minute,
+			wantArrival:   9 * time.Minute,
+			wantDeparture: 5 * time.Minute,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+			delay := tc.delay
+			var updates []gtfs.StopTimeUpdate
+			var tripDelay *time.Duration
+			switch tc.kind {
+			case "trip":
+				tripDelay = &delay
+			case "arrival":
+				updates = []gtfs.StopTimeUpdate{{
+					StopID:       &targetStop,
+					StopSequence: &targetSeq,
+					Arrival:      &gtfs.StopTimeEvent{Delay: &delay},
+				}}
+			case "departure":
+				updates = []gtfs.StopTimeUpdate{{
+					StopID:       &targetStop,
+					StopSequence: &targetSeq,
+					Departure:    &gtfs.StopTimeEvent{Delay: &delay},
+				}}
+			case "prior":
+				updates = []gtfs.StopTimeUpdate{{
+					StopID:       &priorStop,
+					StopSequence: &priorSeq,
+					Departure:    &gtfs.StopTimeEvent{Delay: &delay},
+				}}
+			case "prior-two":
+				earlierStop := "earlier_stop"
+				earlierSeq := uint32(1)
+				closerSeq := uint32(2)
+				earlierDelay := time.Minute
+				updates = []gtfs.StopTimeUpdate{
+					{
+						StopID:       &earlierStop,
+						StopSequence: &earlierSeq,
+						Departure:    &gtfs.StopTimeEvent{Delay: &earlierDelay},
+					},
+					{
+						StopID:       &priorStop,
+						StopSequence: &closerSeq,
+						Departure:    &gtfs.StopTimeEvent{Delay: &delay},
+					},
+				}
+			case "trip-with-later-stu":
+				tripDelay = &delay
+				laterStop := "later_stop"
+				laterSeq := uint32(8)
+				laterTime := scheduledArrival.Add(time.Hour)
+				updates = []gtfs.StopTimeUpdate{{
+					StopID:       &laterStop,
+					StopSequence: &laterSeq,
+					Arrival:      &gtfs.StopTimeEvent{Time: &laterTime},
+				}}
+			case "trip-with-two-later-stus":
+				tripDelay = &delay
+				laterStop := "later_stop"
+				laterSeq := uint32(8)
+				lastStop := "last_stop"
+				lastSeq := uint32(9)
+				laterTime := scheduledArrival.Add(time.Hour)
+				updates = []gtfs.StopTimeUpdate{
+					{
+						StopID:       &laterStop,
+						StopSequence: &laterSeq,
+						Arrival:      &gtfs.StopTimeEvent{Time: &laterTime},
+					},
+					{
+						StopID:       &lastStop,
+						StopSequence: &lastSeq,
+						Arrival:      &gtfs.StopTimeEvent{Time: &laterTime},
+					},
+				}
+			case "trip-with-earlier-stus":
+				tripDelay = &delay
+				earlierStop := "earlier_stop"
+				earlierSeq := uint32(1)
+				closerSeq := uint32(2)
+				updates = []gtfs.StopTimeUpdate{
+					{
+						StopID:       &earlierStop,
+						StopSequence: &earlierSeq,
+						Departure:    &gtfs.StopTimeEvent{Delay: &delay},
+					},
+					{
+						StopID:       &priorStop,
+						StopSequence: &closerSeq,
+						Departure:    &gtfs.StopTimeEvent{Delay: &delay},
+					},
+				}
+			default:
+				t.Fatalf("unknown kind %q", tc.kind)
+			}
+
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+				ID:              gtfs.TripID{ID: "dwell-" + tc.kind},
+				Delay:           tripDelay,
+				StopTimeUpdates: updates,
+			}})
+
+			scheduledDeparture := scheduledArrival.Add(tc.dwell)
+			predArrival, predDeparture, predicted := api.getPredictedTimes(
+				context.Background(),
+				"dwell-"+tc.kind, targetStop, int64(targetSeq), scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture}, predictionClock{queryTime: tc.queryTime},
+			)
+
+			assert.True(t, predicted)
+			assert.Equal(t, scheduledArrival.Add(tc.wantArrival), predArrival)
+			assert.Equal(t, scheduledDeparture.Add(tc.wantDeparture), predDeparture)
+		})
+	}
+}
+
+// TestDwellSlack_QueryTimeReachesHandlers verifies that the request time
+// reaches getPredictedTimes on both arrival endpoints. A +4 minute trip delay
+// and a 08:00-08:05 dwell leave the departure at 08:07 for a request at
+// 08:07, and at 08:09 once the request is past the dwell. Dropping the query
+// time would absorb the whole delay and report 08:05 for both.
+func TestDwellSlack_QueryTimeReachesHandlers(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(time.Date(2010, 1, 1, 8, 10, 0, 0, time.UTC)))
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	_, combinedStopID, tripID, _ := setupDelayPropTestData(t, api, 1)
+	delay := 4 * time.Minute
+	api.GtfsManager.MockAddTripUpdate(tripID, &delay, nil)
+
+	serviceMidnight := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	during := time.Date(2010, 1, 1, 8, 7, 0, int(900*time.Millisecond), time.UTC)
+	after := time.Date(2010, 1, 1, 8, 10, 0, 0, time.UTC)
+	combinedTripID := utils.FormCombinedID("dp-agency", tripID)
+
+	singular := func(at time.Time) models.ArrivalAndDeparture {
+		t.Helper()
+		endpoint := fmt.Sprintf(
+			"/api/where/arrival-and-departure-for-stop/%s.json?key=TEST&tripId=%s&serviceDate=%d&stopSequence=1&time=%d",
+			combinedStopID, combinedTripID, serviceMidnight.UnixMilli(), at.UnixMilli(),
+		)
+		resp, model := callAPIHandler[ArrivalAndDepartureResponse](t, api, endpoint)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		return model.Data.Entry
+	}
+
+	duringEntry := singular(during)
+	assert.Equal(t, serviceMidnight.Add(8*time.Hour+7*time.Minute).UnixMilli(), duringEntry.PredictedDepartureTime.UnixMilli(),
+		"milliseconds inside the dwell must not change the departure")
+	afterEntry := singular(after)
+	assert.Equal(t, serviceMidnight.Add(8*time.Hour+9*time.Minute).UnixMilli(), afterEntry.PredictedDepartureTime.UnixMilli())
+
+	pluralURL := fmt.Sprintf(
+		"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&time=%d",
+		combinedStopID, after.UnixMilli(),
+	)
+	resp, plural := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, pluralURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	arrival := findArrivalForTrip(t, plural.Data.Entry.ArrivalsAndDepartures, combinedTripID)
+	assert.Equal(t, serviceMidnight.Add(8*time.Hour+9*time.Minute).UnixMilli(), arrival.PredictedDepartureTime.UnixMilli())
+
+	duringURL := fmt.Sprintf(
+		"/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&time=%d",
+		combinedStopID, during.UnixMilli(),
+	)
+	duringResp, duringPlural := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, duringURL)
+	require.Equal(t, http.StatusOK, duringResp.StatusCode)
+	duringArrival := findArrivalForTrip(t, duringPlural.Data.Entry.ArrivalsAndDepartures, combinedTripID)
+	assert.Equal(t, serviceMidnight.Add(8*time.Hour+7*time.Minute).UnixMilli(), duringArrival.PredictedDepartureTime.UnixMilli(),
+		"the plural handler must use the request time, not the clock")
+}
+
+// TestDwellSlack_StopIDOnlyUpdatesUseUniqueSequence verifies that a stop-time
+// update with a stop id and no sequence counts toward the earliest update
+// when that stop is visited once. A stop visited twice stays unresolved, so
+// the trip delay is not absorbed.
+func TestDwellSlack_StopIDOnlyUpdatesUseUniqueSequence(t *testing.T) {
+	scheduledArrival := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+	scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
+	delay := 9 * time.Minute
+
+	tests := []struct {
+		name              string
+		repeated          bool
+		withTripDelay     bool
+		wantPredicted     bool
+		wantDeparture     time.Duration
+		wantScheduleReads int64
+	}{
+		// 14 queries are the vehicle-record lookup. Resolving a stop id adds
+		// one GetStopTimesForTrip, and a trip with no delay does not.
+		{name: "unique earlier stops absorb", withTripDelay: true, wantPredicted: true, wantDeparture: 4 * time.Minute, wantScheduleReads: 15},
+		{name: "a repeated stop stays unresolved", repeated: true, withTripDelay: true, wantPredicted: true, wantDeparture: 9 * time.Minute, wantScheduleReads: 15},
+		{name: "no trip delay skips the schedule read", wantScheduleReads: 14},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 4)
+			ctx := context.Background()
+			q := api.GtfsManager.GtfsDB.Queries
+			addStop := func(id string, seq int64) {
+				t.Helper()
+				_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+					ID: id, Name: nulls.String(id), Lat: 47.0, Lon: -122.0,
+				})
+				require.NoError(t, err)
+				_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+					TripID: tripID, StopID: id, StopSequence: seq,
+					ArrivalTime:   int64(6 * time.Hour),
+					DepartureTime: int64(6*time.Hour + time.Minute),
+				})
+				require.NoError(t, err)
+			}
+
+			var updates []gtfs.StopTimeUpdate
+			if tc.repeated {
+				loopStop := "dp-loop"
+				addStop(loopStop, 1)
+				_, err := q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+					TripID: tripID, StopID: loopStop, StopSequence: 3,
+					ArrivalTime:   int64(7 * time.Hour),
+					DepartureTime: int64(7*time.Hour + time.Minute),
+				})
+				require.NoError(t, err)
+				updates = []gtfs.StopTimeUpdate{
+					{StopID: &loopStop, Departure: &gtfs.StopTimeEvent{Delay: &delay}},
+					{StopID: &loopStop, Departure: &gtfs.StopTimeEvent{Delay: &delay}},
+				}
+			} else {
+				earlyA := "dp-early-a"
+				earlyB := "dp-early-b"
+				addStop(earlyA, 1)
+				addStop(earlyB, 2)
+				updates = []gtfs.StopTimeUpdate{
+					{StopID: &earlyA, Departure: &gtfs.StopTimeEvent{Delay: &delay}},
+					{StopID: &earlyB, Departure: &gtfs.StopTimeEvent{Delay: &delay}},
+				}
+			}
+			var tripDelay *time.Duration
+			if tc.withTripDelay {
+				tripDelay = &delay
+			}
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+				ID:              gtfs.TripID{ID: tripID},
+				Delay:           tripDelay,
+				StopTimeUpdates: updates,
+			}})
+
+			counter := swapInQueryCounter(t, api)
+			_, predDeparture, predicted := api.getPredictedTimes(
+				ctx, tripID, "dp-stop", 4, scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture}, predictionClock{},
+			)
+			assert.Equal(t, tc.wantScheduleReads, counter.count.Load())
+			assert.Equal(t, tc.wantPredicted, predicted)
+			if tc.wantPredicted {
+				assert.Equal(t, scheduledDeparture.Add(tc.wantDeparture), predDeparture)
+			}
+		})
+	}
+}
+
+// TestDwellSlack_StopIDOnlyPriorDelayBeatsTripDelay verifies that a prior
+// stop named only by stop id supplies its own delay. A 4 minute trip delay
+// would be absorbed by the 5 minute dwell. The closer prior stop is 9
+// minutes late, so the arrival stays 9 minutes late and the departure 4.
+func TestDwellSlack_StopIDOnlyPriorDelayBeatsTripDelay(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 4)
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+	addStop := func(id string, seq int64) {
+		t.Helper()
+		_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+			ID: id, Name: nulls.String(id), Lat: 47.0, Lon: -122.0,
+		})
+		require.NoError(t, err)
+		_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+			TripID: tripID, StopID: id, StopSequence: seq,
+			ArrivalTime:   int64(6 * time.Hour),
+			DepartureTime: int64(6*time.Hour + time.Minute),
+		})
+		require.NoError(t, err)
+	}
+	far, near := "dp-far", "dp-near"
+	addStop(far, 1)
+	addStop(near, 2)
+
+	tripDelay := 4 * time.Minute
+	farDelay := time.Minute
+	nearDelay := 9 * time.Minute
+	api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+		ID:    gtfs.TripID{ID: tripID},
+		Delay: &tripDelay,
+		StopTimeUpdates: []gtfs.StopTimeUpdate{
+			{StopID: &far, Departure: &gtfs.StopTimeEvent{Delay: &farDelay}},
+			{StopID: &near, Departure: &gtfs.StopTimeEvent{Delay: &nearDelay}},
+		},
+	}})
+
+	scheduledArrival := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+	scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
+	query := time.Date(2010, 1, 1, 7, 50, 0, 0, time.UTC)
+	arrival, departure, predicted := api.getPredictedTimes(
+		ctx, tripID, "dp-stop", 4, scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture}, predictionClock{queryTime: query},
+	)
+	require.True(t, predicted)
+	assert.Equal(t, scheduledArrival.Add(9*time.Minute), arrival)
+	assert.Equal(t, scheduledDeparture.Add(4*time.Minute), departure)
+}
+
+// TestDwellSlack_StopIDOnlyPriorTimeBeatsTripDelay covers a prior update that
+// names its stop but sends a predicted time instead of a delay. The delay is
+// that time minus the stop's scheduled time. An update with neither leaves
+// the trip delay in place.
+func TestDwellSlack_StopIDOnlyPriorTimeBeatsTripDelay(t *testing.T) {
+	tests := []struct {
+		name          string
+		kind          string
+		wantArrival   time.Duration
+		wantDeparture time.Duration
+	}{
+		{name: "departure time", kind: "departure-time", wantArrival: 9 * time.Minute, wantDeparture: 4 * time.Minute},
+		{name: "arrival time", kind: "arrival-time", wantArrival: 9 * time.Minute, wantDeparture: 4 * time.Minute},
+		{name: "no time", kind: "no-time", wantArrival: 4 * time.Minute, wantDeparture: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 4)
+			ctx := context.Background()
+			q := api.GtfsManager.GtfsDB.Queries
+			addStop := func(id string, seq int64) {
+				t.Helper()
+				_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+					ID: id, Name: nulls.String(id), Lat: 47.0, Lon: -122.0,
+				})
+				require.NoError(t, err)
+				_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+					TripID: tripID, StopID: id, StopSequence: seq,
+					ArrivalTime:   int64(6 * time.Hour),
+					DepartureTime: int64(6*time.Hour + time.Minute),
+				})
+				require.NoError(t, err)
+			}
+			far, near := "dp-far", "dp-near"
+			addStop(far, 1)
+			addStop(near, 2)
+
+			var updates []gtfs.StopTimeUpdate
+			switch tc.kind {
+			case "departure-time":
+				late := time.Date(2010, 1, 1, 6, 10, 0, 0, time.UTC)
+				updates = []gtfs.StopTimeUpdate{
+					{StopID: &far, Departure: &gtfs.StopTimeEvent{Time: &late}},
+					{StopID: &near, Departure: &gtfs.StopTimeEvent{Time: &late}},
+				}
+			case "arrival-time":
+				late := time.Date(2010, 1, 1, 6, 9, 0, 0, time.UTC)
+				updates = []gtfs.StopTimeUpdate{
+					{StopID: &far, Arrival: &gtfs.StopTimeEvent{Time: &late}},
+					{StopID: &near, Arrival: &gtfs.StopTimeEvent{Time: &late}},
+				}
+			default:
+				updates = []gtfs.StopTimeUpdate{
+					{StopID: &far, Departure: &gtfs.StopTimeEvent{}},
+					{StopID: &near, Departure: &gtfs.StopTimeEvent{}},
+				}
+			}
+			tripDelay := 4 * time.Minute
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+				ID:              gtfs.TripID{ID: tripID},
+				Delay:           &tripDelay,
+				StopTimeUpdates: updates,
+			}})
+
+			scheduledArrival := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+			scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
+			query := time.Date(2010, 1, 1, 7, 50, 0, 0, time.UTC)
+			arrival, departure, predicted := api.getPredictedTimes(
+				ctx, tripID, "dp-stop", 4, scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture},
+				predictionClock{queryTime: query, serviceDate: predictionServiceDate},
+			)
+			require.True(t, predicted)
+			assert.Equal(t, scheduledArrival.Add(tc.wantArrival), arrival)
+			assert.Equal(t, scheduledDeparture.Add(tc.wantDeparture), departure)
+		})
+	}
+}
+
+// A predicted Time is measured from the offset base, which is an hour away
+// from local midnight on a daylight-saving transition.
+func TestDwellSlack_TimeOnlyDelayUsesOffsetBaseOnDST(t *testing.T) {
+	losAngeles, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name string
+		date servicedate.Date
+	}{
+		{name: "spring forward", date: servicedate.New(2026, time.March, 8)},
+		{name: "fall back", date: servicedate.New(2026, time.November, 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 4)
+			ctx := context.Background()
+			q := api.GtfsManager.GtfsDB.Queries
+			addStop := func(id string, seq int64) {
+				t.Helper()
+				_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+					ID: id, Name: nulls.String(id), Lat: 47.0, Lon: -122.0,
+				})
+				require.NoError(t, err)
+				_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+					TripID: tripID, StopID: id, StopSequence: seq,
+					ArrivalTime:   int64(6 * time.Hour),
+					DepartureTime: int64(6*time.Hour + time.Minute),
+				})
+				require.NoError(t, err)
+			}
+			far, near := "dp-far", "dp-near"
+			addStop(far, 1)
+			addStop(near, 2)
+
+			serviceDate := tc.date.Midnight(losAngeles)
+			late := servicedate.OffsetBase(serviceDate).Add(6*time.Hour + time.Minute + 9*time.Minute)
+			tripDelay := 4 * time.Minute
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+				ID:    gtfs.TripID{ID: tripID},
+				Delay: &tripDelay,
+				StopTimeUpdates: []gtfs.StopTimeUpdate{
+					{StopID: &far, Departure: &gtfs.StopTimeEvent{Time: &late}},
+					{StopID: &near, Departure: &gtfs.StopTimeEvent{Time: &late}},
+				},
+			}})
+
+			scheduledArrival := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+			scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
+			query := time.Date(2010, 1, 1, 7, 50, 0, 0, time.UTC)
+			arrival, departure, predicted := api.getPredictedTimes(
+				ctx, tripID, "dp-stop", 4, scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture},
+				predictionClock{queryTime: query, serviceDate: serviceDate, dwellOnly: true},
+			)
+			require.True(t, predicted)
+			assert.Equal(t, scheduledArrival.Add(9*time.Minute), arrival)
+			assert.Equal(t, scheduledDeparture.Add(4*time.Minute), departure)
+		})
+	}
+}
+
+// A target stop that already has an arrival does not read the prior delay,
+// so a prior predicted Time must not load the trip's stop times.
+func TestDwellSlack_TargetArrivalSkipsPriorScheduleRead(t *testing.T) {
+	scheduledArrival := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
+	scheduledDeparture := scheduledArrival.Add(5 * time.Minute)
+	targetDelay := 2 * time.Minute
+	counts := map[string]int64{}
+
+	for _, kind := range []string{"delay", "time"} {
+		t.Run(kind, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			_, _, tripID, _ := setupDelayPropTestData(t, api, 4)
+			ctx := context.Background()
+			q := api.GtfsManager.GtfsDB.Queries
+			prior := "dp-prior"
+			_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+				ID: prior, Name: nulls.String(prior), Lat: 47.0, Lon: -122.0,
+			})
+			require.NoError(t, err)
+			_, err = q.CreateStopTime(ctx, gtfsdb.CreateStopTimeParams{
+				TripID: tripID, StopID: prior, StopSequence: 2,
+				ArrivalTime:   int64(6 * time.Hour),
+				DepartureTime: int64(6*time.Hour + time.Minute),
+			})
+			require.NoError(t, err)
+
+			seq2, seq4 := uint32(2), uint32(4)
+			targetStop := "dp-stop"
+			var priorEvent *gtfs.StopTimeEvent
+			if kind == "delay" {
+				delay := 9 * time.Minute
+				priorEvent = &gtfs.StopTimeEvent{Delay: &delay}
+			} else {
+				late := time.Date(2010, 1, 1, 6, 10, 0, 0, time.UTC)
+				priorEvent = &gtfs.StopTimeEvent{Time: &late}
+			}
+			api.GtfsManager.SetRealTimeTripsForTest([]gtfs.Trip{{
+				ID: gtfs.TripID{ID: tripID},
+				StopTimeUpdates: []gtfs.StopTimeUpdate{
+					{StopID: &prior, StopSequence: &seq2, Departure: priorEvent},
+					{StopID: &targetStop, StopSequence: &seq4, Arrival: &gtfs.StopTimeEvent{Delay: &targetDelay}},
+				},
+			}})
+
+			counter := swapInQueryCounter(t, api)
+			arrival, departure, predicted := api.getPredictedTimes(
+				ctx, tripID, targetStop, 4, scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture},
+				predictionClock{serviceDate: predictionServiceDate},
+			)
+			counts[kind] = counter.count.Load()
+			require.True(t, predicted)
+			assert.Equal(t, scheduledArrival.Add(targetDelay), arrival)
+			assert.Equal(t, scheduledDeparture.Add(targetDelay), departure)
+		})
+	}
+	assert.Equal(t, counts["delay"], counts["time"], "a prior predicted time must not add a schedule read")
 }
 
 // An absolute Arrival.Time and Departure.Time pair goes down the same path as
@@ -1254,7 +1912,7 @@ func TestGetPredictedTimes_UnequalAbsoluteTimes(t *testing.T) {
 
 	arrival, departure, predicted := api.getPredictedTimes(
 		context.Background(),
-		tripID, predictionServiceDate, stopID, int64(seq), scheduledArrival, scheduledDeparture,
+		tripID, stopID, int64(seq), scheduledTimes{arrival: scheduledArrival, departure: scheduledDeparture}, predictionClock{},
 	)
 
 	assert.True(t, predicted, "predicted flag must be true")
@@ -1856,12 +2514,12 @@ func TestGetPredictedTimes_LoopTripPrefersMatchingSequence(t *testing.T) {
 
 	scheduled := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
-	arr, dep, predicted := api.getPredictedTimes(context.Background(), "trip-loop-predicted", predictionServiceDate, stopA, 3, scheduled, scheduled)
+	arr, dep, predicted := api.getPredictedTimes(context.Background(), "trip-loop-predicted", stopA, 3, scheduledTimes{arrival: scheduled, departure: scheduled}, predictionClock{})
 	require.True(t, predicted)
 	assert.Equal(t, scheduled.Add(secondVisit), arr, "sequence 3 must use its own update, not sequence 1's")
 	assert.Equal(t, scheduled.Add(secondVisit), dep)
 
-	arr, dep, predicted = api.getPredictedTimes(context.Background(), "trip-loop-predicted", predictionServiceDate, stopA, 1, scheduled, scheduled)
+	arr, dep, predicted = api.getPredictedTimes(context.Background(), "trip-loop-predicted", stopA, 1, scheduledTimes{arrival: scheduled, departure: scheduled}, predictionClock{})
 	require.True(t, predicted)
 	assert.Equal(t, scheduled.Add(firstVisit), arr, "sequence 1 keeps its own update")
 	assert.Equal(t, scheduled.Add(firstVisit), dep)
@@ -1994,7 +2652,7 @@ func TestGetPredictedTimes_FallsBackToStopIDWithoutSequence(t *testing.T) {
 	scheduled := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	// The scheduled stop-time has a sequence the feed never mentioned.
-	arr, _, predicted := api.getPredictedTimes(context.Background(), "trip-id-only-predicted", predictionServiceDate, stopC, 7, scheduled, scheduled)
+	arr, _, predicted := api.getPredictedTimes(context.Background(), "trip-id-only-predicted", stopC, 7, scheduledTimes{arrival: scheduled, departure: scheduled}, predictionClock{})
 	require.True(t, predicted)
 	assert.Equal(t, scheduled.Add(delay), arr)
 }
@@ -2042,7 +2700,7 @@ func TestGetPredictedTimes_SequenceMustAgreeWithStopID(t *testing.T) {
 			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 			api.GtfsManager.MockAddTripUpdate(tripID, nil, tt.updates)
 
-			arr, _, predicted := api.getPredictedTimes(context.Background(), tripID, predictionServiceDate, target.StopID, target.StopSequence, scheduled, scheduled)
+			arr, _, predicted := api.getPredictedTimes(context.Background(), tripID, target.StopID, target.StopSequence, scheduledTimes{arrival: scheduled, departure: scheduled}, predictionClock{})
 			require.True(t, predicted)
 			assert.Equal(t, scheduled.Add(targetDelay), arr)
 		})
