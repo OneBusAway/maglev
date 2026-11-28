@@ -642,9 +642,9 @@ func TestLoadBlockShapes_OmitsShapelessTrip(t *testing.T) {
 	shapes := api.loadBlockShapes(ctx, []blockTripRef{{id: "shaped", shapeID: "shape"}, {id: "shapeless"}})
 
 	require.Contains(t, shapes, "shaped")
-	assert.Len(t, shapes["shaped"].points, 2)
-	assert.Len(t, shapes["shaped"].cumDistances, 2)
-	assert.Greater(t, shapes["shaped"].totalDist, 0.0)
+	assert.Len(t, shapes["shaped"].Points, 2)
+	assert.Len(t, shapes["shaped"].CumulativeDistances, 2)
+	assert.Greater(t, shapes["shaped"].TotalDistance, 0.0)
 	assert.NotContains(t, shapes, "shapeless")
 }
 

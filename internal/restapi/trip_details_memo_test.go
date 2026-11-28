@@ -107,13 +107,18 @@ func TestTripDetailsLeavesMemoizedRowsUnchanged(t *testing.T) {
 }
 
 // swapInQueryCounter routes api's sqlc queries through a counter for the
-// rest of the test.
+// rest of the test. It empties the manager's static caches first, since tests
+// share one manager: counts then start from a cold cache whatever ran before.
 func swapInQueryCounter(t testing.TB, api *RestAPI) *queryCountingDB {
 	t.Helper()
+	api.GtfsManager.ResetStaticCaches()
 	counter := &queryCountingDB{DBTX: api.GtfsManager.GtfsDB.DB}
 	original := api.GtfsManager.GtfsDB.Queries
 	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(counter)
-	t.Cleanup(func() { api.GtfsManager.GtfsDB.Queries = original })
+	t.Cleanup(func() {
+		api.GtfsManager.GtfsDB.Queries = original
+		api.GtfsManager.ResetStaticCaches()
+	})
 	return counter
 }
 
