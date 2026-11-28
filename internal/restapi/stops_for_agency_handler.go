@@ -11,6 +11,12 @@ import (
 
 // stopsForAgencyHandler returns all stops belonging to a given agency with full stop details.
 func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request) {
+	includeReferences, fieldErrors := ShouldIncludeReferences(r, nil)
+	if len(fieldErrors) > 0 {
+		api.validationErrorResponse(w, r, fieldErrors)
+		return
+	}
+
 	ctx := r.Context()
 
 	// Check if context is already cancelled
@@ -49,35 +55,37 @@ func (api *RestAPI) stopsForAgencyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Resolve parent stations referenced by any stop into references.stops.
-	parentRefs, err := api.buildParentStationReferences(ctx, id, stopsList)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-
-	// Route references cover the listed stops and their parent stations, so a
-	// route that serves only the station still resolves.
-	routeSource := make([]models.Stop, 0, len(stopsList)+len(parentRefs))
-	routeSource = append(routeSource, stopsList...)
-	routeSource = append(routeSource, parentRefs...)
-	routeRefs, err := api.BuildRouteReferences(ctx, id, routeSource)
-	if err != nil {
-		api.serverErrorResponse(w, r, err)
-		return
-	}
-
 	// Build references
 	references := models.NewEmptyReferences()
-	references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
-	references.Routes = routeRefs
-	references.Stops = parentRefs
+	if includeReferences {
+		// Resolve parent stations referenced by any stop into references.stops.
+		parentRefs, err := api.buildParentStationReferences(ctx, id, stopsList)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
 
-	// A route in routeRefs can belong to a different agency than the one
-	// requested here (a stop can be served by more than one agency's routes).
-	// Every such route's agencyId must resolve against references.agencies too.
-	for _, route := range routeRefs {
-		api.appendRouteAgencyReference(ctx, references, route.AgencyID, id)
+		// Route references cover the listed stops and their parent stations, so a
+		// route that serves only the station still resolves.
+		routeSource := make([]models.Stop, 0, len(stopsList)+len(parentRefs))
+		routeSource = append(routeSource, stopsList...)
+		routeSource = append(routeSource, parentRefs...)
+		routeRefs, err := api.BuildRouteReferences(ctx, id, routeSource)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+
+		references.Agencies = []models.AgencyReference{models.AgencyReferenceFromDatabase(agency)}
+		references.Routes = routeRefs
+		references.Stops = parentRefs
+
+		// A route in routeRefs can belong to a different agency than the one
+		// requested here (a stop can be served by more than one agency's routes).
+		// Every such route's agencyId must resolve against references.agencies too.
+		for _, route := range routeRefs {
+			api.appendRouteAgencyReference(ctx, references, route.AgencyID, id)
+		}
 	}
 
 	response := models.NewListResponse(stopsList, *references, false, api.Clock)

@@ -41,7 +41,7 @@ func TestArrivalsQueryBudget(t *testing.T) {
 		maxQueries int64
 	}{
 		{name: "for stop", endpoint: arrivalsForStopMemoURL(), maxQueries: 31},
-		{name: "for location", endpoint: arrivalsForLocationMemoURL(), maxQueries: 645},
+		{name: "for location", endpoint: arrivalsForLocationMemoURL(), maxQueries: 180},
 	}
 
 	for _, tt := range tests {

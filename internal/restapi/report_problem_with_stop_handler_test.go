@@ -96,7 +96,7 @@ func TestReportProblemWithStopSanitization(t *testing.T) {
 func TestReportProblemWithStopCoordinateRangeValidation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil, api.Clock)
 
 	tests := []struct {
 		name           string
@@ -175,7 +175,7 @@ func TestReportProblemWithStopNullStorage(t *testing.T) {
 func TestReportProblemAcceptsQueryID(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil, api.Clock)
 
 	stopIDs := []string{"path-stop", "query-stop", "path-wins", "query-ignored"}
 	tripIDs := []string{"path-trip", "query-trip", "path-loses", "query-wins"}
