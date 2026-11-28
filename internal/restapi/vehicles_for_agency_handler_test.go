@@ -645,7 +645,7 @@ func TestVehiclesForAgencyHandler_AgeInSecondsAbsentNoFilter(t *testing.T) {
 func TestVehiclesForAgencyHandler_AgeInSecondsValidation(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil, api.Clock)
 
 	tests := []struct {
 		name       string
