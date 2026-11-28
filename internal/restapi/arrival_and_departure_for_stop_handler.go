@@ -178,7 +178,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		return
 	}
 
-	_, tripID, err := utils.ExtractAgencyIDAndCodeID(params.TripID)
+	tripAgencyID, tripID, err := utils.ExtractAgencyIDAndCodeID(params.TripID)
 	if err != nil {
 		fieldErrors := map[string][]string{
 			"tripId": {err.Error()},
@@ -224,6 +224,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	route, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetRoute(ctx, trip.RouteID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
+		return
+	}
+
+	if tripAgencyID != route.AgencyID {
+		api.sendNotFound(w, r)
 		return
 	}
 
