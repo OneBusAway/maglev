@@ -3,8 +3,11 @@ package restapi
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -16,19 +19,60 @@ import (
 // queryCountingDB counts the queries sqlc issues so a benchmark can report
 // database round trips per request alongside time and allocations. Queries
 // that bypass the swapped-in Queries (raw GtfsDB.DB access, or a component
-// holding the original *Queries) are not counted.
+// holding the original *Queries) are not counted. It also counts queries by
+// their sqlc name, and fails every query named failQuery when one is set.
 type queryCountingDB struct {
 	gtfsdb.DBTX
 	count atomic.Int64
+
+	mu        sync.Mutex
+	byName    map[string]int64
+	failQuery string
+}
+
+var sqlcQueryName = regexp.MustCompile(`-- name: (\w+)`)
+
+var errInjectedQuery = errors.New("injected query failure")
+
+// record counts query and reports whether it should fail.
+func (db *queryCountingDB) record(query string) bool {
+	db.count.Add(1)
+	name := query
+	if match := sqlcQueryName.FindStringSubmatch(query); match != nil {
+		name = match[1]
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.byName == nil {
+		db.byName = map[string]int64{}
+	}
+	db.byName[name]++
+	return name == db.failQuery
+}
+
+// countOf returns how many times the query with this sqlc name has run.
+func (db *queryCountingDB) countOf(name string) int64 {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return db.byName[name]
+}
+
+// failOn makes every later query with this sqlc name fail.
+func (db *queryCountingDB) failOn(name string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.failQuery = name
 }
 
 func (db *queryCountingDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	db.count.Add(1)
+	if db.record(query) {
+		return nil, errInjectedQuery
+	}
 	return db.DBTX.QueryContext(ctx, query, args...)
 }
 
 func (db *queryCountingDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	db.count.Add(1)
+	db.record(query)
 	return db.DBTX.QueryRowContext(ctx, query, args...)
 }
 

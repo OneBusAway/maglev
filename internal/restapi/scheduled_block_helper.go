@@ -10,6 +10,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
@@ -865,9 +866,9 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, blockTrips []blockTri
 		out = append(out, blockTripData{
 			id:           id,
 			stopTimes:    stopTimes,
-			shapePoints:  shape.points,
-			cumDistances: shape.cumDistances,
-			totalDist:    shape.totalDist,
+			shapePoints:  shape.Points,
+			cumDistances: shape.CumulativeDistances,
+			totalDist:    shape.TotalDistance,
 			firstSeconds: utils.EffectiveStopTimeSeconds(stopTimes[0].ArrivalTime, stopTimes[0].DepartureTime),
 			lastSeconds: utils.EffectiveStopTimeSeconds(
 				stopTimes[len(stopTimes)-1].ArrivalTime,
@@ -878,47 +879,28 @@ func (api *RestAPI) loadBlockTripData(ctx context.Context, blockTrips []blockTri
 	return out
 }
 
-// blockShape is one shape's points with their cumulative distances, which are
-// set only when the shape has at least two points.
-type blockShape struct {
-	points       []gtfs.ShapePoint
-	cumDistances []float64
-	totalDist    float64
-}
-
 // loadBlockShapes returns each trip's shape keyed by trip ID; a trip with no
-// shape is absent. Block-mates usually run the same few shapes, so each
-// distinct shape is loaded and measured once and shared between its trips.
-// Callers must treat the shared slices as read-only.
+// shape is absent. Block-mates usually run the same few shapes, and every
+// shape is read and measured once per import by the GTFS manager, so the
+// slices are shared across trips and requests and must be treated as
+// read-only.
 //
 // Shape errors are non-fatal: emitBlockStops falls back to haversine, still
 // correct just less precise. Real DB errors are logged so an operator sees
 // the degradation instead of silently losing shape-based precision.
-func (api *RestAPI) loadBlockShapes(ctx context.Context, blockTrips []blockTripRef) map[string]blockShape {
-	shapeIDs := make([]string, 0, len(blockTrips))
-	for _, blockTrip := range blockTrips {
-		if blockTrip.shapeID != "" && !slices.Contains(shapeIDs, blockTrip.shapeID) {
-			shapeIDs = append(shapeIDs, blockTrip.shapeID)
-		}
+func (api *RestAPI) loadBlockShapes(ctx context.Context, blockTrips []blockTripRef) map[string]internalgtfs.CachedShape {
+	shapeIDs := make([]string, len(blockTrips))
+	for i, blockTrip := range blockTrips {
+		shapeIDs[i] = blockTrip.shapeID
 	}
-	pointsByShapeID, err := api.shapePointsByShapeIDs(ctx, shapeIDs)
+	shapesByID, err := api.GtfsManager.ShapesByID(ctx, shapeIDs)
 	if err != nil {
 		warnIfRealDBError(err, "loadBlockShapes: shape lookup failed, degrading every trip to haversine fallback",
 			slog.Int("trip_count", len(blockTrips)))
 		return nil
 	}
 
-	shapesByID := make(map[string]blockShape, len(pointsByShapeID))
-	for shapeID, points := range pointsByShapeID {
-		shape := blockShape{points: points}
-		if len(points) >= 2 {
-			shape.cumDistances = preCalculateCumulativeDistances(points)
-			shape.totalDist = shape.cumDistances[len(shape.cumDistances)-1]
-		}
-		shapesByID[shapeID] = shape
-	}
-
-	shapesByTrip := make(map[string]blockShape, len(blockTrips))
+	shapesByTrip := make(map[string]internalgtfs.CachedShape, len(blockTrips))
 	for _, blockTrip := range blockTrips {
 		if shape, ok := shapesByID[blockTrip.shapeID]; ok {
 			shapesByTrip[blockTrip.id] = shape

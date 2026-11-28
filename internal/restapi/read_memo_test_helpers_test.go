@@ -17,7 +17,6 @@ type memoizedTripRows struct {
 	activeServiceIDs  []string
 	blockTrips        []gtfsdb.GetTripsByBlockIDRow
 	stopTimes         []gtfsdb.StopTime
-	shapePoints       []gtfsdb.GetShapePointsByTripIDRow
 	frequencies       []gtfsdb.Frequency
 	blockTripSequence int64
 }
@@ -47,8 +46,6 @@ func readMemoizedTripRowsWith(t *testing.T, ctx context.Context, reader gtfsdb.M
 	rows.blockTrips, err = reader.GetTripsByBlockID(ctx, rows.trip.BlockID)
 	require.NoError(t, err)
 	rows.stopTimes, err = reader.GetStopTimesForTrip(ctx, tripID)
-	require.NoError(t, err)
-	rows.shapePoints, err = reader.GetShapePointsByTripID(ctx, tripID)
 	require.NoError(t, err)
 	if !options.frequenciesBatched {
 		rows.frequencies, err = reader.GetFrequenciesForTrip(ctx, tripID)

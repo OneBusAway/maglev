@@ -369,3 +369,34 @@ func TestStoreGtfsDataRejectsUnparsedData(t *testing.T) {
 	assert.ErrorIs(t, err, errNotParsed)
 	assert.False(t, changed)
 }
+
+// TestImportGenerationCountsCommittedImports checks that the generation moves
+// once per import that commits new rows, and not for a skipped import, so a
+// cache keyed by it drops rows exactly when the feed changes.
+func TestImportGenerationCountsCommittedImports(t *testing.T) {
+	client, err := NewClient(Config{DBPath: ":memory:", Env: appconf.Test})
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+
+	originalData, modifiedData := createTestData(t)
+	assert.Zero(t, client.ImportGeneration(), "nothing imported yet")
+
+	parsedOriginal, err := ParseGtfsData(originalData, "test-source")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsedOriginal)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), client.ImportGeneration(), "first import commits")
+
+	parsedAgain, err := ParseGtfsData(originalData, "test-source")
+	require.NoError(t, err)
+	changed, err := client.StoreGtfsData(t.Context(), parsedAgain)
+	require.NoError(t, err)
+	require.False(t, changed)
+	assert.Equal(t, uint64(1), client.ImportGeneration(), "an unchanged feed is skipped")
+
+	parsedModified, err := ParseGtfsData(modifiedData, "test-source")
+	require.NoError(t, err)
+	_, err = client.StoreGtfsData(t.Context(), parsedModified)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(2), client.ImportGeneration(), "a changed feed commits again")
+}

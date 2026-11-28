@@ -642,9 +642,9 @@ func TestLoadBlockShapes_OmitsShapelessTrip(t *testing.T) {
 	shapes := api.loadBlockShapes(ctx, []blockTripRef{{id: "shaped", shapeID: "shape"}, {id: "shapeless"}})
 
 	require.Contains(t, shapes, "shaped")
-	assert.Len(t, shapes["shaped"].points, 2)
-	assert.Len(t, shapes["shaped"].cumDistances, 2)
-	assert.Greater(t, shapes["shaped"].totalDist, 0.0)
+	assert.Len(t, shapes["shaped"].Points, 2)
+	assert.Len(t, shapes["shaped"].CumulativeDistances, 2)
+	assert.Greater(t, shapes["shaped"].TotalDistance, 0.0)
 	assert.NotContains(t, shapes, "shapeless")
 }
 
@@ -1043,7 +1043,7 @@ func TestProjectStopsInSequence_ProjectsAllStopsGeometrically(t *testing.T) {
 		{Latitude: 0.0, Longitude: 0.00075},
 		{Latitude: 0.0, Longitude: 0.00100},
 	}
-	cumDist := preCalculateCumulativeDistances(shape)
+	cumDist := utils.CumulativeShapeDistances(shape)
 	totalDist := cumDist[len(cumDist)-1]
 
 	// Feed publishes bogus shape_dist_traveled values (arbitrary unit,
@@ -1106,7 +1106,7 @@ func TestProjectStopsInSequence_LoopRouteRevisitsSameCoords(t *testing.T) {
 		{Latitude: 0.0, Longitude: 0.0001},
 		{Latitude: 0.0, Longitude: 0.0},
 	}
-	cumDist := preCalculateCumulativeDistances(shape)
+	cumDist := utils.CumulativeShapeDistances(shape)
 	require.Len(t, cumDist, 5)
 	require.Greater(t, cumDist[len(cumDist)-1], 0.0, "shape must have non-zero total distance")
 

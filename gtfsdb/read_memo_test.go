@@ -61,9 +61,6 @@ func TestReadMemo_RepeatsHitTheMemo(t *testing.T) {
 		{name: "GetStopTimesForTrip", read: func(ctx context.Context, r MemoReader) (any, error) {
 			return r.GetStopTimesForTrip(ctx, memoTestTripID)
 		}},
-		{name: "GetShapePointsByTripID", read: func(ctx context.Context, r MemoReader) (any, error) {
-			return r.GetShapePointsByTripID(ctx, memoTestTripID)
-		}},
 		{name: "GetFrequenciesForTrip", read: func(ctx context.Context, r MemoReader) (any, error) {
 			return r.GetFrequenciesForTrip(ctx, memoTestTripID)
 		}},

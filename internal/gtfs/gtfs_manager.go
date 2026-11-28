@@ -56,6 +56,9 @@ type Manager struct {
 	shutdownErr       error
 	isReady           atomic.Bool // Tracks whether initial data loading is complete
 
+	// shapes caches shape points per import; see ShapesByID.
+	shapes shapeCache
+
 	staticMutex  sync.RWMutex
 	regionBounds map[string]*RegionBounds
 	// firstAgencyID is the lowest agency ID in the static feed; see FirstStaticAgencyID.
