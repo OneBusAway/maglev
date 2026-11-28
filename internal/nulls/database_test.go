@@ -6,6 +6,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNullStringOrEmpty(t *testing.T) {
@@ -39,6 +40,14 @@ func TestNonEmptyString(t *testing.T) {
 func TestNullWheelchairBoardingOrUnknown(t *testing.T) {
 	assert.Equal(t, gtfs.WheelchairBoarding_Possible, WheelchairBoardingOrUnknown(sql.NullInt64{Int64: int64(gtfs.WheelchairBoarding_Possible), Valid: true}))
 	assert.Equal(t, gtfs.WheelchairBoarding_NotSpecified, WheelchairBoardingOrUnknown(sql.NullInt64{Int64: 0, Valid: false}))
+}
+
+func TestFloat64Ptr(t *testing.T) {
+	assert.Nil(t, Float64Ptr(sql.NullFloat64{Valid: false}), "invalid NullFloat64 returns nil")
+
+	got := Float64Ptr(sql.NullFloat64{Float64: 0.0, Valid: true})
+	require.NotNil(t, got, "valid NullFloat64 with zero value returns a pointer, not nil")
+	assert.Equal(t, 0.0, *got)
 }
 
 func TestFloat64FromPtr(t *testing.T) {
