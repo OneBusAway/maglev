@@ -231,7 +231,7 @@ func (api *RestAPI) tripDetailsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var vehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
-		vehicle = api.requestedVehicleForTrip(ctx, params.VehicleID, agencyID, trip.ID, serviceDate)
+		vehicle = api.requestedVehicleForTrip(ctx, params.VehicleID, agencyID, trip.ID, serviceDate, positionOnBlockInstance)
 		if vehicle == nil {
 			api.sendNotFound(w, r)
 			return
