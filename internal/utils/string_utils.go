@@ -4,8 +4,6 @@ import (
 	"cmp"
 	"math/big"
 	"strconv"
-	"strings"
-	"unicode"
 )
 
 // isASCIIDigit checks if a rune is an ASCII digit (0-9)
@@ -78,12 +76,4 @@ func NaturalCompare(a, b string) int {
 	}
 
 	return cmp.Compare(len(a), len(b))
-}
-
-// ContainsLetterOrDigit reports whether s has at least one letter or digit. FTS5 tokenizes
-// punctuation-only terms to nothing, which makes MATCH raise a syntax error.
-func ContainsLetterOrDigit(s string) bool {
-	return strings.ContainsFunc(s, func(r rune) bool {
-		return unicode.IsLetter(r) || unicode.IsDigit(r)
-	})
 }
