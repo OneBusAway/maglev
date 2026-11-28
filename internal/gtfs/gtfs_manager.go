@@ -730,17 +730,12 @@ func (manager *Manager) GetVehicleForTrip(ctx context.Context, tripID string) *g
 		return nil
 	}
 
-	// Java treats a blockless trip as its own block, and the direct lookup
-	// above already checked that trip.
-	requestedBlockID := nulls.StringOrEmpty(requestedTrip.BlockID)
-	if requestedBlockID == "" {
-		return nil
-	}
+	effectiveBlockID := gtfsdb.EffectiveBlockID(requestedTrip)
 
-	blockTrips, err := manager.GtfsDB.Queries.Memo(ctx).GetTripsByBlockID(ctx, requestedTrip.BlockID)
+	blockTrips, err := manager.GtfsDB.Queries.Memo(ctx).GetTripsByBlockID(ctx, effectiveBlockID)
 	if err != nil {
 		logging.LogError(reqLogger, "could not get trips for block", err,
-			slog.String("block_id", requestedBlockID))
+			slog.String("block_id", effectiveBlockID.String))
 		return nil
 	}
 

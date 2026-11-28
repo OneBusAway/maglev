@@ -567,6 +567,52 @@ func TestBlockTripIDsForServiceDate_FallsBackForBlocklessTrip(t *testing.T) {
 	assert.Equal(t, []string{"blockless"}, ids, "a trip with no block is its own one-trip block")
 }
 
+func TestBlockTripIDsForServiceDate_BlocklessTripSharesID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+	queries := api.GtfsManager.GtfsDB.Queries
+
+	// Retrieve an existing active service on rabaServiceDate.
+	serviceIDs, err := queries.GetActiveServiceIDsForDate(ctx, rabaServiceDate.Format("20060102"))
+	require.NoError(t, err)
+	require.NotEmpty(t, serviceIDs)
+	serviceID := serviceIDs[0]
+
+	// Use a dedicated route for this test to avoid polluting existing routes.
+	agencies := mustGetAgencies(t, api)
+	require.NotEmpty(t, agencies)
+	const testRouteID = "blockless-test-route"
+	_, err = queries.CreateRoute(ctx, gtfsdb.CreateRouteParams{
+		ID:       testRouteID,
+		AgencyID: agencies[0].ID,
+		Type:     3,
+	})
+	require.NoError(t, err)
+
+	// Blockless trip 'X'
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        "X",
+		RouteID:   testRouteID,
+		ServiceID: serviceID,
+		BlockID:   nulls.String(""),
+	})
+	require.NoError(t, err)
+
+	// Trip 'Y' with block_id = "X"
+	_, err = queries.CreateTrip(ctx, gtfsdb.CreateTripParams{
+		ID:        "Y",
+		RouteID:   testRouteID,
+		ServiceID: serviceID,
+		BlockID:   nulls.String("X"),
+	})
+	require.NoError(t, err)
+
+	ids := api.blockTripIDsForServiceDate(ctx, "X", rabaServiceDate)
+	assert.ElementsMatch(t, []string{"Y", "X"}, ids,
+		"blockTripIDsForServiceDate for blockless trip X should return both trips sharing the block")
+}
+
 func TestLoadBlockTripData_PopulatesStopTimesAndShape(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()

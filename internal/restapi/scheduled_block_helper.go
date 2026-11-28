@@ -751,8 +751,9 @@ type blockTripRef struct {
 }
 
 // blockTripIDsForServiceDate returns the IDs of trips that share targetTripID's
-// block and are active on serviceDate. Falls back to [targetTripID] when the
-// trip has no block or block lookup fails.
+// block and are active on serviceDate. For a blockless trip, it looks up the
+// block named after its own ID. Falls back to [targetTripID] when block lookup fails
+// or no other trips share the block.
 func (api *RestAPI) blockTripIDsForServiceDate(
 	ctx context.Context,
 	targetTripID string,
@@ -788,14 +789,11 @@ func (api *RestAPI) blockTripsForServiceDate(
 		return []blockTripRef{{id: targetTripID}}
 	}
 	fallback := []blockTripRef{{id: targetTripID, shapeID: nulls.StringOrEmpty(trip.ShapeID)}}
-	blockIDStr := nulls.StringOrEmpty(trip.BlockID)
-	if blockIDStr == "" {
-		return fallback
-	}
-	blockTrips, err := q.GetTripsByBlockID(ctx, trip.BlockID)
+	effectiveBlockID := gtfsdb.EffectiveBlockID(trip)
+	blockTrips, err := q.GetTripsByBlockID(ctx, effectiveBlockID)
 	if err != nil {
 		warnIfRealDBError(err, "blockTripIDsForServiceDate: GetTripsByBlockID failed, degrading to single-trip mode",
-			slog.String("trip_id", targetTripID), slog.String("block_id", blockIDStr))
+			slog.String("trip_id", targetTripID), slog.String("block_id", effectiveBlockID.String))
 		return fallback
 	}
 	if len(blockTrips) == 0 {

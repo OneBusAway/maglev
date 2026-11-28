@@ -10,7 +10,6 @@ import (
 	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/models"
-	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -167,9 +166,10 @@ func wallClockSinceMidnightNs(t time.Time) int64 {
 // nominalTripID when there is no block or no better match.
 func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID string, referenceTime time.Time) string {
 	nominalTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, nominalTripID)
-	if err != nil || nulls.StringOrEmpty(nominalTrip.BlockID) == "" {
+	if err != nil {
 		return nominalTripID
 	}
+	effectiveBlockID := gtfsdb.EffectiveBlockID(nominalTrip)
 
 	// Wall-clock time since midnight, matching GTFS times which are wall-clock
 	// durations (not elapsed physical time, which shifts by an hour across DST).
@@ -178,11 +178,11 @@ func (api *RestAPI) resolveActiveTripID(ctx context.Context, nominalTripID strin
 	// Check the current service day, then the previous day for trips whose windows
 	// run past 24:00 (GTFS allows e.g. 25:30:00). A trip belonging to the previous
 	// service day is matched against referenceTime offset by +24h.
-	if tripID, ok := api.activeTripInBlockAt(ctx, nominalTrip.BlockID, referenceTime, sinceMidnightNs); ok {
+	if tripID, ok := api.activeTripInBlockAt(ctx, effectiveBlockID, referenceTime, sinceMidnightNs); ok {
 		return tripID
 	}
 	prevDay := referenceTime.AddDate(0, 0, -1)
-	if tripID, ok := api.activeTripInBlockAt(ctx, nominalTrip.BlockID, prevDay, sinceMidnightNs+int64(24*time.Hour)); ok {
+	if tripID, ok := api.activeTripInBlockAt(ctx, effectiveBlockID, prevDay, sinceMidnightNs+int64(24*time.Hour)); ok {
 		return tripID
 	}
 
