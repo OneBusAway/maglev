@@ -399,6 +399,7 @@ func TestTripDetailsHandlerVehicleFilterMatchesBlockInstance(t *testing.T) {
 		omitStatus    bool
 		competingBus  bool
 		namedUpdate   bool
+		recordAge     time.Duration
 		missingBounds bool
 		relationship  gtfs.TripScheduleRelationship
 		wantCode      int
@@ -410,6 +411,9 @@ func TestTripDetailsHandlerVehicleFilterMatchesBlockInstance(t *testing.T) {
 		{name: "previous trip without status", tripID: previousTrip, filter: busID, serviceDate: serviceDay, omitStatus: true, wantCode: http.StatusOK},
 		{name: "requested vehicle differs from automatic selection", tripID: previousTrip, filter: busID, serviceDate: serviceDay, competingBus: true, wantCode: http.StatusOK},
 		{name: "requested trip update names a different vehicle", tripID: previousTrip, filter: busID, serviceDate: serviceDay, competingBus: true, namedUpdate: true, wantCode: http.StatusNotFound},
+		{name: "fresh sibling record on exact ID fallback", tripID: previousTrip, filter: busID, serviceDate: serviceDay, competingBus: true, recordAge: time.Minute, wantCode: http.StatusOK},
+		{name: "expired sibling record", tripID: previousTrip, filter: busID, serviceDate: serviceDay, recordAge: 20 * time.Minute, wantCode: http.StatusNotFound},
+		{name: "expired sibling record on exact ID fallback", tripID: previousTrip, filter: busID, serviceDate: serviceDay, competingBus: true, recordAge: 20 * time.Minute, wantCode: http.StatusNotFound},
 		{name: "different block", tripID: "other-block-trip", filter: busID, serviceDate: serviceDay, wantCode: http.StatusNotFound},
 		{name: "overlapping shift in same block", tripID: "other-shift-trip", filter: busID, serviceDate: serviceDay, wantCode: http.StatusNotFound},
 		{name: "different service date", tripID: previousTrip, filter: busID, serviceDate: "2025-06-13", wantCode: http.StatusNotFound},
@@ -444,6 +448,14 @@ func TestTripDetailsHandlerVehicleFilterMatchesBlockInstance(t *testing.T) {
 					Timestamp: &now,
 				})
 			}
+			if tt.recordAge > 0 {
+				recordTime := now.Add(-tt.recordAge)
+				api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
+					ID:        gtfs.TripID{ID: activeTrip, HasStartDate: true, StartDate: startDate},
+					Vehicle:   &gtfs.Vehicle{ID: &gtfs.VehicleID{ID: busID}},
+					Timestamp: &recordTime,
+				})
+			}
 			if tt.missingBounds {
 				_, err := api.GtfsManager.GtfsDB.Queries.CreateTrip(context.Background(), gtfsdb.CreateTripParams{
 					ID: "no-stop-times", RouteID: tripsForRouteRouteID, ServiceID: "tfr-svc", BlockID: nulls.String("tfr-seq-block"),
@@ -463,8 +475,11 @@ func TestTripDetailsHandlerVehicleFilterMatchesBlockInstance(t *testing.T) {
 				query.Set("includeStatus", "false")
 			}
 			endpoint := "/api/where/trip-details/" + tripID + ".json?" + query.Encode()
-			resp, model := callAPIHandler[TripDetailsResponse](t, api, endpoint)
-			require.Equal(t, tt.wantCode, resp.StatusCode)
+			recorder := httptest.NewRecorder()
+			api.SetupAPIRoutes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, endpoint, nil))
+			require.Equal(t, tt.wantCode, recorder.Code, recorder.Body.String())
+			var model TripDetailsResponse
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &model))
 			require.Equal(t, tt.wantCode, model.Code)
 			if tt.wantCode != http.StatusOK {
 				return
