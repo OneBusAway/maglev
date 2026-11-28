@@ -296,6 +296,47 @@ func TestPositionAndOrientationAtDistance_NorthSegment(t *testing.T) {
 	assert.InDelta(t, 90.0, orient, 1e-6)
 }
 
+// TestPositionAndOrientationAtDistance_Antimeridian covers both sides of a
+// crossing and the headings returned when distance clamps to either endpoint.
+func TestPositionAndOrientationAtDistance_Antimeridian(t *testing.T) {
+	tests := []struct {
+		name                string
+		fromLon, toLon      float64
+		beforeLon, afterLon float64
+		orientation         float64
+	}{
+		{"eastbound", 179.95, -179.95, 179.983333333, -179.983333333, 0},
+		{"westbound", -179.95, 179.95, -179.983333333, 179.983333333, 180},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shape := []gtfs.ShapePoint{
+				{Latitude: -16.8, Longitude: tt.fromLon},
+				{Latitude: -16.8, Longitude: tt.toLon},
+			}
+			cumulative := preCalculateCumulativeDistances(shape)
+			for _, sample := range []struct {
+				name    string
+				ratio   float64
+				wantLon float64
+			}{
+				{"before start", -1, tt.fromLon},
+				{"before crossing", 1.0 / 3, tt.beforeLon},
+				{"after crossing", 2.0 / 3, tt.afterLon},
+				{"after end", 2, tt.toLon},
+			} {
+				t.Run(sample.name, func(t *testing.T) {
+					position, orientation := positionAndOrientationAtDistance(shape, cumulative, sample.ratio*cumulative[1])
+					require.NotNil(t, position)
+					assert.InDelta(t, -16.8, position.Lat, 1e-9)
+					assert.InDelta(t, sample.wantLon, position.Lon, 1e-6)
+					assert.InDelta(t, tt.orientation, orientation, 1e-6)
+				})
+			}
+		})
+	}
+}
+
 func TestMetricsForStop_TargetMissing(t *testing.T) {
 	snap := &scheduledBlockSnapshot{
 		Stops:     nil,

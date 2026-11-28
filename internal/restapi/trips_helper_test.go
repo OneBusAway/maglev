@@ -2661,3 +2661,45 @@ func TestBuildTripStatus_ShapelessTripScheduledPosition(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildTripStatus_ShapelessTripCrossesAntimeridian verifies that a
+// scheduled position stays near the two stops when their longitudes wrap.
+func TestBuildTripStatus_ShapelessTripCrossesAntimeridian(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	departure := serviceDate.Add(10 * time.Hour)
+	tests := []struct {
+		name               string
+		fromLon, toLon     float64
+		wantBeforeCrossing float64
+		wantAfterCrossing  float64
+		wantOrientation    float64
+	}{
+		{"eastbound", 179.95, -179.95, 179.983333333, -179.983333333, 0},
+		{"westbound", -179.95, 179.95, -179.983333333, 179.983333333, 180},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := agencyPrefixFiles()
+			files["stops.txt"] = fmt.Sprintf("stop_id,stop_name,stop_lat,stop_lon\n"+
+				"stop-1,Stop One,-16.8,%.2f\nstop-2,Stop Two,-16.8,%.2f\n", tt.fromLon, tt.toLon)
+			api := createTestApiWithGTFSFixture(t, clock.NewMockClock(departure), "antimeridian.zip", files)
+
+			for _, sample := range []struct {
+				elapsed time.Duration
+				wantLon float64
+			}{
+				{10 * time.Minute, tt.wantBeforeCrossing},
+				{20 * time.Minute, tt.wantAfterCrossing},
+			} {
+				t.Run(sample.elapsed.String(), func(t *testing.T) {
+					now := departure.Add(sample.elapsed)
+					status, _, err := api.BuildTripStatus(context.Background(), "other", "other-trip", nil, serviceDate, now, nil)
+					require.NoError(t, err)
+					assert.InDelta(t, -16.8, status.Position.Lat, 1e-5)
+					assert.InDelta(t, sample.wantLon, status.Position.Lon, 1e-5)
+					assert.InDelta(t, tt.wantOrientation, status.Orientation, 1e-5)
+				})
+			}
+		})
+	}
+}
