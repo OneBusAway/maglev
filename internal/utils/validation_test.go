@@ -52,25 +52,17 @@ func TestValidateID(t *testing.T) {
 			name:    "ID too long",
 			id:      strings.Repeat("a", 101),
 			wantErr: true,
-			errMsg:  "id too long (max 100 characters)",
+			errMsg:  "id too long (max 100 bytes)",
 		},
 		{
-			name:    "ID with invalid characters",
+			name:    "valid ID with angle brackets",
 			id:      "agency_123<script>",
-			wantErr: true,
-			errMsg:  "id contains invalid characters",
+			wantErr: false,
 		},
 		{
-			name:    "ID with SQL injection attempt",
+			name:    "valid ID with SQL-looking punctuation",
 			id:      "agency_'; DROP TABLE stops; --",
-			wantErr: true,
-			errMsg:  "id contains invalid characters",
-		},
-		{
-			name:    "ID with path traversal",
-			id:      "../../../etc/passwd",
-			wantErr: true,
-			errMsg:  "id contains invalid characters",
+			wantErr: false,
 		},
 		{
 			name:    "valid ID with hyphens",
@@ -86,6 +78,39 @@ func TestValidateID(t *testing.T) {
 			name:    "valid ID with colon",
 			id:      "agency_shp_654:456",
 			wantErr: false,
+		},
+		{
+			name:    "valid ID with parentheses",
+			id:      "ALH_0700 - Copy (10)",
+			wantErr: false,
+		},
+		{
+			name:    "valid ID with punctuation",
+			id:      "Meridian~2FA&M",
+			wantErr: false,
+		},
+		{
+			name:    "valid ID with UTF-8 characters",
+			id:      "acme_東京駅",
+			wantErr: false,
+		},
+		{
+			name:    "UTF-8 ID exceeding byte limit",
+			id:      strings.Repeat("界", 34), // 102 bytes
+			wantErr: true,
+			errMsg:  "id too long (max 100 bytes)",
+		},
+		{
+			name:    "invalid UTF-8 ID",
+			id:      string([]byte{'a', '_', 0xff}),
+			wantErr: true,
+			errMsg:  "id contains invalid UTF-8",
+		},
+		{
+			name:    "ID with null byte",
+			id:      "agency_123\x00",
+			wantErr: true,
+			errMsg:  "id contains invalid characters",
 		},
 	}
 

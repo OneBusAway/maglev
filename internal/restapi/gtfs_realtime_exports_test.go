@@ -94,7 +94,7 @@ func TestGtfsRealtimeExports_RequireKey(t *testing.T) {
 func TestGtfsRealtimeExports_InvalidAgencyID(t *testing.T) {
 	api := newGtfsRealtimeExportsTestAPI(t)
 	for _, path := range gtfsRealtimeExportPaths {
-		for _, agencyID := range []string{"", "%3Cx%3E"} {
+		for _, agencyID := range []string{"", "%09"} {
 			t.Run(path+agencyID, func(t *testing.T) {
 				resp, _ := getRaw(t, api, exportURL(path, agencyID+".pb"), nil)
 				assert.Equal(t, http.StatusBadRequest, resp.StatusCode)

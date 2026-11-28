@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // gtfsRealtimeLegacyTimeLayout is the yyyy-MM-dd_HH-mm-ss form that the
@@ -15,11 +17,6 @@ const gtfsRealtimeLegacyTimeLayout = "2006-01-02_15-04-05"
 
 // Compiled regular expressions for validation
 var (
-	// Allow alphanumeric, underscore, hyphen, dot, colon and space - common in
-	// transit IDs. GTFS IDs are free text, and feeds use spaces in them (the
-	// RABA test feed has trips such as "Route 15 Southbound").
-	validIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.: -]+$`)
-
 	// Detect potentially dangerous characters - more focused on injection patterns
 	dangerousPattern = regexp.MustCompile(`[<>]|--|\/\*|\*\/|;.*--`)
 
@@ -27,18 +24,25 @@ var (
 	htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 )
 
-// ValidateID validates that an ID is safe and within reasonable limits
+// ValidateID validates that an ID is a valid UTF-8 string without control characters
+// and is within the existing length limit. GTFS IDs are otherwise opaque values.
 func ValidateID(id string) error {
 	if id == "" {
 		return errors.New("id cannot be empty")
 	}
 
 	if len(id) > 100 {
-		return errors.New("id too long (max 100 characters)")
+		return errors.New("id too long (max 100 bytes)")
 	}
 
-	if !validIDPattern.MatchString(id) {
-		return errors.New("id contains invalid characters")
+	if !utf8.ValidString(id) {
+		return errors.New("id contains invalid UTF-8")
+	}
+
+	for _, r := range id {
+		if unicode.IsControl(r) {
+			return errors.New("id contains invalid characters")
+		}
 	}
 
 	return nil

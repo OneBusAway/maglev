@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,6 +54,47 @@ func TestStopHandlerEndToEnd(t *testing.T) {
 	assert.Empty(t, model.Data.References.Trips, "trips should always be empty for this endpoint")
 	assert.Empty(t, model.Data.References.StopTimes, "stopTimes should always be empty for this endpoint")
 	assert.Empty(t, model.Data.References.Situations, "situations should always be empty for this endpoint")
+}
+
+func TestStopHandlerAcceptsUTF8StopID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	const stopID = "東京駅"
+
+	// Insert a stop with a non-ASCII UTF-8 identifier.
+	_, err := q.CreateStop(ctx, gtfsdb.CreateStopParams{
+		ID:   stopID,
+		Name: nulls.String("Tokyo Station"),
+		Lat:  35.6812,
+		Lon:  139.7671,
+	})
+	require.NoError(t, err)
+
+	// Build the combined agency/stop ID.
+	combinedID := utils.FormCombinedID(testdata.Raba.ID, stopID)
+
+	// Encode the ID as a URL path segment.
+	encodedID := url.PathEscape(combinedID)
+
+	// Perform an API-level lookup.
+	resp, model := callAPIHandler[StopEntryResponse](
+		t,
+		api,
+		stopURL(encodedID),
+	)
+
+	// Verify successful lookup.
+	require.Equal(t, http.StatusOK, resp.StatusCode, model.Text)
+	assert.Equal(t, http.StatusOK, model.Code)
+
+	// Verify the original UTF-8 identifier is preserved.
+	assert.Equal(t, combinedID, model.Data.Entry.ID)
+	assert.Equal(t, stopID, model.Data.Entry.Code)
+	assert.Equal(t, "Tokyo Station", model.Data.Entry.Name)
 }
 
 func TestStopHandler_NotFoundAndMalformed(t *testing.T) {

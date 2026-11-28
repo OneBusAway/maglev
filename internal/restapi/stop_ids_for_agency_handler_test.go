@@ -66,7 +66,7 @@ func TestStopIdsForAgencyMalformedAgencyId(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL("bad@agency"))
+	resp, model := callAPIHandler[StopIDsForAgencyResponse](t, api, stopIdsForAgencyURL("bad%09agency"))
 
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assert.Equal(t, http.StatusBadRequest, model.Code)

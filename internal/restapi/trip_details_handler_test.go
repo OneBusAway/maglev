@@ -1010,3 +1010,45 @@ func TestTripSpanCovers(t *testing.T) {
 		})
 	}
 }
+
+func TestTripDetailsHandlerAcceptsTripIDWithParentheses(t *testing.T) {
+	tripCodeID := "0700 - Copy (10)"
+
+	files := basicTripsForRouteFiles()
+
+	files["trips.txt"] =
+		"route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			tripsForRouteRouteID + ",tfr-svc," +
+			tripCodeID + "," + tripsForRouteHeadsign + ",0,tfr-block\n"
+
+	files["stop_times.txt"] =
+		"trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			tripCodeID + ",11:55:00,11:55:00," +
+			tripsForRouteStop1ID + ",1\n" +
+			tripCodeID + ",12:05:00,12:05:00," +
+			tripsForRouteStop2ID + ",2\n"
+
+	api := createTestApiWithGTFSFixture(
+		t,
+		clock.NewMockClock(tripsForRouteTestClock),
+		"trip-parentheses.zip",
+		files,
+	)
+
+	combinedTripID := utils.FormCombinedID(
+		tripsForRouteAgencyID,
+		tripCodeID,
+	)
+
+	endpoint := "/api/where/trip-details/" +
+		url.PathEscape(combinedTripID) +
+		".json?key=TEST"
+
+	resp, model := callAPIHandler[TripDetailsResponse](
+		t, api, endpoint,
+	)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, model.Code)
+	assert.Equal(t, combinedTripID, model.Data.Entry.TripID)
+}
