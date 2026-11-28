@@ -1042,9 +1042,10 @@ func mustCreateSingleDayService(t *testing.T, manager *Manager, serviceID, date 
 }
 
 // TestGetMetrics_ScheduledTripsCountTreatsImportedBlocklessTripsSeparately
-// guards the blockless-trip fallback against how the importer actually stores
-// a missing block_id: as a valid empty string, not NULL. Each such trip must
-// count as its own block rather than all of them collapsing into one.
+// guards the blockless-trip fallback for legacy rows. The importer now stores
+// NULL for a missing block_id; this test seeds the legacy empty string
+// form that NULLIF still covers. Each such trip must count as its own block
+// rather than all of them collapsing into one.
 func TestGetMetrics_ScheduledTripsCountTreatsImportedBlocklessTripsSeparately(t *testing.T) {
 	routes := map[string]*gtfs.Route{
 		"R1": {Id: "R1", Agency: &gtfs.Agency{Id: "A"}},
