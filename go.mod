@@ -6,7 +6,7 @@ require (
 	github.com/OneBusAway/go-gtfs v1.5.0
 	github.com/getkin/kin-openapi v0.153.0
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.20.4
+	github.com/klauspost/compress v1.20.5
 	github.com/mattn/go-sqlite3 v1.14.53
 	github.com/prometheus/client_golang v1.25.0
 	github.com/stretchr/testify v1.12.1
@@ -14,7 +14,7 @@ require (
 	golang.org/x/sync v0.25.0
 	golang.org/x/time v0.16.0
 	google.golang.org/protobuf v1.36.12
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (

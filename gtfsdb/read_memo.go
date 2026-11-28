@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"slices"
+	"strings"
 )
 
 // readMemo holds rows already read during one request, keyed by query
@@ -17,6 +18,13 @@ type readMemo struct {
 	stopTimesByTripID map[string][]StopTime
 	shapePointsByTrip map[string][]GetShapePointsByTripIDRow
 	frequenciesByTrip map[string][]Frequency
+	blockTripSequence map[blockTripSequenceKey]int64
+}
+
+type blockTripSequenceKey struct {
+	tripID     string
+	blockID    sql.NullString
+	serviceIDs string
 }
 
 type readMemoKey struct{}
@@ -36,6 +44,7 @@ func WithReadMemo(ctx context.Context) context.Context {
 		stopTimesByTripID: make(map[string][]StopTime),
 		shapePointsByTrip: make(map[string][]GetShapePointsByTripIDRow),
 		frequenciesByTrip: make(map[string][]Frequency),
+		blockTripSequence: make(map[blockTripSequenceKey]int64),
 	})
 }
 
@@ -125,6 +134,32 @@ func (r MemoReader) GetShapePointsByTripID(ctx context.Context, id string) ([]Ge
 func (r MemoReader) GetFrequenciesForTrip(ctx context.Context, tripID string) ([]Frequency, error) {
 	return memoized(r.memo, func(m *readMemo) map[string][]Frequency { return m.frequenciesByTrip }, tripID,
 		func() ([]Frequency, error) { return clipped(r.queries.GetFrequenciesForTrip(ctx, tripID)) })
+}
+
+// GetBlockTripSequence is Queries.GetBlockTripSequence, memoized by trip ID,
+// block ID, and canonicalized active service ID set.
+func (r MemoReader) GetBlockTripSequence(ctx context.Context, arg GetBlockTripSequenceParams) (int64, error) {
+	key := makeBlockTripSequenceKey(arg)
+	return memoized(r.memo, func(m *readMemo) map[blockTripSequenceKey]int64 { return m.blockTripSequence }, key,
+		func() (int64, error) { return r.queries.GetBlockTripSequence(ctx, arg) })
+}
+
+func makeBlockTripSequenceKey(arg GetBlockTripSequenceParams) blockTripSequenceKey {
+	if len(arg.ServiceIds) <= 1 {
+		return blockTripSequenceKey{
+			tripID:     arg.TripID,
+			blockID:    arg.BlockID,
+			serviceIDs: strings.Join(arg.ServiceIds, "\x00"),
+		}
+	}
+	sorted := slices.Clone(arg.ServiceIds)
+	slices.Sort(sorted)
+	sorted = slices.Compact(sorted)
+	return blockTripSequenceKey{
+		tripID:     arg.TripID,
+		blockID:    arg.BlockID,
+		serviceIDs: strings.Join(sorted, "\x00"),
+	}
 }
 
 // clipped drops a query result's spare capacity, so a caller appending to a
