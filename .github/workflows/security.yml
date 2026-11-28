@@ -1,0 +1,47 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    # Every Monday at 02:00 UTC
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: 'Go Vulnerability Scan (${{ matrix.variant }})'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: CGO
+            cgo_enabled: '1'
+            build_tags: 'sqlite_fts5,sqlite_math_functions'
+          - variant: purego
+            cgo_enabled: '0'
+            build_tags: 'purego'
+
+    env:
+      CGO_ENABLED: ${{ matrix.cgo_enabled }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+
+      - name: Run govulncheck
+        run: go tool govulncheck -tags='${{ matrix.build_tags }}' ./...
