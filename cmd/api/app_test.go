@@ -816,7 +816,7 @@ func TestDumpConfigJSON_RedactsStaticAndRealtimeFeedURLs(t *testing.T) {
 	require.Len(t, staticFeeds, 1)
 	staticFeed, ok := staticFeeds[0].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "https://user:xxxxx@example.com/metro.zip?"+appconf.RedactedValue, staticFeed["url"])
+	assert.Equal(t, "https://xxxxx@example.com/metro.zip?"+appconf.RedactedValue, staticFeed["url"])
 
 	realtimeFeeds, ok := parsed["gtfs-rt-feeds"].([]any)
 	require.True(t, ok)

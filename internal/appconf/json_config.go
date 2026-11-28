@@ -33,8 +33,11 @@ type GtfsStaticFeed struct {
 // RedactedValue replaces secret values in redacted config output.
 const RedactedValue = "***REDACTED***"
 
+// redactedURLUserinfo matches net/url.URL.Redacted's password placeholder so the output is familiar.
+const redactedURLUserinfo = "xxxxx"
+
 // Redacted returns a copy of the feed with its secrets hidden: URL query
-// credentials and passwords, AuthHeaderValue, and every Headers value.
+// credentials and userinfo, AuthHeaderValue, and every Headers value.
 // Update it when adding a field that can hold a secret.
 func (feed GtfsStaticFeed) Redacted() GtfsStaticFeed {
 	feed.URL = RedactURL(feed.URL)
@@ -59,9 +62,10 @@ func RedactHeaderValues(headers map[string]string) map[string]string {
 	return redacted
 }
 
-// RedactURL preserves ordinary local paths while hiding URL query values
-// and passwords in URL userinfo. URL references without a scheme are also
-// handled. Malformed URL candidates fail closed.
+// RedactURL preserves ordinary local paths while hiding URL secrets: the
+// query string (holds a signed URL's signature) and the full userinfo,
+// including bare-username tokens (https://TOKEN@host/). URL references
+// without a scheme are also handled. Malformed URL candidates fail closed.
 func RedactURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	lower := strings.ToLower(trimmed)
@@ -94,8 +98,10 @@ func RedactURL(raw string) string {
 	if parsed.RawQuery != "" {
 		parsed.RawQuery = RedactedValue
 	}
-
-	return parsed.Redacted()
+	if parsed.User != nil {
+		parsed.User = url.User(redactedURLUserinfo)
+	}
+	return parsed.String()
 }
 
 // replaceURLText replaces both the literal URL and its Go-quoted form. The
