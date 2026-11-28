@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,17 +19,4 @@ func rebuildStopIndexes(t *testing.T, api *RestAPI) {
 	require.NoError(t, queries.BuildStopRoutes(ctx))
 	require.NoError(t, queries.ClearStopAgencies(ctx))
 	require.NoError(t, queries.BuildStopAgencies(ctx))
-}
-
-// registerStopFixtureCleanup is registerFixtureCleanup for fixtures that add stops:
-// it first removes the stops' rows from every stop index, which would otherwise block
-// deleting the stops, routes or agencies they point at. stopIDs is a quoted SQL list,
-// e.g. `'a', 'b'`.
-func registerStopFixtureCleanup(t *testing.T, db *sql.DB, stopIDs string, statements ...string) {
-	t.Helper()
-	indexCleanup := []string{
-		`DELETE FROM stop_routes WHERE stop_id IN (` + stopIDs + `)`,
-		`DELETE FROM stop_agencies WHERE stop_id IN (` + stopIDs + `)`,
-	}
-	registerFixtureCleanup(t, db, append(indexCleanup, statements...)...)
 }

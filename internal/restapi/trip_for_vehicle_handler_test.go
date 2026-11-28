@@ -33,7 +33,7 @@ func tripForVehicleURL(vehicleID string, params ...url.Values) string {
 // first static trip and returns the API plus the vehicle's combined ID.
 func setupTestApiWithMockVehicle(t *testing.T) (api *RestAPI, vehicleCombinedID string) {
 	t.Helper()
-	api = createTestApi(t)
+	api = createIsolatedTestApi(t)
 	t.Cleanup(api.Shutdown)
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -44,8 +44,7 @@ func setupTestApiWithMockVehicle(t *testing.T) (api *RestAPI, vehicleCombinedID 
 	api.GtfsManager.MockAddAgency(testdata.Raba.ID, "unitrans")
 	api.GtfsManager.MockAddRoute(combinedRouteID, testdata.Raba.ID, combinedRouteID)
 	// Deliberately no MockAddTrip: the trip already exists in the fixture DB, and
-	// MockAddTrip is an INSERT OR REPLACE that would wipe its block and shape IDs
-	// in the package-shared test database for every test that runs afterwards.
+	// MockAddTrip is an INSERT OR REPLACE that would wipe its block and shape IDs.
 	api.GtfsManager.MockAddVehicle(mockVehicleID, trip.ID, combinedRouteID)
 
 	return api, utils.FormCombinedID(testdata.Raba.ID, mockVehicleID)
@@ -135,7 +134,7 @@ func TestTripForVehicleHandlerEndToEnd(t *testing.T) {
 
 func TestTripForVehicleHandler_KeepsRequestedVehicleOnSharedTrip(t *testing.T) {
 	now := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
+	api := createIsolatedTestApiWithClock(t, clock.NewMockClock(now))
 	t.Cleanup(api.Shutdown)
 	trip := mustGetTrip(t, api)
 	tripID := utils.FormCombinedID(testdata.Raba.ID, trip.ID)
@@ -787,7 +786,7 @@ func TestTripForVehicleHandler_ScheduleTripsResolve(t *testing.T) {
 // two feeds attributed to different agencies report the same vehicle ID.
 // trip-for-vehicle returns each agency's own trip (both 200), and a third prefix returns 404.
 func TestTripForVehicleHandler_SharedVehicleAcrossAgencies(t *testing.T) {
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	t.Cleanup(api.Shutdown)
 	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
 
@@ -803,13 +802,6 @@ func TestTripForVehicleHandler_SharedVehicleAcrossAgencies(t *testing.T) {
 	api.GtfsManager.MockAddAgency(agency1, "Agency One")
 	api.GtfsManager.MockAddAgency(agency2, "Agency Two")
 	api.GtfsManager.MockAddAgency(agency3, "Agency Three")
-	t.Cleanup(func() {
-		ctx := context.Background()
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM agencies WHERE id IN (?, ?, ?)`, agency1, agency2, agency3)
-		_, _ = api.GtfsManager.GtfsDB.DB.ExecContext(ctx, `DELETE FROM trips WHERE id IN (?, ?)`, trip1ID, trip2ID)
-		api.GtfsManager.MockSetAgencyVehicles("feed-1", "", nil)
-		api.GtfsManager.MockSetAgencyVehicles("feed-2", "", nil)
-	})
 
 	insertStubTrip(t, api, trip1ID, "route1")
 	insertStubTrip(t, api, trip2ID, "route2")

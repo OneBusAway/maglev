@@ -488,7 +488,7 @@ func TestRoutesForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApi(t)
+			api := createIsolatedTestApi(t)
 			// Seed enough routes near the query point that the endpoint's 50 cap
 			// (and the fact it's 50, not 250) is actually observable - RABA alone
 			// only has 13 routes total.
@@ -507,7 +507,7 @@ func TestRoutesForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {
 
 func TestRoutesForLocationHandlerDefaultsMaxCountToTen(t *testing.T) {
 	const lat, lon = 40.583321, -122.362535
-	api := createTestApi(t)
+	api := createIsolatedTestApi(t)
 	// Seed past 10 in-bounds routes so the spec default (10, not the endpoint's
 	// 50 clamp ceiling) is actually observable.
 	seedRoutesNearLocation(t, api, lat, lon, 15)

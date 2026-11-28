@@ -32,12 +32,16 @@ var (
 	testDirectionCalculator *gtfs.AdvancedDirectionCalculator
 	testDbSetupOnce         sync.Once
 	testDbPath              = filepath.Join("../../testdata", "raba-test.db")
+	// testDbSnapshotPath holds a copy of the shared database taken right after
+	// the import, before any test adds rows, for createIsolatedTestApiWithClock.
+	testDbSnapshotPath = filepath.Join("../../testdata", "raba-test-snapshot.db")
 )
 
 func removeTestDb() {
 	_ = os.Remove(testDbPath)
 	_ = os.Remove(testDbPath + "-shm")
 	_ = os.Remove(testDbPath + "-wal")
+	_ = os.Remove(testDbSnapshotPath)
 }
 
 // TestMain handles setup and cleanup for all tests in this package
@@ -72,38 +76,11 @@ func newTestManagerNoData(t testing.TB) *gtfs.Manager {
 // createTestApiWithClock creates a new restAPI instance with a custom clock for deterministic testing.
 // The GTFS database is created once and reused across all tests for performance.
 func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
-	ctx := context.Background()
-
-	// Initialize the shared GTFS manager only once
-	testDbSetupOnce.Do(func() {
-		gtfsConfig := gtfs.Config{
-			GtfsURL:      filepath.Join("../../testdata", "raba.zip"),
-			GTFSDataPath: testDbPath,
-		}
-		var err error
-		testGtfsManager, err = gtfs.InitGTFSManager(ctx, gtfsConfig)
-		if err != nil {
-			t.Fatalf("Failed to initialize shared test GTFS manager: %v", err)
-		}
-
-		// Create the DirectionCalculator using the shared manager's queries
-		testDirectionCalculator = gtfs.NewAdvancedDirectionCalculator(testGtfsManager.GtfsDB.Queries)
-	})
-
-	gtfsConfig := gtfs.Config{
-		GtfsURL:      filepath.Join("../../testdata", "raba.zip"),
-		GTFSDataPath: testDbPath,
-	}
+	ensureSharedTestDb(t)
 
 	application := &app.Application{
-		Config: appconf.Config{
-			Env:              appconf.EnvFlagToEnvironment("test"),
-			ApiKeys:          []string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"},
-			ProtectedApiKeys: []string{"PROTECTED-TEST"},
-			RateLimit:        5, // Low rate limit for testing
-			ExemptApiKeys:    []string{"org.onebusaway.iphone"},
-		},
-		GtfsConfig:          gtfsConfig,
+		Config:              sharedTestAppConfig(),
+		GtfsConfig:          rabaGtfsConfig(testDbPath),
 		GtfsManager:         testGtfsManager,
 		DirectionCalculator: testDirectionCalculator,
 		Clock:               c,
@@ -112,6 +89,108 @@ func createTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
 	api := NewRestAPI(application)
 
 	return api
+}
+
+// ensureSharedTestDb imports RABA into the shared database once per package
+// run, then snapshots it for newIsolatedTestManager before any test adds rows.
+func ensureSharedTestDb(t testing.TB) {
+	testDbSetupOnce.Do(func() {
+		ctx := context.Background()
+		var err error
+		testGtfsManager, err = gtfs.InitGTFSManager(ctx, rabaGtfsConfig(testDbPath))
+		if err != nil {
+			t.Fatalf("Failed to initialize shared test GTFS manager: %v", err)
+		}
+
+		// Create the DirectionCalculator using the shared manager's queries
+		testDirectionCalculator = gtfs.NewAdvancedDirectionCalculator(testGtfsManager.GtfsDB.Queries)
+
+		_, err = testGtfsManager.GtfsDB.DB.ExecContext(ctx, "VACUUM INTO ?", testDbSnapshotPath)
+		if err != nil {
+			t.Fatalf("Failed to snapshot shared test database: %v", err)
+		}
+	})
+}
+
+func rabaGtfsConfig(dbPath string) gtfs.Config {
+	return gtfs.Config{
+		GtfsURL:      filepath.Join("../../testdata", "raba.zip"),
+		GTFSDataPath: dbPath,
+	}
+}
+
+// sharedTestAppConfig is the API configuration of the RABA test APIs.
+func sharedTestAppConfig() appconf.Config {
+	return appconf.Config{
+		Env:              appconf.EnvFlagToEnvironment("test"),
+		ApiKeys:          []string{"TEST", "test", "test-rate-limit", "test-headers", "test-refill", "test-error-format", "org.onebusaway.iphone"},
+		ProtectedApiKeys: []string{"PROTECTED-TEST"},
+		RateLimit:        5, // Low rate limit for testing
+		ExemptApiKeys:    []string{"org.onebusaway.iphone"},
+	}
+}
+
+// createIsolatedTestApiWithClock is createTestApiWithClock with a private copy
+// of the RABA database. Use it for any test that writes rows (fixtures, problem
+// reports): the shared database is reused by every later test in the package,
+// so rows left there change their results.
+func createIsolatedTestApiWithClock(t testing.TB, c clock.Clock) *RestAPI {
+	t.Helper()
+	gtfsConfig, gtfsManager := newIsolatedTestManager(t)
+	return NewRestAPI(&app.Application{
+		Config:              sharedTestAppConfig(),
+		GtfsConfig:          gtfsConfig,
+		GtfsManager:         gtfsManager,
+		DirectionCalculator: gtfs.NewAdvancedDirectionCalculator(gtfsManager.GtfsDB.Queries),
+		Clock:               c,
+	})
+}
+
+// createIsolatedTestApi is createIsolatedTestApiWithClock with the real clock.
+func createIsolatedTestApi(t testing.TB) *RestAPI {
+	return createIsolatedTestApiWithClock(t, clock.RealClock{})
+}
+
+// createTestApiOnDatabaseOf builds a fresh API over base's database, for
+// subtests that need the fixture rows base was given. A new isolated API
+// would get a copy without them.
+func createTestApiOnDatabaseOf(base *RestAPI, c clock.Clock) *RestAPI {
+	return NewRestAPI(&app.Application{
+		Config:              sharedTestAppConfig(),
+		GtfsConfig:          base.GtfsConfig,
+		GtfsManager:         base.GtfsManager,
+		DirectionCalculator: base.DirectionCalculator,
+		Clock:               c,
+	})
+}
+
+// newIsolatedTestManager opens a private copy of the freshly imported RABA
+// database. The copy already holds the feed, so the manager skips the import
+// and the whole setup costs a file copy.
+func newIsolatedTestManager(t testing.TB) (gtfs.Config, *gtfs.Manager) {
+	t.Helper()
+	ensureSharedTestDb(t)
+
+	dbPath := filepath.Join(t.TempDir(), "raba.db")
+	copyTestFile(t, testDbSnapshotPath, dbPath)
+
+	gtfsConfig := rabaGtfsConfig(dbPath)
+	gtfsManager, err := gtfs.InitGTFSManager(context.Background(), gtfsConfig)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = gtfsManager.Shutdown(context.Background()) })
+	return gtfsConfig, gtfsManager
+}
+
+func copyTestFile(t testing.TB, src, dst string) {
+	t.Helper()
+	in, err := os.Open(src)
+	require.NoError(t, err)
+	defer func() { _ = in.Close() }()
+	out, err := os.Create(dst)
+	require.NoError(t, err)
+	_, err = io.Copy(out, in)
+	require.NoError(t, err)
+	require.NoError(t, out.Close())
 }
 
 // createTestApi creates a new restAPI instance with a GTFS manager initialized for use in tests.
