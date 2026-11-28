@@ -1117,7 +1117,7 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 	}
 
 	// Use optimized query with ROW_NUMBER() window function
-	seq, err := api.GtfsManager.GtfsDB.Queries.GetBlockTripSequence(ctx, gtfsdb.GetBlockTripSequenceParams{
+	seq, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetBlockTripSequence(ctx, gtfsdb.GetBlockTripSequenceParams{
 		TripID:     tripID,
 		BlockID:    trip.BlockID,
 		ServiceIds: activeServiceIDs,

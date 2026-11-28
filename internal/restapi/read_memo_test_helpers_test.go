@@ -12,13 +12,14 @@ import (
 // memoizedTripRows holds every memoized lookup a request can make for one
 // trip.
 type memoizedTripRows struct {
-	trip             gtfsdb.Trip
-	route            gtfsdb.Route
-	activeServiceIDs []string
-	blockTrips       []gtfsdb.GetTripsByBlockIDRow
-	stopTimes        []gtfsdb.StopTime
-	shapePoints      []gtfsdb.GetShapePointsByTripIDRow
-	frequencies      []gtfsdb.Frequency
+	trip              gtfsdb.Trip
+	route             gtfsdb.Route
+	activeServiceIDs  []string
+	blockTrips        []gtfsdb.GetTripsByBlockIDRow
+	stopTimes         []gtfsdb.StopTime
+	shapePoints       []gtfsdb.GetShapePointsByTripIDRow
+	frequencies       []gtfsdb.Frequency
+	blockTripSequence int64
 }
 
 // memoCheckOptions says which per-trip lookups a request's path makes.
@@ -51,6 +52,14 @@ func readMemoizedTripRowsWith(t *testing.T, ctx context.Context, reader gtfsdb.M
 	require.NoError(t, err)
 	if !options.frequenciesBatched {
 		rows.frequencies, err = reader.GetFrequenciesForTrip(ctx, tripID)
+		require.NoError(t, err)
+	}
+	if rows.trip.BlockID.Valid && len(rows.activeServiceIDs) > 0 {
+		rows.blockTripSequence, err = reader.GetBlockTripSequence(ctx, gtfsdb.GetBlockTripSequenceParams{
+			TripID:     tripID,
+			BlockID:    rows.trip.BlockID,
+			ServiceIds: rows.activeServiceIDs,
+		})
 		require.NoError(t, err)
 	}
 	return rows

@@ -1548,6 +1548,32 @@ func TestBlockShiftTripIDs_CachedPerRequest(t *testing.T) {
 	assert.Equal(t, first, again)
 }
 
+func TestBlockShiftTripIDs_SharedWithShiftSiblings(t *testing.T) {
+	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+	api := createTestApiWithClock(t, clock.NewMockClock(serviceDate.Add(8*time.Hour)))
+	defer api.Shutdown()
+	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
+	stopID := addDownstreamStop(t, api, tripID)
+	laterTripID := addLaterBlockTrip(t, api, stopID, tripID)
+	// Populate cached bounds (normally written by GTFS import) so shift resolution completes cleanly.
+	_, err := api.GtfsManager.GtfsDB.DB.ExecContext(context.Background(), `
+		UPDATE trips
+		SET min_arrival_time = (SELECT MIN(arrival_time) FROM stop_times WHERE stop_times.trip_id = trips.id),
+		    max_departure_time = (SELECT MAX(departure_time) FROM stop_times WHERE stop_times.trip_id = trips.id)
+		WHERE id IN (?, ?)`, tripID, laterTripID)
+	require.NoError(t, err)
+	ctx := WithSnapshotCache(context.Background(), newSnapshotCache())
+
+	first := api.blockShiftTripIDsSortedByStartTime(ctx, tripID, serviceDate)
+	first[0] = "mutated" // Verify returned slice is cloned.
+
+	counter := countQueries(t, api)
+	siblingResult := api.blockShiftTripIDsSortedByStartTime(ctx, laterTripID, serviceDate)
+
+	assert.Zero(t, counter.count.Load())
+	assert.Equal(t, []string{tripID, laterTripID}, siblingResult)
+}
+
 // A block's updates expire together as one record, so a trip's own stale update
 // still predicts its stops while a later update keeps the record fresh.
 func TestArrivals_StaleUpdateInFreshRecordStillPredicts(t *testing.T) {
