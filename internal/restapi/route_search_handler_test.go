@@ -229,24 +229,27 @@ func TestRouteSearchHandlerSorting(t *testing.T) {
 // a route that belongs on the first sorted page get dropped in favor of one that
 // doesn't.
 func TestRouteSearchHandlerPaginationBoundary(t *testing.T) {
-	api := createTestApi(t)
-	defer api.Shutdown()
-
-	_, fullModel := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {"1"}, "maxCount": {"250"}}))
-	require.GreaterOrEqual(t, len(fullModel.Data.List), 3, "need multiple matches to exercise the pagination boundary")
-
 	tests := []struct {
 		name     string
+		input    string
 		maxCount int
 	}{
-		{"first page of four", 4},
-		{"first page of five", 5},
+		{"first page of four", "1", 4},
+		{"first page of five", "1", 5},
+		// FTS5 ranks route 9 last of the ten "r" matches, though it sorts fifth by name.
+		{"low-relevance match on the first page", "r", 5},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			api := createTestApi(t)
+			defer api.Shutdown()
+
+			_, fullModel := callAPIHandler[RoutesResponse](t, api, routeSearchURL(url.Values{"input": {tt.input}, "maxCount": {"250"}}))
+			require.Greater(t, len(fullModel.Data.List), tt.maxCount, "need more matches than maxCount to exercise the pagination boundary")
+
 			resp, model := callAPIHandler[RoutesResponse](t, api,
-				routeSearchURL(url.Values{"input": {"1"}, "maxCount": {strconv.Itoa(tt.maxCount)}}))
+				routeSearchURL(url.Values{"input": {tt.input}, "maxCount": {strconv.Itoa(tt.maxCount)}}))
 
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 			require.Len(t, model.Data.List, tt.maxCount)
