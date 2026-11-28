@@ -1801,16 +1801,19 @@ func TestBoundedProjectionMatchesFullScan(t *testing.T) {
 				shape[i] = shape[i-1]
 			}
 		}
-		cum := preCalculateCumulativeDistances(shape)
-		boxes := projectionBounds(shape, 12)
+		matcher := stopProjectionMatcher{
+			shape:      shape,
+			cumulative: preCalculateCumulativeDistances(shape),
+			boxes:      projectionBounds(shape, 12),
+		}
 		hits := 0
 		for i, p := range shape {
 			for _, offset := range []float64{0, .00005, .00042, .002} {
 				stop := gtfsdb.Stop{Lat: p.Latitude + offset, Lon: wrapLongitude(p.Longitude - offset)}
 				geometry := stopProjectionGeometry{lat: stop.Lat, lon: stop.Lon, lonMetres: metresPerDegree * math.Cos(stop.Lat*math.Pi/180)}
-				want := scanStopProjection(geometry, shape, cum)
+				want := matcher.scanStopProjection(geometry, 0, len(shape))
 				for _, radius := range []float64{50, 500} {
-					got, ok := closestInBounds(boxes, geometry, shape, cum, radius)
+					got, ok := matcher.closestInBounds(geometry, radius)
 					if !ok {
 						if math.Abs(stop.Lat) <= 85 {
 							require.Greater(t, want.cost, radius)

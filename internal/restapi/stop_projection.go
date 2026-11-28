@@ -1,7 +1,10 @@
+// Stop projection minimizes the total stop-to-shape distance while keeping
+// projected positions non-decreasing in trip order. Consecutive visits to the
+// same stop prefer distinct positions at equal cost when the order allows it.
+
 package restapi
 
 import (
-	"cmp"
 	"math"
 	"slices"
 
@@ -14,6 +17,76 @@ const (
 	metresPerDegree         = utils.RadiusOfEarthInMeters * math.Pi / 180
 	stopProjectionTolerance = 1e-6 // metres
 )
+
+type stopProjectionMatcher struct {
+	shape      []gtfs.ShapePoint
+	cumulative []float64
+	boxes      []utils.CoordinateBounds
+	stops      []orderedStop
+	positions  []float64
+}
+
+// projectStopsInSequence returns each stop's distance-along-trip in metres,
+// projecting the stop's lat/lon onto the shape polyline. The publisher's
+// stop_times.shape_dist_traveled is deliberately ignored — Java's
+// StopTimeEntriesFactory.ensureStopTimesHaveShapeDistanceTraveledSet does
+// the same, overwriting the publisher value at load time with the projected
+// value from DistanceAlongShapeLibrary. Publisher-supplied values are often
+// wrong (bad units, corrupt data on some feeds), so both codebases treat
+// projection as authoritative.
+func projectStopsInSequence(
+	stopIDs []string,
+	stopByID map[string]gtfsdb.Stop,
+	shapePoints []gtfs.ShapePoint,
+	cumulativeDistances []float64,
+) []float64 {
+	positions := make([]float64, len(stopIDs))
+	if len(shapePoints) < 2 || len(cumulativeDistances) != len(shapePoints) {
+		return positions
+	}
+	matcher := stopProjectionMatcher{
+		shape:      shapePoints,
+		cumulative: cumulativeDistances,
+		boxes:      projectionBounds(shapePoints, len(stopIDs)),
+		positions:  positions,
+	}
+	var scratch [128]orderedStop
+	stops, inOrder := matcher.projectNearestStops(scratch[:0], stopIDs, stopByID)
+	matcher.stops = stops
+	// Independently closest positions attain the lower bound if they follow
+	// trip order. Try other equally close positions before the full solver.
+	if !inOrder && !matcher.matchNearestStops() {
+		matcher.matchOrderedStops()
+	}
+	matcher.separateRepeatedStopVisits()
+	return positions
+}
+
+func (matcher *stopProjectionMatcher) projectNearestStops(stops []orderedStop, stopIDs []string, stopByID map[string]gtfsdb.Stop) ([]orderedStop, bool) {
+	inOrder := true
+	for i, stopID := range stopIDs {
+		stop, ok := stopByID[stopID]
+		if !ok {
+			continue
+		}
+		geometry := stopProjectionGeometry{
+			lat: stop.Lat, lon: stop.Lon,
+			lonMetres: metresPerDegree * math.Cos(stop.Lat*math.Pi/180),
+		}
+		best := matcher.closestStopProjection(geometry)
+		if len(stops) > 0 && best.position < stops[len(stops)-1].nearest.position {
+			inOrder = false
+		}
+		stops = append(stops, orderedStop{
+			index:           i,
+			geometry:        geometry,
+			nearest:         best,
+			repeatsPrevious: i > 0 && stopID == stopIDs[i-1],
+		})
+		matcher.positions[i] = best.position
+	}
+	return stops, inOrder
+}
 
 type stopProjection struct {
 	position float64
@@ -64,6 +137,14 @@ func (stop stopProjectionGeometry) segment(from, to gtfs.ShapePoint) segmentStop
 	}
 }
 
+// wrapLongitude normalizes a longitude or longitude offset to [-180, 180].
+func wrapLongitude(degrees float64) float64 {
+	if degrees < -180 || degrees > 180 {
+		return math.Remainder(degrees, 360)
+	}
+	return degrees
+}
+
 func (d segmentStopDistance) cost(ratio float64) float64 {
 	along := (ratio - d.centre) * d.length
 	return math.Sqrt(along*along + d.crossTrack*d.crossTrack)
@@ -88,62 +169,6 @@ func (stop stopProjectionGeometry) bounds(radius float64) utils.CoordinateBounds
 		window.MinLon, window.MaxLon = -180, 180
 	}
 	return window
-}
-
-// projectStopsInSequence returns each stop's distance-along-trip in metres,
-// projecting the stop's lat/lon onto the shape polyline. The publisher's
-// stop_times.shape_dist_traveled is deliberately ignored — Java's
-// StopTimeEntriesFactory.ensureStopTimesHaveShapeDistanceTraveledSet does
-// the same, overwriting the publisher value at load time with the projected
-// value from DistanceAlongShapeLibrary. Publisher-supplied values are often
-// wrong (bad units, corrupt data on some feeds), so both codebases treat
-// projection as authoritative.
-//
-// Choose the lowest combined projection error among matches that follow the
-// trip's stop order. For consecutive visits to the same stop, prefer distinct
-// positions when an equally close match fits the surrounding assignments.
-func projectStopsInSequence(
-	stopIDs []string,
-	stopByID map[string]gtfsdb.Stop,
-	shapePoints []gtfs.ShapePoint,
-	cumulativeDistances []float64,
-) []float64 {
-	positions := make([]float64, len(stopIDs))
-	if len(shapePoints) < 2 || len(cumulativeDistances) != len(shapePoints) {
-		return positions
-	}
-	bounds := projectionBounds(shapePoints, len(stopIDs))
-	var scratch [128]orderedStop
-	stops := scratch[:0]
-	inOrder := true
-	for i, stopID := range stopIDs {
-		stop, ok := stopByID[stopID]
-		if !ok {
-			continue
-		}
-		geometry := stopProjectionGeometry{
-			lat: stop.Lat, lon: stop.Lon,
-			lonMetres: metresPerDegree * math.Cos(stop.Lat*math.Pi/180),
-		}
-		best := closestStopProjection(bounds, geometry, shapePoints, cumulativeDistances)
-		if len(stops) > 0 && best.position < stops[len(stops)-1].nearest.position {
-			inOrder = false
-		}
-		stops = append(stops, orderedStop{
-			index:           i,
-			geometry:        geometry,
-			nearest:         best,
-			repeatsPrevious: i > 0 && stopID == stopIDs[i-1],
-		})
-		positions[i] = best.position
-	}
-	// Independently closest positions already achieve the lower bound when
-	// they follow trip order.
-	if !inOrder && !matchNearestStops(positions, stops, shapePoints, cumulativeDistances) {
-		matchOrderedStops(positions, stops, shapePoints, cumulativeDistances, bounds)
-	}
-	separateRepeatedStopVisits(positions, stops, shapePoints, cumulativeDistances)
-	return positions
 }
 
 const segmentsPerProjectionBox = 32
@@ -176,7 +201,8 @@ func projectionBounds(shape []gtfs.ShapePoint, stops int) []utils.CoordinateBoun
 // Search every run of segments that could contain a match within the radius.
 // The window uses the same longitude scale as the projection. At high
 // latitudes, use the full scan. Ties retain the first occurrence in shape order.
-func closestInBounds(boxes []utils.CoordinateBounds, stop stopProjectionGeometry, shape []gtfs.ShapePoint, cumulative []float64, radius float64) (stopProjection, bool) {
+func (matcher *stopProjectionMatcher) closestInBounds(stop stopProjectionGeometry, radius float64) (stopProjection, bool) {
+	boxes := matcher.boxes
 	best := stopProjection{cost: math.Inf(1)}
 	if len(boxes) == 0 || math.Abs(stop.lat) > 85 {
 		return best, false
@@ -192,8 +218,8 @@ func closestInBounds(boxes []utils.CoordinateBounds, stop stopProjectionGeometry
 		for i < len(boxes) && !utils.IsOutOfBounds(boxes[i], window) {
 			i++
 		}
-		end := min(i*segmentsPerProjectionBox+1, len(shape))
-		candidate := scanStopProjection(stop, shape[start:end], cumulative[start:end])
+		end := min(i*segmentsPerProjectionBox+1, len(matcher.shape))
+		candidate := matcher.scanStopProjection(stop, start, end)
 		if candidate.cost < best.cost {
 			best = candidate
 		}
@@ -201,19 +227,21 @@ func closestInBounds(boxes []utils.CoordinateBounds, stop stopProjectionGeometry
 	return best, best.cost <= radius
 }
 
-func closestStopProjection(bounds []utils.CoordinateBounds, stop stopProjectionGeometry, shape []gtfs.ShapePoint, cumulative []float64) stopProjection {
-	if best, ok := closestInBounds(bounds, stop, shape, cumulative, 50); ok {
+func (matcher *stopProjectionMatcher) closestStopProjection(stop stopProjectionGeometry) stopProjection {
+	if best, ok := matcher.closestInBounds(stop, 50); ok {
 		return best
 	}
-	if len(bounds) > 0 {
-		if best, ok := closestInBounds(bounds, stop, shape, cumulative, 500); ok {
+	if len(matcher.boxes) > 0 {
+		if best, ok := matcher.closestInBounds(stop, 500); ok {
 			return best
 		}
 	}
-	return scanStopProjection(stop, shape, cumulative)
+	return matcher.scanStopProjection(stop, 0, len(matcher.shape))
 }
 
-func scanStopProjection(stop stopProjectionGeometry, shape []gtfs.ShapePoint, cumulative []float64) stopProjection {
+func (matcher *stopProjectionMatcher) scanStopProjection(stop stopProjectionGeometry, start, end int) stopProjection {
+	shape := matcher.shape[start:end]
+	cumulative := matcher.cumulative[start:end]
 	best := stopProjection{cost: math.Inf(1)}
 	for i, from := range shape[:len(shape)-1] {
 		segment := stop.segment(from, shape[i+1])
@@ -227,23 +255,24 @@ func scanStopProjection(stop stopProjectionGeometry, shape []gtfs.ShapePoint, cu
 
 // Taking the earliest feasible minimum leaves the most room for the next stop.
 // A complete sequence of independent minima attains the error lower bound.
-func matchNearestStops(positions []float64, stops []orderedStop, shape []gtfs.ShapePoint, cumulative []float64) bool {
-	previous, end := cumulative[0], cumulative[len(cumulative)-1]
+func (matcher *stopProjectionMatcher) matchNearestStops() bool {
+	stops := matcher.stops
+	previous, end := matcher.cumulative[0], matcher.cumulative[len(matcher.cumulative)-1]
 	tolerance := stopProjectionTolerance / float64(len(stops))
 	for i, stop := range stops {
 		position := stop.nearest.position
 		if position < previous {
 			var ok bool
-			position, ok = firstMatchingProjection(stop.geometry, shape, cumulative, previous, end, stop.nearest.cost+tolerance)
+			position, ok = matcher.firstMatchingProjection(stop.geometry, previous, end, stop.nearest.cost+tolerance)
 			if !ok {
 				// Finish the feasible prefix at its last position to bound the solver.
 				for _, remaining := range stops[i:] {
-					positions[remaining.index] = previous
+					matcher.positions[remaining.index] = previous
 				}
 				return false
 			}
 		}
-		positions[stop.index] = position
+		matcher.positions[stop.index] = position
 		previous = position
 	}
 	return true
@@ -251,7 +280,8 @@ func matchNearestStops(positions []float64, stops []orderedStop, shape []gtfs.Sh
 
 // Search each segment's closest point in shape order. Repeated visits start
 // beyond the preceding position so a shared vertex counts only once.
-func firstMatchingProjection(stop stopProjectionGeometry, shape []gtfs.ShapePoint, cumulative []float64, minPosition, maxPosition, maxCost float64) (float64, bool) {
+func (matcher *stopProjectionMatcher) firstMatchingProjection(stop stopProjectionGeometry, minPosition, maxPosition, maxCost float64) (float64, bool) {
+	shape, cumulative := matcher.shape, matcher.cumulative
 	start, _ := slices.BinarySearch(cumulative, minPosition)
 	for i := max(0, start-1); i < len(shape)-1 && cumulative[i] <= maxPosition; i++ {
 		segment := stop.segment(shape[i], shape[i+1])
@@ -264,7 +294,8 @@ func firstMatchingProjection(stop stopProjectionGeometry, shape []gtfs.ShapePoin
 	return 0, false
 }
 
-func separateRepeatedStopVisits(positions []float64, stops []orderedStop, shape []gtfs.ShapePoint, cumulative []float64) {
+func (matcher *stopProjectionMatcher) separateRepeatedStopVisits() {
+	stops, positions := matcher.stops, matcher.positions
 	for i := 1; i < len(stops); {
 		position := positions[stops[i].index]
 		if !stops[i].repeatsPrevious || position != positions[stops[i-1].index] {
@@ -275,48 +306,43 @@ func separateRepeatedStopVisits(positions []float64, stops []orderedStop, shape 
 		for end < len(stops) && stops[end].repeatsPrevious && positions[stops[end].index] == position {
 			end++
 		}
-		limit := cumulative[len(cumulative)-1]
+		limit := matcher.cumulative[len(matcher.cumulative)-1]
 		if end < len(stops) {
 			limit = positions[stops[end].index]
 			if stops[end].repeatsPrevious {
 				limit -= stopProjectionTolerance
 			}
 		}
-		start := cumulative[0]
+		start := matcher.cumulative[0]
 		if i >= 2 {
 			start = positions[stops[i-2].index]
 			if stops[i-1].repeatsPrevious {
 				start += stopProjectionTolerance
 			}
 		}
-		maxCost := projectionCostAtPosition(stops[i], position, shape, cumulative) + stopProjectionTolerance
-		if earlier, ok := firstMatchingProjection(stops[i].geometry, shape, cumulative, start, position-stopProjectionTolerance, maxCost); ok {
+		maxCost := matcher.projectionCostAtPosition(stops[i], position) + stopProjectionTolerance
+		if earlier, ok := matcher.firstMatchingProjection(stops[i].geometry, start, position-stopProjectionTolerance, maxCost); ok {
 			position = earlier
 			positions[stops[i-1].index] = earlier
 		}
-		spreadRepeatedStopVisits(positions, stops[i:end], shape, cumulative, position, limit, maxCost)
+		matcher.spreadRepeatedStopVisits(stops[i:end], position, limit, maxCost)
 		i = end
 	}
 }
 
-func spreadRepeatedStopVisits(positions []float64, repeats []orderedStop, shape []gtfs.ShapePoint, cumulative []float64, position, limit, maxCost float64) {
+func (matcher *stopProjectionMatcher) spreadRepeatedStopVisits(repeats []orderedStop, position, limit, maxCost float64) {
 	stop := repeats[0]
 	for i, visit := range repeats {
-		next, ok := firstMatchingProjection(stop.geometry, shape, cumulative, position+stopProjectionTolerance, limit, maxCost)
+		next, ok := matcher.firstMatchingProjection(stop.geometry, position+stopProjectionTolerance, limit, maxCost)
 		if !ok {
 			for _, remaining := range repeats[i:] {
-				positions[remaining.index] = position
+				matcher.positions[remaining.index] = position
 			}
 			return
 		}
-		positions[visit.index] = next
+		matcher.positions[visit.index] = next
 		position = next
 	}
-}
-
-type stopGroup struct {
-	first, end  int
-	ratio, cost float64
 }
 
 type stopAssignment struct {
@@ -329,11 +355,13 @@ type stopAssignment struct {
 // vertex the stops can share the position through successive single-stop
 // assignments. Process these possibilities in shape order, retaining the
 // cheapest assignment of each prefix of stops.
-func matchOrderedStops(positions []float64, stops []orderedStop, shape []gtfs.ShapePoint, cumulative []float64, boxes []utils.CoordinateBounds) {
-	forwardError, backwardError := orderedProjectionErrorBounds(stops, shape, cumulative)
+func (matcher *stopProjectionMatcher) matchOrderedStops() {
+	shape, cumulative := matcher.shape, matcher.cumulative
+	stops := matcher.stops
+	forwardError, backwardError := matcher.orderedProjectionErrorBounds()
 	var prefixError float64
 	for _, stop := range stops {
-		prefixError += max(0, projectionCostAtPosition(stop, positions[stop.index], shape, cumulative)-stop.nearest.cost)
+		prefixError += max(0, matcher.projectionCostAtPosition(stop, matcher.positions[stop.index])-stop.nearest.cost)
 	}
 	maxExcess := min(prefixError, forwardError, backwardError) + stopProjectionTolerance
 	search := newStopGroupSearch(stops, maxExcess)
@@ -344,7 +372,7 @@ func matchOrderedStops(positions []float64, stops []orderedStop, shape []gtfs.Sh
 	}
 	for i, from := range shape[:len(shape)-1] {
 		if i%segmentsPerProjectionBox == 0 {
-			search.selectStops(boxes, i/segmentsPerProjectionBox)
+			search.selectStops(matcher.boxes, i/segmentsPerProjectionBox)
 		}
 		length := cumulative[i+1] - cumulative[i]
 		if length == 0 {
@@ -357,14 +385,14 @@ func matchOrderedStops(positions []float64, stops []orderedStop, shape []gtfs.Sh
 		// Keep the feasible upper-bound assignment if roundoff prevents a
 		// complete path from passing the pruning bounds.
 		if min(forwardError, backwardError) < prefixError {
-			clampNearestStopPositions(positions, stops, forwardError <= backwardError)
+			matcher.clampNearestStopPositions(forwardError <= backwardError)
 		}
 		return
 	}
 	for index := best[len(stops)]; index > 0; {
 		assignment := assignments[index]
 		for _, stop := range stops[assignment.first:assignment.end] {
-			positions[stop.index] = assignment.position
+			matcher.positions[stop.index] = assignment.position
 		}
 		index = assignment.previous
 	}
@@ -394,20 +422,22 @@ func updateStopPrefixes(best []int, assignments []stopAssignment, groups []stopG
 
 // Upper bounds from clamping independent minima forward and backward limit
 // how far any stop can deviate from its independent minimum in the solver.
-func orderedProjectionErrorBounds(stops []orderedStop, shape []gtfs.ShapePoint, cumulative []float64) (float64, float64) {
+func (matcher *stopProjectionMatcher) orderedProjectionErrorBounds() (float64, float64) {
+	stops := matcher.stops
 	var forwardError, backwardError float64
-	forward, backward := cumulative[0], cumulative[len(cumulative)-1]
+	forward, backward := matcher.cumulative[0], matcher.cumulative[len(matcher.cumulative)-1]
 	for i, stop := range stops {
 		last := stops[len(stops)-1-i]
 		forward = max(forward, stop.nearest.position)
 		backward = min(backward, last.nearest.position)
-		forwardError += max(0, projectionCostAtPosition(stop, forward, shape, cumulative)-stop.nearest.cost)
-		backwardError += max(0, projectionCostAtPosition(last, backward, shape, cumulative)-last.nearest.cost)
+		forwardError += max(0, matcher.projectionCostAtPosition(stop, forward)-stop.nearest.cost)
+		backwardError += max(0, matcher.projectionCostAtPosition(last, backward)-last.nearest.cost)
 	}
 	return forwardError, backwardError
 }
 
-func clampNearestStopPositions(positions []float64, stops []orderedStop, forward bool) {
+func (matcher *stopProjectionMatcher) clampNearestStopPositions(forward bool) {
+	stops, positions := matcher.stops, matcher.positions
 	if forward {
 		position := stops[0].nearest.position
 		for _, stop := range stops {
@@ -424,127 +454,11 @@ func clampNearestStopPositions(positions []float64, stops []orderedStop, forward
 	}
 }
 
-// Stop group generation reuses scratch space as the solver advances along the shape.
-type stopGroupSearch struct {
-	maxExcess float64
-	windows   []utils.CoordinateBounds
-	eligible  []int
-	segments  []segmentStopDistance
-	excess    []float64
-	groups    []stopGroup
-}
-
-func newStopGroupSearch(stops []orderedStop, maxExcess float64) stopGroupSearch {
-	windows := make([]utils.CoordinateBounds, len(stops))
-	for i, stop := range stops {
-		windows[i] = stop.geometry.bounds(stop.nearest.cost + maxExcess)
-	}
-	return stopGroupSearch{
-		maxExcess: maxExcess,
-		windows:   windows,
-		eligible:  make([]int, 0, len(stops)),
-		segments:  make([]segmentStopDistance, len(stops)),
-		excess:    make([]float64, len(stops)),
-	}
-}
-
-func (search *stopGroupSearch) selectStops(boxes []utils.CoordinateBounds, boxIndex int) {
-	search.eligible = search.eligible[:0]
-	for i, window := range search.windows {
-		if len(boxes) == 0 || !utils.IsOutOfBounds(boxes[boxIndex], window) {
-			search.eligible = append(search.eligible, i)
-		}
-	}
-}
-
-func (search *stopGroupSearch) candidates(stops []orderedStop, from, to gtfs.ShapePoint) []stopGroup {
-	search.groups = search.groups[:0]
-	hasNonlinearCost := false
-	for _, i := range search.eligible {
-		segment := stops[i].geometry.segment(from, to)
-		search.segments[i] = segment
-		search.excess[i] = segment.excessAtRatio(segment.closestRatio(), stops[i].nearest.cost)
-		hasNonlinearCost = hasNonlinearCost || !segment.hasLinearCost()
-	}
-	for index, first := range search.eligible {
-		if search.excess[first] > search.maxExcess {
-			continue
-		}
-		search.addSingleStopGroups(first, stops[first].nearest.cost)
-		// If every cost is linear on this segment, an ordered minimum
-		// exists at the endpoints. Single-stop groups already cover it.
-		if hasNonlinearCost && index+1 < len(search.eligible) {
-			search.addSharedStopGroups(stops, search.eligible[index:])
-		}
-	}
-	slices.SortFunc(search.groups, func(a, b stopGroup) int {
-		return cmp.Or(cmp.Compare(a.ratio, b.ratio), cmp.Compare(a.first, b.first))
-	})
-	return search.groups
-}
-
-func (search *stopGroupSearch) addSingleStopGroups(index int, nearestCost float64) {
-	segment := search.segments[index]
-	minimum := segment.closestRatio()
-	search.groups = append(search.groups, stopGroup{index, index + 1, minimum, search.excess[index]})
-	for _, ratio := range [...]float64{0, 1} {
-		if ratio == minimum {
-			continue
-		}
-		if cost := segment.excessAtRatio(ratio, nearestCost); cost <= search.maxExcess {
-			search.groups = append(search.groups, stopGroup{index, index + 1, ratio, cost})
-		}
-	}
-}
-
-func (search *stopGroupSearch) addSharedStopGroups(stops []orderedStop, indices []int) {
-	first := indices[0]
-	firstCentre := search.segments[first].centre
-	lowerBound := search.excess[first]
-	differentCentres := false
-	for offset, last := range indices[1:] {
-		if last != first+offset+1 {
-			break
-		}
-		lowerBound += search.excess[last]
-		if (last-first)%2 == 1 {
-			// At a shared ratio, the sum of two along-track errors is at
-			// least the distance between their centres at the smaller scale.
-			// Disjoint pairs can contribute independent lower bounds.
-			a, b := search.segments[last-1], search.segments[last]
-			pair := math.Abs(a.centre-b.centre)*min(a.length, b.length) - stops[last-1].nearest.cost - stops[last].nearest.cost
-			lowerBound += max(0, pair-search.excess[last-1]-search.excess[last])
-		}
-		if lowerBound > search.maxExcess {
-			break
-		}
-		lastCentre := search.segments[last].centre
-		differentCentres = differentCentres || lastCentre != firstCentre
-		// An interior group must lie between the last and first minima.
-		// Outside that range, one end stop could move to reduce the error.
-		lo, hi := max(0, lastCentre), min(1, firstCentre)
-		if !differentCentres || lo > hi || lo >= 1 || hi <= 0 {
-			continue
-		}
-		ratio := closestStopGroup(search.segments[first:last+1], lo, hi)
-		if cost := search.groupCost(stops, first, last+1, ratio); cost <= search.maxExcess {
-			search.groups = append(search.groups, stopGroup{first, last + 1, ratio, cost})
-		}
-	}
-}
-
-func (search *stopGroupSearch) groupCost(stops []orderedStop, first, end int, ratio float64) float64 {
-	var cost float64
-	for i := first; i < end; i++ {
-		cost += search.segments[i].excessAtRatio(ratio, stops[i].nearest.cost)
-	}
-	return cost
-}
-
-func projectionCostAtPosition(stop orderedStop, position float64, shape []gtfs.ShapePoint, cumulative []float64) float64 {
+func (matcher *stopProjectionMatcher) projectionCostAtPosition(stop orderedStop, position float64) float64 {
 	if position == stop.nearest.position {
 		return stop.nearest.cost
 	}
+	cumulative := matcher.cumulative
 	end, _ := slices.BinarySearch(cumulative, position)
 	end = max(1, end)
 	length := cumulative[end] - cumulative[end-1]
@@ -552,30 +466,5 @@ func projectionCostAtPosition(stop orderedStop, position float64, shape []gtfs.S
 	if length > 0 {
 		ratio = (position - cumulative[end-1]) / length
 	}
-	return stop.geometry.segment(shape[end-1], shape[end]).cost(ratio)
-}
-
-// The sum of distances on a segment is convex. Bisect its derivative to
-// find the shared minimizer, including the zero-cross-track median case.
-func closestStopGroup(segment []segmentStopDistance, lo, hi float64) float64 {
-	if lo == hi {
-		return lo
-	}
-	const iterations = 40
-	for i := 0; i < iterations; i++ {
-		mid := (lo + hi) / 2
-		var derivative float64
-		for _, d := range segment {
-			cost := d.cost(mid)
-			if cost > 0 {
-				derivative += (mid - d.centre) * d.length * d.length / cost
-			}
-		}
-		if derivative < 0 {
-			lo = mid
-		} else {
-			hi = mid
-		}
-	}
-	return (lo + hi) / 2
+	return stop.geometry.segment(matcher.shape[end-1], matcher.shape[end]).cost(ratio)
 }
