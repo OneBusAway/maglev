@@ -14,6 +14,7 @@ import (
 
 	"github.com/OneBusAway/go-gtfs"
 	"maglev.onebusaway.org/gtfsdb"
+	internalgtfs "maglev.onebusaway.org/internal/gtfs"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 	"maglev.onebusaway.org/internal/nulls"
@@ -158,7 +159,7 @@ func (api *RestAPI) buildTripStatusForVehicle(
 	stopTimes := api.statusStopTimes(ctx, input.dbTripID)
 	api.applyStatusStops(ctx, status, input, stopTimes, scheduleDeviation)
 
-	shapeRows := api.statusShapeRows(ctx, input.dbTripID)
+	shape := api.statusShape(ctx, input.dbTripID)
 	// Snap is built from BLOCK trip data (loadBlockTripData + emitBlockStops
 	// with per-block-trip haversine fallback), so it does not require the
 	// target trip's own shape. Computing it outside the target-shape gate
@@ -177,7 +178,7 @@ func (api *RestAPI) buildTripStatusForVehicle(
 		snap = api.statusBlockSnapshot(ctx, status, input, extras.record, scheduleDeviation)
 	}
 	api.applySnapshotToStatus(ctx, status, extras, input, snap)
-	api.applyShapeToStatus(ctx, status, input, snap, shapeRows, stopTimes)
+	api.applyShapeToStatus(ctx, status, input, snap, shape, stopTimes)
 
 	extras.snapshot = snap
 	return status, extras, nil
@@ -322,16 +323,30 @@ func (api *RestAPI) statusStopTimes(ctx context.Context, dbTripID string) []gtfs
 	return stopTimes
 }
 
-// statusShapeRows returns the trip's shape points. A failed query logs and
-// returns none, so the status falls back to what it can report without them.
-func (api *RestAPI) statusShapeRows(ctx context.Context, dbTripID string) []gtfsdb.GetShapePointsByTripIDRow {
-	shapeRows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetShapePointsByTripID(ctx, dbTripID)
+// statusShape returns the shape of the trip a status reads. The trip row is
+// usually already in the request's read memo.
+func (api *RestAPI) statusShape(ctx context.Context, dbTripID string) internalgtfs.CachedShape {
+	trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, dbTripID)
 	if err != nil {
-		slog.Warn("buildTripStatusCore: failed to get shape points",
-			slog.String("trip_id", dbTripID),
-			slog.String("error", err.Error()))
+		warnIfRealDBError(err, "buildTripStatusCore: failed to get trip for its shape", slog.String("trip_id", dbTripID))
+		return internalgtfs.CachedShape{}
 	}
-	return shapeRows
+	return api.tripShape(ctx, &trip)
+}
+
+// tripShape returns the trip's shape from the manager's cache, which block
+// snapshots fill too. A trip with no shape, or a failed lookup, gets an empty
+// shape, so callers fall back to what they can report without one.
+func (api *RestAPI) tripShape(ctx context.Context, trip *gtfsdb.Trip) internalgtfs.CachedShape {
+	shapeID := nulls.StringOrEmpty(trip.ShapeID)
+	shapes, err := api.GtfsManager.ShapesByID(ctx, []string{shapeID})
+	if err != nil {
+		slog.Warn("tripShape: failed to get shape points",
+			slog.String("trip_id", trip.ID),
+			slog.String("error", err.Error()))
+		return internalgtfs.CachedShape{}
+	}
+	return shapes[shapeID]
 }
 
 // applyStatusStops sets the status's closest and next stops from the vehicle or
@@ -536,10 +551,10 @@ func (api *RestAPI) applyShapeToStatus(
 	status *models.TripStatus,
 	input tripStatusInput,
 	snap *scheduledBlockSnapshot,
-	shapeRows []gtfsdb.GetShapePointsByTripIDRow,
+	shape internalgtfs.CachedShape,
 	stopTimes []gtfsdb.StopTime,
 ) {
-	if len(shapeRows) <= 1 {
+	if len(shape.Points) <= 1 {
 		// A trip with no shape still gets the block's scheduled position,
 		// between stops when no block trip has a shape either.
 		if !vehicleHasLiveCoordinates(input) {
@@ -547,12 +562,12 @@ func (api *RestAPI) applyShapeToStatus(
 		}
 		return
 	}
-	shapePoints := shapeRowsToPoints(shapeRows)
-	cumulativeDistances := utils.CumulativeShapeDistances(shapePoints)
+	shapePoints := shape.Points
+	cumulativeDistances := shape.CumulativeDistances
 	// Snap's ActiveTripTotalDistance takes precedence; only fall back to target's
 	// shape total when snap didn't provide one.
 	if status.TotalDistanceAlongTrip == 0 {
-		status.TotalDistanceAlongTrip = cumulativeDistances[len(cumulativeDistances)-1]
+		status.TotalDistanceAlongTrip = shape.TotalDistance
 	}
 
 	switch {
@@ -672,19 +687,7 @@ func (api *RestAPI) BuildTripSchedule(ctx context.Context, agencyID string, serv
 		return nil, err
 	}
 
-	shapeRows, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetShapePointsByTripID(ctx, trip.ID)
-	if err != nil {
-		slog.Warn(
-			"BuildTripSchedule: failed to get shape points",
-			slog.String("trip_id", trip.ID),
-			slog.String("error", err.Error()),
-		)
-	}
-
-	var shapePoints []gtfs.ShapePoint
-	if err == nil && len(shapeRows) > 0 {
-		shapePoints = shapeRowsToPoints(shapeRows)
-	}
+	shapePoints := api.tripShape(ctx, trip).Points
 
 	var nextTripID, previousTripID string
 	nextTripID, previousTripID, _, err = api.GetNextAndPreviousTripIDs(ctx, trip, agencyID, serviceDate)

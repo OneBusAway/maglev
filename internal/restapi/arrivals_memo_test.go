@@ -41,6 +41,8 @@ func TestArrivalsQueryBudget(t *testing.T) {
 		maxQueries int64
 	}{
 		{name: "for stop", endpoint: arrivalsForStopMemoURL(), maxQueries: 31},
+		// Many arrivals, so per-arrival reads show up in the count.
+		{name: "for stop wide window", endpoint: arrivalsForStopWideWindowURL(), maxQueries: 115},
 		{name: "for location", endpoint: arrivalsForLocationMemoURL(), maxQueries: 180},
 	}
 

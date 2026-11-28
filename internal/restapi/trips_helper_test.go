@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"log/slog"
 	"testing"
@@ -2246,12 +2245,9 @@ func TestBuildTripSchedule_ShapeLookupFailureLogsAndContinues(t *testing.T) {
 	loc, err := time.LoadLocation(agency.Timezone)
 	require.NoError(t, err)
 
-	originalQueries := api.GtfsManager.GtfsDB.Queries
-	t.Cleanup(func() { api.GtfsManager.GtfsDB.Queries = originalQueries })
-	api.GtfsManager.GtfsDB.Queries = gtfsdb.New(&shapeFetchFailureDB{
-		DBTX:     api.GtfsManager.GtfsDB.DB,
-		failWith: errors.New("forced shape lookup failure"),
-	})
+	// The schedule takes shapes from the manager's cache, which the counter
+	// empties, so the shape is read and the read fails.
+	swapInQueryCounter(t, api).failOn("GetShapePointsByIDs")
 
 	var logBuf bytes.Buffer
 	previousLogger := slog.Default()
@@ -2275,13 +2271,9 @@ func TestBuildTripSchedule_ShapeLookupFailureLogsAndContinues(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, schedule)
 
-	assert.Contains(
-		t,
-		logBuf.String(),
-		"BuildTripSchedule: failed to get shape points",
-	)
+	assert.Contains(t, logBuf.String(), "tripShape: failed to get shape points")
 	assert.Contains(t, logBuf.String(), tripRow.ID)
-	assert.Contains(t, logBuf.String(), "forced shape lookup failure")
+	assert.Contains(t, logBuf.String(), errInjectedQuery.Error())
 }
 
 func TestAbsorbSlack(t *testing.T) {

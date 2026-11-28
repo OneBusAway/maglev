@@ -112,3 +112,17 @@ func TestArrivalsForStopSurvivesShapeReadFailure(t *testing.T) {
 	assert.NotEmpty(t, arrivalsForStopFromBody(t, recorder.Body.Bytes()))
 	assert.Positive(t, counter.countOf("GetShapePointsByIDs"), "the shape read should have been attempted")
 }
+
+// TestArrivalsTripStatusReadsShapesFromCache checks that trip status takes the
+// arriving trip's shape from the manager's cache, the one block snapshots
+// fill, instead of reading it again per arrival.
+func TestArrivalsTripStatusReadsShapesFromCache(t *testing.T) {
+	api := createTestApiWithClock(t, clock.NewMockClock(arrivalsTestClock))
+	counter := swapInQueryCounter(t, api)
+	mux := http.NewServeMux()
+	api.SetRoutes(mux)
+
+	recorder := serveArrivals(t, mux, arrivalsForStopWideWindowURL())
+	require.NotEmpty(t, arrivalsForStopFromBody(t, recorder.Body.Bytes()))
+	assert.Zero(t, counter.countOf("GetShapePointsByTripID"))
+}
