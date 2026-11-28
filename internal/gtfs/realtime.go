@@ -60,10 +60,7 @@ type mergedRealtime struct {
 	alerts                   alertIndex
 	alertFeedsByAgency       map[string]agencyAlertFeed
 	tripUpdatesByAgency      map[string]AgencyTripUpdates
-	// alertsSince is the first snapshot's build time, the header time of an
-	// agency that has had no alerts since then.
-	alertsSince time.Time
-	builtAt     time.Time
+	builtAt                  time.Time
 }
 
 // emptyMergedRealtime is returned before the first publish so a zero-value
@@ -119,7 +116,6 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 		},
 		alertFeedsByAgency:  maps.Clone(m.alertFeedsByAgency),
 		tripUpdatesByAgency: maps.Clone(m.tripUpdatesByAgency),
-		alertsSince:         m.alertsSince,
 		builtAt:             m.builtAt,
 	}
 	if out.tripLookup == nil {
@@ -1443,10 +1439,6 @@ func (indices *vehicleIndices) indexDuplicatedVehicle(vehicle gtfs.Vehicle, trip
 func (manager *Manager) rebuildMergedRealtimeLocked() {
 	builtAt := time.Now()
 	previous := manager.mergedRealtime()
-	alertsSince := previous.alertsSince
-	if alertsSince.IsZero() {
-		alertsSince = builtAt
-	}
 	feedIDs := make([]string, 0, len(manager.feedTrips))
 	totalTrips := 0
 	for id, trips := range manager.feedTrips {
@@ -1560,8 +1552,7 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 		vehiclePositionsByAgency: manager.buildVehiclePositionsByAgency(vehicleFeedIDs, builtAt),
 		alerts:                   idx,
 		alertFeedsByAgency:       manager.buildAlertFeedsByAgency(alertFeedIDs, previous, builtAt),
-		tripUpdatesByAgency:      manager.buildTripUpdatesByAgency(feedIDs, builtAt),
-		alertsSince:              alertsSince,
+		tripUpdatesByAgency:      manager.buildTripUpdatesByAgency(feedIDs),
 		builtAt:                  builtAt,
 	})
 }

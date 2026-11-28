@@ -169,7 +169,7 @@ func TestTripUpdatesForAgencyHandler_UnknownAgency(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	feed := decodeFeed(t, body)
 	assert.Equal(t, "2.0", feed.GetHeader().GetGtfsRealtimeVersion())
-	assert.NotZero(t, feed.GetHeader().GetTimestamp())
+	assert.Nil(t, feed.GetHeader().Timestamp)
 	assert.Empty(t, feed.GetEntity())
 }
 

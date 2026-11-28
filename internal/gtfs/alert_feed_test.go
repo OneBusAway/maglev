@@ -289,9 +289,8 @@ func TestAlertFeedForAgency_ChangeTime(t *testing.T) {
 		assert.Equal(t, merged.builtAt, merged.alertFeedsByAgency["1"].changedAt)
 		assert.Empty(t, decodeAlertFeed(t, manager, "1").GetEntity())
 	})
-	t.Run("a never-seen agency is dated at the first snapshot, stable over rebuilds", func(t *testing.T) {
+	t.Run("a never-seen agency has no timestamp, stable over rebuilds", func(t *testing.T) {
 		manager := newManager()
-		firstBuild := manager.mergedRealtime().builtAt
 		before, err := manager.AlertFeedForAgency("nope")
 		require.NoError(t, err)
 		setFeedAlerts(manager, "f1", headedAlert("a", "edited"))
@@ -301,19 +300,18 @@ func TestAlertFeedForAgency_ChangeTime(t *testing.T) {
 		assert.Equal(t, before, after)
 		feed := decodeAlertFeed(t, manager, "nope")
 		assert.Empty(t, feed.GetEntity())
-		assert.Equal(t, uint64(firstBuild.Unix()), feed.GetHeader().GetTimestamp())
+		assert.Nil(t, feed.GetHeader().Timestamp)
 	})
-	t.Run("before any snapshot the timestamp is the current time", func(t *testing.T) {
-		before := time.Now().Unix()
+	t.Run("before any snapshot the timestamp is absent", func(t *testing.T) {
 		feed := decodeAlertFeed(t, newTestManager(), "1")
-		assert.GreaterOrEqual(t, int64(feed.GetHeader().GetTimestamp()), before)
+		assert.Nil(t, feed.GetHeader().Timestamp)
 	})
-	t.Run("clone keeps the alert feeds and their start time", func(t *testing.T) {
+	t.Run("clone keeps the alert feeds and snapshot time", func(t *testing.T) {
 		manager := newManager()
 		merged := manager.mergedRealtime()
 		cloned := merged.clone()
 		assert.Equal(t, merged.alertFeedsByAgency, cloned.alertFeedsByAgency)
-		assert.Equal(t, merged.alertsSince, cloned.alertsSince)
+		assert.Equal(t, merged.builtAt, cloned.builtAt)
 	})
 	t.Run("the same alerts give identical bytes in two managers", func(t *testing.T) {
 		first, second := newManager(), newManager()

@@ -98,8 +98,27 @@ func TestGtfsRealtimeExports_InvalidAgencyID(t *testing.T) {
 			t.Run(path+agencyID, func(t *testing.T) {
 				resp, _ := getRaw(t, api, exportURL(path, agencyID+".pb"), nil)
 				assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				assert.Equal(t, "no-cache, no-store, must-revalidate", resp.Header.Get("Cache-Control"))
+				assert.Empty(t, resp.Header.Get("ETag"))
 			})
 		}
+	}
+}
+
+func TestGtfsRealtimeExports_UnknownAgencyHasStableEmptyFeed(t *testing.T) {
+	api := newGtfsRealtimeExportsTestAPI(t)
+	for _, path := range gtfsRealtimeExportPaths {
+		t.Run(path, func(t *testing.T) {
+			url := exportURL(path, "nope.pb")
+			first, body := getRaw(t, api, url, nil)
+			second, _ := getRaw(t, api, url, nil)
+
+			require.Equal(t, http.StatusOK, first.StatusCode)
+			assert.Equal(t, first.Header.Get("ETag"), second.Header.Get("ETag"))
+			feed := decodeFeed(t, body)
+			assert.Empty(t, feed.GetEntity())
+			assert.Nil(t, feed.GetHeader().Timestamp)
+		})
 	}
 }
 
@@ -116,10 +135,19 @@ func TestGtfsRealtimeExports_GzipKeepsTheETag(t *testing.T) {
 			identity, _ := getRaw(t, api, url, http.Header{"Accept-Encoding": {"identity"}})
 			require.Equal(t, "gzip", compressed.Header.Get("Content-Encoding"))
 			assert.Equal(t, identity.Header.Get("ETag"), compressed.Header.Get("ETag"))
+			assert.Equal(t, "Accept-Encoding", compressed.Header.Get("Vary"))
+			assert.Equal(t, "Accept-Encoding", identity.Header.Get("Vary"))
+
+			unchanged, _ := getRaw(t, api, url, http.Header{"Accept-Encoding": {"identity"}})
+			assert.Equal(t, identity.Header.Get("ETag"), unchanged.Header.Get("ETag"))
 
 			gzipped.Set("If-None-Match", compressed.Header.Get("ETag"))
-			notModified, _ := getRaw(t, api, url, gzipped)
+			notModified, body := getRaw(t, api, url, gzipped)
 			assert.Equal(t, http.StatusNotModified, notModified.StatusCode)
+			assert.Empty(t, body)
+			assert.Equal(t, compressed.Header.Get("ETag"), notModified.Header.Get("ETag"))
+			assert.Equal(t, "public, max-age=30", notModified.Header.Get("Cache-Control"))
+			assert.Equal(t, "Accept-Encoding", notModified.Header.Get("Vary"))
 		})
 	}
 }

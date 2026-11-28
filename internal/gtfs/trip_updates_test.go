@@ -180,18 +180,27 @@ func TestTripUpdatesForAgency_Timestamps(t *testing.T) {
 		assert.True(t, newer.Equal(updates.Timestamp))
 	})
 
-	t.Run("an agency with no trip updates is dated at the snapshot", func(t *testing.T) {
+	t.Run("an agency with no trip updates has no timestamp", func(t *testing.T) {
 		manager := newTripUpdatesTestManager("feed")
 		setFeedTrips(manager, "feed", older, map[string]string{"T1": "A"}, tripOnRoute("T1", "R1"))
 
 		updates := manager.TripUpdatesForAgency("nope")
 		assert.Empty(t, updates.TripUpdates)
-		assert.True(t, manager.mergedRealtime().builtAt.Equal(updates.Timestamp))
+		assert.True(t, updates.Timestamp.IsZero())
 	})
 
-	t.Run("a server without realtime feeds dates it now", func(t *testing.T) {
-		before := time.Now()
+	t.Run("a server without realtime feeds has no timestamp", func(t *testing.T) {
 		updates := newTestManager().TripUpdatesForAgency("A")
+		assert.True(t, updates.Timestamp.IsZero())
+	})
+
+	t.Run("trip updates without a header time use the fetch time", func(t *testing.T) {
+		manager := newTripUpdatesTestManager("feed")
+		before := time.Now()
+		setFeedTrips(manager, "feed", time.Time{}, map[string]string{"T1": "A"}, tripOnRoute("T1", "R1"))
+
+		updates := manager.TripUpdatesForAgency("A")
+		require.Len(t, updates.TripUpdates, 1)
 		assert.False(t, updates.Timestamp.Before(before))
 	})
 }

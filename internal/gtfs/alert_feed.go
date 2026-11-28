@@ -25,21 +25,15 @@ type agencyAlertFeed struct {
 }
 
 // AlertFeedForAgency returns the current snapshot's serialized GTFS-RT
-// alerts feed for an agency. An agency with no alerts since the server
-// started gets a header-only feed dated at the first snapshot, so its bytes
-// stay the same across rebuilds. The bytes are shared with every other
+// alerts feed for an agency. An agency without an alert feed entry gets a
+// header-only feed without a timestamp. The bytes are shared with every other
 // reader and must not be modified.
 func (manager *Manager) AlertFeedForAgency(agencyID string) ([]byte, error) {
 	merged := manager.mergedRealtime()
 	if feed, ok := merged.alertFeedsByAgency[agencyID]; ok {
 		return feed.body, nil
 	}
-	since := merged.alertsSince
-	// No snapshot is built on a server without realtime feeds.
-	if since.IsZero() {
-		since = time.Now()
-	}
-	return encodeAlertFeed(nil, since)
+	return encodeAlertFeed(nil, time.Time{})
 }
 
 // buildAlertFeedsByAgency serializes every agency's alerts for the export.
@@ -165,9 +159,11 @@ func encodeAlertFeed(entities []*gtfsrt.FeedEntity, timestamp time.Time) ([]byte
 	feed := &gtfsrt.FeedMessage{
 		Header: &gtfsrt.FeedHeader{
 			GtfsRealtimeVersion: proto.String(GtfsRealtimeVersion),
-			Timestamp:           proto.Uint64(uint64(timestamp.Unix())),
 		},
 		Entity: entities,
+	}
+	if !timestamp.IsZero() {
+		feed.Header.Timestamp = proto.Uint64(uint64(timestamp.Unix()))
 	}
 	return proto.MarshalOptions{Deterministic: true}.Marshal(feed)
 }
