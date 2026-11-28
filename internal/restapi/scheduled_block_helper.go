@@ -503,6 +503,17 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 	// snapshot; the helper logs the cause.
 	stopByID, _ := api.fetchStopCoords(ctx, unionStopIDs)
 
+	type projectionEntry struct {
+		stopIDs   []string
+		distances []float64
+	}
+	// loadBlockShapes shares immutable slices for a block's trips. Include the
+	// slice length so a prefix of the same backing array remains distinct.
+	type shapeKey struct {
+		first  *gtfs.ShapePoint
+		length int
+	}
+	projectionsByShape := make(map[shapeKey][]projectionEntry)
 	var cumulativeBlockDist float64
 	var blockSeq int
 	for i, t := range trips {
@@ -510,7 +521,18 @@ func (api *RestAPI) emitBlockStops(ctx context.Context, trips []blockTripData) (
 		var tripStopDistances []float64
 		var tripLength float64
 		if len(t.shapePoints) >= 2 {
-			tripStopDistances = projectStopsInSequence(stopIDsByTrip[i], stopByID, t.shapePoints, t.cumDistances)
+			key := shapeKey{first: &t.shapePoints[0], length: len(t.shapePoints)}
+			stopIDs := stopIDsByTrip[i]
+			for _, entry := range projectionsByShape[key] {
+				if slices.Equal(entry.stopIDs, stopIDs) {
+					tripStopDistances = entry.distances
+					break
+				}
+			}
+			if tripStopDistances == nil {
+				tripStopDistances = projectStopsInSequence(stopIDs, stopByID, t.shapePoints, t.cumDistances)
+				projectionsByShape[key] = append(projectionsByShape[key], projectionEntry{stopIDs: stopIDs, distances: tripStopDistances})
+			}
 			tripLength = t.totalDist
 		} else {
 			// Shapeless trip (missing shape_id, unresolvable shape, or shape
@@ -971,46 +993,6 @@ func stopIDsOf(stopTimes []gtfsdb.StopTime) []string {
 	return stopIDs
 }
 
-// projectStopsInSequence returns each stop's distance-along-trip in metres,
-// projecting the stop's lat/lon onto the shape polyline. The publisher's
-// stop_times.shape_dist_traveled is deliberately ignored — Java's
-// StopTimeEntriesFactory.ensureStopTimesHaveShapeDistanceTraveledSet does
-// the same, overwriting the publisher value at load time with the projected
-// value from DistanceAlongShapeLibrary. Publisher-supplied values are often
-// wrong (bad units, corrupt data on some feeds), so both codebases treat
-// projection as authoritative.
-//
-// Our projection uses a monotonic cursor so loop routes (same lat/lon at
-// multiple shape segments) get distinct distances per occurrence; a naive
-// global-minimum search picks the same segment for both occurrences,
-// producing the catastrophic distanceFromStop outliers we saw on the Q
-// route. Java's DistanceAlongShapeLibrary uses a more sophisticated
-// UTM-based multi-assignment algorithm — matching Java's exact numbers
-// would require porting that library; our simpler projection produces
-// values within ~90-250m of Java's, which is acceptable drift for our use.
-func projectStopsInSequence(
-	stopIDs []string,
-	stopByID map[string]gtfsdb.Stop,
-	shapePoints []gtfs.ShapePoint,
-	cumulativeDistances []float64,
-) []float64 {
-	distances := make([]float64, len(stopIDs))
-	if len(shapePoints) < 2 || len(cumulativeDistances) != len(shapePoints) {
-		return distances
-	}
-
-	lastMatchedIndex := 0
-	for i, stopID := range stopIDs {
-		stop, ok := stopByID[stopID]
-		if !ok {
-			distances[i] = 0
-			continue
-		}
-		distances[i], lastMatchedIndex = projectStopGeometric(stop, shapePoints, cumulativeDistances, lastMatchedIndex)
-	}
-	return distances
-}
-
 // haversineStopDistances is the fallback used when a trip has no shape
 // polyline (missing shape_id, GetShapePointsByTripID error, or fewer than
 // two shape points). It accumulates the great-circle distance between
@@ -1044,53 +1026,6 @@ func haversineStopDistances(stopIDs []string, stopByID map[string]gtfsdb.Stop) (
 		prev, prevOK = curr, currOK
 	}
 	return distances, cumulative
-}
-
-// projectStopGeometric projects a stop's lat/lon onto the shape, scanning
-// forward from `cursor` to preserve monotonicity on loop routes. Returns
-// the projected distance and the updated cursor.
-func projectStopGeometric(stop gtfsdb.Stop, shapePoints []gtfs.ShapePoint, cumulativeDistances []float64, cursor int) (float64, int) {
-	const earlyExitThresholdMeters = 100.0
-	const goodMatchThreshold = 500.0
-
-	if cursor >= len(shapePoints)-1 {
-		cursor = len(shapePoints) - 2
-	}
-	minDistance := math.Inf(1)
-	closestSegmentIndex := cursor
-	var projectionRatio float64
-	for j := cursor; j < len(shapePoints)-1; j++ {
-		d, ratio := distanceToLineSegment(
-			stop.Lat, stop.Lon,
-			shapePoints[j].Latitude, shapePoints[j].Longitude,
-			shapePoints[j+1].Latitude, shapePoints[j+1].Longitude,
-		)
-		if d < minDistance {
-			minDistance = d
-			closestSegmentIndex = j
-			projectionRatio = ratio
-			cursor = j
-		} else if minDistance < goodMatchThreshold && d > minDistance+earlyExitThresholdMeters {
-			break
-		}
-	}
-	// Loop-route correctness: when the best match lands at the END of a
-	// segment (ratio ≈ 1.0), advance the cursor past that segment so the
-	// next stop doesn't snap back to it. Without this, a stop whose coords
-	// repeat earlier on the shape (figure-eight, lasso, Q-route loop) finds
-	// the same zero-distance match at the original segment and gets
-	// distance 0 instead of progressing along the loop.
-	if projectionRatio > 0.95 && cursor < len(shapePoints)-2 {
-		cursor++
-	}
-	var segmentLength float64
-	if closestSegmentIndex < len(shapePoints)-1 {
-		segmentLength = utils.Distance(
-			shapePoints[closestSegmentIndex].Latitude, shapePoints[closestSegmentIndex].Longitude,
-			shapePoints[closestSegmentIndex+1].Latitude, shapePoints[closestSegmentIndex+1].Longitude,
-		)
-	}
-	return interpolateDistance(cumulativeDistances, segmentLength, closestSegmentIndex, projectionRatio), cursor
 }
 
 // stopsAreMonotonic reports whether every stop's EffectiveStopSeconds is

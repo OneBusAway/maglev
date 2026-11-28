@@ -14,13 +14,13 @@
         "frequency": null,
         "serviceDate": 1749711600000,
         "situationIds": [],
-        "tripId": "25_4bcbf76b-9279-40b3-9168-6a488f6e9f80"
+        "tripId": "25_23059813-beb0-4301-855c-d2b63702eb9e"
       },
       {
         "frequency": null,
         "serviceDate": 1749711600000,
         "situationIds": [],
-        "tripId": "25_6b0a93e5-a9f8-4c61-9955-5fb3509788d9"
+        "tripId": "25_4bcbf76b-9279-40b3-9168-6a488f6e9f80"
       },
       {
         "frequency": null,
@@ -50,7 +50,7 @@
         "frequency": null,
         "serviceDate": 1749711600000,
         "situationIds": [],
-        "tripId": "25_t_404_b_18260_tn_0"
+        "tripId": "25_t_402_b_18260_tn_0"
       },
       {
         "frequency": null,
@@ -215,6 +215,19 @@
           "tripShortName": ""
         },
         {
+          "blockId": "25_44",
+          "directionId": "0",
+          "id": "25_23059813-beb0-4301-855c-d2b63702eb9e",
+          "peakOffpeak": 0,
+          "routeId": "25_44X",
+          "routeShortName": "",
+          "serviceId": "25_c_1658_b_18260_d_31",
+          "shapeId": "25_f170",
+          "timeZone": "",
+          "tripHeadsign": "",
+          "tripShortName": ""
+        },
+        {
           "blockId": "25_401",
           "directionId": "0",
           "id": "25_4bcbf76b-9279-40b3-9168-6a488f6e9f80",
@@ -223,19 +236,6 @@
           "routeShortName": "",
           "serviceId": "25_c_1658_b_18260_d_31",
           "shapeId": "25_b9yw",
-          "timeZone": "",
-          "tripHeadsign": "",
-          "tripShortName": ""
-        },
-        {
-          "blockId": "25_44",
-          "directionId": "0",
-          "id": "25_6b0a93e5-a9f8-4c61-9955-5fb3509788d9",
-          "peakOffpeak": 0,
-          "routeId": "25_44X",
-          "routeShortName": "",
-          "serviceId": "25_c_1658_b_18260_d_31",
-          "shapeId": "25_8e3f",
           "timeZone": "",
           "tripHeadsign": "",
           "tripShortName": ""
@@ -294,16 +294,16 @@
         },
         {
           "blockId": "25_299",
-          "directionId": "0",
-          "id": "25_t_404_b_18260_tn_0",
+          "directionId": "1",
+          "id": "25_t_402_b_18260_tn_0",
           "peakOffpeak": 0,
           "routeId": "25_161",
           "routeShortName": "",
           "serviceId": "25_c_1658_b_18260_d_31",
-          "shapeId": "25_p_2639",
+          "shapeId": "25_p_2671",
           "timeZone": "",
-          "tripHeadsign": "Burney",
-          "tripShortName": "Burney"
+          "tripHeadsign": "Redding",
+          "tripShortName": "Redding"
         },
         {
           "blockId": "25_14",
