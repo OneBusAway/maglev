@@ -174,7 +174,7 @@ All endpoints are registered in `internal/restapi/routes.go`:
 | `/api/where/trips-for-location.json` | `trips_for_location_handler.go` | Active trips near coordinates |
 | `/api/where/trip-for-vehicle/{id}` | `trip_for_vehicle_handler.go` | Trip for a vehicle |
 | `/api/where/vehicles-for-agency/{id}` | `vehicles_for_agency_handler.go` | Real-time vehicles |
-| `/api/where/block/{id}` | `block_handler.go` | Block configuration |
+| `/api/where/block/{id}` | `block_handler.go` | Block configuration (out of scope, #1176) |
 | `/api/where/shape/{id}` | `shapes_handler.go` | Polyline shape data |
 | `/api/where/schedule-for-stop/{id}` | `schedule_for_stop_handler.go` | Stop schedule |
 | `/api/where/schedule-for-route/{id}` | `schedule_for_route_handler.go` | Route schedule |
@@ -291,7 +291,7 @@ After modifying SQL queries or schema, run `make models` to regenerate the Go co
 - `GetArrivalsAndDeparturesForStop` - Arrivals/departures
 
 **Block Operations:**
-- `GetTripsByBlockID`, `GetBlockDetails` - Block trip sequences
+- `GetTripsByBlockID` - Block trip sequences
 - `GetTripsByBlockIDOrdered` - Trips ordered by departure time
 
 **Shape Data:**
@@ -624,7 +624,9 @@ Maglev supports JSON configuration files with IDE validation via `config.schema.
 
 **The [maglev.wiki](https://github.com/OneBusAway/maglev/wiki) spec is the source of truth for endpoint behavior**: request parameters, defaults, response fields and status codes. Each endpoint page describes the Java OneBusAway server's behavior, which Maglev matches unless the page's Implementation Decisions section records a deliberate difference.
 
-If an endpoint has no wiki page yet (for example `block` or the report-problem endpoints), follow the Java implementation, not openapi.yml, and flag it in the PR description.
+Only the endpoints listed on the [Maglev 1.0 Endpoint Scope](https://github.com/OneBusAway/maglev/wiki/Maglev-1.0-Endpoint-Scope) page are in scope. Don't implement or fix an endpoint that isn't listed there, even if Maglev still serves it (for example `block`, which #1176 tracks removing).
+
+If an in-scope endpoint has no wiki page yet (for example the report-problem endpoints), follow the Java implementation, not openapi.yml, and flag it in the PR description.
 
 The OpenAPI spec (`testdata/openapi.yml`, synced from [OneBusAway/sdk-config](https://github.com/OneBusAway/sdk-config/blob/main/stainless/openapi.yml)) comes second. It generates the client SDKs and has known errors. For example, it gives trips-for-route's `includeStatus` and `includeSchedule` a default of `false`, where Java and the wiki use `true`.
 
