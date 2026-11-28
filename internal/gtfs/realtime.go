@@ -21,13 +21,28 @@ import (
 	"maglev.onebusaway.org/internal/utils"
 )
 
-// alertIndex holds pre-built maps for O(1) alert lookups, keyed by trip, route, agency, and stop IDs.
-// It is rebuilt on every call to rebuildMergedRealtimeLocked under the existing write lock.
+// routeStopKey identifies a route+stop informed-entity pair.
+type routeStopKey struct {
+	routeID string
+	stopID  string
+}
+
+// tripStopKey identifies a trip+stop informed-entity pair.
+type tripStopKey struct {
+	tripID string
+	stopID string
+}
+
+// alertIndex holds pre-built maps for O(1) alert lookups, keyed by trip, route,
+// agency, stop, and the combined route+stop / trip+stop selectors. It is rebuilt
+// on every call to rebuildMergedRealtimeLocked under the existing write lock.
 type alertIndex struct {
-	byTrip   map[string][]FeedAlert
-	byRoute  map[string][]FeedAlert
-	byAgency map[string][]FeedAlert
-	byStop   map[string][]FeedAlert
+	byTrip      map[string][]FeedAlert
+	byRoute     map[string][]FeedAlert
+	byAgency    map[string][]FeedAlert
+	byStop      map[string][]FeedAlert
+	byRouteStop map[routeStopKey][]FeedAlert
+	byTripStop  map[tripStopKey][]FeedAlert
 	// all keeps every indexed alert, including two feeds that publish the same
 	// raw alert id. The by* maps collapse those by id on lookup.
 	all []FeedAlert
@@ -77,10 +92,12 @@ var emptyMergedRealtime = &mergedRealtime{
 	vehiclesByRoute:          map[string][]gtfs.Vehicle{},
 	vehiclePositionsByAgency: map[string]AgencyVehiclePositions{},
 	alerts: alertIndex{
-		byTrip:   map[string][]FeedAlert{},
-		byRoute:  map[string][]FeedAlert{},
-		byAgency: map[string][]FeedAlert{},
-		byStop:   map[string][]FeedAlert{},
+		byTrip:      map[string][]FeedAlert{},
+		byRoute:     map[string][]FeedAlert{},
+		byAgency:    map[string][]FeedAlert{},
+		byStop:      map[string][]FeedAlert{},
+		byRouteStop: map[routeStopKey][]FeedAlert{},
+		byTripStop:  map[tripStopKey][]FeedAlert{},
 	},
 	alertFeedsByAgency:  map[string]agencyAlertFeed{},
 	tripUpdatesByAgency: map[string]AgencyTripUpdates{},
@@ -111,11 +128,13 @@ func (m *mergedRealtime) clone() *mergedRealtime {
 		vehiclesByRoute:          maps.Clone(m.vehiclesByRoute),
 		vehiclePositionsByAgency: maps.Clone(m.vehiclePositionsByAgency),
 		alerts: alertIndex{
-			byTrip:   maps.Clone(m.alerts.byTrip),
-			byRoute:  maps.Clone(m.alerts.byRoute),
-			byAgency: maps.Clone(m.alerts.byAgency),
-			byStop:   maps.Clone(m.alerts.byStop),
-			all:      slices.Clone(m.alerts.all),
+			byTrip:      maps.Clone(m.alerts.byTrip),
+			byRoute:     maps.Clone(m.alerts.byRoute),
+			byAgency:    maps.Clone(m.alerts.byAgency),
+			byStop:      maps.Clone(m.alerts.byStop),
+			byRouteStop: maps.Clone(m.alerts.byRouteStop),
+			byTripStop:  maps.Clone(m.alerts.byTripStop),
+			all:         slices.Clone(m.alerts.all),
 		},
 		alertFeedsByAgency:  maps.Clone(m.alertFeedsByAgency),
 		tripUpdatesByAgency: maps.Clone(m.tripUpdatesByAgency),
@@ -457,6 +476,30 @@ func (manager *Manager) GetAlertsForStop(stopID, agencyID string) []FeedAlert {
 	if agencyID != "" {
 		src = slices.Concat(src, idx.byAgency[agencyID])
 	}
+	return dedupeFeedAlerts(src)
+}
+
+// GetAlertsForRouteStop returns alerts whose informed entity names both the
+// given route and stop (and no trip). Empty arguments or no matches return nil.
+func (manager *Manager) GetAlertsForRouteStop(routeID, stopID string) []FeedAlert {
+	if routeID == "" || stopID == "" {
+		return nil
+	}
+	return dedupeFeedAlerts(manager.mergedRealtime().alerts.byRouteStop[routeStopKey{routeID: routeID, stopID: stopID}])
+}
+
+// GetAlertsForTripStop returns alerts whose informed entity names both the
+// given trip and stop. Empty arguments or no matches return nil.
+func (manager *Manager) GetAlertsForTripStop(tripID, stopID string) []FeedAlert {
+	if tripID == "" || stopID == "" {
+		return nil
+	}
+	return dedupeFeedAlerts(manager.mergedRealtime().alerts.byTripStop[tripStopKey{tripID: tripID, stopID: stopID}])
+}
+
+// dedupeFeedAlerts returns src with each alert ID kept once, in first-seen
+// order. An empty input yields nil so callers can treat "no alerts" uniformly.
+func dedupeFeedAlerts(src []FeedAlert) []FeedAlert {
 	if len(src) == 0 {
 		return nil
 	}
@@ -1440,6 +1483,72 @@ func (indices *vehicleIndices) indexDuplicatedVehicle(vehicle gtfs.Vehicle, trip
 	}
 }
 
+// alertEntitySeen dedups one alert across its informed entities. The maps are
+// per alert, so the caller creates them and passes the same pointer for every
+// entity of that alert.
+type alertEntitySeen struct {
+	trip      map[string]bool
+	route     map[string]bool
+	agency    map[string]bool
+	stop      map[string]bool
+	routeStop map[routeStopKey]bool
+	tripStop  map[tripStopKey]bool
+}
+
+// indexAlertEntity files one informed entity into the alert index. A trip_id is
+// the only trip key arrivals look up. go-gtfs also keeps a Trip descriptor with
+// an empty ID when route, direction, and start time/date identify a trip;
+// Maglev does not resolve those, so they stay in byStop instead of byTripStop.
+func indexAlertEntity(idx *alertIndex, feedAlert FeedAlert, entity gtfs.AlertInformedEntity, seen *alertEntitySeen) {
+	hasTripID := entity.TripID != nil && entity.TripID.ID != ""
+	// Trip+stop is stop-specific for that trip: Java's AffectsTripKeyFactory
+	// skips combined selectors, and getServiceAlertsForStopCall resolves them
+	// via the trip+stop index instead.
+	if hasTripID && entity.StopID != nil {
+		key := tripStopKey{tripID: entity.TripID.ID, stopID: *entity.StopID}
+		if !seen.tripStop[key] {
+			seen.tripStop[key] = true
+			idx.byTripStop[key] = append(idx.byTripStop[key], feedAlert)
+		}
+	} else if entity.TripID != nil && entity.StopID == nil && !seen.trip[entity.TripID.ID] {
+		seen.trip[entity.TripID.ID] = true
+		idx.byTrip[entity.TripID.ID] = append(idx.byTrip[entity.TripID.ID], feedAlert)
+	}
+	// Route-wide only when there is no stop or trip restriction. Route+stop
+	// (no trip) goes to byRouteStop; Java's AffectsRouteKeyFactory skips it.
+	if entity.RouteID != nil && entity.StopID == nil && entity.TripID == nil && !seen.route[*entity.RouteID] {
+		seen.route[*entity.RouteID] = true
+		idx.byRoute[*entity.RouteID] = append(idx.byRoute[*entity.RouteID], feedAlert)
+	}
+	if entity.RouteID != nil && entity.StopID != nil && entity.TripID == nil {
+		key := routeStopKey{routeID: *entity.RouteID, stopID: *entity.StopID}
+		if !seen.routeStop[key] {
+			seen.routeStop[key] = true
+			idx.byRouteStop[key] = append(idx.byRouteStop[key], feedAlert)
+		}
+	}
+	// Agency-wide only: no route, trip, or stop. {agencyId+stopId} is
+	// stop-specific and filed in byStop, matching AffectsAgencyKeyFactory.
+	isAgencyWide := entity.AgencyID != nil &&
+		entity.RouteID == nil &&
+		entity.TripID == nil &&
+		entity.StopID == nil
+	if isAgencyWide && !seen.agency[*entity.AgencyID] {
+		seen.agency[*entity.AgencyID] = true
+		idx.byAgency[*entity.AgencyID] = append(idx.byAgency[*entity.AgencyID], feedAlert)
+	}
+	// Pure stop (and agency+stop): no route and no resolvable trip.
+	// A Trip descriptor with an empty trip_id still names the stop, so it
+	// stays in byStop instead of an unreadable byTripStop key.
+	unresolvedTrip := entity.TripID != nil && entity.TripID.ID == ""
+	isStopOnly := entity.StopID != nil &&
+		(unresolvedTrip || (entity.RouteID == nil && entity.TripID == nil))
+	if isStopOnly && !seen.stop[*entity.StopID] {
+		seen.stop[*entity.StopID] = true
+		idx.byStop[*entity.StopID] = append(idx.byStop[*entity.StopID], feedAlert)
+	}
+}
+
 func (manager *Manager) rebuildMergedRealtimeLocked() {
 	builtAt := time.Now()
 	previous := manager.mergedRealtime()
@@ -1495,10 +1604,12 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 	vehicleIndex := manager.buildVehicleIndices(vehicleFeedIDs, totalVehicles, tripLookup, allTrips)
 
 	idx := alertIndex{
-		byTrip:   make(map[string][]FeedAlert),
-		byRoute:  make(map[string][]FeedAlert),
-		byAgency: make(map[string][]FeedAlert),
-		byStop:   make(map[string][]FeedAlert),
+		byTrip:      make(map[string][]FeedAlert),
+		byRoute:     make(map[string][]FeedAlert),
+		byAgency:    make(map[string][]FeedAlert),
+		byStop:      make(map[string][]FeedAlert),
+		byRouteStop: make(map[routeStopKey][]FeedAlert),
+		byTripStop:  make(map[tripStopKey][]FeedAlert),
 	}
 	for _, id := range alertFeedIDs {
 		for _, alert := range manager.feedAlerts[id] {
@@ -1512,37 +1623,16 @@ func (manager *Manager) rebuildMergedRealtimeLocked() {
 			// referencing the same key (e.g. two entities both pointing to stop "S1").
 			// Capacity is set to the entity count so the map never needs to grow.
 			n := len(alert.InformedEntities)
-			seenTrip := make(map[string]bool, n)
-			seenRoute := make(map[string]bool, n)
-			seenAgency := make(map[string]bool, n)
-			seenStop := make(map[string]bool, n)
+			seen := &alertEntitySeen{
+				trip:      make(map[string]bool, n),
+				route:     make(map[string]bool, n),
+				agency:    make(map[string]bool, n),
+				stop:      make(map[string]bool, n),
+				routeStop: make(map[routeStopKey]bool, n),
+				tripStop:  make(map[tripStopKey]bool, n),
+			}
 			for _, entity := range alert.InformedEntities {
-				if entity.TripID != nil && !seenTrip[entity.TripID.ID] {
-					seenTrip[entity.TripID.ID] = true
-					idx.byTrip[entity.TripID.ID] = append(idx.byTrip[entity.TripID.ID], feedAlert)
-				}
-				// Only match route-level entities that have no stop or trip restriction.
-				// Entities with {routeId + stopId} are stop-specific alerts and are filed
-				// in byStop only (matching Java's inverted index bucket behaviour).
-				if entity.RouteID != nil && entity.StopID == nil && entity.TripID == nil && !seenRoute[*entity.RouteID] {
-					seenRoute[*entity.RouteID] = true
-					idx.byRoute[*entity.RouteID] = append(idx.byRoute[*entity.RouteID], feedAlert)
-				}
-				// Only match agency-wide alerts: entity has agencyId but no route, trip
-				// or stop restriction. Entities with {agencyId + stopId} are stop-specific
-				// and are filed in byStop only, matching Java's AffectsAgencyKeyFactory.
-				isAgencyWide := entity.AgencyID != nil &&
-					entity.RouteID == nil &&
-					entity.TripID == nil &&
-					entity.StopID == nil
-				if isAgencyWide && !seenAgency[*entity.AgencyID] {
-					seenAgency[*entity.AgencyID] = true
-					idx.byAgency[*entity.AgencyID] = append(idx.byAgency[*entity.AgencyID], feedAlert)
-				}
-				if entity.StopID != nil && !seenStop[*entity.StopID] {
-					seenStop[*entity.StopID] = true
-					idx.byStop[*entity.StopID] = append(idx.byStop[*entity.StopID], feedAlert)
-				}
+				indexAlertEntity(&idx, feedAlert, entity, seen)
 			}
 		}
 	}

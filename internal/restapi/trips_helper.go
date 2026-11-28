@@ -1191,6 +1191,20 @@ func distanceToLineSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio floa
 	return d, r
 }
 
+// appendStopScopedSituationRefs adds route+stop and trip+stop alerts for the
+// arrival's stop onto the trip-scoped base refs. base may be nil. Empty stopCode
+// leaves base unchanged. Index keys are bare GTFS IDs, not FormCombinedID.
+func (api *RestAPI) appendStopScopedSituationRefs(base []situationRef, tripID, routeID, stopCode string) []situationRef {
+	if stopCode == "" {
+		return base
+	}
+	firstAgency := api.GtfsManager.FirstStaticAgencyID()
+	merged := append([]situationRef(nil), base...)
+	merged = append(merged, situationRefsFromAlerts(api.GtfsManager.GetAlertsForRouteStop(routeID, stopCode), firstAgency)...)
+	merged = append(merged, situationRefsFromAlerts(api.GtfsManager.GetAlertsForTripStop(tripID, stopCode), firstAgency)...)
+	return dedupeSituationRefs(merged)
+}
+
 // situationRefsForTrip resolves the alerts affecting a trip and pairs each with
 // the situation ID that refers to it, so a caller needing both the entry IDs and
 // the situation references gets them from one lookup.
