@@ -571,3 +571,21 @@ func TestScheduleForRouteKeepsStopsOfTripsWithoutDirection(t *testing.T) {
 	assert.Contains(t, noDirection, "25_1504")
 	assert.NotContains(t, direction0, "25_1504")
 }
+
+func TestScheduleForRouteTripReferencesLeaveRouteShortNameEmpty(t *testing.T) {
+	api := newScheduleForRouteAPI(t)
+
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL("25_161", "2025-06-12"))
+
+	assertScheduleOK(t, resp, model)
+	require.NotEmpty(t, model.Data.References.Trips)
+
+	hasTripShortName := false
+	for _, trip := range model.Data.References.Trips {
+		assert.Equal(t, "", trip.RouteShortName, "trip %s should not copy trip_short_name into routeShortName", trip.ID)
+		if trip.TripShortName != "" {
+			hasTripShortName = true
+		}
+	}
+	assert.True(t, hasTripShortName, "expected RABA route 161 trips to have tripShortName set")
+}

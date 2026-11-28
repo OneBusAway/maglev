@@ -1010,3 +1010,17 @@ func TestTripSpanCovers(t *testing.T) {
 		})
 	}
 }
+
+func TestTripDetailsTripReferencesLeaveRouteShortNameEmpty(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	resp, model := callAPIHandler[TripDetailsResponse](t, api,
+		"/api/where/trip-details/25_84f4520e-88b6-4ee6-8975-856799bc1359.json?key=TEST&time=1749740400000")
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.References.Trips)
+	for _, trip := range model.Data.References.Trips {
+		assert.Equal(t, "", trip.RouteShortName, "trip %s should not copy route short_name into routeShortName", trip.ID)
+	}
+}
