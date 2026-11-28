@@ -137,6 +137,23 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	var servesRouteType map[string]bool
+	if len(routeTypes) > 0 && query == "" {
+		activeRoutesByStop := make(map[string]map[string]bool, len(stopRouteIDs))
+		for stopID, rids := range stopRouteIDs {
+			m := make(map[string]bool, len(rids))
+			for _, r := range rids {
+				m[utils.FormCombinedID(r.agencyID, r.routeID)] = true
+			}
+			activeRoutesByStop[stopID] = m
+		}
+		servesRouteType, err = api.stopsServingRouteTypes(ctx, stopIDs, routeTypes, activeRoutesByStop)
+		if err != nil {
+			api.serverErrorResponse(w, r, err)
+			return
+		}
+	}
+
 	// Batch query to get agencies for all stops
 	agenciesForStops, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, stopIDs)
 	if err != nil {
@@ -170,6 +187,9 @@ func (api *RestAPI) stopsForLocationHandler(w http.ResponseWriter, r *http.Reque
 
 		// A stop-code lookup still resolves the stop when nothing is scheduled that day.
 		if agency == nil || (len(rids) == 0 && query == "") {
+			continue
+		}
+		if servesRouteType != nil && !servesRouteType[stopID] {
 			continue
 		}
 
@@ -321,7 +341,7 @@ func (api *RestAPI) queryTimeForStops(ctx context.Context, timeParam string, age
 
 // routeIDsByStop maps each stop to the routes serving it. Stop-code queries report every
 // route serving the stop, matching legacy; geospatial searches report only the routes
-// active on the queried date.
+// active within the service interval on the queried date.
 func (api *RestAPI) routeIDsByStop(
 	ctx context.Context,
 	stopIDs []string,
@@ -349,14 +369,15 @@ func (api *RestAPI) routeIDsByStop(
 		return byStop, nil
 	}
 
-	rows, err := api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsOnDate(ctx, gtfsdb.GetActiveRouteIDsForStopsOnDateParams{
-		StopIds:    stopIDs,
-		ServiceIds: activeServiceIDs,
+	rows, err := api.GtfsManager.GtfsDB.Queries.GetActiveRouteIDsForStopsInInterval(ctx, gtfsdb.GetActiveRouteIDsForStopsInIntervalParams{
+		IntervalEnd: int64(defaultServiceIntervalEnd),
+		StopIds:     stopIDs,
+		ServiceIds:  activeServiceIDs,
 	})
 	if err != nil {
 		return nil, err
 	}
-	utils.SortActiveRouteIDsForStopsRowsByName(rows)
+	utils.SortActiveRouteIDsForStopsInIntervalRowsByName(rows)
 	for _, row := range rows {
 		collect(row.StopID, row.AgencyID, row.RouteID)
 	}

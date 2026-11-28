@@ -1014,3 +1014,111 @@ func TestStopsForLocation_AgencyWithUnderscore(t *testing.T) {
 	assert.Equal(t, "AGENCY_ONE_ROUTE_100", model.Data.References.Routes[0].ID)
 	assert.Equal(t, "AGENCY_ONE", model.Data.References.Routes[0].AgencyID)
 }
+
+// TestStopsForLocationServiceInterval verifies that the stops-for-location endpoint
+// filters stops using the service interval (00:00–24:00), matching the nearby-stops
+// behaviour already tested for arrivals-and-departures.
+//
+// Feed layout (from nearbyIntervalFiles):
+//
+//	s-found  – the anchor stop visited at 10:00 (bus, inside the bounds)
+//	s-2300   – visited at 23:00 by bus  → within interval → returned
+//	s-2400   – visited at 24:00 by bus  → within interval → returned
+//	s-2500   – visited at 25:00 by bus only → outside interval → dropped (geospatial)
+//	s-mixed  – visited at 25:00 AND 10:00 by bus → has in-interval visit → returned
+//	s-split  – visited at 25:00 by bus, 10:00 by tram → bus outside interval, tram inside
+//	           → with routeType=3 (bus) it is dropped; without routeType it appears
+//
+// All stops sit within a small radius around s-found (37.7749, -122.4194) with a
+// wide-enough search radius; the clock is nearbyIntervalClock (Mon noon UTC).
+func TestStopsForLocationServiceInterval(t *testing.T) {
+	files := nearbyIntervalFiles()
+	// stops.txt in nearbyIntervalFiles does not define stop_code; add stop_code matching stop_id
+	// so stop-code queries (query != "") can look up candidates by code.
+	files["stops.txt"] = "stop_id,stop_code,stop_name,stop_lat,stop_lon\n" +
+		"s-found,s-found,Found,37.7749,-122.4194\n" +
+		"s-2300,s-2300,Visited 23:00,37.7752,-122.4194\n" +
+		"s-2400,s-2400,Visited 24:00,37.7753,-122.4194\n" +
+		"s-2500,s-2500,Visited 25:00 only,37.7754,-122.4194\n" +
+		"s-mixed,s-mixed,Visited 25:00 and 10:00,37.7755,-122.4194\n" +
+		"s-split,s-split,Bus 25:00 and tram 10:00,37.7756,-122.4194\n" +
+		"s-far,s-far,Terminal,37.8749,-122.4194\n"
+
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(nearbyIntervalClock), "nearby-interval-sfl.zip", files)
+
+	const (
+		lat    = "37.7749"
+		lon    = "-122.4194"
+		radius = "1000"
+	)
+	baseURL := "/api/where/stops-for-location.json?key=TEST&lat=" + lat + "&lon=" + lon + "&radius=" + radius
+
+	tests := []struct {
+		name        string
+		extraParams string
+		wantIDs     []string            // combined stop IDs that must be present
+		dontWantIDs []string            // combined stop IDs that must be absent
+		wantRoutes  map[string][]string // optional: expected route IDs for specific stops
+	}{
+		{
+			name:       "stop visited at 23:00 is within interval and included",
+			wantIDs:    []string{nearbyIntervalAgencyID + "_s-2300"},
+			wantRoutes: map[string][]string{nearbyIntervalAgencyID + "_s-2300": {nearbyIntervalAgencyID + "_bus"}},
+		},
+		{
+			name:       "stop visited at 24:00 is within interval and included",
+			wantIDs:    []string{nearbyIntervalAgencyID + "_s-2400"},
+			wantRoutes: map[string][]string{nearbyIntervalAgencyID + "_s-2400": {nearbyIntervalAgencyID + "_bus"}},
+		},
+		{
+			name:        "stop visited only at 25:00 is outside interval and dropped",
+			dontWantIDs: []string{nearbyIntervalAgencyID + "_s-2500"},
+		},
+		{
+			name:        "routeType=3 drops s-split whose only bus visit is at 25:00",
+			extraParams: "&routeType=3",
+			wantIDs:     []string{nearbyIntervalAgencyID + "_s-2400"},
+			dontWantIDs: []string{nearbyIntervalAgencyID + "_s-split"},
+			wantRoutes: map[string][]string{
+				nearbyIntervalAgencyID + "_s-2400": {nearbyIntervalAgencyID + "_bus"},
+			},
+		},
+		{
+			name:        "stop-code query bypasses interval filter and keeps all routes",
+			extraParams: "&query=s-split",
+			wantIDs:     []string{nearbyIntervalAgencyID + "_s-split"},
+			wantRoutes: map[string][]string{
+				nearbyIntervalAgencyID + "_s-split": {nearbyIntervalAgencyID + "_bus", nearbyIntervalAgencyID + "_tram"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[StopsResponse](t, api, baseURL+tt.extraParams)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			gotIDs := make([]string, 0, len(model.Data.List))
+			for _, stop := range model.Data.List {
+				gotIDs = append(gotIDs, stop.ID)
+			}
+
+			for _, want := range tt.wantIDs {
+				assert.Contains(t, gotIDs, want, "expected stop %q to be present", want)
+			}
+			for _, noWant := range tt.dontWantIDs {
+				assert.NotContains(t, gotIDs, noWant, "expected stop %q to be absent", noWant)
+			}
+
+			if tt.wantRoutes != nil {
+				for stopID, expectedRoutes := range tt.wantRoutes {
+					for _, stop := range model.Data.List {
+						if stop.ID == stopID {
+							assert.ElementsMatch(t, expectedRoutes, stop.RouteIDs, "routes for stop %q", stopID)
+						}
+					}
+				}
+			}
+		})
+	}
+}
