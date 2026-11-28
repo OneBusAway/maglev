@@ -1192,3 +1192,56 @@ func TestScheduleForStopHandlerWithFrequency(t *testing.T) {
 		}
 	})
 }
+
+func TestScheduleForStopDirectionGroupOrderDeterministic(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+
+	ctx := context.Background()
+	tiedRoutes := map[string]bool{
+		"25_151": true,
+		"25_153": true,
+		"25_154": true,
+	}
+
+	for i := range 20 {
+		resp, body := callAPIHandler[map[string]any](t, api, "/api/where/schedule-for-stop/25_2000.json?key=org.onebusaway.iphone&date=2025-06-12")
+		require.Equal(t, http.StatusOK, resp.StatusCode, "iteration %d", i)
+
+		data := body["data"].(map[string]any)
+		entry := data["entry"].(map[string]any)
+		routeSchedules := entry["stopRouteSchedules"].([]any)
+
+		seenRoutes := 0
+		for _, rsAny := range routeSchedules {
+			rs := rsAny.(map[string]any)
+			routeID := rs["routeId"].(string)
+			if !tiedRoutes[routeID] {
+				continue
+			}
+			seenRoutes++
+
+			dirSchedules := rs["stopRouteDirectionSchedules"].([]any)
+			require.Len(t, dirSchedules, 2, "route %s at stop 2000 should have 2 direction groups", routeID)
+
+			var gotDirections []int64
+			for _, dsAny := range dirSchedules {
+				ds := dsAny.(map[string]any)
+				stopTimes := ds["scheduleStopTimes"].([]any)
+				require.NotEmpty(t, stopTimes)
+
+				combinedTripID := stopTimes[0].(map[string]any)["tripId"].(string)
+				_, tripID, err := utils.ExtractAgencyIDAndCodeID(combinedTripID)
+				require.NoError(t, err)
+
+				trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+				require.NoError(t, err)
+				require.True(t, trip.DirectionID.Valid)
+				gotDirections = append(gotDirections, trip.DirectionID.Int64)
+			}
+
+			assert.Equal(t, []int64{0, 1}, gotDirections, "iteration %d route %s: direction 0 must precede direction 1 when headsigns tie", i, routeID)
+		}
+		require.Equal(t, len(tiedRoutes), seenRoutes)
+	}
+}
