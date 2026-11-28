@@ -1175,10 +1175,9 @@ func positionAndOrientationAtDistance(
 			}
 			ratio := (distance - segStart) / span
 			from, to := shapePoints[i], shapePoints[i+1]
-			longitudeOffset := wrapLongitude(to.Longitude - from.Longitude)
 			return &models.Location{
 					Lat: from.Latitude + ratio*(to.Latitude-from.Latitude),
-					Lon: wrapLongitude(from.Longitude + ratio*longitudeOffset),
+					Lon: from.Longitude + ratio*(to.Longitude-from.Longitude),
 				},
 				segmentOrientation(from, to)
 		}

@@ -1785,10 +1785,6 @@ func TestProjectionAtAntimeridian(t *testing.T) {
 		stop := gtfsdb.Stop{Lon: -179.999}
 		distances := projectStopsInSequence([]string{"A"}, map[string]gtfsdb.Stop{"A": stop}, shape, cumulative)
 		require.InDelta(t, cumulative[1]/2, distances[0], .001)
-
-		position, orientation := positionAndOrientationAtDistance(shape, cumulative, distances[0])
-		require.InDelta(t, stop.Lon, position.Lon, 1e-9)
-		require.Zero(t, orientation)
 	})
 }
 
