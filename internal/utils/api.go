@@ -447,16 +447,6 @@ func ParseServiceDate(date string, loc *time.Location) (servicedate.Date, error)
 	return servicedate.Date{}, errors.New("invalid date format, use YYYY-MM-DD or a Unix millisecond integer")
 }
 
-// ParseDate parses date strings in YYYY-MM-DD format or as a Unix millisecond integer.
-// It returns a time.Time set to midnight (start of day) in the provided location.
-func ParseDate(date string, loc *time.Location) (time.Time, error) {
-	sd, err := ParseServiceDate(date, loc)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return sd.Midnight(loc), nil
-}
-
 // ParseRequiredStringParam retrieves a required string parameter.
 // Returns the value and a populated error map if missing.
 func ParseRequiredStringParam(params url.Values, key string, fieldErrors map[string][]string) (string, map[string][]string) {
