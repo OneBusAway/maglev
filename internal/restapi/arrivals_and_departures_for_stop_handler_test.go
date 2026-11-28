@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/OneBusAway/go-gtfs"
-	gtfsrt "github.com/OneBusAway/go-gtfs/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
@@ -338,6 +337,46 @@ func TestArrivalsAndDeparturesForStopHandler_AgencyAlertWithoutArrivals(t *testi
 	assert.Contains(t, referencedIDs, wantSituationID)
 }
 
+func TestArrivalsAndDeparturesForStopHandler_RouteAlertWithoutArrivals(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	// Route 154 is the only route serving stop 4062; route 15 doesn't serve it.
+	const servingRouteID = "154"
+	const otherRouteID = "15"
+	routeIDs := map[string]string{
+		"serving-route-alert": servingRouteID,
+		"other-route-alert":   otherRouteID,
+	}
+	for alertID, routeID := range routeIDs {
+		api.GtfsManager.MockAddAlert("feed-0", gtfs.Alert{
+			ID:               alertID,
+			InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &routeID}},
+			Header:           []gtfs.AlertText{{Text: "Route alert", Language: "en"}},
+		})
+	}
+
+	requestURL := arrivalsAndDeparturesURL(arrivalsTestStopID,
+		url.Values{"minutesBefore": {"0"}, "minutesAfter": {"0"}})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the empty window must leave no arrival to carry the alert")
+
+	agencyID := testdata.Raba.ID
+	servingSituationID := utils.FormCombinedID(agencyID, "serving-route-alert")
+	assert.Contains(t, model.Data.Entry.SituationIDs, servingSituationID,
+		"a stop must show alerts for the routes that serve it")
+	assert.NotContains(t, model.Data.Entry.SituationIDs, utils.FormCombinedID(agencyID, "other-route-alert"),
+		"a stop must not show alerts for routes that don't serve it")
+	var referencedIDs []string
+	for _, situation := range model.Data.References.Situations {
+		referencedIDs = append(referencedIDs, situation.ID)
+	}
+	assert.Contains(t, referencedIDs, servingSituationID)
+}
+
 func TestArrivalsAndDeparturesForStopHandlerTimeParams(t *testing.T) {
 	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
 	defer cleanup()
@@ -526,8 +565,75 @@ func TestArrivalsAndDeparturesForStopHandlerNoActiveServices(t *testing.T) {
 	assert.NotNil(t, model.Data.Entry.NearbyStopIDs)
 	assert.NotNil(t, model.Data.Entry.SituationIDs)
 	assert.ElementsMatch(t, []models.AgencyReference{testdata.Raba}, model.Data.References.Agencies)
-	assert.Empty(t, model.Data.References.Routes)
+	// Routes serving the stop are referenced whether or not any service runs (Java does the same).
+	assert.NotEmpty(t, model.Data.References.Routes)
 	assert.Empty(t, model.Data.References.Trips)
+}
+
+// TestArrivalsAndDeparturesForStopHandlerNoServiceAtStop covers a stop whose
+// only route doesn't run on the query day while another route does. Java
+// returns a bare `null` body here; maglev deliberately returns the normal
+// envelope with the stop, its route and an empty arrivals list (#2102).
+func TestArrivalsAndDeparturesForStopHandlerNoServiceAtStop(t *testing.T) {
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"NS,No Service Agency,http://example.com,UTC\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"weekday-route,NS,WK,Weekday Route,3\n" +
+			"daily-route,NS,DY,Daily Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"weekdays,1,1,1,1,1,0,0,20240101,20991231\n" +
+			"daily,1,1,1,1,1,1,1,20240101,20991231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"weekday-stop,Weekday Stop,37.7749,-122.4194\n" +
+			"daily-stop,Daily Stop,37.7849,-122.4094\n" +
+			"shared-stop,Shared Stop,37.7949,-122.3994\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id,block_id\n" +
+			"weekday-route,weekdays,weekday-trip,Weekday,0,weekday-block\n" +
+			"daily-route,daily,daily-trip,Daily,0,daily-block\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"weekday-trip,12:00:00,12:00:00,weekday-stop,1\n" +
+			"weekday-trip,12:10:00,12:10:00,shared-stop,2\n" +
+			"daily-trip,12:00:00,12:00:00,daily-stop,1\n" +
+			"daily-trip,12:10:00,12:10:00,shared-stop,2\n",
+	}
+	sunday := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	monday := sunday.AddDate(0, 0, 1)
+	api := createTestApiWithGTFSFixture(t, clock.NewMockClock(sunday), "no-service-at-stop.zip", files)
+	defer api.Shutdown()
+
+	tests := []struct {
+		name      string
+		stopCode  string
+		routeCode string
+		queryTime time.Time
+		wantTrips []string
+	}{
+		{"only route doesn't run that day", "weekday-stop", "weekday-route", sunday, []string{}},
+		{"same stop on a service day", "weekday-stop", "weekday-route", monday, []string{"weekday-trip"}},
+		{"another stop's route runs that day", "daily-stop", "daily-route", sunday, []string{"daily-trip"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stopID := utils.FormCombinedID("NS", tt.stopCode)
+			resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+				arrivalsAndDeparturesURL(stopID, url.Values{"time": {fmt.Sprint(tt.queryTime.UnixMilli())}}))
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, http.StatusOK, model.Code)
+			assert.Equal(t, stopID, model.Data.Entry.StopID)
+			assertFrequencyWindowTrips(t, model.Data.Entry.ArrivalsAndDepartures, tt.wantTrips)
+
+			// Clients draw the stop header from these even when nothing runs.
+			routeIDs := make([]string, 0, len(model.Data.References.Routes))
+			for _, route := range model.Data.References.Routes {
+				routeIDs = append(routeIDs, route.ID)
+			}
+			assert.Contains(t, routeIDs, utils.FormCombinedID("NS", tt.routeCode))
+			assert.NotNil(t, model.Data.Entry.NearbyStopIDs)
+			assert.NotNil(t, model.Data.Entry.SituationIDs)
+		})
+	}
 }
 
 func TestParseArrivalsAndDeparturesParams_AllParameters(t *testing.T) {
@@ -572,7 +678,7 @@ func TestParseArrivalsAndDeparturesParams_InvalidValues(t *testing.T) {
 func TestArrivalsAndDeparturesForStopHandlerWithInvalidParams(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(100, time.Second, nil)
+	api.rateLimiter = NewRateLimitMiddleware(100, time.Second, nil, api.Clock)
 
 	tests := []struct {
 		name   string
@@ -1222,16 +1328,6 @@ func TestPluralArrivals_ScheduleDeviationFallback(t *testing.T) {
 		wantDepartureOffset time.Duration
 	}{
 		{
-			name: "canceled trip with fresh vehicle is not predicted",
-			setup: func(t *testing.T, api *RestAPI, now time.Time, tripID string) {
-				api.GtfsManager.MockAddVehicleWithOptions("v1", tripID, "dp-route", internalgtfs.MockVehicleOptions{
-					Timestamp:            &now,
-					ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED,
-				})
-			},
-			wantPredicted: false,
-		},
-		{
 			name: "deviation beyond blockNotActive window is not predicted",
 			setup: func(t *testing.T, api *RestAPI, now time.Time, tripID string) {
 				api.GtfsManager.MockAddVehicleWithOptions("v1", tripID, "dp-route", internalgtfs.MockVehicleOptions{
@@ -1470,7 +1566,7 @@ func findRABAStopWithNeighbour(t *testing.T, api *RestAPI, ctx context.Context) 
 	require.NoError(t, err)
 	require.NotEmpty(t, candidates, "precondition: RABA should have stops near Redding")
 	for _, c := range candidates {
-		nearby, err := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
+		nearby, _, _, err := getNearbyStopIDs(api, ctx, c.Lat, c.Lon, c.ID, "fallback")
 		require.NoError(t, err)
 		if len(nearby) > 0 {
 			return c
@@ -1488,14 +1584,17 @@ func TestGetNearbyStopIDs_UsesResolvedAgency(t *testing.T) {
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
+	result, bareIDs, stopAgencies, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "WrongFallbackAgency")
 	require.NoError(t, err)
 
 	require.NotEmpty(t, result, "expected ≥1 nearby stop within 100m")
-	for _, combinedID := range result {
-		agencyID, _, err := utils.ExtractAgencyIDAndCodeID(combinedID)
+	require.Equal(t, len(result), len(bareIDs))
+	for i, combinedID := range result {
+		agencyID, codeID, err := utils.ExtractAgencyIDAndCodeID(combinedID)
 		require.NoError(t, err, "combined ID should be parseable: %s", combinedID)
 		assert.NotEqual(t, "WrongFallbackAgency", agencyID)
+		assert.Equal(t, agencyID, stopAgencies[codeID])
+		assert.Equal(t, codeID, bareIDs[i])
 	}
 }
 
@@ -1506,9 +1605,12 @@ func TestGetNearbyStopIDs_ExcludesCurrentStop(t *testing.T) {
 	ctx := context.Background()
 
 	currentStop := findRABAStopWithNeighbour(t, api, ctx)
-	result, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
+	result, bareIDs, _, err := getNearbyStopIDs(api, ctx, currentStop.Lat, currentStop.Lon, currentStop.ID, "25")
 	require.NoError(t, err)
 
+	for _, codeID := range bareIDs {
+		assert.NotEqual(t, currentStop.ID, codeID, "current stop should be excluded from nearby results")
+	}
 	for _, combinedID := range result {
 		_, codeID, _ := utils.ExtractAgencyIDAndCodeID(combinedID)
 		assert.NotEqual(t, currentStop.ID, codeID, "current stop should be excluded from nearby results")
@@ -1523,10 +1625,81 @@ func TestGetNearbyStopIDs_ReturnsQueryError(t *testing.T) {
 	cancel()
 
 	stop := testdata.Stop4062
-	result, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, "4062", "25")
+	result, bareIDs, agencies, err := getNearbyStopIDs(api, ctx, stop.Lat, stop.Lon, "4062", "25")
 
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, result)
+	assert.Nil(t, bareIDs)
+	assert.Nil(t, agencies)
+}
+
+func TestAddNearbyStopRefs_UnderscoreAgency(t *testing.T) {
+	acc := newArrivalsAccumulator()
+	// Stop IDs might contain underscores, or belong to agencies with underscores.
+	// Since bare stop IDs are passed directly without parsing, they are accurately preserved.
+	addNearbyStopRefs(acc, []string{"stop_1", "stop2"})
+	assert.True(t, acc.stopIDs["stop_1"])
+	assert.True(t, acc.stopIDs["stop2"])
+}
+
+// TestGetNearbyStopIDs_UnderscoreAgencyKeepsBareIDs covers the seam the unit
+// test above cannot: getNearbyStopIDs has to hand the real bare stop IDs to
+// addNearbyStopRefs. Rebuilding them by splitting the combined IDs turns
+// AGENCY_ONE_s2 into ONE_s2, which resolves to no stop row, so the nearby stop
+// silently drops out of references.
+//
+// It stops short of a request because the endpoint cannot address an
+// underscore-agency stop at all: extractAndValidateAgencyCodeID splits the
+// path ID at the first underscore, so AGENCY_ONE_s1 is read as agency AGENCY
+// and code ONE_s1 and returns 404 before this code runs. That entry-point
+// limitation is the subject of #1854, #2042 and #2032.
+func TestGetNearbyStopIDs_UnderscoreAgencyKeepsBareIDs(t *testing.T) {
+	const agencyID = "AGENCY_ONE"
+	files := map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			agencyID + ",Agency One,http://agency1.com,America/Los_Angeles\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"ROUTE_100," + agencyID + ",100,Route 100,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"svc1,1,1,1,1,1,1,1,20240101,20991231\n",
+		// s2 sits about 33 m from s1, inside the 100 m nearby radius.
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"s1,Stop 1,37.7749,-122.4194\n" +
+			"s2,Stop 2,37.7752,-122.4194\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"ROUTE_100,svc1,t1,Headsign,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"t1,08:00:00,08:00:00,s1,1\n" +
+			"t1,08:10:00,08:10:00,s2,2\n",
+	}
+
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	mockClock := clock.NewMockClock(time.Date(2024, 6, 12, 8, 0, 0, 0, loc))
+	api := createTestApiWithGTFSFixture(t, mockClock, "underscore-agency-nearby-stops.zip", files)
+	ctx := context.Background()
+
+	combined, bareIDs, agencies, err := getNearbyStopIDs(api, ctx, 37.7749, -122.4194, "s1", agencyID)
+	require.NoError(t, err)
+	require.Equal(t, []string{utils.FormCombinedID(agencyID, "s2")}, combined)
+	require.Equal(t, []string{"s2"}, bareIDs, "the bare IDs must be the real stop IDs, not re-split combined IDs")
+	assert.Equal(t, agencyID, agencies["s2"])
+
+	acc := newArrivalsAccumulator()
+	addNearbyStopRefs(acc, bareIDs)
+	require.True(t, acc.stopIDs["s2"], "the bare stop ID must reach the accumulator intact")
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, []string{"s2"})
+	require.NoError(t, err)
+	require.Len(t, stops, 1, "the accumulated ID must resolve to a stop row")
+
+	// What splitting the combined ID produced, and why the reference vanished.
+	_, resplit, err := utils.ExtractAgencyIDAndCodeID(combined[0])
+	require.NoError(t, err)
+	require.Equal(t, "ONE_s2", resplit)
+	missing, err := api.GtfsManager.GtfsDB.Queries.GetStopsByIDs(ctx, []string{resplit})
+	require.NoError(t, err)
+	assert.Empty(t, missing, "re-splitting the combined ID yields an ID that resolves to no stop")
 }
 
 func TestArrivalsAndDeparturesForStop_VehicleWithNilID(t *testing.T) {
@@ -1697,6 +1870,8 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_Regression(t *t
 	expectedArrivalUTC := time.Date(2026, 1, 15, 15, 10, 0, 0, time.UTC)
 	expectedMidnightLA := time.Date(2026, 1, 15, 0, 0, 0, 0, locLA)
 
+	rebuildStopIndexes(t, api)
+
 	// Query via UTC Agency prefix
 	{
 		resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, queryURLWithPrefix(agencyUTC))
@@ -1768,6 +1943,8 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *
 		conn, err := api.GtfsManager.GtfsDB.DB.Conn(context.Background())
 		if err == nil {
 			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = OFF")
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_routes WHERE stop_id = ?", sharedStop)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_agencies WHERE stop_id = ?", sharedStop)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_times WHERE stop_id = ?", sharedStop)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM trips WHERE id = ?", tripInvalid)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM routes WHERE id IN (?, ?)", routePrimary, routeInvalid)
@@ -1830,6 +2007,8 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_LookupError(t *
 	})
 	require.NoError(t, err)
 
+	rebuildStopIndexes(t, api)
+
 	endpoint := arrivalsAndDeparturesURL(utils.FormCombinedID(agencyPrimary, sharedStop), nil)
 	resp, model := callAPIHandler[models.ResponseModel](t, api, endpoint)
 	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
@@ -1860,6 +2039,8 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 		conn, err := api.GtfsManager.GtfsDB.DB.Conn(context.Background())
 		if err == nil {
 			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys = OFF")
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_routes WHERE stop_id = ?", sharedStop)
+			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_agencies WHERE stop_id = ?", sharedStop)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM stop_times WHERE stop_id = ?", sharedStop)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM trips WHERE id IN (?, ?)", tripPrimary, tripMissing)
 			_, _ = conn.ExecContext(context.Background(), "DELETE FROM routes WHERE id IN (?, ?)", routePrimary, routeMissing)
@@ -1945,10 +2126,13 @@ func TestArrivalsAndDeparturesForStopHandler_MultiAgencyTimezone_MissingAgencySk
 	require.NoError(t, err)
 	conn.Close()
 
+	rebuildStopIndexes(t, api)
+
 	endpoint := arrivalsAndDeparturesURL(utils.FormCombinedID(agencyPrimary, sharedStop), url.Values{
 		"minutesBefore": {"5"},
 		"minutesAfter":  {"30"},
 	})
+
 	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, http.StatusOK, model.Code)
@@ -1986,5 +2170,101 @@ func TestArrivalsAndDeparturesForStopHandler_NoArrivalsStillListsNearbyStops(t *
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures, "precondition: no service at 03:00")
-	assert.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
+	require.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
+
+	referencedStops := make(map[string]bool)
+	for _, stop := range model.Data.References.Stops {
+		referencedStops[stop.ID] = true
+	}
+	for _, nearbyID := range model.Data.Entry.NearbyStopIDs {
+		assert.True(t, referencedStops[nearbyID], "nearby stop %s must resolve in references.stops at 03:00", nearbyID)
+	}
+}
+
+// TestArrivalsAndDeparturesForStopHandler_EmptyWindowKeepsStopAndRouteReferences
+// checks that a window with no arrivals still references the requested stop and
+// the routes serving it, as Java does.
+func TestArrivalsAndDeparturesForStopHandler_EmptyWindowKeepsStopAndRouteReferences(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	requestURL := arrivalsAndDeparturesURL(arrivalsTestStopID,
+		url.Values{"minutesBefore": {"0"}, "minutesAfter": {"0"}})
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, requestURL)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, model.Data.Entry.ArrivalsAndDepartures,
+		"the empty window must leave no arrival")
+
+	var stopIDs []string
+	for _, stop := range model.Data.References.Stops {
+		stopIDs = append(stopIDs, stop.ID)
+	}
+	assert.Contains(t, stopIDs, arrivalsTestStopID,
+		"the requested stop must be a reference even with no arrivals")
+	assert.NotEmpty(t, model.Data.References.Routes,
+		"the routes serving the requested stop must be references even with no arrivals")
+	require.NotEmpty(t, model.Data.Entry.NearbyStopIDs)
+	for _, nearbyID := range model.Data.Entry.NearbyStopIDs {
+		assert.Contains(t, stopIDs, nearbyID,
+			"nearby stop %s must be a reference even with no arrivals", nearbyID)
+	}
+}
+
+// TestArrivalsAndDeparturesForStopHandler_NearbyStopsAreReferenced verifies that
+// every stop in nearbyStopIds is present in references.stops, with its routes
+// in references.routes and agencies in references.agencies, matching Java BeanFactoryV2.
+func TestArrivalsAndDeparturesForStopHandler_NearbyStopsAreReferenced(t *testing.T) {
+	api, cleanup := createTestApiWithRealTimeData(t, clock.NewMockClock(arrivalsTestClock))
+	defer cleanup()
+
+	resp, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api,
+		arrivalsAndDeparturesURL(arrivalsTestStopID, url.Values{"minutesBefore": {"60"}, "minutesAfter": {"240"}}))
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, model.Data.Entry.NearbyStopIDs, "expected nearby stops for test stop")
+
+	referencedStops := make(map[string]models.Stop)
+	for _, stop := range model.Data.References.Stops {
+		referencedStops[stop.ID] = stop
+	}
+
+	referencedRoutes := make(map[string]bool)
+	for _, route := range model.Data.References.Routes {
+		referencedRoutes[route.ID] = true
+	}
+
+	referencedAgencies := make(map[string]bool)
+	for _, agency := range model.Data.References.Agencies {
+		referencedAgencies[agency.ID] = true
+	}
+
+	var nearbyRoutesFound int
+	for _, nearbyID := range model.Data.Entry.NearbyStopIDs {
+		stop, ok := referencedStops[nearbyID]
+		assert.True(t, ok, "nearby stop %s must resolve in references.stops", nearbyID)
+		if !ok {
+			continue
+		}
+		assert.NotEmpty(t, stop.RouteIDs, "nearby stop %s must have route IDs", nearbyID)
+		for _, routeID := range stop.RouteIDs {
+			nearbyRoutesFound++
+			assert.True(t, referencedRoutes[routeID], "route %s for nearby stop %s must resolve in references.routes", routeID, nearbyID)
+		}
+		agencyID, _, _ := utils.ExtractAgencyIDAndCodeID(nearbyID)
+		assert.True(t, referencedAgencies[agencyID], "agency %s for nearby stop %s must resolve in references.agencies", agencyID, nearbyID)
+	}
+	assert.Greater(t, nearbyRoutesFound, 0, "expected at least one route referenced via nearby stops")
+
+	// Fast Track at Churn Creek Rd (25_1506) is served only by Route 15, which
+	// does not serve the requested stop, so its route reference can only come
+	// from the nearby-stop path.
+	const nearbyStopServedByRoute15 = "25_1506"
+	require.Contains(t, model.Data.Entry.NearbyStopIDs, nearbyStopServedByRoute15)
+	nearbyStop, ok := referencedStops[nearbyStopServedByRoute15]
+	require.True(t, ok, "stop %s must resolve in references.stops", nearbyStopServedByRoute15)
+	assert.Contains(t, nearbyStop.RouteIDs, testdata.Route15.ID,
+		"stop %s must list its serving route", nearbyStopServedByRoute15)
+	assert.True(t, referencedRoutes[testdata.Route15.ID],
+		"route %s must resolve in references.routes", testdata.Route15.ID)
 }

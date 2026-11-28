@@ -146,7 +146,11 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	}
 	stopID := utils.FormCombinedID(stopAgencyID, stopCode)
 
-	ctx := r.Context()
+	// The vehicle lookup, cancellation check, predictions and status each build
+	// the same block trip list and snapshot, so they share one request cache.
+	// The read memo fetches the trip, route, stop-time and frequency rows they
+	// look up once.
+	ctx := WithSnapshotCache(gtfsdb.WithReadMemo(r.Context()), newSnapshotCache())
 	reqLogger := logging.ForComponent(ctx, "http_server")
 
 	// Capture parsing errors (syntax validation only — localization happens below
@@ -210,13 +214,13 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		params.Time = &resolved
 	}
 
-	trip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, tripID)
+	trip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, tripID)
 	if err != nil {
 		api.dbErrorResponse(w, r, err)
 		return
 	}
 
-	route, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, trip.RouteID)
+	route, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetRoute(ctx, trip.RouteID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -263,7 +267,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	serviceMidnight := serviceDate.Midnight(loc)
 	serviceStart := serviceDate.Start(loc)
 
-	orderedStopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	orderedStopTimes, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetStopTimesForTrip(ctx, tripID)
 	if err != nil {
 		api.serverErrorResponse(w, r, err)
 		return
@@ -305,39 +309,32 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// If vehicleId is provided, validate it matches the trip
 	var vehicle *gtfs.Vehicle
 	if params.VehicleID != "" {
-		_, providedVehicleID, err := utils.ExtractAgencyIDAndCodeID(params.VehicleID)
-		if err == nil {
-			v, err := api.GtfsManager.GetVehicleByID(providedVehicleID)
-			// If vehicle is found, validate it matches the trip
-			if err == nil && v != nil && v.Trip != nil && v.Trip.ID.ID == tripID {
-				vehicle = v
-			}
-		} else {
-			reqLogger.Warn("malformed vehicleId provided",
-				"vehicleId", params.VehicleID,
-				"error", err)
+		vehicle = api.requestedVehicleForTrip(ctx, params.VehicleID, route.AgencyID, tripID, serviceMidnight)
+		if vehicle == nil {
+			api.sendNotFound(w, r)
+			return
 		}
 	} else {
 		// If vehicleId is not provided, get the vehicle for the trip
-		vehicle = api.GtfsManager.GetVehicleForTrip(ctx, tripID)
+		vehicle = api.vehicleForTrip(ctx, tripID, serviceMidnight)
+	}
+
+	// Java returns no arrival for a canceled trip by default (hideCanceledTrips,
+	// ArrivalsAndDeparturesBeanServiceImpl.java:267), as the wiki's SD-03 adopts.
+	if api.arrivalCanceled(ctx, tripID, vehicle, serviceMidnight) {
+		api.sendNotFound(w, r)
+		return
 	}
 
 	if vehicle != nil && vehicle.Trip != nil {
-		if vehicle.ID != nil {
-			// Combined {agencyId}_{vehicleId} form per spec; matches
-			// tripStatus.vehicleId (set by BuildTripStatus below) and lets
-			// clients round-trip this value into /trip-for-vehicle/{id} and
-			// /trip-details/{id}?vehicleId=... which both extract the agency
-			// prefix before doing GetVehicleByID on the raw id.
-			vehicleID = utils.FormCombinedID(route.AgencyID, vehicle.ID.ID)
-		} else {
-			reqLogger.Warn("vehicle with nil ID descriptor found for trip", "tripID", tripID)
-		}
+		// Matches tripStatus.vehicleId (set by BuildTripStatus below), and clients
+		// round-trip it into /trip-for-vehicle/{id} and /trip-details/{id}?vehicleId=...
+		vehicleID = api.combinedVehicleID(ctx, vehicle, route.AgencyID, tripID)
 		predicted = true
 	}
 
 	// Fetch the trip's frequency rows once and share them with BuildTripStatus.
-	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.GetFrequenciesForTrip(ctx, tripID)
+	freqRows, freqErr := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetFrequenciesForTrip(ctx, tripID)
 	if freqErr != nil {
 		api.serverErrorResponse(w, r, freqErr)
 		return
@@ -348,7 +345,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	// carry a wall-clock time portion) for all schedule math — matches Java's
 	// BlockInstance contract ("midnight time relative to stop times"; see
 	// BlockInstance.java:69-72) and the plural handler's convention.
-	status, statusExtras, statusErr := api.BuildTripStatus(ctx, route.AgencyID, tripID, nil, serviceMidnight, currentTime, freqMap)
+	status, statusExtras, statusErr := api.buildTripStatusForVehicle(ctx, route.AgencyID, tripID, vehicle, serviceMidnight, currentTime, freqMap)
 	if statusErr != nil {
 		reqLogger.Warn("BuildTripStatus failed",
 			"tripID", tripID, "error", statusErr)
@@ -361,7 +358,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, serviceMidnight, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
 
 		if isPredicted {
 			predictedArrivalTime = predictedArrival
@@ -428,6 +425,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		tripStatus,                                     // tripStatus
 		situationIDs,                                   // situationIds
 	)
+	applyVehicleRecordUpdateTime(arrival, status, statusExtras)
 
 	// The arrival's frequency uses the window-matched row fetched above.
 	if len(freqRows) > 0 {
@@ -466,9 +464,9 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	if tripStatus != nil && tripStatus.ActiveTripID != "" {
 		_, activeTripID, err := utils.ExtractAgencyIDAndCodeID(tripStatus.ActiveTripID)
 		if err == nil && activeTripID != tripID {
-			activeTrip, err := api.GtfsManager.GtfsDB.Queries.GetTrip(ctx, activeTripID)
+			activeTrip, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetTrip(ctx, activeTripID)
 			if err == nil {
-				activeRoute, err := api.GtfsManager.GtfsDB.Queries.GetRoute(ctx, activeTrip.RouteID)
+				activeRoute, err := api.GtfsManager.GtfsDB.Queries.Memo(ctx).GetRoute(ctx, activeTrip.RouteID)
 				if err != nil {
 					reqLogger.Warn("failed to fetch route for active trip reference", "tripID", activeTripID, "error", err)
 				} else {
@@ -536,6 +534,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		reqLogger.Warn("failed to batch fetch routes for stops", "error", err)
 		batchedRoutesForStops = nil
 	}
+	utils.SortRoutesForStopsRowsByName(batchedRoutesForStops)
 
 	routesByStopID := make(map[string][]gtfsdb.GetRoutesForStopsRow)
 	for _, routeRow := range batchedRoutesForStops {
@@ -566,7 +565,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 			Lon:                stopData.Lon,
 			Code:               nulls.StringOrNonEmpty(stopData.Code, stopData.ID),
 			Parent:             parentStationID(stopAgencyID, stopData),
-			Direction:          api.DirectionCalculator.CalculateStopDirection(r.Context(), stopData.ID, stopData.Direction),
+			Direction:          api.DirectionCalculator.CalculateStopDirection(ctx, stopData.ID, stopData.Direction),
 			LocationType:       int(stopData.LocationType.Int64),
 			WheelchairBoarding: utils.MapWheelchairBoarding(nulls.WheelchairBoardingOrUnknown(stopData.WheelchairBoarding)),
 			RouteIDs:           combinedRouteIDs,
@@ -575,7 +574,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 		references.Stops = append(references.Stops, stopRef)
 	}
 
-	addedParents, parentRoutes, err := api.missingParentStops(r.Context(), references.Stops)
+	addedParents, parentRoutes, err := api.missingParentStops(ctx, references.Stops)
 	if err != nil {
 		reqLogger.Warn("failed to resolve parent stops", "error", err)
 	} else {
@@ -620,9 +619,13 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 //
 // Returns (predictedArrivalMs, predictedDepartureMs, isPredicted).
 // Returns (time.Time{}, time.Time{}, false) if no prediction can be made.
+//
+// The update expires with its vehicle's record. A later update from the same
+// vehicle can refresh it, but another vehicle's update cannot.
 func (api *RestAPI) getPredictedTimes(
 	ctx context.Context,
 	tripID string,
+	serviceDate time.Time,
 	stopCode string,
 	targetStopSequence int64,
 	scheduledArrivalTime, scheduledDepartureTime time.Time,
@@ -631,7 +634,7 @@ func (api *RestAPI) getPredictedTimes(
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
 		return time.Time{}, time.Time{}, false
 	}
-	if api.tripUpdateExpired(*realTimeTrip) {
+	if api.vehicleRecordExpired(api.predictionRecordUpdates(ctx, *realTimeTrip, tripID, serviceDate)) {
 		return time.Time{}, time.Time{}, false
 	}
 

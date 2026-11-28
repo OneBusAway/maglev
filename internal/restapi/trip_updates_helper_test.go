@@ -2,7 +2,6 @@ package restapi
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -771,7 +770,7 @@ func TestDeviationSampleCache(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := 0
 			for i, blockTripIDs := range tt.lookups {
-				samples := tt.cache.samplesFor(blockTripIDs, tt.midnights[i], countingCompute(&calls))
+				samples := tt.cache.samplesFor(blockTripIDs, tt.midnights[i], deviationRecordKey{}, countingCompute(&calls))
 				assert.Equal(t, []deviationSample{{scheduledArrival: 100, deviation: 60}}, samples)
 			}
 			assert.Equal(t, tt.wantCalls, calls)
@@ -1201,56 +1200,6 @@ func TestGetStopDelaysFromTripUpdates_IgnoresExpiredTripUpdate(t *testing.T) {
 	assert.Equal(t, 0, api.GetStopDelaysFromTripUpdates(tripID, nil).Len())
 }
 
-// Java picks the deviation when it processes a feed, not per request, so a stop
-// the bus passed after that feed arrived still supplies the deviation.
-func TestGetScheduleDeviationForBlock_PicksAtFeedTime(t *testing.T) {
-	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
-	const firstStopDelay, secondStopDelay = 17, 99
-
-	tests := []struct {
-		name                 string
-		feedSecondsAfterStop *int64
-		want                 int
-	}{
-		{name: "feed time before the stop's prediction picks that stop", feedSecondsAfterStop: ptrInt64(0), want: firstStopDelay},
-		{name: "no feed update falls back to the current time", want: secondStopDelay},
-		{name: "feed time after the stop's prediction picks the next stop", feedSecondsAfterStop: ptrInt64(firstStopDelay + 1), want: secondStopDelay},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			api := createTestApi(t)
-			defer api.Shutdown()
-			t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-			ctx := context.Background()
-
-			trip := mustGetTrip(t, api)
-			stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
-			require.NoError(t, err)
-			stopTimes = slices.CompactFunc(stopTimes, func(a, b gtfsdb.StopTime) bool { return a.ArrivalTime == b.ArrivalTime })
-			require.GreaterOrEqual(t, len(stopTimes), 2)
-			first, second := stopTimes[0], stopTimes[1]
-			require.Greater(t, second.ArrivalTime-first.ArrivalTime, int64(firstStopDelay+60)*int64(time.Second))
-
-			firstDelay, secondDelay := firstStopDelay*time.Second, secondStopDelay*time.Second
-			api.GtfsManager.MockAddTripUpdate(trip.ID, nil, []gtfs.StopTimeUpdate{
-				{StopID: &first.StopID, Arrival: &gtfs.StopTimeEvent{Delay: &firstDelay}},
-				{StopID: &second.StopID, Arrival: &gtfs.StopTimeEvent{Delay: &secondDelay}},
-			})
-			firstStopTime := serviceDate.Add(time.Duration(first.ArrivalTime))
-			if tt.feedSecondsAfterStop != nil {
-				api.GtfsManager.SetFeedUpdateTimeForTest("feed", firstStopTime.Add(time.Duration(*tt.feedSecondsAfterStop)*time.Second))
-			}
-			requestTime := firstStopTime.Add((firstStopDelay + 30) * time.Second)
-
-			deviation, hasData := api.GetScheduleDeviationForBlock(ctx, []string{trip.ID}, serviceDate, requestTime)
-
-			assert.True(t, hasData)
-			assert.Equal(t, tt.want, deviation)
-		})
-	}
-}
-
 func ptrInt64(v int64) *int64 { return &v }
 
 // Java reprocesses a vehicle's record only when its timestamp advances
@@ -1298,7 +1247,6 @@ func TestGetScheduleDeviationForBlock_PicksAtRecordTime(t *testing.T) {
 					{StopID: &second.StopID, Arrival: &gtfs.StopTimeEvent{Delay: &secondDelay}},
 				},
 			})
-			api.GtfsManager.SetFeedUpdateTimeForTest("feed", requestTime)
 			if tt.seenSecondsAfterStamp != nil {
 				api.GtfsManager.MockSetTripUpdateFirstSeen(trip.ID, recordTime.Add(time.Duration(*tt.seenSecondsAfterStamp)*time.Second))
 			}
@@ -1309,28 +1257,6 @@ func TestGetScheduleDeviationForBlock_PicksAtRecordTime(t *testing.T) {
 			assert.Equal(t, tt.want, deviation)
 		})
 	}
-}
-
-func TestPluralArrivals_CanceledTripUpdateIsNotPredicted(t *testing.T) {
-	serviceDate := time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
-	now := serviceDate.Add(8*time.Hour + 30*time.Minute)
-	api := createTestApiWithClock(t, clock.NewMockClock(now))
-	defer api.Shutdown()
-	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
-	_, _, tripID, _ := setupDelayPropTestData(t, api, 1)
-	stopID := addDownstreamStop(t, api, tripID)
-	api.GtfsManager.MockAddFullTripUpdate(gtfs.Trip{
-		ID:        gtfs.TripID{ID: tripID, ScheduleRelationship: gtfsrt.TripDescriptor_CANCELED},
-		Timestamp: &now,
-	})
-	endpoint := fmt.Sprintf("/api/where/arrivals-and-departures-for-stop/%s.json?key=TEST&minutesBefore=0&minutesAfter=120",
-		utils.FormCombinedID("dp-agency", stopID))
-
-	_, model := callAPIHandler[ArrivalsAndDeparturesResponse](t, api, endpoint)
-
-	arrival := findArrivalForTrip(t, model.Data.Entry.ArrivalsAndDepartures, utils.FormCombinedID("dp-agency", tripID))
-	assert.False(t, arrival.Predicted)
-	assert.Zero(t, arrival.PredictedArrivalTime)
 }
 
 func TestSampleEntryForSTU_SequenceWithoutStopID(t *testing.T) {

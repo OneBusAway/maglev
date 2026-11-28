@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"maglev.onebusaway.org/internal/clock"
 	"maglev.onebusaway.org/internal/logging"
 	"maglev.onebusaway.org/internal/models"
 
@@ -20,12 +21,14 @@ type RateLimitMiddleware struct {
 	rateLimit  rate.Limit
 	burstSize  int
 	exemptKeys map[string]bool
+	clock      clock.Clock
 }
 
 // NewRateLimitMiddleware creates a new rate limiting middleware.
 // ratePerSecond: number of requests allowed per second (0 blocks all, negative is unlimited)
 // burstSize: equal to ratePerSecond
-func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKeys []string) *RateLimitMiddleware {
+// clk: the app clock, used for the currentTime field of a 429 response; nil means the real clock
+func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKeys []string, clk clock.Clock) *RateLimitMiddleware {
 	var rateLimit rate.Limit
 	switch {
 	case ratePerSecond < 0:
@@ -47,11 +50,16 @@ func NewRateLimitMiddleware(ratePerSecond int, interval time.Duration, exemptKey
 		}
 	}
 
+	if clk == nil {
+		clk = clock.RealClock{}
+	}
+
 	return &RateLimitMiddleware{
 		limiter:    rate.NewLimiter(rateLimit, burst),
 		rateLimit:  rateLimit,
 		burstSize:  burst,
 		exemptKeys: exemptMap,
+		clock:      clk,
 	}
 }
 
@@ -118,7 +126,7 @@ func (rl *RateLimitMiddleware) sendRateLimitExceeded(w http.ResponseWriter, r *h
 				"stopTimes": []any{},
 			},
 		},
-		"currentTime": time.Now().UnixMilli(),
+		"currentTime": rl.clock.Now().UnixMilli(),
 		"version":     models.APIVersion,
 	}
 

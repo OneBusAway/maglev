@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+	"maglev.onebusaway.org/internal/appconf"
 	logging "maglev.onebusaway.org/internal/logging"
 )
 
@@ -146,8 +148,8 @@ func TestRebuildRealTimeVehicleLookupByVehicle(t *testing.T) {
 
 	assert.NotNil(t, manager.mergedRealtime().vehicleLookupByVehicle)
 	assert.Len(t, manager.mergedRealtime().vehicleLookupByVehicle, 2)
-	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle["vehicle1"])
-	assert.Equal(t, 1, manager.mergedRealtime().vehicleLookupByVehicle["vehicle2"])
+	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle1"}])
+	assert.Equal(t, 1, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle2"}])
 }
 
 func TestRebuildRealTimeVehicleLookupByVehicle_WithInvalidIDs(t *testing.T) {
@@ -175,8 +177,37 @@ func TestRebuildRealTimeVehicleLookupByVehicle_WithInvalidIDs(t *testing.T) {
 
 	assert.NotNil(t, manager.mergedRealtime().vehicleLookupByVehicle)
 	assert.Len(t, manager.mergedRealtime().vehicleLookupByVehicle, 2)
-	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle["vehicle1"])
-	assert.Equal(t, 3, manager.mergedRealtime().vehicleLookupByVehicle["vehicle3"])
+	assert.Equal(t, 0, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle1"}])
+	assert.Equal(t, 3, manager.mergedRealtime().vehicleLookupByVehicle[agencyVehicleKey{vehicleID: "vehicle3"}])
+}
+
+func TestLoadRealtimeData_RedactsQueryFromHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	secretURL := server.URL + "/feed.pb?token=REALTIME_ERROR_SECRET"
+	_, err := loadRealtimeData(context.Background(), secretURL, nil)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "REALTIME_ERROR_SECRET")
+	assert.Contains(t, err.Error(), appconf.RedactedValue)
+}
+
+func TestLoadRealtimeData_RedactsQueryFromTransportError(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	secretURL := server.URL + "/feed.pb?token=REALTIME_TRANSPORT_SECRET"
+	server.Close() // Force the HTTP client to return a *url.Error.
+
+	_, err := loadRealtimeData(context.Background(), secretURL, nil)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "REALTIME_TRANSPORT_SECRET")
+	assert.Contains(t, err.Error(), appconf.RedactedValue)
+
+	var urlErr *url.Error
+	require.ErrorAs(t, err, &urlErr)
+	assert.NotContains(t, urlErr.URL, "REALTIME_TRANSPORT_SECRET")
+	assert.Contains(t, urlErr.URL, appconf.RedactedValue)
 }
 
 func TestLoadRealtimeData_Non200StatusCode(t *testing.T) {
@@ -1237,6 +1268,7 @@ func TestVehicleMerge_RetainedVehicleKeepsUntakenTrip(t *testing.T) {
 	manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now.Add(-30*time.Second), []*gtfsrt.VehiclePosition{
 		positionOnTrip("V1", "trip-x", 47.1, nil),
 	}))
+	previousLive := manager.GetLiveRealTimeVehicles()
 	manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, now, []*gtfsrt.VehiclePosition{
 		positionOnTrip("V2", "trip-y", 47.4, nil),
 	}))
@@ -1244,6 +1276,12 @@ func TestVehicleMerge_RetainedVehicleKeepsUntakenTrip(t *testing.T) {
 	vehicle := manager.GetVehicleForTrip(context.Background(), "trip-x")
 	require.NotNil(t, vehicle)
 	assert.Equal(t, "V1", vehicle.ID.ID)
+	require.Len(t, manager.GetRealTimeVehicles(), 2, "retention must remain unchanged")
+	live := manager.GetLiveRealTimeVehicles()
+	require.Len(t, live, 1)
+	assert.Equal(t, "V2", live[0].ID.ID)
+	require.Len(t, previousLive, 1)
+	assert.Equal(t, "V1", previousLive[0].ID.ID, "publishing a feed must not mutate an earlier snapshot")
 }
 
 // TestVehicleMerge_RetainedVehicleReleasesTripTakenInAnotherFeed checks that a
@@ -2407,6 +2445,32 @@ func TestUpdateFeedRealtime_NormalizesTripUpdateTimestamps(t *testing.T) {
 	})
 }
 
+func TestUpdateFeedRealtime_NormalizesVehicleTimestamps(t *testing.T) {
+	reportTime := time.Now().Add(-time.Minute).Truncate(time.Second)
+
+	tests := []struct {
+		name      string
+		timestamp uint64
+	}{
+		{name: "seconds are kept", timestamp: uint64(reportTime.Unix())},
+		{name: "milliseconds are converted", timestamp: uint64(reportTime.UnixMilli())},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := newTestManager()
+			position := labelOnlyPosition("101", 47.1, reportTime)
+			position.Timestamp = proto.Uint64(tt.timestamp)
+			manager.updateFeedRealtime(context.Background(), serveVehicleFeed(t, reportTime, []*gtfsrt.VehiclePosition{position}))
+
+			vehicles := manager.GetRealTimeVehicles()
+			require.Len(t, vehicles, 1)
+			require.NotNil(t, vehicles[0].Timestamp)
+			assert.Equal(t, reportTime.Unix(), vehicles[0].Timestamp.Unix())
+		})
+	}
+}
+
 func TestUpdateFeedRealtime_FirstSeenUsesNormalizedFeedTime(t *testing.T) {
 	headerTime := time.Now().Add(-time.Minute).Truncate(time.Second)
 	updateTime := proto.Uint64(uint64(headerTime.Add(-30 * time.Second).Unix()))
@@ -2431,33 +2495,6 @@ func TestUpdateFeedRealtime_FirstSeenUsesNormalizedFeedTime(t *testing.T) {
 		require.True(t, ok)
 		assert.GreaterOrEqual(t, seenAt.Unix(), before.Unix())
 	})
-}
-
-func TestLatestFeedUpdateTime_FollowsRemainingFeeds(t *testing.T) {
-	manager := newTestManager()
-	older := time.Now().Add(-time.Minute).Truncate(time.Second)
-	newer := older.Add(30 * time.Second)
-	manager.SetFeedUpdateTimeForTest("older", older)
-	manager.SetFeedUpdateTimeForTest("newer", newer)
-
-	manager.clearFeedData("newer")
-	latest, ok := manager.LatestFeedUpdateTime()
-	require.True(t, ok)
-	assert.True(t, older.Equal(latest), "expected the remaining feed's time, got %s", latest)
-
-	manager.clearFeedData("older")
-	_, ok = manager.LatestFeedUpdateTime()
-	assert.False(t, ok)
-}
-
-func TestMockResetRealTimeData_ClearsLatestFeedUpdate(t *testing.T) {
-	manager := newTestManager()
-	manager.SetFeedUpdateTimeForTest("feed", time.Now())
-
-	manager.MockResetRealTimeData()
-
-	_, ok := manager.LatestFeedUpdateTime()
-	assert.False(t, ok)
 }
 
 func TestUpdateFeedRealtime_KeepsOnlyTripUpdateEntities(t *testing.T) {
@@ -2519,4 +2556,39 @@ func serveTripUpdate(t *testing.T, manager *Manager, tripID string, timestamp, h
 	}))
 	defer server.Close()
 	manager.updateFeedRealtime(context.Background(), RTFeedConfig{ID: "feed", TripUpdatesURL: server.URL, Enabled: true})
+}
+
+func TestPollFeedLogRedactsConfiguredURLs(t *testing.T) {
+	logOutput := captureStructuredLogOutput(t)
+
+	feedCfg := RTFeedConfig{
+		ID:                  "test-feed",
+		RefreshInterval:     60,
+		TripUpdatesURL:      "https://example.com/trips?token=TRIP_SECRET",
+		VehiclePositionsURL: "https://example.com/vehicles?token=VEHICLE_SECRET",
+		ServiceAlertsURL:    "https://example.com/alerts?token=ALERT_SECRET",
+	}
+
+	manager := &Manager{
+		shutdownChan: make(chan struct{}),
+	}
+
+	manager.wg.Add(1)
+	go manager.pollFeed(feedCfg)
+
+	// The poller logs its configured URLs before waiting on this channel.
+	close(manager.shutdownChan)
+	manager.wg.Wait()
+
+	output := logOutput.String()
+
+	require.Contains(t, output, `"msg":"started_realtime_feed_poller"`)
+
+	require.Contains(t, output, `"tripUpdatesURL":"https://example.com/trips?`+appconf.RedactedValue+`"`)
+	require.Contains(t, output, `"vehiclePositionsURL":"https://example.com/vehicles?`+appconf.RedactedValue+`"`)
+	require.Contains(t, output, `"serviceAlertsURL":"https://example.com/alerts?`+appconf.RedactedValue+`"`)
+
+	assert.NotContains(t, output, "TRIP_SECRET")
+	assert.NotContains(t, output, "VEHICLE_SECRET")
+	assert.NotContains(t, output, "ALERT_SECRET")
 }

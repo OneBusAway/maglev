@@ -62,7 +62,8 @@ func (api *RestAPI) loadSituationAgencies(ctx context.Context, alerts []internal
 		return agencies
 	}
 	ids := collectSituationEntityIDs(alerts)
-	agencies.firstStaticAgencyID = api.loadSituationKnownAgencies(ctx, agencies.known)
+	agencies.firstStaticAgencyID = api.GtfsManager.FirstStaticAgencyID()
+	api.loadSituationKnownAgencies(ctx, agencies.known)
 	api.loadSituationRouteAgencies(ctx, ids.routes, agencies.routes, "routes")
 	api.loadSituationStopAgencies(ctx, ids.stops, agencies.stops)
 	api.loadSituationTripAgencies(ctx, ids.trips, agencies)
@@ -71,19 +72,15 @@ func (api *RestAPI) loadSituationAgencies(ctx context.Context, alerts []internal
 
 // loadSituationKnownAgencies identifies prefixes that qualification may retain
 // even when the referenced entity is absent from the static feed.
-func (api *RestAPI) loadSituationKnownAgencies(ctx context.Context, agencies map[string]struct{}) string {
+func (api *RestAPI) loadSituationKnownAgencies(ctx context.Context, agencies map[string]struct{}) {
 	ids, err := api.GtfsManager.GtfsDB.Queries.ListAgencyIds(ctx)
 	if err != nil {
 		logQueryError(logging.ForComponent(ctx, "http_server"), "failed to fetch agencies for situation reference", err)
-		return ""
+		return
 	}
 	for _, id := range ids {
 		agencies[id] = struct{}{}
 	}
-	if len(ids) > 0 {
-		return ids[0]
-	}
-	return ""
 }
 
 // loadSituationRouteAgencies deduplicates candidates and publishes results only

@@ -130,9 +130,9 @@ func TestScheduleForRouteHandlerDateParam(t *testing.T) {
 	})
 
 	t.Run("Epoch ms date parsed as Java OBA compatibility", func(t *testing.T) {
-		// date=0 → epoch start (1970-01-01 00:00:00 UTC) → before any RABA service → NoServiceThatDay
+		// date=0 → epoch start (1970-01-01) → before the route's planned span → ServiceDateOutOfRange
 		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "0"))
-		assertScheduleErr(t, resp, model, 200, "NoServiceThatDay")
+		assertScheduleErr(t, resp, model, 200, "ServiceDateOutOfRange")
 	})
 
 	t.Run("Epoch ms for valid service date returns schedule", func(t *testing.T) {
@@ -286,6 +286,48 @@ func TestScheduleForRouteHandler_WithReferences(t *testing.T) {
 	require.NotEmpty(t, model.Data.References.StopTimes)
 }
 
+func TestScheduleForRouteHandler_StopRouteIDsResolve(t *testing.T) {
+	api := newScheduleForRouteAPI(t)
+	defer api.Shutdown()
+
+	routeID := testdata.Route1.ID
+	resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2025-06-12"))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	refs := model.Data.References
+	routes := make(map[string]bool, len(refs.Routes))
+	for _, rt := range refs.Routes {
+		routes[rt.ID] = true
+	}
+	agencies := make(map[string]bool, len(refs.Agencies))
+	for _, ag := range refs.Agencies {
+		agencies[ag.ID] = true
+	}
+
+	require.NotEmpty(t, refs.Stops)
+	var stop2000RouteIDs, stop2000StaticRouteIDs []string
+	for _, stop := range refs.Stops {
+		if stop.ID == "25_2000" {
+			stop2000RouteIDs, stop2000StaticRouteIDs = stop.RouteIDs, stop.StaticRouteIDs
+		}
+		for _, rid := range stop.RouteIDs {
+			assert.True(t, routes[rid], "stop %s routeId %s missing from references.routes", stop.ID, rid)
+		}
+		for _, rid := range stop.StaticRouteIDs {
+			assert.True(t, routes[rid], "stop %s staticRouteId %s missing from references.routes", stop.ID, rid)
+		}
+	}
+
+	// Stop references are full stop records: 25_2000 lists every route serving it.
+	require.NotNil(t, stop2000RouteIDs, "stop 25_2000 missing from references.stops")
+	assert.Subset(t, stop2000RouteIDs, []string{"25_151", "25_24", "25_157"})
+	assert.Subset(t, stop2000StaticRouteIDs, []string{"25_151", "25_24", "25_157"})
+
+	for _, rt := range refs.Routes {
+		assert.True(t, agencies[rt.AgencyID], "route %s agency %s missing from references.agencies", rt.ID, rt.AgencyID)
+	}
+}
+
 func TestScheduleForRouteHandler_TripIDsSorted(t *testing.T) {
 	api := newScheduleForRouteAPI(t)
 	defer api.Shutdown()
@@ -307,9 +349,9 @@ func TestScheduleForRouteHandler_ServiceDateOutOfRange(t *testing.T) {
 	routeID := testdata.Route1.ID
 
 	t.Run("Future date beyond route service returns ServiceDateOutOfRange with partial body", func(t *testing.T) {
-		// 2099-01-01 is after all of the route's service; the route has no future
-		// service, so the reason is ServiceDateOutOfRange. Per the Implementation
-		// Decisions the body uses code 200 with an empty-schedule body.
+		// 2099-01-01 is after the route's planned service span, so the reason is
+		// ServiceDateOutOfRange. Per the Implementation Decisions the body uses
+		// code 200 with an empty-schedule body.
 		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "2099-01-01"))
 		assertScheduleErr(t, resp, model, 200, "ServiceDateOutOfRange")
 
@@ -331,28 +373,40 @@ func TestScheduleForRouteHandler_ServiceDateOutOfRange(t *testing.T) {
 	})
 }
 
-func TestScheduleForRouteHandler_NoServiceThatDay(t *testing.T) {
+func TestScheduleForRouteHandler_EmptyScheduleReason(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
+	// RABA route 25_151 services span 20240101–20251231 (issue #2190).
 	routeID := testdata.Route1.ID
 
-	t.Run("Early date before feed returns NoServiceThatDay with references", func(t *testing.T) {
-		// 1970-01-01 is before any RABA calendar data, but the route still has
-		// service on later dates, so the reason is NoServiceThatDay (body code 200).
-		resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, "1970-01-01"))
+	tests := []struct {
+		name string
+		date string
+		want string
+	}{
+		{"day before span", "2023-12-31", "ServiceDateOutOfRange"},
+		{"day after span", "2026-01-01", "ServiceDateOutOfRange"},
+		{"early date before span", "1970-01-01", "ServiceDateOutOfRange"},
+		{"in-span Christmas removal", "2024-12-25", "NoServiceThatDay"},
+		{"in-span Sunday no weekday", "2025-06-15", "NoServiceThatDay"},
+	}
 
-		assertScheduleErr(t, resp, model, 200, "NoServiceThatDay")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, model := callAPIHandler[ScheduleForRouteResponse](t, api, scheduleForRouteURL(routeID, tt.date))
+			assertScheduleErr(t, resp, model, 200, tt.want)
 
-		entry := model.Data.Entry
-		assert.NotEmpty(t, entry.RouteID, "routeId should be present in NoServiceThatDay")
-		assert.Empty(t, entry.ServiceIDs)
-		assert.Empty(t, entry.StopTripGroupings)
+			entry := model.Data.Entry
+			assert.NotEmpty(t, entry.RouteID)
+			assert.Empty(t, entry.ServiceIDs)
+			assert.Empty(t, entry.StopTripGroupings)
 
-		refs := model.Data.References
-		assert.NotEmpty(t, refs.Agencies, "references.agencies should be populated for NoServiceThatDay")
-		assert.NotEmpty(t, refs.Routes, "references.routes should be populated for NoServiceThatDay")
-	})
+			refs := model.Data.References
+			assert.NotEmpty(t, refs.Agencies)
+			assert.NotEmpty(t, refs.Routes)
+		})
+	}
 }
 
 func TestScheduleForRouteHandler_TripReferenceCombinedIDs(t *testing.T) {

@@ -52,7 +52,10 @@ func TestSituationReferenceLookupFailures(t *testing.T) {
 	require.NoError(t, db.DB.QueryRow("SELECT id FROM trips WHERE route_id = '151' ORDER BY id LIMIT 1").Scan(&trip))
 	fallback, route, stop, unknown := "fallback", "missing", "1056", "25_missing"
 	entity := gtfs.AlertInformedEntity{AgencyID: &fallback, RouteID: &route, StopID: &stop, TripID: &gtfs.TripID{ID: trip}}
-	alerts := []gtfs.Alert{{ID: "first", InformedEntities: []gtfs.AlertInformedEntity{entity, entity, {RouteID: &unknown}}}, {ID: "second"}}
+	alerts := []gtfs.Alert{
+		{ID: "first", InformedEntities: []gtfs.AlertInformedEntity{entity, entity, {RouteID: &unknown}}},
+		{ID: "second", InformedEntities: []gtfs.AlertInformedEntity{{RouteID: &route}}},
+	}
 	wantCalls := []string{
 		"-- name: ListAgencyIds :many", "-- name: GetRoutesByIDs :many",
 		"-- name: GetAgenciesForStops :many", "-- name: GetTripsByIDs :many",
@@ -91,6 +94,8 @@ func TestSituationReferenceLookupFailures(t *testing.T) {
 				require.Len(t, got, 2)
 				require.Equal(t, "first", got[0].ID)
 				require.Equal(t, "second", got[1].ID)
+				require.Len(t, got[1].AllAffects, 1)
+				require.Equal(t, "25_missing", got[1].AllAffects[0].RouteID, "the cached static agency survives a failed agency query")
 				require.Len(t, got[0].AllAffects, 3, "repeated selectors must remain in order")
 				require.Equal(t, got[0].AllAffects[0], got[0].AllAffects[1])
 				affect := got[0].AllAffects[0]
@@ -152,6 +157,7 @@ func TestSituationReferencesSharedStopAgency(t *testing.T) {
 		_, err := db.Exec(query)
 		require.NoError(t, err)
 	}
+	rebuildStopIndexes(t, api)
 	ctx := context.Background()
 	rows, err := api.GtfsManager.GtfsDB.Queries.GetAgenciesForStops(ctx, []string{"1056"})
 	require.NoError(t, err)

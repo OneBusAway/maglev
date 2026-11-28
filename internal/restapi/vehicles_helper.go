@@ -318,7 +318,7 @@ func (api *RestAPI) vehicleSituationRefs(ctx context.Context, active, nominal tr
 			return api.situationRefsForTrip(ctx, ref.tripID)
 		}
 
-		return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(ref.tripID, ref.routeID, route.AgencyID), route.AgencyID)
+		return situationRefsFromAlerts(api.GtfsManager.GetAlertsByIDs(ref.tripID, ref.routeID, route.AgencyID), api.GtfsManager.FirstStaticAgencyID())
 	}
 
 	refs := refsFor(active)

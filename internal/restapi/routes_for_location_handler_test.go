@@ -444,6 +444,7 @@ func seedRoutesNearLocation(t *testing.T, api *RestAPI, lat, lon float64, count 
 	).Scan(&stopID))
 
 	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM stop_routes WHERE route_id LIKE 'clamp-test-%'`)
 		_, _ = db.ExecContext(ctx, `DELETE FROM stop_times WHERE trip_id LIKE 'clamp-test-%'`)
 		_, _ = db.ExecContext(ctx, `DELETE FROM trips WHERE id LIKE 'clamp-test-%'`)
 		_, _ = db.ExecContext(ctx, `DELETE FROM routes WHERE id LIKE 'clamp-test-%'`)
@@ -466,6 +467,7 @@ func seedRoutesNearLocation(t *testing.T, api *RestAPI, lat, lon float64, count 
 			id, stopID)
 		require.NoError(t, err)
 	}
+	rebuildStopIndexes(t, api)
 }
 
 func TestRoutesForLocationHandlerClampsMaxCountAboveCap(t *testing.T) {
@@ -580,6 +582,9 @@ func TestRoutesForLocationHandlerInvalidMaxCount(t *testing.T) {
 		{"zero", "0", "must be greater than zero"},
 		{"negative", "-5", "must be greater than zero"},
 		{"unparseable", "invalid", `Invalid field value for field "maxCount".`},
+		{"64-bit overflow", "99999999999", `Invalid field value for field "maxCount".`},
+		{"int32 overflow 2147483648", "2147483648", `Invalid field value for field "maxCount".`},
+		{"int32 underflow -2147483649", "-2147483649", `Invalid field value for field "maxCount".`},
 	}
 
 	for _, tt := range tests {

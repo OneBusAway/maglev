@@ -68,10 +68,20 @@ const connectionCacheKiB = 2000
 const connectionBusyTimeoutMs = 5000
 
 // DSN returns the connection string for path with foreign key enforcement,
-// the page cache size and the busy timeout set. All three are
-// connection-scoped and not persistent, so setting them via PRAGMA on a single
-// connection leaves the rest of the pool without them; they have to ride the
-// DSN. Each driver file spells the settings in its own connectionParams.
+// recursive triggers, the page cache size and the busy timeout set. All four
+// are connection-scoped and not persistent, so setting them via PRAGMA on a
+// single connection leaves the rest of the pool without them; they have to
+// ride the DSN. Each driver file spells the settings in its own
+// connectionParams.
+//
+// recursive_triggers makes SQLite fire DELETE triggers for the implicit delete
+// of INSERT OR REPLACE. Without it a feed that repeats a stop_id leaves the
+// first row's stops_rtree and stops_fts entries behind, pointing at a rowid
+// that no longer exists. A feed that repeats a route_id does the same to
+// routes_fts, so the replaced route's name keeps matching. The setting is
+// global, so a trigger that writes to its own table re-fires itself. Every
+// trigger in schema.sql writes to a different table; keep it that way or guard
+// against the recursion in new triggers.
 func DSN(path string) string {
 	return dsn(path, connectionCacheKiB)
 }
