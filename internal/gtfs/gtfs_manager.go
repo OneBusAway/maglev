@@ -111,6 +111,9 @@ type Manager struct {
 	// trip-updates sub-feed ages out on its own clock even while sibling
 	// sub-feeds keep resetting the feed-wide staleness timer.
 	feedTripLastSuccess map[string]time.Time
+
+	// Agency cache gets reloaded everytime ReloadStatic is called
+	agencyCache atomic.Pointer[[]gtfsdb.Agency]
 }
 
 // clearFeedData removes stale data for a specific feed when the staleness threshold is crossed
@@ -353,6 +356,29 @@ func (manager *Manager) Shutdown(ctx context.Context) error {
 // GetAgencies returns all agencies from the database.
 func (manager *Manager) GetAgencies(ctx context.Context) ([]gtfsdb.Agency, error) {
 	return manager.GtfsDB.Queries.ListAgencies(ctx)
+}
+
+func (manager *Manager) setCachedAgencies(agencies []gtfsdb.Agency) {
+	slices.SortFunc(agencies, func(a, b gtfsdb.Agency) int {
+		return cmp.Compare(len(a.ID), len(b.ID))
+	})
+	manager.agencyCache.Store(&agencies)
+}
+
+// GetCachedAgencies returns agencies from the static reload cache sorted by
+// ID length ascending, loading and caching them from the database if needed.
+func (manager *Manager) GetCachedAgencies(ctx context.Context) []gtfsdb.Agency {
+	if ptr := manager.agencyCache.Load(); ptr != nil {
+		return *ptr
+	}
+	agencies, err := manager.GtfsDB.Queries.ListAgencies(ctx)
+	if err != nil {
+		logger := slog.Default().With(slog.String("component", "gtfs_manager"))
+		logging.LogError(logger, "failed to fetch agencies for cache", err)
+		return nil
+	}
+	manager.setCachedAgencies(agencies)
+	return agencies
 }
 
 // GetTrips returns up to limit trips from the database.

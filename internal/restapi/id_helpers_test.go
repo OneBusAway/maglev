@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"maglev.onebusaway.org/gtfsdb"
 	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/clock"
 )
@@ -78,7 +79,8 @@ func TestExtractAndValidateID(t *testing.T) {
 func TestExtractAndValidateAgencyCodeID(t *testing.T) {
 	api := &RestAPI{
 		Application: &app.Application{
-			Clock: &clock.RealClock{},
+			Clock:       &clock.RealClock{},
+			GtfsManager: newTestManagerNoData(t),
 		},
 	}
 
@@ -146,6 +148,60 @@ func TestExtractAndValidateAgencyCodeID(t *testing.T) {
 				assert.Equal(t, tt.expectedStatus, errorResp.Code)
 				assert.True(t, strings.Contains(rr.Body.String(), "id") || strings.Contains(rr.Body.String(), "invalid format"))
 			}
+		})
+	}
+}
+
+// Longest matching agency ID wins ties when one agency ID is a prefix of
+// another (e.g. with agencies "a" and "a_b", "a_b_x" resolves to "a_b" and "x").
+func TestExtractAgencyCodeIDOnAgencyWithUnderscore(t *testing.T) {
+	api := &RestAPI{
+		Application: &app.Application{
+			Clock:       &clock.RealClock{},
+			GtfsManager: newTestManagerNoData(t),
+		},
+	}
+
+	_, err := api.GtfsManager.GtfsDB.Queries.CreateAgency(context.Background(), gtfsdb.CreateAgencyParams{ID: "a_b"})
+	require.NoError(t, err)
+	_, err = api.GtfsManager.GtfsDB.Queries.CreateAgency(context.Background(), gtfsdb.CreateAgencyParams{ID: "a"})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		url      string
+		agencyID string
+		codeID   string
+		idParam  string
+	}{
+		{
+			name:     "Combined ID a_b_x",
+			url:      "/api/where/route/a_b_x.json",
+			agencyID: "a_b",
+			codeID:   "x",
+			idParam:  "a_b_x",
+		},
+		{
+			name:     "Combined ID a_x",
+			url:      "/api/where/route/a_x.json",
+			agencyID: "a",
+			codeID:   "x",
+			idParam:  "a_x",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequestWithContext(context.Background(), "GET", tt.url, nil)
+			require.NoError(t, err)
+			req.SetPathValue("id", tt.idParam)
+
+			rr := httptest.NewRecorder()
+			agencyID, codeID, ok := api.extractAndValidateAgencyCodeID(rr, req)
+
+			require.True(t, ok)
+			require.Equal(t, tt.agencyID, agencyID)
+			require.Equal(t, tt.codeID, codeID)
 		})
 	}
 }
