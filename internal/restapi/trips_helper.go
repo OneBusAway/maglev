@@ -548,7 +548,7 @@ func (api *RestAPI) applyShapeToStatus(
 		return
 	}
 	shapePoints := shapeRowsToPoints(shapeRows)
-	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+	cumulativeDistances := utils.CumulativeShapeDistances(shapePoints)
 	// Snap's ActiveTripTotalDistance takes precedence; only fall back to target's
 	// shape total when snap didn't provide one.
 	if status.TotalDistanceAlongTrip == 0 {
@@ -1135,27 +1135,6 @@ func (api *RestAPI) blockTripSequence(ctx context.Context, tripID string, servic
 	return int(seq), true
 }
 
-// preCalculateCumulativeDistances pre-calculates cumulative distances along shape points
-// Returns an array where cumulativeDistances[i] is the cumulative distance up to (but not including) segment i
-func preCalculateCumulativeDistances(shapePoints []gtfs.ShapePoint) []float64 {
-	if len(shapePoints) <= 1 {
-		return []float64{0}
-	}
-
-	cumulativeDistances := make([]float64, len(shapePoints))
-	cumulativeDistances[0] = 0
-
-	for i := 1; i < len(shapePoints); i++ {
-		segmentDistance := utils.Distance(
-			shapePoints[i-1].Latitude, shapePoints[i-1].Longitude,
-			shapePoints[i].Latitude, shapePoints[i].Longitude,
-		)
-		cumulativeDistances[i] = cumulativeDistances[i-1] + segmentDistance
-	}
-
-	return cumulativeDistances
-}
-
 // projectOntoSegment is the shared implementation for projecting a point onto a line segment.
 // Returns the distance from point to the closest point on the segment, the projection ratio t ∈ [0,1],
 func projectOntoSegment(px, py, x1, y1, x2, y2 float64) (distance, ratio float64, projLat, projLon float64) {
@@ -1294,7 +1273,7 @@ func (api *RestAPI) calculateBatchStopDistances(
 	var cumulativeDistances []float64
 	var distances []float64
 	if len(shapePoints) >= 2 {
-		cumulativeDistances = preCalculateCumulativeDistances(shapePoints)
+		cumulativeDistances = utils.CumulativeShapeDistances(shapePoints)
 	}
 	if len(cumulativeDistances) == len(shapePoints) {
 		stopByID := stopByIDFromCoords(timeStops, stopCoords)
@@ -1787,7 +1766,7 @@ func (api *RestAPI) scheduledPositionAtTime(
 		}
 	}
 
-	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+	cumulativeDistances := utils.CumulativeShapeDistances(shapePoints)
 	position, _, _ := scheduledTripPosition(
 		stopTimes, stopsByID, shapePoints, cumulativeDistances, currentTime, serviceDate)
 	return position

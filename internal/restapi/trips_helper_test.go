@@ -489,7 +489,7 @@ func TestBuildTripStatus_ShapeData_ComputesDistanceAlongTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, len(shapeRows), 1, "shape must have at least two points")
 	shapePoints := shapeRowsToPoints(shapeRows)
-	cumulativeDistances := preCalculateCumulativeDistances(shapePoints)
+	cumulativeDistances := utils.CumulativeShapeDistances(shapePoints)
 	shapeMidIdx := len(shapePoints) / 2
 	expectedProjection := cumulativeDistances[shapeMidIdx]
 

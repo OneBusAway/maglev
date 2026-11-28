@@ -912,7 +912,7 @@ func (api *RestAPI) loadBlockShapes(ctx context.Context, blockTrips []blockTripR
 	for shapeID, points := range pointsByShapeID {
 		shape := blockShape{points: points}
 		if len(points) >= 2 {
-			shape.cumDistances = preCalculateCumulativeDistances(points)
+			shape.cumDistances = utils.CumulativeShapeDistances(points)
 			shape.totalDist = shape.cumDistances[len(shape.cumDistances)-1]
 		}
 		shapesByID[shapeID] = shape

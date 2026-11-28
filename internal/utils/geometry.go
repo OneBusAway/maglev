@@ -1,6 +1,10 @@
 package utils
 
-import "math"
+import (
+	"math"
+
+	"github.com/OneBusAway/go-gtfs"
+)
 
 const (
 	// RadiusOfEarthInMeters is RADIUS_OF_EARTH_IN_KM * 1000
@@ -104,4 +108,23 @@ func IsOutOfBounds(inner, outer CoordinateBounds) bool {
 		inner.MinLat > outer.MaxLat ||
 		inner.MaxLon < outer.MinLon ||
 		inner.MinLon > outer.MaxLon
+}
+
+// CumulativeShapeDistances returns the distance in meters along the shape to
+// each point, so the result has one entry per point and starts at 0. A shape
+// with fewer than two points yields []float64{0}.
+func CumulativeShapeDistances(shapePoints []gtfs.ShapePoint) []float64 {
+	if len(shapePoints) <= 1 {
+		return []float64{0}
+	}
+
+	cumulativeDistances := make([]float64, len(shapePoints))
+	for i := 1; i < len(shapePoints); i++ {
+		segmentDistance := Distance(
+			shapePoints[i-1].Latitude, shapePoints[i-1].Longitude,
+			shapePoints[i].Latitude, shapePoints[i].Longitude,
+		)
+		cumulativeDistances[i] = cumulativeDistances[i-1] + segmentDistance
+	}
+	return cumulativeDistances
 }

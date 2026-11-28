@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -510,4 +511,27 @@ func FuzzCalculateBounds(f *testing.F) {
 			t.Errorf("Property violation: MinLon (%f) > MaxLon (%f)", bounds.MinLon, bounds.MaxLon)
 		}
 	})
+}
+
+func TestCumulativeShapeDistances(t *testing.T) {
+	a := gtfs.ShapePoint{Latitude: 47.60, Longitude: -122.33}
+	b := gtfs.ShapePoint{Latitude: 47.61, Longitude: -122.33}
+	c := gtfs.ShapePoint{Latitude: 47.61, Longitude: -122.34}
+	ab := Distance(a.Latitude, a.Longitude, b.Latitude, b.Longitude)
+	bc := Distance(b.Latitude, b.Longitude, c.Latitude, c.Longitude)
+
+	tests := []struct {
+		name   string
+		points []gtfs.ShapePoint
+		want   []float64
+	}{
+		{name: "no points", points: nil, want: []float64{0}},
+		{name: "one point", points: []gtfs.ShapePoint{a}, want: []float64{0}},
+		{name: "three points", points: []gtfs.ShapePoint{a, b, c}, want: []float64{0, ab, ab + bc}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, CumulativeShapeDistances(tt.points))
+		})
+	}
 }
