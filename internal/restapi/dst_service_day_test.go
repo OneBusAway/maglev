@@ -478,3 +478,114 @@ func TestTripEndpoints_ReportServiceDayStartOnDSTServiceDays(t *testing.T) {
 		})
 	}
 }
+
+// stopsForRouteDSTFiles returns a minimal GTFS feed with an agency in the given
+// timezone. The route has two trips: a Sunday-only trip serving "today1" and
+// "today2", and a Saturday-only trip serving "yesterday1" and "yesterday2".
+// When a Sunday date is requested on stops-for-route, only the Sunday stops
+// should be returned — even if that Sunday's local midnight does not exist
+// (i.e. the timezone springs clocks forward at midnight).
+func stopsForRouteDSTFiles(timezone string) map[string]string {
+	return map[string]string{
+		"agency.txt": "agency_id,agency_name,agency_url,agency_timezone\n" +
+			"A,Test Agency,http://example.com," + timezone + "\n",
+		"routes.txt": "route_id,agency_id,route_short_name,route_long_name,route_type\n" +
+			"R,A,R,Test Route,3\n",
+		"calendar.txt": "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n" +
+			"sunday-svc,0,0,0,0,0,0,1,20260101,20261231\n" +
+			"saturday-svc,0,0,0,0,0,1,0,20260101,20261231\n",
+		"stops.txt": "stop_id,stop_name,stop_lat,stop_lon\n" +
+			"today1,Today Stop 1,-33.4489,-70.6693\n" +
+			"today2,Today Stop 2,-33.4500,-70.6700\n" +
+			"yesterday1,Yesterday Stop 1,-33.4510,-70.6710\n" +
+			"yesterday2,Yesterday Stop 2,-33.4520,-70.6720\n",
+		"trips.txt": "route_id,service_id,trip_id,trip_headsign,direction_id\n" +
+			"R,sunday-svc,today-trip,Today,0\n" +
+			"R,saturday-svc,yesterday-trip,Yesterday,0\n",
+		"stop_times.txt": "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n" +
+			"today-trip,10:00:00,10:00:00,today1,1\n" +
+			"today-trip,10:30:00,10:30:00,today2,2\n" +
+			"yesterday-trip,10:00:00,10:00:00,yesterday1,1\n" +
+			"yesterday-trip,10:30:00,10:30:00,yesterday2,2\n",
+	}
+}
+
+// stopsForRouteSkipMidnightResponse is a minimal struct for decoding the
+// stops-for-route response in the DST regression test.
+type stopsForRouteSkipMidnightResponse struct {
+	Data struct {
+		Entry struct {
+			StopIds []string `json:"stopIds"`
+		} `json:"entry"`
+	} `json:"data"`
+}
+
+// TestStopsForRoutePreservesDateAcrossSkippedMidnight verifies that when the
+// requested date is a DST spring-forward day whose local midnight does not
+// exist, stops-for-route returns only the stops active on that calendar date
+// and does not include stops from the previous day.
+func TestStopsForRoutePreservesDateAcrossSkippedMidnight(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		timezone     string
+		calendarDate string
+		unixMillis   string
+		wantStops    []string
+		unwantStops  []string
+	}{
+		{
+			name:         "America/Santiago Sunday 2026-09-06",
+			timezone:     "America/Santiago",
+			calendarDate: "2026-09-06",
+			unixMillis:   "1788706800000", // noon on 2026-09-06 in Santiago
+			wantStops:    []string{"A_today1", "A_today2"},
+			unwantStops:  []string{"A_yesterday1", "A_yesterday2"},
+		},
+		{
+			name:         "America/Havana Sunday 2026-03-08",
+			timezone:     "America/Havana",
+			calendarDate: "2026-03-08",
+			unixMillis:   "1772985600000", // noon on 2026-03-08 in Havana
+			wantStops:    []string{"A_today1", "A_today2"},
+			unwantStops:  []string{"A_yesterday1", "A_yesterday2"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			files := stopsForRouteDSTFiles(tc.timezone)
+			api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "sfr-dst-"+tc.calendarDate+".zip", files)
+			for _, timeParam := range []string{tc.calendarDate, tc.unixMillis} {
+				t.Run(timeParam, func(t *testing.T) {
+					resp, body := callAPIHandler[stopsForRouteSkipMidnightResponse](t, api,
+						"/api/where/stops-for-route/A_R.json?key=TEST&time="+timeParam+"&includePolylines=false")
+					require.Equal(t, 200, resp.StatusCode)
+
+					stopIDs := body.Data.Entry.StopIds
+					for _, want := range tc.wantStops {
+						assert.Contains(t, stopIDs, want, "time=%s: expected stop %s", timeParam, want)
+					}
+					for _, unwant := range tc.unwantStops {
+						assert.NotContains(t, stopIDs, unwant, "time=%s: Saturday stop %s must not appear on Sunday", timeParam, unwant)
+					}
+				})
+			}
+		})
+	}
+
+	// 1788663600000 is 2026-09-05 23:00:00 -04 in America/Santiago (Saturday night,
+	// one hour before the skipped midnight). Verify it returns Saturday's stops,
+	// not Sunday's.
+	t.Run("America/Santiago Saturday 23:00 before skipped midnight", func(t *testing.T) {
+		files := stopsForRouteDSTFiles("America/Santiago")
+		api := createTestApiWithGTFSFixture(t, clock.RealClock{}, "sfr-dst-santiago-sat-2300.zip", files)
+
+		resp, body := callAPIHandler[stopsForRouteSkipMidnightResponse](t, api,
+			"/api/where/stops-for-route/A_R.json?key=TEST&time=1788663600000&includePolylines=false")
+		require.Equal(t, 200, resp.StatusCode)
+
+		stopIDs := body.Data.Entry.StopIds
+		assert.Contains(t, stopIDs, "A_yesterday1")
+		assert.Contains(t, stopIDs, "A_yesterday2")
+		assert.NotContains(t, stopIDs, "A_today1")
+		assert.NotContains(t, stopIDs, "A_today2")
+	})
+}
