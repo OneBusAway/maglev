@@ -871,16 +871,68 @@ func sequenceIdentifiesVisit(stu gtfs.StopTimeUpdate, staticStops map[int64]stri
 	return ok && staticStop == *stu.StopID
 }
 
-// staticStopsForTrip loads a trip's static schedule as a stop_sequence to
-// stop_id map. It returns an empty map when the lookup fails.
-func (api *RestAPI) staticStopsForTrip(ctx context.Context, tripID string) map[int64]string {
-	stops := map[int64]string{}
+// uniqueStopSequence resolves stopID to its static sequence when the trip
+// visits that stop once. The schedule is loaded on the first call. A stop
+// visited twice stays unresolved.
+func (api *RestAPI) uniqueStopSequence(ctx context.Context, tripID, stopID string, schedule **staticSchedule) (int64, bool) {
+	loaded := api.loadStaticSchedule(ctx, tripID, schedule)
+	return uniqueStaticSequence(loaded.stopIDs, stopID)
+}
+
+// uniqueStaticSequence returns the stop_sequence of stopID when the trip
+// visits that stop once. A stop that appears more than once stays unresolved.
+func uniqueStaticSequence(staticStops map[int64]string, stopID string) (int64, bool) {
+	seq := int64(-1)
+	for candidate, id := range staticStops {
+		if id != stopID {
+			continue
+		}
+		if seq != -1 {
+			return 0, false
+		}
+		seq = candidate
+	}
+	if seq == -1 {
+		return 0, false
+	}
+	return seq, true
+}
+
+// staticVisit is one stop on a trip's static schedule. Times are nanoseconds
+// since midnight, the same unit stop_times stores.
+type staticVisit struct {
+	stopID    string
+	arrival   int64
+	departure int64
+}
+
+// staticSchedule is a trip's stop times, loaded at most once per prediction.
+type staticSchedule struct {
+	bySequence map[int64]staticVisit
+	stopIDs    map[int64]string
+}
+
+// loadStaticSchedule loads the trip's stop times on the first call. A failed
+// lookup still counts as loaded, so a missing trip is not queried again.
+func (api *RestAPI) loadStaticSchedule(ctx context.Context, tripID string, schedule **staticSchedule) *staticSchedule {
+	if *schedule != nil {
+		return *schedule
+	}
+	loaded := &staticSchedule{
+		bySequence: map[int64]staticVisit{},
+		stopIDs:    map[int64]string{},
+	}
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
-	if err != nil {
-		return stops
+	if err == nil {
+		for _, st := range stopTimes {
+			loaded.bySequence[st.StopSequence] = staticVisit{
+				stopID:    st.StopID,
+				arrival:   st.ArrivalTime,
+				departure: st.DepartureTime,
+			}
+			loaded.stopIDs[st.StopSequence] = st.StopID
+		}
 	}
-	for _, st := range stopTimes {
-		stops[st.StopSequence] = st.StopID
-	}
-	return stops
+	*schedule = loaded
+	return loaded
 }

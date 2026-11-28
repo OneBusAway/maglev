@@ -2023,7 +2023,10 @@ func TestVehicleRecordOwnership_RetentionAndDeviation(t *testing.T) {
 			assert.Equal(t, tt.wantVehicle, extras.record.present)
 			assert.Equal(t, tt.wantVehicle, status.Predicted)
 			_, _, predicted := api.getPredictedTimes(context.Background(), tripID, serviceDate, stopID, 5,
-				serviceDate.Add(9*time.Hour), serviceDate.Add(9*time.Hour+5*time.Minute))
+				scheduledTimes{
+					arrival:   serviceDate.Add(9 * time.Hour),
+					departure: serviceDate.Add(9*time.Hour + 5*time.Minute),
+				}, time.Time{})
 			assert.Equal(t, tt.wantVehicle, predicted, "arrival predictions must use the same record expiry")
 			if tt.wantVehicle {
 				assert.Equal(t, 60, status.ScheduleDeviation)

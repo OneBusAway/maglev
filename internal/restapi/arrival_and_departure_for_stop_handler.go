@@ -359,7 +359,7 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 
 		// getPredictedTimes now returns 3 values (arr, dep, isPredicted)
 		// and includes trip-level Delay fallback for consistency with the plural handler
-		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, serviceMidnight, stopCode, matchedStopTime.StopSequence, scheduledArrivalTime, scheduledDepartureTime)
+		predictedArrival, predictedDeparture, isPredicted := api.getPredictedTimes(ctx, tripID, serviceMidnight, stopCode, matchedStopTime.StopSequence, scheduledTimes{arrival: scheduledArrivalTime, departure: scheduledDepartureTime}, currentTime)
 
 		if isPredicted {
 			predictedArrivalTime = predictedArrival
@@ -616,6 +616,168 @@ func (api *RestAPI) arrivalAndDepartureForStopHandler(w http.ResponseWriter, r *
 	api.sendResponse(w, r, response)
 }
 
+// departureDeviationAtQuery is Java's calculateDepartureDeviation
+// (ArrivalAndDepartureServiceImpl) for a vehicle that has not reached the
+// stop. Slack is the scheduled dwell, floored at zero. A late bus spends that
+// slack before the departure moves. Once the query time minus the deviation
+// is past the scheduled departure, the full deviation is kept. While that
+// instant falls inside the dwell, the remaining slack shrinks by the time
+// already spent there. The query time is truncated to the second, matching
+// Java's whole-second schedule math. A zero queryTime is before any
+// scheduled arrival and leaves the full slack. An early bus keeps its early
+// departure. Slack from earlier stops on the block is #1875.
+func departureDeviationAtQuery(deviation time.Duration, queryTime, scheduledArrival, scheduledDeparture time.Time) time.Duration {
+	slack := scheduledDeparture.Sub(scheduledArrival)
+	if slack < 0 {
+		slack = 0
+	}
+	if deviation > 0 {
+		effective := queryTime.Truncate(time.Second).Add(-deviation)
+		if effective.After(scheduledDeparture) {
+			return deviation
+		}
+		if !effective.Before(scheduledArrival) {
+			slack -= effective.Sub(scheduledArrival)
+		}
+	}
+	if slack > 0 && deviation > 0 {
+		if deviation <= slack {
+			return 0
+		}
+		return deviation - slack
+	}
+	return deviation
+}
+
+// dwellAbsorbsLateness reports whether Java would run calculateDepartureDeviation
+// for this stop. That runs only when the stop has no timepoint record. An update
+// for the stop itself is a record. A single stop-time update is expanded to a
+// full-delay record for the other stops. A trip delay with two or more updates
+// only builds those records for stops before the earliest update
+// (predictedDepartureTime < tprStartTime in applyTripUpdatesToRecord), so a
+// later stop still absorbs. With no trip delay, a prior-stop delay absorbs once
+// the feed has two or more updates.
+func dwellAbsorbsLateness(foundTarget bool, stuCount int, hasTripDelay, targetPastEarliestSTU bool) bool {
+	if foundTarget {
+		return false
+	}
+	if hasTripDelay {
+		if stuCount == 0 {
+			return true
+		}
+		if stuCount == 1 {
+			return false
+		}
+		return targetPastEarliestSTU
+	}
+	return stuCount >= 2
+}
+
+// priorStopSelection remembers the closest earlier updates. The delay is
+// derived later, and only when a path reads it, so a predicted Time does not
+// load the trip's stop times when the target stop already has its own.
+type priorStopSelection struct {
+	target      int64
+	earliest    *int64
+	explicit    *gtfs.StopTimeUpdate
+	explicitSeq int64
+	timed       *gtfs.StopTimeUpdate
+	timedSeq    int64
+}
+
+// notePriorStop records the earliest update, the closest one with a Delay,
+// and the closest one with only a predicted Time. An update with neither
+// does not take a slot, so a trip delay is kept.
+func notePriorStop(stu *gtfs.StopTimeUpdate, trackedSeq int64, sel *priorStopSelection) {
+	if trackedSeq == -1 {
+		return
+	}
+	if *sel.earliest == -1 || trackedSeq < *sel.earliest {
+		*sel.earliest = trackedSeq
+	}
+	if trackedSeq >= sel.target {
+		return
+	}
+	if eventHasDelay(stu.Departure) || eventHasDelay(stu.Arrival) {
+		if sel.explicit == nil || trackedSeq > sel.explicitSeq {
+			sel.explicit = stu
+			sel.explicitSeq = trackedSeq
+		}
+		return
+	}
+	if eventHasTime(stu.Departure) || eventHasTime(stu.Arrival) {
+		if sel.timed == nil || trackedSeq > sel.timedSeq {
+			sel.timed = stu
+			sel.timedSeq = trackedSeq
+		}
+	}
+}
+
+func eventHasDelay(event *gtfs.StopTimeEvent) bool {
+	return event != nil && event.Delay != nil
+}
+
+func eventHasTime(event *gtfs.StopTimeEvent) bool {
+	return event != nil && event.Time != nil
+}
+
+// priorDelay is the closest earlier delay. A predicted Time is measured only
+// when it is closer than an explicit Delay, so a target that already has its
+// own time never pays for that read.
+func (api *RestAPI) priorDelay(ctx context.Context, tripID string, serviceDate time.Time, schedule **staticSchedule, sel *priorStopSelection) (time.Duration, bool) {
+	if sel.timed != nil && (sel.explicit == nil || sel.timedSeq > sel.explicitSeq) {
+		if delay, ok := api.propagatedStopDelay(ctx, tripID, sel.timed, sel.timedSeq, serviceDate, schedule); ok {
+			return delay, true
+		}
+	}
+	if sel.explicit == nil {
+		return 0, false
+	}
+	return api.propagatedStopDelay(ctx, tripID, sel.explicit, sel.explicitSeq, serviceDate, schedule)
+}
+
+// propagatedStopDelay is the delay an earlier stop-time update passes on.
+// It reports false when the update names a stop but carries no delay and no
+// predicted time.
+func (api *RestAPI) propagatedStopDelay(ctx context.Context, tripID string, stu *gtfs.StopTimeUpdate, seq int64, serviceDate time.Time, schedule **staticSchedule) (time.Duration, bool) {
+	if stu.Departure != nil && stu.Departure.Delay != nil {
+		return *stu.Departure.Delay, true
+	}
+	if stu.Arrival != nil && stu.Arrival.Delay != nil {
+		return *stu.Arrival.Delay, true
+	}
+	if delay, ok := api.delayFromPredictedTime(ctx, tripID, stu.Departure, seq, serviceDate, schedule, false); ok {
+		return delay, true
+	}
+	return api.delayFromPredictedTime(ctx, tripID, stu.Arrival, seq, serviceDate, schedule, true)
+}
+
+// delayFromPredictedTime derives a delay from a predicted Time and the static
+// stop time. arrival selects the scheduled arrival; otherwise the departure.
+func (api *RestAPI) delayFromPredictedTime(ctx context.Context, tripID string, event *gtfs.StopTimeEvent, seq int64, serviceDate time.Time, schedule **staticSchedule, arrival bool) (time.Duration, bool) {
+	if event == nil || event.Time == nil {
+		return 0, false
+	}
+	visit, ok := api.loadStaticSchedule(ctx, tripID, schedule).bySequence[seq]
+	if !ok {
+		return 0, false
+	}
+	nanos := visit.departure
+	if arrival {
+		nanos = visit.arrival
+	}
+	// Stop-time offsets are added to the service date's offset base. On a
+	// daylight-saving transition that base is not local midnight.
+	return event.Time.Sub(servicedate.OffsetBase(serviceDate).Add(time.Duration(nanos))), true
+}
+
+// scheduledTimes is one stop's scheduled arrival and departure. Grouped so
+// getPredictedTimes stays within SonarCloud's parameter limit.
+type scheduledTimes struct {
+	arrival   time.Time
+	departure time.Time
+}
+
 // getPredictedTimes computes predicted arrival/departure times from GTFS-RT TripUpdate data.
 // It implements a 3-tier fallback strategy matching the plural handler's behavior:
 //  1. Exact stop match — uses per-stop arrival/departure time or delay directly
@@ -633,7 +795,8 @@ func (api *RestAPI) getPredictedTimes(
 	serviceDate time.Time,
 	stopCode string,
 	targetStopSequence int64,
-	scheduledArrivalTime, scheduledDepartureTime time.Time,
+	scheduled scheduledTimes,
+	queryTime time.Time,
 ) (predictedArrivalTime, predictedDepartureTime time.Time, predicted bool) {
 	realTimeTrip, _ := api.GtfsManager.GetTripUpdateByID(tripID)
 	if realTimeTrip == nil || (len(realTimeTrip.StopTimeUpdates) == 0) && realTimeTrip.Delay == nil {
@@ -644,8 +807,7 @@ func (api *RestAPI) getPredictedTimes(
 	}
 
 	var arrivalOffset, departureOffset *time.Duration
-	var propagatedDelay time.Duration
-	var closestPriorSequence int64 = -1
+	var earliestSTUSequence int64 = -1
 	var foundTarget bool
 
 	// A stop_id can be visited more than once on a loop trip, so matching on
@@ -653,7 +815,12 @@ func (api *RestAPI) getPredictedTimes(
 	// the update whose stop_sequence matches the requested one, and fall back
 	// to stop_id for updates whose sequence doesn't name a visit to this stop.
 	var target, stopIDFallback *gtfs.StopTimeUpdate
-	var staticStops map[int64]string
+	var schedule *staticSchedule
+	selection := priorStopSelection{target: targetStopSequence, earliest: &earliestSTUSequence}
+	// earliestSTUSequence matters only for a trip delay with two or more
+	// updates. Stop-id-only updates resolve a sequence in that case alone,
+	// so other feeds do not load the trip's stop times.
+	resolveUniqueStop := realTimeTrip.Delay != nil && len(realTimeTrip.StopTimeUpdates) >= 2
 
 	for i := range realTimeTrip.StopTimeUpdates {
 		stu := &realTimeTrip.StopTimeUpdates[i]
@@ -669,22 +836,37 @@ func (api *RestAPI) getPredictedTimes(
 				target = stu
 			}
 		case matchesStop && stopIDFallback == nil:
-			if seq != -1 && staticStops == nil {
-				staticStops = api.staticStopsForTrip(ctx, tripID)
+			var stopIDs map[int64]string
+			if seq != -1 {
+				stopIDs = api.loadStaticSchedule(ctx, tripID, &schedule).stopIDs
 			}
-			if !sequenceIdentifiesVisit(*stu, staticStops) {
+			if !sequenceIdentifiesVisit(*stu, stopIDs) {
 				stopIDFallback = stu
 			}
 		}
 
-		if seq != -1 && seq < targetStopSequence && seq > closestPriorSequence {
-			closestPriorSequence = seq
-			propagatedDelay = 0
-			if stu.Departure != nil && stu.Departure.Delay != nil {
-				propagatedDelay = *stu.Departure.Delay
-			} else if stu.Arrival != nil && stu.Arrival.Delay != nil {
-				propagatedDelay = *stu.Arrival.Delay
+		trackedSeq := seq
+		if trackedSeq == -1 && resolveUniqueStop && stu.StopID != nil {
+			if resolved, ok := api.uniqueStopSequence(ctx, tripID, *stu.StopID, &schedule); ok {
+				trackedSeq = resolved
 			}
+		}
+		notePriorStop(stu, trackedSeq, &selection)
+	}
+
+	// A predicted Time is measured from the static schedule. Do that only
+	// once a path below actually reads the prior delay.
+	var propagatedDelay time.Duration
+	var havePrior bool
+	var priorResolved bool
+	resolvePrior := func() {
+		if priorResolved {
+			return
+		}
+		priorResolved = true
+		if delay, ok := api.priorDelay(ctx, tripID, serviceDate, &schedule, &selection); ok {
+			propagatedDelay = delay
+			havePrior = true
 		}
 	}
 
@@ -695,7 +877,7 @@ func (api *RestAPI) getPredictedTimes(
 		foundTarget = true
 		if target.Arrival != nil {
 			if target.Arrival.Time != nil {
-				offset := target.Arrival.Time.Sub(scheduledArrivalTime)
+				offset := target.Arrival.Time.Sub(scheduled.arrival)
 				arrivalOffset = &offset
 			} else if target.Arrival.Delay != nil {
 				offset := *target.Arrival.Delay
@@ -704,7 +886,7 @@ func (api *RestAPI) getPredictedTimes(
 		}
 		if target.Departure != nil {
 			if target.Departure.Time != nil {
-				offset := target.Departure.Time.Sub(scheduledDepartureTime)
+				offset := target.Departure.Time.Sub(scheduled.departure)
 				departureOffset = &offset
 			} else if target.Departure.Delay != nil {
 				offset := *target.Departure.Delay
@@ -717,7 +899,8 @@ func (api *RestAPI) getPredictedTimes(
 	// Previously this returned (0, 0) when !foundTarget && closestPriorSequence == -1,
 	// ignoring trip-level delay entirely
 	if !foundTarget {
-		if closestPriorSequence != -1 {
+		resolvePrior()
+		if havePrior {
 			// Fallback 1: Propagated delay from closest prior stop
 			arr := propagatedDelay
 			dep := propagatedDelay
@@ -733,22 +916,36 @@ func (api *RestAPI) getPredictedTimes(
 		}
 	}
 
-	// Mirror Java's propagateScheduleDeviationForwardAcrossStop
-	// (ArrivalAndDepartureServiceImpl.java:925-930). When slack between arrival
-	// and departure is zero (the typical case at most stops), the
-	// propagation reduces to "copy the present side." Falling back to
-	// propagatedDelay here would mix the target stop with an unrelated
-	// earlier stop's deviation, producing a negative dwell on stops where
-	// arr != dep. Only fall back to propagatedDelay if BOTH sides are nil.
+	// Fill a missing side from the side the feed did send, or from the
+	// propagated delay when neither side did. Mixing in an earlier stop's
+	// delay when one side of this stop is already known produces a negative
+	// dwell, so propagatedDelay is only used when both sides are nil.
+	//
+	// Dwell absorbs lateness only when Java would call calculateDepartureDeviation,
+	// which is when this stop has no timepoint record. A departure the feed
+	// sent, an arrival-only update, and a single stop-time update keep the full
+	// delay. A trip delay keeps it for stops before the earliest update, and
+	// absorbs it for stops after that update. Once the query time shows the
+	// vehicle has left the stop, or has already spent part of the dwell, the
+	// remaining slack shrinks to match calculateDepartureDeviation.
 	if arrivalOffset == nil && departureOffset != nil {
 		arrivalOffset = departureOffset
 	} else if arrivalOffset == nil {
+		resolvePrior()
 		arrivalOffset = &propagatedDelay
 	}
 	if departureOffset == nil && arrivalOffset != nil {
 		departureOffset = arrivalOffset
 	} else if departureOffset == nil {
+		resolvePrior()
 		departureOffset = &propagatedDelay
+	}
+	targetPastEarliestSTU := earliestSTUSequence >= 0 && targetStopSequence > earliestSTUSequence
+	// A feed departure is only recorded on the target stop, and
+	// dwellAbsorbsLateness already returns false when that stop was found.
+	if dwellAbsorbsLateness(foundTarget, len(realTimeTrip.StopTimeUpdates), realTimeTrip.Delay != nil, targetPastEarliestSTU) {
+		adjusted := departureDeviationAtQuery(*arrivalOffset, queryTime, scheduled.arrival, scheduled.departure)
+		departureOffset = &adjusted
 	}
 
 	// Java's ±1h blockNotActive filter (GtfsRealtimeSource.java:711-752)
@@ -764,8 +961,8 @@ func (api *RestAPI) getPredictedTimes(
 
 	// Arrival and departure each take their own offset, matching Java's
 	// setPredictedTimesFromTimepointPredictionRecords.
-	predictedArrival := scheduledArrivalTime.Add(*arrivalOffset)
-	predictedDeparture := scheduledDepartureTime.Add(*departureOffset)
+	predictedArrival := scheduled.arrival.Add(*arrivalOffset)
+	predictedDeparture := scheduled.departure.Add(*departureOffset)
 
 	return predictedArrival, predictedDeparture, true
 }

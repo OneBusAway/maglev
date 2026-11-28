@@ -992,7 +992,7 @@ func TestPluralArrivals_PriorStopPropagation(t *testing.T) {
 	assert.Equal(t, scheduledArrivalMs+90000, arrival.PredictedArrivalTime.UnixMilli(),
 		"predicted arrival should be scheduled + propagated 90s delay")
 	assert.Equal(t, scheduledDepartureMs+90000, arrival.PredictedDepartureTime.UnixMilli(),
-		"predicted departure should be scheduled + propagated 90s delay")
+		"a single prior update keeps the full delay on the departure")
 }
 
 // TestPluralArrivals_TripLevelDelayFallback verifies that when a TripUpdate has a
@@ -1027,7 +1027,7 @@ func TestPluralArrivals_TripLevelDelayFallback(t *testing.T) {
 		assert.Equal(t, scheduledArrivalMs+120000, a.PredictedArrivalTime.UnixMilli(),
 			"predicted arrival should be scheduled + trip-level 120s delay")
 		assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli(),
-			"predicted departure should be scheduled + trip-level 120s delay")
+			"a trip delay next to a stop update keeps the full delay on the departure")
 		break
 	}
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
@@ -1063,7 +1063,8 @@ func TestPluralArrivals_TripLevelDelayWithoutVehicle(t *testing.T) {
 		found = true
 		assert.True(t, a.Predicted, "trip-level delay without vehicle should still be predicted")
 		assert.Equal(t, scheduledArrivalMs+120000, a.PredictedArrivalTime.UnixMilli())
-		assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli())
+		assert.Equal(t, scheduledDepartureMs+120000, a.PredictedDepartureTime.UnixMilli(),
+			"a trip delay next to a stop update keeps the full delay on the departure")
 		break
 	}
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
@@ -1507,9 +1508,10 @@ func TestPluralArrivals_AbsoluteTimeStopEvent(t *testing.T) {
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
 }
 
-// TestPluralArrivals_StalePropagatedDelayReset verifies that when the closest prior
-// stop has only absolute Time data (no Delay), propagatedDelayMs is reset to 0.
-func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
+// TestPluralArrivals_TimeOnlyPriorWithoutScheduleKeepsEarlierDelay verifies that
+// a closer update with only a predicted Time does not clear an earlier delay
+// when that stop has no static visit to measure the Time against.
+func TestPluralArrivals_TimeOnlyPriorWithoutScheduleKeepsEarlierDelay(t *testing.T) {
 	mockClock := clock.NewMockClock(time.Date(2010, 1, 1, 8, 2, 0, 0, time.UTC))
 	api := createTestApiWithClock(t, mockClock)
 	defer api.Shutdown()
@@ -1520,8 +1522,8 @@ func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 	api.GtfsManager.MockAddVehicle("v1", tripID, "dp-route")
 
 	// Sequence 1: has a 90s delay.
-	// Sequence 2 (closer): has only an absolute Time, no Delay.
-	// Expected: propagatedDelayMs is reset to 0 when seq 2 becomes the closest prior.
+	// Sequence 2 (closer): has only an absolute Time, and no static visit.
+	// The closer update cannot be measured, so the 90s delay stays.
 	seq1 := uint32(1)
 	seq1Time := time.Date(2010, 1, 1, 8, 0, 0, 0, time.UTC)
 	delay90s := 90 * time.Second
@@ -1547,8 +1549,8 @@ func TestPluralArrivals_StalePropagatedDelayReset(t *testing.T) {
 		}
 		found = true
 		assert.True(t, a.Predicted, "should be predicted via prior stop propagation")
-		assert.Equal(t, scheduledArrivalMs, a.PredictedArrivalTime.UnixMilli(),
-			"propagatedDelayMs should be 0 when closest prior stop only has absolute Time data")
+		assert.Equal(t, scheduledArrivalMs+int64((90*time.Second).Milliseconds()), a.PredictedArrivalTime.UnixMilli(),
+			"a time-only update with no static visit keeps the earlier 90s delay")
 		break
 	}
 	assert.True(t, found, "expected to find arrival for trip %s", expectedTripID)
