@@ -327,6 +327,10 @@ func TestNewClient_RecordsQueryMetricsWhenOnlyMetricsEnabled(t *testing.T) {
     	id TEXT PRIMARY KEY,
     	code TEXT
 	);
+    CREATE TABLE IF NOT EXISTS import_metadata (
+        file_hash TEXT NOT NULL,
+        file_source TEXT NOT NULL
+    );
 `
 	t.Cleanup(func() {
 		ddl = originalDDL
@@ -703,6 +707,7 @@ func TestSchemaVersion_MatchesSchemaHash(t *testing.T) {
 	// Do not overwrite hashes for existing versions.
 	knownHashes := map[int]string{
 		1: "1194bf134b12563b4ad12469c952b7587ab70c9ef247ba3a788fc4357158288a",
+		2: "a154c32c271483918d30b6e14a19bfe2e848d00ad5062cfb1bc10c6d90e576dd",
 	}
 
 	expectedHash, ok := knownHashes[schemaVersion]

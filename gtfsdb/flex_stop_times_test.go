@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OneBusAway/go-gtfs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -77,9 +76,9 @@ func importFlexFeed(t *testing.T, files map[string]string) ([]string, map[string
 }
 
 // go-gtfs 1.5.0 keeps stop times that serve a location group instead of a
-// stop (#2209). A trip that serves only location groups can't be stored
-// until Flex import lands, so it is skipped and the rest of the feed loads.
-func TestStreamedImportSkipsTripsWithOnlyFlexStopTimes(t *testing.T) {
+// stop (#2209). A trip that serves only location groups is stored, but its
+// windowed records go to flex_stop_times, not stop_times.
+func TestStreamedImportStoresTripsWithOnlyFlexStopTimes(t *testing.T) {
 	files := flexFeedFiles()
 	files["trips.txt"] = "route_id,service_id,trip_id\nR1,WK,T1\nR1,WK,FLEX\n"
 	files["stop_times.txt"] = flexStopTimesHeader +
@@ -91,12 +90,13 @@ func TestStreamedImportSkipsTripsWithOnlyFlexStopTimes(t *testing.T) {
 
 	tripIDs, stopIDs := importFlexFeed(t, files)
 
-	assert.Equal(t, []string{"T1"}, tripIDs)
+	assert.Equal(t, []string{"FLEX", "T1"}, tripIDs)
+	assert.Empty(t, stopIDs["FLEX"])
 	assert.Equal(t, []string{"S1", "S2", "S3"}, stopIDs["T1"])
 }
 
 // A fixed-route trip that deviates into a location group keeps its stop
-// times at stops; only the deviation is skipped (#2209).
+// times at stops in stop_times; the deviation is not one of them (#2209).
 func TestStreamedImportKeepsStopsOfDeviatedTrip(t *testing.T) {
 	files := flexFeedFiles()
 	files["trips.txt"] = "route_id,service_id,trip_id\nR1,WK,T1\n"
@@ -111,9 +111,9 @@ func TestStreamedImportKeepsStopsOfDeviatedTrip(t *testing.T) {
 	assert.Equal(t, []string{"S1", "S3"}, stopIDs["T1"])
 }
 
-// A deviated trip left with fewer than two stop times at stops is skipped
-// like any other trip with too few stop times.
-func TestStreamedImportSkipsDeviatedTripWithOneStop(t *testing.T) {
+// A deviated trip with one stop time at a stop still has two records, so it
+// is stored with that one stop time in stop_times.
+func TestStreamedImportKeepsDeviatedTripWithOneStop(t *testing.T) {
 	files := flexFeedFiles()
 	files["trips.txt"] = "route_id,service_id,trip_id\nR1,WK,T1\nR1,WK,SHORT\n"
 	files["stop_times.txt"] = flexStopTimesHeader +
@@ -122,16 +122,16 @@ func TestStreamedImportSkipsDeviatedTripWithOneStop(t *testing.T) {
 		"SHORT,07:00:00,07:00:00,S1,,1,,,0,1\n" +
 		"SHORT,,,,G1,2,07:05:00,07:15:00,2,1\n"
 
-	tripIDs, _ := importFlexFeed(t, files)
+	tripIDs, stopIDs := importFlexFeed(t, files)
 
-	assert.Equal(t, []string{"T1"}, tripIDs)
+	assert.Equal(t, []string{"SHORT", "T1"}, tripIDs)
+	assert.Equal(t, []string{"S1"}, stopIDs["SHORT"])
 }
 
-// A feed with locations.geojson (not location_groups.txt) also triggers the
-// Flex path: a trip that serves only a GeoJSON location is skipped, and a
-// regular trip in the same feed loads normally. This covers the
-// static.Locations != nil half of hasFlexLocations.
-func TestStreamedImportSkipsTripsWithOnlyLocationIDStopTimes(t *testing.T) {
+// A trip that serves only a GeoJSON location (locations.geojson, not
+// location_groups.txt) is stored with no stop_times rows, and a regular trip
+// in the same feed loads normally.
+func TestStreamedImportStoresTripsWithOnlyLocationIDStopTimes(t *testing.T) {
 	files := flexLocationFeedFiles()
 	files["trips.txt"] = "route_id,service_id,trip_id\nR1,WK,T1\nR1,WK,ZONE\n"
 	files["stop_times.txt"] = flexLocationStopTimesHeader +
@@ -143,12 +143,13 @@ func TestStreamedImportSkipsTripsWithOnlyLocationIDStopTimes(t *testing.T) {
 
 	tripIDs, stopIDs := importFlexFeed(t, files)
 
-	assert.Equal(t, []string{"T1"}, tripIDs)
+	assert.Equal(t, []string{"T1", "ZONE"}, tripIDs)
+	assert.Empty(t, stopIDs["ZONE"])
 	assert.Equal(t, []string{"S1", "S2", "S3"}, stopIDs["T1"])
 }
 
 // A deviated trip that mixes stops and a GeoJSON location keeps its stop
-// times at stops; the location deviation is skipped.
+// times at stops in stop_times; the location deviation is not one of them.
 func TestStreamedImportKeepsStopsOfLocationDeviatedTrip(t *testing.T) {
 	files := flexLocationFeedFiles()
 	files["trips.txt"] = "route_id,service_id,trip_id\nR1,WK,T1\n"
@@ -161,18 +162,4 @@ func TestStreamedImportKeepsStopsOfLocationDeviatedTrip(t *testing.T) {
 
 	assert.Equal(t, []string{"T1"}, tripIDs)
 	assert.Equal(t, []string{"S1", "S3"}, stopIDs["T1"])
-}
-
-func TestStopTimesAtStops(t *testing.T) {
-	s1, s2 := &gtfs.Stop{Id: "S1"}, &gtfs.Stop{Id: "S2"}
-
-	allAtStops := []gtfs.ScheduledStopTime{{Stop: s1}, {Stop: s2}}
-	got := stopTimesAtStops(allAtStops)
-	assert.Equal(t, allAtStops, got)
-	assert.Same(t, &allAtStops[0], &got[0], "with no Flex rows the slice is returned unchanged")
-
-	mixed := []gtfs.ScheduledStopTime{{Stop: s1}, {}, {Stop: s2}, {}}
-	assert.Equal(t, []gtfs.ScheduledStopTime{{Stop: s1}, {Stop: s2}}, stopTimesAtStops(mixed))
-
-	assert.Empty(t, stopTimesAtStops([]gtfs.ScheduledStopTime{{}, {}}))
 }
