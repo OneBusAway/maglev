@@ -16,7 +16,6 @@ type readMemo struct {
 	activeServiceIDs  map[string][]string
 	tripsByBlockID    map[sql.NullString][]GetTripsByBlockIDRow
 	stopTimesByTripID map[string][]StopTime
-	shapePointsByTrip map[string][]GetShapePointsByTripIDRow
 	frequenciesByTrip map[string][]Frequency
 	blockTripSequence map[blockTripSequenceKey]int64
 }
@@ -42,7 +41,6 @@ func WithReadMemo(ctx context.Context) context.Context {
 		activeServiceIDs:  make(map[string][]string),
 		tripsByBlockID:    make(map[sql.NullString][]GetTripsByBlockIDRow),
 		stopTimesByTripID: make(map[string][]StopTime),
-		shapePointsByTrip: make(map[string][]GetShapePointsByTripIDRow),
 		frequenciesByTrip: make(map[string][]Frequency),
 		blockTripSequence: make(map[blockTripSequenceKey]int64),
 	})
@@ -122,12 +120,6 @@ func (r MemoReader) GetTripsByBlockID(ctx context.Context, blockID sql.NullStrin
 func (r MemoReader) GetStopTimesForTrip(ctx context.Context, tripID string) ([]StopTime, error) {
 	return memoized(r.memo, func(m *readMemo) map[string][]StopTime { return m.stopTimesByTripID }, tripID,
 		func() ([]StopTime, error) { return clipped(r.queries.GetStopTimesForTrip(ctx, tripID)) })
-}
-
-// GetShapePointsByTripID is Queries.GetShapePointsByTripID, memoized.
-func (r MemoReader) GetShapePointsByTripID(ctx context.Context, id string) ([]GetShapePointsByTripIDRow, error) {
-	return memoized(r.memo, func(m *readMemo) map[string][]GetShapePointsByTripIDRow { return m.shapePointsByTrip }, id,
-		func() ([]GetShapePointsByTripIDRow, error) { return clipped(r.queries.GetShapePointsByTripID(ctx, id)) })
 }
 
 // GetFrequenciesForTrip is Queries.GetFrequenciesForTrip, memoized.
