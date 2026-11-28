@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,6 +16,8 @@ type Client struct {
 	DB            *sql.DB
 	Queries       *Queries
 	importRuntime time.Duration
+	// importGeneration counts imports that committed new static rows.
+	importGeneration atomic.Uint64
 }
 
 // NewClient creates a new Client with the provided configuration
@@ -187,6 +190,13 @@ func recreateStopAgenciesTable(ctx context.Context, tx *sql.Tx) error {
 		return fmt.Errorf("failed to recreate stop_agencies index: %w", err)
 	}
 	return nil
+}
+
+// ImportGeneration returns how many imports have committed new static rows
+// since the client was created. Caches of static rows compare it to tell when
+// their rows may be stale.
+func (c *Client) ImportGeneration() uint64 {
+	return c.importGeneration.Load()
 }
 
 func (c *Client) Close() error {

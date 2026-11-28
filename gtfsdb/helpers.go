@@ -622,6 +622,9 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("error committing import transaction: %w", err)
 	}
+	// Bump before the steps below, which can fail or take seconds: readers
+	// already see the new rows, so caches of the old ones must go now.
+	c.importGeneration.Add(1)
 
 	logging.LogOperation(logger, "optimizing_database")
 	if err := c.OptimizeDatabase(ctx); err != nil {
