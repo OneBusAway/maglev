@@ -248,6 +248,34 @@ func TestGetScheduleDeviation_FallbackForwardWalkAcrossBlockTrips(t *testing.T) 
 		"outer walk must be forward — first block trip's STU wins over later trips'")
 }
 
+// TestGetScheduleDeviation_FallbackSkipsSkippedSTUs confirms that the
+// pickFirstAvailableSTUDelay fallback ignores SKIPPED stop time updates and
+// does not return a skipped stop's delay as the schedule deviation.
+func TestGetScheduleDeviation_FallbackSkipsSkippedSTUs(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+
+	skippedStop := "stop-skipped"
+	skippedDelay := 999 * time.Second
+	servedStop := "stop-served"
+	servedDelay := 60 * time.Second
+	skippedSTU := gtfs.StopTimeUpdate{StopID: &skippedStop, Arrival: &gtfs.StopTimeEvent{Delay: &skippedDelay}}
+	skippedSTU.ScheduleRelationship = gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED
+	updates := []gtfs.StopTimeUpdate{
+		skippedSTU,
+		{StopID: &servedStop, Arrival: &gtfs.StopTimeEvent{Delay: &servedDelay}},
+	}
+	api.GtfsManager.MockAddTripUpdate("trip-fallback-skip-skipped", nil, updates)
+
+	deviation, hasData := api.GetScheduleDeviationForBlock(
+		context.Background(), []string{"trip-fallback-skip-skipped"}, devDate, devNow,
+	)
+	assert.True(t, hasData)
+	assert.Equal(t, 60, deviation,
+		"fallback must skip SKIPPED STUs and return the first served stop's delay")
+}
+
 func TestGetStopDelaysFromTripUpdates_NoUpdates(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -346,9 +374,7 @@ func TestGetScheduleDeviationForBlock_ClosestInTimeAgainstRealSchedule(t *testin
 	trip := mustGetTrip(t, api)
 	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
 	require.NoError(t, err, "GetStopTimesForTrip failed for %s: a real DB error must not be masked as a benign skip", trip.ID)
-	if len(stopTimes) < 3 {
-		t.Skip("need a real trip with >= 3 stop_times for this path")
-	}
+	require.GreaterOrEqual(t, len(stopTimes), 3, "RABA fixture must have a trip with >= 3 stop_times")
 
 	// nearStop ≈ at currentTime (~12h into the service day in our default
 	// devNow); farStop is the trip's first stop (typically early morning).
@@ -364,10 +390,8 @@ func TestGetScheduleDeviationForBlock_ClosestInTimeAgainstRealSchedule(t *testin
 
 	// Align currentTime to the near stop's scheduled arrival so delta=0
 	// at that candidate.
-	loc := time.UTC
-	if z, _ := time.LoadLocation("America/Los_Angeles"); z != nil {
-		loc = z
-	}
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
 	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
 	var nearScheduledSec int64
 	for _, st := range stopTimes {
@@ -381,6 +405,61 @@ func TestGetScheduleDeviationForBlock_ClosestInTimeAgainstRealSchedule(t *testin
 	assert.True(t, hasData)
 	assert.Equal(t, 17, dev,
 		"closest-in-time STU must win; the absurd 9999s decoy at a far stop must not")
+}
+
+// TestGetScheduleDeviationForBlock_ClosestInTime_SkipsSkippedSTUs verifies
+// that a SKIPPED stop time update is excluded from the closest-in-time
+// picker even when its prediction is nearer to currentTime than a served
+// stop's prediction. Without the guard in pickClosestSTUDeviation the
+// SKIPPED stop's 0s deviation would win; with it, the served stop's 42s
+// must win.
+func TestGetScheduleDeviationForBlock_ClosestInTime_SkipsSkippedSTUs(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	t.Cleanup(api.GtfsManager.MockResetRealTimeData)
+	ctx := context.Background()
+
+	trip := mustGetTrip(t, api)
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, trip.ID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(stopTimes), 2, "RABA fixture must have a trip with >= 2 stop_times")
+
+	// nearStop is the middle stop of the trip; we align currentTime to its
+	// scheduled arrival (delta=0) and mark it SKIPPED so it must be ignored.
+	// farStop is the first stop, far from currentTime, served with a 42s delay.
+	nearStop := stopTimes[len(stopTimes)/2].StopID
+	farStop := stopTimes[0].StopID
+	skippedDelay := 0 * time.Second
+	servedDelay := 42 * time.Second
+
+	skippedSTU := gtfs.StopTimeUpdate{
+		StopID:  &nearStop,
+		Arrival: &gtfs.StopTimeEvent{Delay: &skippedDelay},
+	}
+	skippedSTU.ScheduleRelationship = gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED
+
+	api.GtfsManager.MockAddTripUpdate(trip.ID, nil, []gtfs.StopTimeUpdate{
+		{StopID: &farStop, Arrival: &gtfs.StopTimeEvent{Delay: &servedDelay}},
+		skippedSTU,
+	})
+
+	// Align currentTime to the skipped stop so delta=0 for the excluded update.
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	serviceDate := time.Date(2024, 11, 4, 0, 0, 0, 0, loc)
+	var nearScheduledSec int64
+	for _, st := range stopTimes {
+		if st.StopID == nearStop {
+			nearScheduledSec = st.ArrivalTime / int64(time.Second)
+			break
+		}
+	}
+	currentTime := serviceDate.Add(time.Duration(nearScheduledSec) * time.Second)
+
+	dev, hasData := api.GetScheduleDeviationForBlock(ctx, []string{trip.ID}, serviceDate, currentTime)
+	assert.True(t, hasData)
+	assert.Equal(t, 42, dev,
+		"SKIPPED stop must be excluded even when closest to currentTime; served stop's 42s delay must win")
 }
 
 func TestGetStopDelaysFromTripUpdates_MultipleStops(t *testing.T) {
