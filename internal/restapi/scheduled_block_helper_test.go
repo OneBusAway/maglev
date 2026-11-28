@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -11,7 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"maglev.onebusaway.org/gtfsdb"
+	"maglev.onebusaway.org/internal/app"
 	"maglev.onebusaway.org/internal/models"
+	"maglev.onebusaway.org/internal/nulls"
 	"maglev.onebusaway.org/internal/utils"
 )
 
@@ -59,6 +62,44 @@ func TestInterpolateBlockDistance_LinearMidpoint(t *testing.T) {
 	assert.Equal(t, 500.0, interpolateBlockDistance(stops, 150, true))
 	// Quarter-way
 	assert.Equal(t, 250.0, interpolateBlockDistance(stops, 125, true))
+}
+
+// A vehicle dwelling at a stop stays at that stop until it departs, rather than
+// being placed behind it.
+func TestInterpolateBlockDistance_DwellAtFromStop(t *testing.T) {
+	tests := []struct {
+		name           string
+		stops          []blockStopMetric
+		currentSeconds int64
+		monotonic      bool
+	}{
+		{
+			name: "monotonic",
+			stops: []blockStopMetric{
+				{EffectiveStopSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+				{EffectiveStopSeconds: 100, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+				{EffectiveStopSeconds: 300, DepartureSeconds: 300, DistanceAlongBlock: 2000},
+			},
+			currentSeconds: 150,
+			monotonic:      true,
+		},
+		{
+			name: "non-monotonic at the stop's arrival",
+			stops: []blockStopMetric{
+				{EffectiveStopSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+				{EffectiveStopSeconds: 100, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+				{EffectiveStopSeconds: 300, DepartureSeconds: 300, DistanceAlongBlock: 2000},
+				{EffectiveStopSeconds: 250, DepartureSeconds: 250, DistanceAlongBlock: 3000},
+				{EffectiveStopSeconds: 400, DepartureSeconds: 400, DistanceAlongBlock: 4000},
+			},
+			currentSeconds: 100,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, 1000.0, interpolateBlockDistance(tt.stops, tt.currentSeconds, tt.monotonic))
+		})
+	}
 }
 
 // TestInterpolateBlockDistance_NonMonotonicUsesLinearScan pins the fallback
@@ -139,7 +180,7 @@ func TestHaversineStopDistances_MonotonicAndNonZero(t *testing.T) {
 		"B": {ID: "B", Lat: 0.0, Lon: 0.00050}, // ~55.6 m east of A
 		"C": {ID: "C", Lat: 0.0, Lon: 0.00100}, // ~55.6 m east of B
 	}
-	dists, total := haversineStopDistances(stopTimes, stopByID)
+	dists, total := haversineStopDistances(stopIDsOf(stopTimes), stopByID)
 	require.Len(t, dists, 3)
 	assert.Equal(t, 0.0, dists[0], "first stop is always the origin (0)")
 	assert.InDelta(t, 55.6, dists[1], 1.0, "second stop ~55.6m from origin")
@@ -167,7 +208,7 @@ func TestHaversineStopDistances_UnknownStopSkipsGracefully(t *testing.T) {
 		"A": {ID: "A", Lat: 0.0, Lon: 0.0},
 		"C": {ID: "C", Lat: 0.0, Lon: 0.00100},
 	}
-	dists, total := haversineStopDistances(stopTimes, stopByID)
+	dists, total := haversineStopDistances(stopIDsOf(stopTimes), stopByID)
 	require.Len(t, dists, 3)
 	assert.Equal(t, 0.0, dists[0])
 	// The A→MISSING and MISSING→C legs both skip (prev/curr coord missing);
@@ -354,6 +395,30 @@ func TestMetricsForStop_NotInRangeRefusesClampedResults(t *testing.T) {
 	assert.Equal(t, 0, n)
 }
 
+func TestMetricsForStop_DwellAtFinalStop(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{TripID: "A", StopID: "first", StopSequenceInTrip: 1, BlockSequence: 0, EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{TripID: "A", StopID: "mid", StopSequenceInTrip: 2, BlockSequence: 1, EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 100, DistanceAlongBlock: 1000},
+		{TripID: "A", StopID: "final", StopSequenceInTrip: 3, BlockSequence: 2, EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 360, DistanceAlongBlock: 2000},
+	}
+
+	currentTime := serviceDate.Add(330 * time.Second)
+	snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+	// Target = final stop (Sequence 3). Bus is dwelling at this stop.
+	d, n, ok := snap.metricsForStop("A", 3)
+	require.True(t, ok)
+	assert.InDelta(t, 0.0, d, 0.001)
+	assert.Equal(t, 0, n)
+
+	// Target = first stop (Sequence 1). Bus has passed it.
+	d, n, ok = snap.metricsForStop("A", 1)
+	require.True(t, ok)
+	assert.InDelta(t, -2000.0, d, 0.001)
+	assert.Equal(t, -2, n)
+}
+
 func TestMetricsForStop_NextStopUnset(t *testing.T) {
 	// currentTime is past every stop → NextStopIndex = -1. Mirroring Java's
 	// behaviour, we report ok=false so the caller leaves distanceFromStop and
@@ -409,6 +474,57 @@ func findTripWithBlockAndShape(t testing.TB, api *RestAPI) string {
 	return tripID
 }
 
+// blockTripRefsFor returns refs for tripIDs, in the given order, with each
+// trip's shape ID as stored in the database.
+func blockTripRefsFor(t testing.TB, api *RestAPI, tripIDs ...string) []blockTripRef {
+	t.Helper()
+	trips, err := api.GtfsManager.GtfsDB.Queries.GetTripsByIDs(context.Background(), tripIDs)
+	require.NoError(t, err)
+	shapeIDs := make(map[string]string, len(trips))
+	for _, trip := range trips {
+		shapeIDs[trip.ID] = nulls.StringOrEmpty(trip.ShapeID)
+	}
+	refs := make([]blockTripRef, len(tripIDs))
+	for i, id := range tripIDs {
+		refs[i] = blockTripRef{id: id, shapeID: shapeIDs[id]}
+	}
+	return refs
+}
+
+func TestBlockTripsForServiceDate_CarriesEachTripsShapeID(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	refs := api.blockTripsForServiceDate(ctx, findTripWithBlockAndShape(t, api), rabaServiceDate)
+	require.NotEmpty(t, refs)
+
+	ids := make([]string, len(refs))
+	for i, ref := range refs {
+		ids[i] = ref.id
+	}
+	assert.Equal(t, blockTripRefsFor(t, api, ids...), refs)
+}
+
+func TestBlockTripsForServiceDate_FallbackCarriesTripShape(t *testing.T) {
+	api := &RestAPI{Application: &app.Application{GtfsManager: newTestManagerNoData(t)}}
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{ID: "agency", Name: "Agency", Url: "https://example.com", Timezone: "UTC"})
+	require.NoError(t, err)
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{ID: "route", AgencyID: "agency", Type: 3})
+	require.NoError(t, err)
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{ID: "service", Monday: 1, StartDate: "20240101", EndDate: "20251231"})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: "blockless", RouteID: "route", ServiceID: "service", ShapeID: sql.NullString{String: "shape", Valid: true}})
+	require.NoError(t, err)
+
+	refs := api.blockTripsForServiceDate(ctx, "blockless", rabaServiceDate)
+
+	assert.Equal(t, []blockTripRef{{id: "blockless", shapeID: "shape"}}, refs)
+}
+
 func TestBlockTripIDsForServiceDate_ReturnsBlockMembers(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
@@ -432,13 +548,32 @@ func TestBlockTripIDsForServiceDate_FallsBackForUnknownTrip(t *testing.T) {
 		"unknown trip should fall back to a one-trip block containing itself")
 }
 
+func TestBlockTripIDsForServiceDate_FallsBackForBlocklessTrip(t *testing.T) {
+	api := &RestAPI{Application: &app.Application{GtfsManager: newTestManagerNoData(t)}}
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{ID: "agency", Name: "Agency", Url: "https://example.com", Timezone: "UTC"})
+	require.NoError(t, err)
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{ID: "route", AgencyID: "agency", Type: 3})
+	require.NoError(t, err)
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{ID: "service", Monday: 1, StartDate: "20240101", EndDate: "20251231"})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: "blockless", RouteID: "route", ServiceID: "service"})
+	require.NoError(t, err)
+
+	ids := api.blockTripIDsForServiceDate(ctx, "blockless", rabaServiceDate)
+
+	assert.Equal(t, []string{"blockless"}, ids, "a trip with no block is its own one-trip block")
+}
+
 func TestLoadBlockTripData_PopulatesStopTimesAndShape(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	ctx := context.Background()
 
 	tripID := findTripWithBlockAndShape(t, api)
-	data := api.loadBlockTripData(ctx, []string{tripID})
+	data := api.loadBlockTripData(ctx, blockTripRefsFor(t, api, tripID))
 
 	require.Len(t, data, 1)
 	d := data[0]
@@ -450,16 +585,128 @@ func TestLoadBlockTripData_PopulatesStopTimesAndShape(t *testing.T) {
 	assert.LessOrEqual(t, d.firstSeconds, d.lastSeconds, "first stop must not be after last stop")
 }
 
+// Block-mates usually run the same shape, so each distinct shape is loaded
+// and measured once and its points shared, with the same values a one-trip
+// load gives.
+func TestLoadBlockTripData_SharesShapeAcrossBlockMates(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	var firstTripID, secondTripID string
+	err := api.GtfsManager.GtfsDB.DB.QueryRowContext(ctx,
+		`SELECT a.id, b.id FROM trips a
+		 JOIN trips b ON b.shape_id = a.shape_id AND b.id > a.id
+		 WHERE a.shape_id IS NOT NULL AND a.shape_id != ''
+		 LIMIT 1`,
+	).Scan(&firstTripID, &secondTripID)
+	require.NoError(t, err, "RABA fixture should contain two trips sharing a shape")
+
+	data := api.loadBlockTripData(ctx, blockTripRefsFor(t, api, firstTripID, secondTripID))
+	require.Len(t, data, 2)
+
+	for _, d := range data {
+		alone := api.loadBlockTripData(ctx, blockTripRefsFor(t, api, d.id))
+		require.Len(t, alone, 1)
+		assert.Equal(t, alone[0].shapePoints, d.shapePoints, "trip %s shape points", d.id)
+		assert.Equal(t, alone[0].cumDistances, d.cumDistances, "trip %s cumulative distances", d.id)
+		assert.Equal(t, alone[0].totalDist, d.totalDist, "trip %s total distance", d.id)
+	}
+	require.NotEmpty(t, data[0].shapePoints)
+	assert.Same(t, &data[0].shapePoints[0], &data[1].shapePoints[0], "block-mates should share one copy of the shape")
+	assert.Same(t, &data[0].cumDistances[0], &data[1].cumDistances[0], "block-mates should share one copy of the cumulative distances")
+}
+
+// A trip with no shape_id is left out of the shape map, so emitBlockStops
+// falls back to haversine for it, while its shaped block-mate keeps its shape.
+func TestLoadBlockShapes_OmitsShapelessTrip(t *testing.T) {
+	api := &RestAPI{Application: &app.Application{GtfsManager: newTestManagerNoData(t)}}
+	ctx := context.Background()
+	q := api.GtfsManager.GtfsDB.Queries
+
+	_, err := q.CreateAgency(ctx, gtfsdb.CreateAgencyParams{ID: "agency", Name: "Agency", Url: "https://example.com", Timezone: "UTC"})
+	require.NoError(t, err)
+	_, err = q.CreateRoute(ctx, gtfsdb.CreateRouteParams{ID: "route", AgencyID: "agency", Type: 3})
+	require.NoError(t, err)
+	_, err = q.CreateCalendar(ctx, gtfsdb.CreateCalendarParams{ID: "service", Monday: 1, StartDate: "20250101", EndDate: "20251231"})
+	require.NoError(t, err)
+	for i, point := range []gtfs.ShapePoint{{Latitude: 40.58, Longitude: -122.39}, {Latitude: 40.59, Longitude: -122.38}} {
+		_, err = q.CreateShape(ctx, gtfsdb.CreateShapeParams{ShapeID: "shape", Lat: point.Latitude, Lon: point.Longitude, ShapePtSequence: int64(i)})
+		require.NoError(t, err)
+	}
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: "shaped", RouteID: "route", ServiceID: "service", ShapeID: sql.NullString{String: "shape", Valid: true}})
+	require.NoError(t, err)
+	_, err = q.CreateTrip(ctx, gtfsdb.CreateTripParams{ID: "shapeless", RouteID: "route", ServiceID: "service"})
+	require.NoError(t, err)
+
+	shapes := api.loadBlockShapes(ctx, []blockTripRef{{id: "shaped", shapeID: "shape"}, {id: "shapeless"}})
+
+	require.Contains(t, shapes, "shaped")
+	assert.Len(t, shapes["shaped"].points, 2)
+	assert.Len(t, shapes["shaped"].cumDistances, 2)
+	assert.Greater(t, shapes["shaped"].totalDist, 0.0)
+	assert.NotContains(t, shapes, "shapeless")
+}
+
+// The trips' order is the block order emitBlockStops walks, so it must follow
+// the input rather than any map built along the way.
+func TestLoadBlockTripData_KeepsInputOrder(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	refs := api.blockTripsForServiceDate(ctx, findTripWithBlockAndShape(t, api), rabaServiceDate)
+	require.Greater(t, len(refs), 2, "need a block with several trips")
+	slices.Reverse(refs)
+
+	for range 5 {
+		data := api.loadBlockTripData(ctx, refs)
+		require.Len(t, data, len(refs), "every RABA block trip has stop times")
+		for i, d := range data {
+			require.Equal(t, refs[i].id, d.id)
+		}
+	}
+}
+
+// TestEmitBlockStops_ShapelessTripFromStopTimesAlone checks that a block trip's
+// stop times are all emitBlockStops needs: a trip built with stop times and no
+// shape gets one metric per stop, measured stop to stop.
+func TestEmitBlockStops_ShapelessTripFromStopTimesAlone(t *testing.T) {
+	api := createTestApi(t)
+	defer api.Shutdown()
+	ctx := context.Background()
+
+	stops, err := api.GtfsManager.GtfsDB.Queries.ListStops(ctx)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(stops), 2)
+	trip := blockTripData{
+		id: "shapeless",
+		stopTimes: []gtfsdb.GetBlockStopTimesForTripIDsRow{
+			{TripID: "shapeless", StopID: stops[0].ID, StopSequence: 1},
+			{TripID: "shapeless", StopID: stops[1].ID, StopSequence: 2},
+		},
+	}
+
+	metrics, tripOffsets := api.emitBlockStops(ctx, []blockTripData{trip})
+
+	require.Len(t, metrics, 2)
+	assert.Equal(t, []float64{0}, tripOffsets)
+	assert.Equal(t, stops[0].ID, metrics[0].StopID)
+	assert.Equal(t, stops[1].ID, metrics[1].StopID)
+	assert.Zero(t, metrics[0].DistanceAlongTrip)
+	assert.Positive(t, metrics[1].DistanceAlongTrip, "the second stop should be measured from the first")
+}
+
 func TestLoadBlockTripData_SkipsTripsWithNoData(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	ctx := context.Background()
 
-	data := api.loadBlockTripData(ctx, []string{"trip-does-not-exist"})
+	data := api.loadBlockTripData(ctx, []blockTripRef{{id: "trip-does-not-exist"}})
 	assert.Empty(t, data)
 }
 
-func TestFetchStopCoordsForStopTimes_DedupesAndReturnsMap(t *testing.T) {
+func TestFetchStopCoords_DedupesAndReturnsMap(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	ctx := context.Background()
@@ -469,7 +716,7 @@ func TestFetchStopCoordsForStopTimes_DedupesAndReturnsMap(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, stopTimes)
 
-	coords, err := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	coords, err := api.fetchStopCoords(ctx, stopIDsOf(stopTimes))
 	require.NoError(t, err)
 	require.NotNil(t, coords)
 	for _, st := range stopTimes {
@@ -480,32 +727,32 @@ func TestFetchStopCoordsForStopTimes_DedupesAndReturnsMap(t *testing.T) {
 	}
 }
 
-func TestFetchStopCoordsForStopTimes_EmptyInput(t *testing.T) {
+func TestFetchStopCoords_EmptyInput(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
-	coords, err := api.fetchStopCoordsForStopTimes(context.Background(), nil)
+	coords, err := api.fetchStopCoords(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Nil(t, coords)
 }
 
-// TestFetchStopCoordsForStopTimes_PropagatesError guards against the lookup
+// TestFetchStopCoords_PropagatesError guards against the lookup
 // failure turning into a silent nil map: a request-path caller
 // (scheduledTripIDsInBounds) must see the error and return a 500 rather than
 // a plausible-looking short list.
-func TestFetchStopCoordsForStopTimes_PropagatesError(t *testing.T) {
+func TestFetchStopCoords_PropagatesError(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	coords, err := api.fetchStopCoordsForStopTimes(ctx, []gtfsdb.StopTime{{StopID: "any-stop"}})
+	coords, err := api.fetchStopCoords(ctx, []string{"any-stop"})
 	require.Error(t, err)
 	assert.Nil(t, coords)
 }
 
-// TestFetchStopCoordsForStopTimes_BatchesLargeStopSets guards against an
+// TestFetchStopCoords_BatchesLargeStopSets guards against an
 // unbatched regression: an unbounded caller — the scheduled-position
 // candidate set among stop_times — can push the unique stop count past a
 // batch boundary, and the batches must concatenate correctly rather than
@@ -517,7 +764,7 @@ func TestFetchStopCoordsForStopTimes_PropagatesError(t *testing.T) {
 // interleaved before and after the synthetic block so some land in the first
 // batch and some in the last — proving concatenation, not just that the loop
 // ran once.
-func TestFetchStopCoordsForStopTimes_BatchesLargeStopSets(t *testing.T) {
+func TestFetchStopCoords_BatchesLargeStopSets(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
 	ctx := context.Background()
@@ -548,7 +795,7 @@ func TestFetchStopCoordsForStopTimes_BatchesLargeStopSets(t *testing.T) {
 	require.Greater(t, len(uniqueIDs), utils.IDsPerBatchedQuery,
 		"the deduped ID set must span more than one batch for this test to mean anything")
 
-	coords, err := api.fetchStopCoordsForStopTimes(ctx, stopTimes)
+	coords, err := api.fetchStopCoords(ctx, stopIDsOf(stopTimes))
 	require.NoError(t, err)
 	require.NotNil(t, coords)
 	for _, stop := range stops {
@@ -744,16 +991,16 @@ func TestProjectStopsInSequence_MonotonicAlongShape(t *testing.T) {
 	ctx := context.Background()
 
 	tripID := findTripWithBlockAndShape(t, api)
-	data := api.loadBlockTripData(ctx, []string{tripID})
+	data := api.loadBlockTripData(ctx, blockTripRefsFor(t, api, tripID))
 	require.Len(t, data, 1)
 	td := data[0]
 	require.GreaterOrEqual(t, len(td.stopTimes), 2)
 
-	stopByID, err := api.fetchStopCoordsForStopTimes(ctx, td.stopTimes)
+	stopByID, err := api.fetchStopCoords(ctx, td.stopIDs())
 	require.NoError(t, err)
 	require.NotNil(t, stopByID)
 
-	distances := projectStopsInSequence(td.stopTimes, stopByID, td.shapePoints, td.cumDistances)
+	distances := projectStopsInSequence(td.stopIDs(), stopByID, td.shapePoints, td.cumDistances)
 	require.Len(t, distances, len(td.stopTimes))
 
 	// Monotonicity is the key invariant — without it loop routes break.
@@ -772,7 +1019,7 @@ func TestProjectStopsInSequence_GracefulOnEmptyShape(t *testing.T) {
 	// being addressable at every index regardless of how degenerate the inputs
 	// were.
 	stopTimes := []gtfsdb.StopTime{{StopID: "x"}, {StopID: "y"}}
-	distances := projectStopsInSequence(stopTimes, nil, nil, nil)
+	distances := projectStopsInSequence(stopIDsOf(stopTimes), nil, nil, nil)
 	require.Len(t, distances, 2)
 	assert.Equal(t, 0.0, distances[0])
 	assert.Equal(t, 0.0, distances[1])
@@ -815,7 +1062,7 @@ func TestProjectStopsInSequence_ProjectsAllStopsGeometrically(t *testing.T) {
 		"stop_C": {ID: "stop_C", Lat: 0.0, Lon: 0.0010}, // shape end
 	}
 
-	distances := projectStopsInSequence(stopTimes, stopByID, shape, cumDist)
+	distances := projectStopsInSequence(stopIDsOf(stopTimes), stopByID, shape, cumDist)
 	require.Len(t, distances, 3)
 
 	// Distances reflect geometry, NOT the bogus publisher-unit values.
@@ -881,7 +1128,7 @@ func TestProjectStopsInSequence_LoopRouteRevisitsSameCoords(t *testing.T) {
 		"stop_D": {ID: "stop_D", Lat: 0.0, Lon: 0.0001},
 	}
 
-	distances := projectStopsInSequence(stopTimes, stopByID, shape, cumDist)
+	distances := projectStopsInSequence(stopIDsOf(stopTimes), stopByID, shape, cumDist)
 	require.Len(t, distances, 4)
 
 	// Monotonicity is THE invariant. If lastMatchedIndex didn't advance
@@ -905,15 +1152,17 @@ func TestApplyScheduledTripPositionToStatus_PopulatesFields(t *testing.T) {
 	ctx := context.Background()
 
 	tripID := findTripWithBlockAndShape(t, api)
-	data := api.loadBlockTripData(ctx, []string{tripID})
+	data := api.loadBlockTripData(ctx, blockTripRefsFor(t, api, tripID))
 	require.Len(t, data, 1)
 	td := data[0]
+	stopTimes, err := api.GtfsManager.GtfsDB.Queries.GetStopTimesForTrip(ctx, tripID)
+	require.NoError(t, err)
 
 	status := models.NewTripStatus()
 	// currentTime well into the trip so we get a non-zero scheduled distance.
 	currentTime := rabaServiceDate.Add(12 * time.Hour)
 	api.applyScheduledTripPositionToStatus(
-		ctx, status, td.stopTimes, td.shapePoints, td.cumDistances, currentTime, rabaServiceDate,
+		ctx, status, stopTimes, td.shapePoints, td.cumDistances, currentTime, rabaServiceDate,
 	)
 
 	assert.GreaterOrEqual(t, status.ScheduledDistanceAlongTrip, 0.0)
@@ -1105,12 +1354,12 @@ func TestAccumulateBlockSlack(t *testing.T) {
 	sharedPoint := gtfs.ShapePoint{Latitude: 47.6, Longitude: -122.3}
 	tripA := blockTripData{
 		id:          "A",
-		stopTimes:   make([]gtfsdb.StopTime, 2),
+		stopTimes:   make([]gtfsdb.GetBlockStopTimesForTripIDsRow, 2),
 		shapePoints: []gtfs.ShapePoint{{Latitude: 47.5, Longitude: -122.3}, sharedPoint},
 	}
 	tripB := blockTripData{
 		id:          "B",
-		stopTimes:   make([]gtfsdb.StopTime, 2),
+		stopTimes:   make([]gtfsdb.GetBlockStopTimesForTripIDsRow, 2),
 		shapePoints: []gtfs.ShapePoint{sharedPoint, {Latitude: 47.7, Longitude: -122.3}},
 	}
 	tripOffsets := []float64{0, 6500}
@@ -1164,4 +1413,254 @@ func TestShapeGapDistance(t *testing.T) {
 	assert.InDelta(t, 1112, shapeGapDistance(withShape, nextShape), 1)
 	assert.Zero(t, shapeGapDistance(withShape, blockTripData{}))
 	assert.Zero(t, shapeGapDistance(blockTripData{}, nextShape))
+}
+
+// closestAndNextStops follows Java's ScheduledBlockLocationServiceImpl: the
+// next stop is the first not yet reached, and the closest is the nearer in
+// time of it and the stop before, ties going to the next stop.
+func TestScheduledBlockSnapshot_ClosestAndNextStops(t *testing.T) {
+	stops := []blockStopMetric{
+		{StopID: "first", EffectiveStopSeconds: 1000},
+		{StopID: "second", EffectiveStopSeconds: 1600},
+	}
+	tests := []struct {
+		name           string
+		currentSeconds int64
+		want           scheduledStops
+	}{
+		{"at the first stop", 1000, scheduledStops{"first", 0, "first", 0}},
+		{"nearer the stop before", 1200, scheduledStops{"first", -200, "second", 400}},
+		{"halfway goes to the next stop", 1300, scheduledStops{"second", 300, "second", 300}},
+		{"nearer the next stop", 1500, scheduledStops{"second", 100, "second", 100}},
+		{"before the block starts", 900, scheduledStops{"first", 100, "first", 100}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := buildSnapshotFromStops(stops, nil, time.Unix(0, 0).UTC().Add(time.Duration(tt.currentSeconds)*time.Second), time.Unix(0, 0).UTC())
+			got, ok := snap.closestAndNextStops()
+			require.True(t, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	// A stop with a dwell holds the bus from arrival to departure, and the run
+	// to the next stop is measured from the departure.
+	dwell := []blockStopMetric{
+		{StopID: "first", EffectiveStopSeconds: 1000, DepartureSeconds: 1300},
+		{StopID: "second", EffectiveStopSeconds: 1600},
+	}
+	for _, tt := range []struct {
+		name           string
+		currentSeconds int64
+		want           scheduledStops
+	}{
+		{"during the dwell", 1200, scheduledStops{"first", 0, "first", 0}},
+		{"just after departing", 1400, scheduledStops{"first", -100, "second", 200}},
+		{"halfway from the departure", 1450, scheduledStops{"second", 150, "second", 150}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := buildSnapshotFromStops(dwell, nil, time.Unix(tt.currentSeconds, 0).UTC(), time.Unix(0, 0).UTC())
+			got, ok := snap.closestAndNextStops()
+			require.True(t, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	outside := buildSnapshotFromStops(stops, nil, time.Unix(2000, 0).UTC(), time.Unix(0, 0).UTC())
+	_, ok := outside.closestAndNextStops()
+	assert.False(t, ok, "past the block's last stop")
+	var none *scheduledBlockSnapshot
+	_, ok = none.closestAndNextStops()
+	assert.False(t, ok)
+}
+
+// Java treats a vehicle between a stop's arrival and departure as at that stop
+// (ScheduledBlockLocationServiceImpl.java:218), and interpolates only from one
+// stop's departure to the next stop's arrival.
+func TestBuildSnapshotFromStops_DwellAtStop(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+		{EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 300, DistanceAlongBlock: 2000},
+	}
+
+	tests := []struct {
+		name         string
+		seconds      int64
+		wantNext     int
+		wantDistance float64
+	}{
+		{name: "travelling to the stop", seconds: 50, wantNext: 1, wantDistance: 500},
+		{name: "arriving at the stop", seconds: 100, wantNext: 1, wantDistance: 1000},
+		{name: "dwelling at the stop", seconds: 150, wantNext: 1, wantDistance: 1000},
+		{name: "departing the stop", seconds: 200, wantNext: 1, wantDistance: 1000},
+		{name: "travelling on after departure", seconds: 250, wantNext: 2, wantDistance: 1500},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			currentTime := serviceDate.Add(time.Duration(tt.seconds) * time.Second)
+
+			snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+			assert.Equal(t, tt.wantNext, snap.NextStopIndex)
+			assert.InDelta(t, tt.wantDistance, snap.DistanceAlongBlock, 0.001)
+		})
+	}
+}
+
+func TestBuildSnapshotFromStops_NonMonotonicDwell(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+		{EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 300, DistanceAlongBlock: 2000},
+		{EffectiveStopSeconds: 120, ArrivalSeconds: 120, DepartureSeconds: 120, DistanceAlongBlock: 3000},
+	}
+	currentTime := serviceDate.Add(150 * time.Second)
+
+	snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+	// The out-of-order final stop makes interpolation clamp to the block's
+	// end. The dwell at index 1 must not override that fallback position.
+	assert.Equal(t, 2, snap.NextStopIndex)
+	assert.Equal(t, float64(3000), snap.DistanceAlongBlock)
+}
+
+func TestBuildSnapshotFromStops_DwellAtFinalStop(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 100, DistanceAlongBlock: 1000},
+		{EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 360, DistanceAlongBlock: 2000},
+	}
+
+	tests := []struct {
+		name         string
+		seconds      int64
+		wantNext     int
+		wantDistance float64
+		wantInRange  bool
+	}{
+		{name: "arriving at final stop", seconds: 300, wantNext: 2, wantDistance: 2000, wantInRange: true},
+		{name: "dwelling at final stop", seconds: 330, wantNext: 2, wantDistance: 2000, wantInRange: true},
+		{name: "departing final stop", seconds: 360, wantNext: 2, wantDistance: 2000, wantInRange: true},
+		{name: "past final stop departure", seconds: 361, wantNext: -1, wantDistance: 2000, wantInRange: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			currentTime := serviceDate.Add(time.Duration(tt.seconds) * time.Second)
+
+			snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+			assert.Equal(t, tt.wantNext, snap.NextStopIndex)
+			assert.InDelta(t, tt.wantDistance, snap.DistanceAlongBlock, 0.001)
+			assert.Equal(t, tt.wantInRange, snap.InRange)
+		})
+	}
+}
+
+func TestBuildSnapshotFromStops_NonMonotonicFinalStopDwell(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{EffectiveStopSeconds: 200, ArrivalSeconds: 200, DepartureSeconds: 200, DistanceAlongBlock: 1000},
+		{EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 100, DistanceAlongBlock: 1500},
+		{EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 360, DistanceAlongBlock: 2000},
+	}
+
+	// 330 is inside final stop's arrival (300) to departure (360) window
+	currentTime := serviceDate.Add(330 * time.Second)
+	snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+	assert.Equal(t, 3, snap.NextStopIndex)
+	assert.Equal(t, float64(2000), snap.DistanceAlongBlock)
+	assert.True(t, snap.InRange)
+
+	// After departure (370s), dwell check should not apply
+	pastTime := serviceDate.Add(370 * time.Second)
+	pastSnap := buildSnapshotFromStops(stops, nil, pastTime, serviceDate)
+
+	assert.Equal(t, -1, pastSnap.NextStopIndex)
+	assert.False(t, pastSnap.InRange)
+}
+
+func TestApplySnapshotStops_DwellAtStop(t *testing.T) {
+	snap := &scheduledBlockSnapshot{
+		NextStopIndex:  1,
+		CurrentSeconds: 150,
+		Stops: []blockStopMetric{
+			{StopID: "before", ArrivalSeconds: 0, DepartureSeconds: 0},
+			{StopID: "dwell", EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 200},
+		},
+	}
+	status := models.NewTripStatus()
+
+	applySnapshotStops(status, snap, "1")
+
+	assert.Equal(t, "1_dwell", status.NextStop)
+	assert.Zero(t, status.NextStopTimeOffset)
+	assert.Equal(t, "1_dwell", status.ClosestStop)
+	assert.Zero(t, status.ClosestStopTimeOffset)
+}
+
+func TestApplySnapshotStops_DwellAtFinalStop(t *testing.T) {
+	serviceDate := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	stops := []blockStopMetric{
+		{StopID: "first", EffectiveStopSeconds: 0, ArrivalSeconds: 0, DepartureSeconds: 0, DistanceAlongBlock: 0},
+		{StopID: "mid", EffectiveStopSeconds: 100, ArrivalSeconds: 100, DepartureSeconds: 100, DistanceAlongBlock: 1000},
+		{StopID: "final", EffectiveStopSeconds: 300, ArrivalSeconds: 300, DepartureSeconds: 360, DistanceAlongBlock: 2000},
+	}
+
+	currentTime := serviceDate.Add(330 * time.Second)
+	snap := buildSnapshotFromStops(stops, nil, currentTime, serviceDate)
+
+	status := models.NewTripStatus()
+	applySnapshotStops(status, snap, "1")
+
+	assert.Equal(t, "1_final", status.NextStop)
+	assert.Zero(t, status.NextStopTimeOffset)
+	assert.Equal(t, "1_final", status.ClosestStop)
+	assert.Zero(t, status.ClosestStopTimeOffset)
+}
+
+// Without a shape, scheduledPosition places the bus between stops by time, as
+// Java does: at a stop during its dwell, then from its departure to the next
+// stop's arrival.
+func TestScheduledBlockSnapshot_ScheduledPositionWithoutShape(t *testing.T) {
+	stops := []blockStopMetric{
+		{StopID: "first", EffectiveStopSeconds: 1000, DepartureSeconds: 1200, Location: &models.Location{Lat: 47.0, Lon: -122.0}},
+		{StopID: "second", EffectiveStopSeconds: 1600, Location: &models.Location{Lat: 47.4, Lon: -122.0}},
+	}
+	tests := []struct {
+		name           string
+		currentSeconds int64
+		wantLat        float64
+		wantAtStop     bool
+	}{
+		{"at the first stop", 1000, 47.0, true},
+		{"during the dwell", 1100, 47.0, true},
+		{"a quarter of the run after departing", 1300, 47.1, false},
+		{"at the next stop", 1600, 47.4, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := buildSnapshotFromStops(stops, nil, time.Unix(tt.currentSeconds, 0).UTC(), time.Unix(0, 0).UTC())
+			pos, orientation := snap.scheduledPosition()
+			require.NotNil(t, pos)
+			assert.InDelta(t, tt.wantLat, pos.Lat, 1e-9)
+			assert.InDelta(t, -122.0, pos.Lon, 1e-9)
+			if tt.wantAtStop {
+				assert.Zero(t, orientation)
+			} else {
+				assert.InDelta(t, 90, orientation, 1e-9, "due north")
+			}
+		})
+	}
+
+	outside := buildSnapshotFromStops(stops, nil, time.Unix(2000, 0).UTC(), time.Unix(0, 0).UTC())
+	pos, _ := outside.scheduledPosition()
+	assert.Nil(t, pos, "past the block's last stop")
 }

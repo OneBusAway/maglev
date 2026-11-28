@@ -165,17 +165,61 @@ func createDB(config Config) (*sql.DB, error) {
 	return db, nil
 }
 
+const schemaVersion = 1
+
 func performDatabaseMigration(ctx context.Context, db *sql.DB) error {
-	statements := strings.Split(ddl, "-- migrate") // Split DDL into individual statements
-	for _, stmt := range statements {
-		trimmedStmt := strings.TrimSpace(stmt)
-		if trimmedStmt == "" {
-			continue // Skip empty statements
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin migration transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var currentVersion int
+	err = tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&currentVersion)
+	if err != nil {
+		return fmt.Errorf("failed to get current schema version: %w", err)
+	}
+
+	// Do not attempt to downgrade a newer database.
+	if currentVersion > schemaVersion {
+		return fmt.Errorf(
+			"database schema version (%d) is newer than supported version (%d)",
+			currentVersion,
+			schemaVersion,
+		)
+	}
+
+	if currentVersion < schemaVersion {
+		statements := strings.Split(ddl, "-- migrate")
+
+		for _, stmt := range statements {
+			trimmedStmt := strings.TrimSpace(stmt)
+			if trimmedStmt == "" {
+				continue
+			}
+
+			if _, err := tx.ExecContext(ctx, trimmedStmt); err != nil {
+				return fmt.Errorf(
+					"error executing DDL statement [%s]: %w",
+					trimmedStmt,
+					err,
+				)
+			}
 		}
-		if _, err := db.ExecContext(ctx, trimmedStmt); err != nil {
-			return fmt.Errorf("error executing DDL statement [%s]: %w", trimmedStmt, err)
+
+		_, err = tx.ExecContext(
+			ctx,
+			fmt.Sprintf("PRAGMA user_version = %d", schemaVersion),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to update schema version: %w", err)
 		}
 	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit database migration: %w", err)
+	}
+
 	return nil
 }
 
@@ -260,7 +304,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 		logging.LogOperation(logger, "gtfs_data_import_completed",
 			slog.Duration("duration_ms", c.importRuntime),
-			slog.String("source", data.Source))
+			slog.String("source", appconf.RedactURL(data.Source)))
 	}()
 
 	// 1. Check if we already have this data imported
@@ -401,7 +445,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 		allStopParams = append(allStopParams, params)
 	}
-	if err := c.bulkInsertStops(ctx, allStopParams, tx); err != nil {
+	if err := c.bulkInsertStops(ctx, slices.Values(allStopParams), tx); err != nil {
 		return false, fmt.Errorf("unable to create stops: %w", err)
 	}
 
@@ -456,7 +500,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 		allTripParams = append(allTripParams, params)
 	}
-	if err := c.bulkInsertTrips(ctx, allTripParams, tx); err != nil {
+	if err := c.bulkInsertTrips(ctx, slices.Values(allTripParams), tx); err != nil {
 		return false, fmt.Errorf("unable to create trips: %w", err)
 	}
 
@@ -483,7 +527,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		}
 	}
 	if len(allFrequencyParams) > 0 {
-		if err := c.bulkInsertFrequencies(ctx, allFrequencyParams, tx); err != nil {
+		if err := c.bulkInsertFrequencies(ctx, slices.Values(allFrequencyParams), tx); err != nil {
 			return false, fmt.Errorf("unable to create frequencies: %w", err)
 		}
 	}
@@ -497,7 +541,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 
 	logging.LogOperation(logger, "updating_import_metadata",
 		slog.String("hash", data.Hash[:8]),
-		slog.String("source", data.Source))
+		slog.String("source", appconf.RedactURL(data.Source)))
 
 	_, err = qtx.UpsertImportMetadata(ctx, UpsertImportMetadataParams{
 		FileHash:   data.Hash,
@@ -536,7 +580,7 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 	}
 
 	if len(allCalendarDateParams) > 0 {
-		if err := c.bulkInsertCalendarDates(ctx, allCalendarDateParams, tx); err != nil {
+		if err := c.bulkInsertCalendarDates(ctx, slices.Values(allCalendarDateParams), tx); err != nil {
 			logging.LogError(logger, "Unable to create calendar dates", err)
 			return false, fmt.Errorf("unable to create calendar dates: %w", err)
 		}
@@ -555,12 +599,12 @@ func (c *Client) StoreGtfsData(ctx context.Context, data *GtfsData) (bool, error
 		return false, fmt.Errorf("failed to bulk update trip time bounds: %w", err)
 	}
 
-	logging.LogOperation(logger, "building_stop_agency_index")
-	if err := buildStopAgencyIndex(ctx, qtx); err != nil {
-		logging.LogError(logger, "Unable to build stop agency index", err)
+	logging.LogOperation(logger, "building_stop_indexes")
+	if err := buildStopIndexes(ctx, qtx); err != nil {
+		logging.LogError(logger, "Unable to build stop indexes", err)
 		return false, err
 	}
-	logging.LogOperation(logger, "stop_agency_index_built")
+	logging.LogOperation(logger, "stop_indexes_built")
 
 	logging.LogOperation(logger, "building_block_layover_index")
 	if err := c.buildBlockLayoverIndex(ctx, allTripEnds, tx); err != nil {
@@ -624,9 +668,19 @@ func shapePointParams(shapeID string, idx int, pt gtfs.ShapePoint) CreateShapePa
 	}
 }
 
+// buildStopIndexes rebuilds the stop indexes derived from stop_times: stop_routes, then
+// stop_agencies, which is built from it.
+func buildStopIndexes(ctx context.Context, qtx *Queries) error {
+	if err := buildStopRouteIndex(ctx, qtx); err != nil {
+		return err
+	}
+	return buildStopAgencyIndex(ctx, qtx)
+}
+
 // buildStopAgencyIndex repopulates stop_agencies from the routes currently serving each
-// stop. The table is rebuilt rather than updated in place because an import replaces the
-// whole feed, and a stop can change agency or lose its routes between feed versions.
+// stop, read from stop_routes, which must already be built. The table is rebuilt rather
+// than updated in place because an import replaces the whole feed, and a stop can change
+// agency or lose its routes between feed versions.
 func buildStopAgencyIndex(ctx context.Context, qtx *Queries) error {
 	if err := qtx.ClearStopAgencies(ctx); err != nil {
 		return fmt.Errorf("failed to clear stop agencies: %w", err)
@@ -635,6 +689,33 @@ func buildStopAgencyIndex(ctx context.Context, qtx *Queries) error {
 		return fmt.Errorf("failed to build stop agencies: %w", err)
 	}
 	return nil
+}
+
+// buildStopRouteIndex repopulates stop_routes from the trips currently serving each stop,
+// rebuilt rather than updated in place for the same reason as buildStopAgencyIndex.
+func buildStopRouteIndex(ctx context.Context, qtx *Queries) error {
+	if err := qtx.ClearStopRoutes(ctx); err != nil {
+		return fmt.Errorf("failed to clear stop routes: %w", err)
+	}
+	if err := qtx.BuildStopRoutes(ctx); err != nil {
+		return fmt.Errorf("failed to build stop routes: %w", err)
+	}
+	return nil
+}
+
+// CoalesceYYYYMMDD normalizes a sqlc interface{} SQLite TEXT date column
+// (string, []byte, or NULL) to a YYYYMMDD string. Empty means no value.
+func CoalesceYYYYMMDD(v interface{}) (string, error) {
+	switch d := v.(type) {
+	case nil:
+		return "", nil
+	case string:
+		return d, nil
+	case []byte:
+		return string(d), nil
+	default:
+		return "", fmt.Errorf("unexpected type for YYYYMMDD column: %T", v)
+	}
 }
 
 // updateFeedExpiresAtFromCalendar persists the end of the latest service date
@@ -646,16 +727,9 @@ func updateFeedExpiresAtFromCalendar(ctx context.Context, qtx *Queries) error {
 		return fmt.Errorf("failed to get feed end date: %w", err)
 	}
 
-	var dateStr string
-	switch v := val.(type) {
-	case nil:
-		// No calendar data — feed_expires_at will be NULL.
-	case string:
-		dateStr = v
-	case []byte:
-		dateStr = string(v)
-	default:
-		return fmt.Errorf("unexpected type from GetFeedEndDate: %T", val)
+	dateStr, err := CoalesceYYYYMMDD(val)
+	if err != nil {
+		return fmt.Errorf("GetFeedEndDate: %w", err)
 	}
 
 	var expires sql.NullInt64
@@ -715,6 +789,9 @@ func latestAgencyExpiry(serviceDate time.Time, agencies []Agency) (time.Time, er
 func (c *Client) clearAllGTFSDataWithQueries(ctx context.Context, q *Queries) error {
 	if err := q.ClearStopAgencies(ctx); err != nil {
 		return fmt.Errorf("error clearing stop_agencies: %w", err)
+	}
+	if err := q.ClearStopRoutes(ctx); err != nil {
+		return fmt.Errorf("error clearing stop_routes: %w", err)
 	}
 	if err := q.ClearBlockLayovers(ctx); err != nil {
 		return fmt.Errorf("error clearing block_layover: %w", err)
@@ -810,64 +887,46 @@ func pickFirstAvailable(a, b string) string {
 	return b
 }
 
-// bulkInsertStops inserts stops. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertStops(ctx context.Context, stops []CreateStopParams, tx *sql.Tx) error {
-	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
-
-	logging.LogOperation(logger, "inserting_stops",
-		slog.Int("count", len(stops)))
-
-	if err := c.withTransaction(ctx, tx, "bulk_insert_stops", func(tx *sql.Tx) error {
-		qtx := queries.WithTx(tx)
-		for _, params := range stops {
-			_, err := qtx.CreateStop(ctx, params)
-			if err != nil {
-				if isConstraintErr(err) {
-					return fmt.Errorf("constraint violation inserting stop %+v: %w", params, err)
-				}
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "stops_inserted",
-		slog.Int("count", len(stops)))
-
-	return nil
+// stopInsert inserts stops rows for insertInBatches.
+var stopInsert = batchInsert[CreateStopParams]{
+	table: "stops",
+	columns: []string{"id", "code", "name", "\"desc\"", "lat", "lon", "zone_id", "url",
+		"location_type", "timezone", "wheelchair_boarding", "platform_code", "direction", "parent_station"},
+	appendArgs: func(args []any, s CreateStopParams) []any {
+		return append(args, s.ID, s.Code, s.Name, s.Desc, s.Lat, s.Lon, s.ZoneID, s.Url,
+			s.LocationType, s.Timezone, s.WheelchairBoarding, s.PlatformCode, s.Direction, s.ParentStation)
+	},
+	progressInterval: 10_000,
+	insertPrefix:     "INSERT OR REPLACE INTO",
 }
 
-// bulkInsertTrips inserts trips. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertTrips(ctx context.Context, trips []CreateTripParams, tx *sql.Tx) error {
-	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+// bulkInsertStops inserts stops in the order they arrive, holding one batch at
+// a time. If tx is non-nil it uses that transaction and does not commit; if
+// nil it starts its own and commits.
+func (c *Client) bulkInsertStops(ctx context.Context, stops iter.Seq[CreateStopParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, stopInsert, stops)
+}
 
-	logging.LogOperation(logger, "inserting_trips",
-		slog.Int("count", len(trips)))
+// tripInsert inserts trips rows for insertInBatches.
+var tripInsert = batchInsert[CreateTripParams]{
+	table: "trips",
+	columns: []string{"id", "route_id", "service_id", "trip_headsign", "trip_short_name",
+		"direction_id", "block_id", "shape_id", "wheelchair_accessible", "bikes_allowed",
+		"min_arrival_time", "max_departure_time"},
+	appendArgs: func(args []any, t CreateTripParams) []any {
+		return append(args, t.ID, t.RouteID, t.ServiceID, t.TripHeadsign, t.TripShortName,
+			t.DirectionID, t.BlockID, t.ShapeID, t.WheelchairAccessible, t.BikesAllowed,
+			t.MinArrivalTime, t.MaxDepartureTime)
+	},
+	progressInterval: 25_000,
+	insertPrefix:     "INSERT OR REPLACE INTO",
+}
 
-	if err := c.withTransaction(ctx, tx, "bulk_insert_trips", func(tx *sql.Tx) error {
-		qtx := queries.WithTx(tx)
-		for _, params := range trips {
-			_, err := qtx.CreateTrip(ctx, params)
-			if err != nil {
-				if isConstraintErr(err) {
-					return fmt.Errorf("constraint violation inserting trip %+v: %w", params, err)
-				}
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "trips_inserted",
-		slog.Int("count", len(trips)))
-
-	return nil
+// bulkInsertTrips inserts trips in the order they arrive, holding one batch at
+// a time. If tx is non-nil it uses that transaction and does not commit; if
+// nil it starts its own and commits.
+func (c *Client) bulkInsertTrips(ctx context.Context, trips iter.Seq[CreateTripParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, tripInsert, trips)
 }
 
 // stopTimeInsert inserts stop_times rows for insertInBatches.
@@ -906,64 +965,40 @@ func (c *Client) bulkInsertShapes(ctx context.Context, shapes iter.Seq[CreateSha
 	return bulkInsertRows(ctx, c, tx, shapeInsert, shapes)
 }
 
-// bulkInsertFrequencies inserts frequencies. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertFrequencies(ctx context.Context, frequencies []CreateFrequencyParams, tx *sql.Tx) error {
-	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
-
-	logging.LogOperation(logger, "inserting_frequencies",
-		slog.Int("count", len(frequencies)))
-
-	if err := c.withTransaction(ctx, tx, "bulk_insert_frequencies", func(tx *sql.Tx) error {
-		qtx := queries.WithTx(tx)
-		for _, params := range frequencies {
-			err := qtx.CreateFrequency(ctx, params)
-			if err != nil {
-				if isConstraintErr(err) {
-					return fmt.Errorf("constraint violation inserting frequency %+v: %w", params, err)
-				}
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "frequencies_inserted",
-		slog.Int("count", len(frequencies)))
-
-	return nil
+// frequencyInsert inserts frequencies rows for insertInBatches.
+var frequencyInsert = batchInsert[CreateFrequencyParams]{
+	table:   "frequencies",
+	columns: []string{"trip_id", "start_time", "end_time", "headway_secs", "exact_times"},
+	appendArgs: func(args []any, f CreateFrequencyParams) []any {
+		return append(args, f.TripID, f.StartTime, f.EndTime, f.HeadwaySecs, f.ExactTimes)
+	},
+	progressInterval: 5_000,
+	insertPrefix:     "INSERT OR IGNORE INTO",
 }
 
-// bulkInsertCalendarDates inserts calendar dates. If tx is non-nil it uses that transaction and does not commit; if nil it starts its own and commits.
-func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates []CreateCalendarDateParams, tx *sql.Tx) error {
-	queries := c.Queries
-	logger := slog.Default().With(slog.String("component", "bulk_insert"))
+// bulkInsertFrequencies inserts frequencies in the order they arrive, holding
+// one batch at a time. If tx is non-nil it uses that transaction and does not
+// commit; if nil it starts its own and commits.
+func (c *Client) bulkInsertFrequencies(ctx context.Context, frequencies iter.Seq[CreateFrequencyParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, frequencyInsert, frequencies)
+}
 
-	logging.LogOperation(logger, "inserting_calendar_dates",
-		slog.Int("count", len(calendarDates)))
+// calendarDateInsert inserts calendar_dates rows for insertInBatches.
+var calendarDateInsert = batchInsert[CreateCalendarDateParams]{
+	table:   "calendar_dates",
+	columns: []string{"service_id", "date", "exception_type"},
+	appendArgs: func(args []any, cd CreateCalendarDateParams) []any {
+		return append(args, cd.ServiceID, cd.Date, cd.ExceptionType)
+	},
+	progressInterval: 10_000,
+	insertPrefix:     "INSERT OR REPLACE INTO",
+}
 
-	if err := c.withTransaction(ctx, tx, "bulk_insert_calendar_dates", func(tx *sql.Tx) error {
-		qtx := queries.WithTx(tx)
-		for _, params := range calendarDates {
-			_, err := qtx.CreateCalendarDate(ctx, params)
-			if err != nil {
-				if isConstraintErr(err) {
-					return fmt.Errorf("constraint violation inserting calendar date %+v: %w", params, err)
-				}
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	logging.LogOperation(logger, "calendar_dates_inserted",
-		slog.Int("count", len(calendarDates)))
-
-	return nil
+// bulkInsertCalendarDates inserts calendar dates in the order they arrive,
+// holding one batch at a time. If tx is non-nil it uses that transaction and
+// does not commit; if nil it starts its own and commits.
+func (c *Client) bulkInsertCalendarDates(ctx context.Context, calendarDates iter.Seq[CreateCalendarDateParams], tx *sql.Tx) error {
+	return bulkInsertRows(ctx, c, tx, calendarDateInsert, calendarDates)
 }
 
 // OptimizeDatabase runs PRAGMA analysis_limit and ANALYZE after an import
@@ -1247,15 +1282,25 @@ func ValidateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger) error {
 	})
 }
 
-// noStopTimesProblem describes a trip without stop times.
-const noStopTimesProblem = "trip has no stop times"
+// minStopTimesPerTrip is the fewest stop times Java's TripEntriesFactory
+// keeps a trip with.
+const minStopTimesPerTrip = 2
+
+// tooFewStopTimesProblem describes a trip with fewer stop times than
+// minStopTimesPerTrip.
+const tooFewStopTimesProblem = "trip has fewer than two stop times"
+
+// tooFewStopTimesAtStopsProblem describes a Flex trip whose stop times at
+// stops (excluding location/location-group rows) are fewer than
+// minStopTimesPerTrip.
+const tooFewStopTimesAtStopsProblem = "trip has fewer than two stop times at stops"
 
 // inMemoryStopTimesProblem checks the stop times of a trip held in memory,
-// which may have been built by hand. A parsed feed never has a stop time
-// without a stop: go-gtfs drops the rows whose stop is unknown.
+// which may have been built by hand. A streamed feed's GTFS-Flex stop times
+// without a stop are dropped by stopTimesAtStops instead.
 func inMemoryStopTimesProblem(stopTimes []gtfs.ScheduledStopTime) string {
-	if len(stopTimes) == 0 {
-		return noStopTimesProblem
+	if len(stopTimes) < minStopTimesPerTrip {
+		return tooFewStopTimesProblem
 	}
 	for _, stopTime := range stopTimes {
 		if stopTime.Stop == nil || stopTime.Stop.Id == "" {
@@ -1269,8 +1314,8 @@ func inMemoryStopTimesProblem(stopTimes []gtfs.ScheduledStopTime) string {
 // feed, whose stop times are not in memory.
 func streamedStopTimesProblem(stream *gtfs.StaticStream) func(tripIndex int) string {
 	return func(tripIndex int) string {
-		if stream.StopTimeCount(tripIndex) == 0 {
-			return noStopTimesProblem
+		if stream.StopTimeCount(tripIndex) < minStopTimesPerTrip {
+			return tooFewStopTimesProblem
 		}
 		return ""
 	}
@@ -1391,7 +1436,7 @@ func validateAndFilterGTFSData(data *gtfs.Static, logger *slog.Logger, stopTimes
 
 	// Ensure we didn't filter out every single trip in the feed
 	if len(data.Trips) == 0 {
-		return fmt.Errorf("validation failed: all trips were filtered out due to invalid foreign key relationships")
+		return fmt.Errorf("validation failed: every trip was filtered out (bad route, service or stop references, or fewer than two stop times)")
 	}
 
 	return nil

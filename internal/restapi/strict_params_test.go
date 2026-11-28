@@ -22,7 +22,7 @@ type strictValidationResponse struct {
 func TestStrictIncludeReferencesAcrossHandlers(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil, api.Clock)
 	endpoints := []string{
 		"route/1_any", "trips-for-location", "schedule-for-stop/1_any", "vehicles-for-agency/unknown",
 		"stops-for-location", "routes-for-agency/unknown", "search/route", "agencies-with-coverage",
@@ -49,7 +49,7 @@ func TestStrictIncludeReferencesAcrossHandlers(t *testing.T) {
 func TestStrictProblemReportsWithStop(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil, api.Clock)
 	const filter = " WHERE stop_id = 'strict-validation'"
 	const endpoint = "/api/where/report-problem-with-stop/1_strict-validation.json?key=TEST"
 	t.Cleanup(func() {
@@ -107,7 +107,7 @@ func TestStrictProblemReportsWithStop(t *testing.T) {
 func TestStrictProblemReportsWithTrip(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil, api.Clock)
 	const filter = " WHERE trip_id = 'strict-validation'"
 	const endpoint = "/api/where/report-problem-with-trip/1_strict-validation.json?key=TEST"
 	t.Cleanup(func() {
@@ -179,7 +179,7 @@ func TestStrictProblemReportsWithTrip(t *testing.T) {
 func TestStrictBooleanFlags(t *testing.T) {
 	api := createTestApi(t)
 	defer api.Shutdown()
-	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil)
+	api.rateLimiter = NewRateLimitMiddleware(10000, time.Second, nil, api.Clock)
 	for _, tc := range []struct{ endpoint, flag string }{
 		{"trips-for-location", "includeTrip"},
 		{"trips-for-location", "includeSchedule"},

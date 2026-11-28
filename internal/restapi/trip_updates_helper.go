@@ -34,42 +34,94 @@ type StopDelayInfo struct {
 //     processing). Publishers often emit delay=0 for future trips, which
 //     overrides the current trip's lateness — that's why Java reports 0.
 //  2. If no trip-level delay anywhere, closest-in-time STU across the block.
-//  3. Java's blockNotActive guard (GtfsRealtimeSource.java:811-821) discards
+//  3. If no update has any times, a zero deviation.
+//  4. Java's blockNotActive guard (GtfsRealtimeSource.java:811-821) discards
 //     records with |deviation| > 1h; we return (0, false) instead.
 //
 // tripIDs MUST be in block-trip-start order; caller sorts via
 // blockTripIDsSortedByStartTime.
 func (api *RestAPI) GetScheduleDeviationForBlock(ctx context.Context, tripIDs []string, serviceDate time.Time, currentTime time.Time) (int, bool) {
+	deviation, ok, _ := api.blockRecordDeviation(ctx, tripIDs, serviceDate, currentTime)
+	return deviation, ok
+}
+
+// blockRecordDeviation is GetScheduleDeviationForBlock, also reporting whether
+// Java's blockNotActive guard would discard the record.
+func (api *RestAPI) blockRecordDeviation(ctx context.Context, tripIDs []string, serviceDate time.Time, currentTime time.Time) (deviation int, ok, discarded bool) {
 	if len(tripIDs) == 0 {
-		return 0, false
+		return 0, false, false
 	}
-	tripUpdates := api.collectBlockTripUpdates(tripIDs)
+	return api.recordDeviation(ctx, api.collectBlockTripUpdates(tripIDs), serviceDate, currentTime)
+}
+
+// recordDeviation resolves a deviation from one record's already scoped, fresh updates.
+func (api *RestAPI) recordDeviation(ctx context.Context, tripUpdates []tripUpdateForTrip, serviceDate, currentTime time.Time) (deviation int, ok, discarded bool) {
 	if len(tripUpdates) == 0 {
-		return 0, false
+		return 0, false, false
+	}
+	// Java sets no deviation when the block's last update is canceled
+	// (GtfsRealtimeTripLibrary.java:953, :1104).
+	lastUpdate := tripUpdates[len(tripUpdates)-1].tu
+	if lastUpdate.ID.ScheduleRelationship == gtfsrt.TripDescriptor_CANCELED {
+		return 0, false, false
 	}
 	dev, ok, discard := pickTripLevelDeviation(tripUpdates)
 	if discard {
 		// Java's blockNotActive guard fired: the entire VehicleLocationRecord
 		// would be discarded. We must NOT fall through to STU/per-stop paths —
 		// that would silently recover RT data Java treats as poisoned.
-		return 0, false
+		return 0, false, true
 	}
 	if ok {
-		return dev, true
+		return dev, true, false
 	}
-	if dev, ok := api.pickClosestSTUDeviation(ctx, tripUpdates, serviceDate, currentTime); ok {
+	if dev, ok := api.pickClosestSTUDeviation(ctx, tripUpdates, serviceDate, api.deviationPickTime(tripUpdates, currentTime)); ok {
 		if exceedsBlockNotActiveThreshold(dev) {
-			return 0, false
+			return 0, false, true
 		}
-		return dev, true
+		return dev, true, false
 	}
 	if dev, ok := pickFirstAvailableSTUDelay(tripUpdates); ok {
 		if exceedsBlockNotActiveThreshold(dev) {
-			return 0, false
+			return 0, false, true
 		}
-		return dev, true
+		return dev, true, false
 	}
-	return 0, false
+	// Java builds a record from any trip update, with a zero deviation when it
+	// has no times (GtfsRealtimeTripLibrary.java:1104-1105). Live Tampa reports
+	// these, whose stops are all SKIPPED, as predicted and on schedule.
+	return 0, true, false
+}
+
+// deviationPickTime is the moment a block's deviation is chosen for. Java keeps
+// a record until its timestamp advances, and chooses at the feed's time when it
+// processes the new one (GtfsRealtimeSource.java:645, :742), so the choice stays
+// put between updates. An update with no timestamp falls back to the request's time.
+func (api *RestAPI) deviationPickTime(tripUpdates []tripUpdateForTrip, currentTime time.Time) time.Time {
+	for i := len(tripUpdates) - 1; i >= 0; i-- {
+		if tripUpdates[i].tu.Timestamp == nil {
+			continue
+		}
+		if seenAt, ok := api.GtfsManager.TripUpdateFirstSeen(tripUpdates[i].tripID); ok {
+			return seenAt
+		}
+		return *tripUpdates[i].tu.Timestamp
+	}
+	return currentTime
+}
+
+// blockRecordTime is the time of the vehicle record Java builds from a block's
+// trip updates: the last timestamp in block order
+// (GtfsRealtimeTripLibrary.java:948-950).
+func blockRecordTime(tripUpdates []tripUpdateForTrip) (time.Time, bool) {
+	var recordTime time.Time
+	found := false
+	for _, t := range tripUpdates {
+		if t.tu.Timestamp != nil {
+			recordTime, found = *t.tu.Timestamp, true
+		}
+	}
+	return recordTime, found
 }
 
 // blockNotActiveThresholdSeconds mirrors Java's blockNotActive filter
@@ -87,15 +139,61 @@ func exceedsBlockNotActiveThreshold(deviationSeconds int) bool {
 		deviationSeconds < -blockNotActiveThresholdSeconds
 }
 
+// tripUpdateMaxAge mirrors Java's _predictionCacheMaxOffset
+// (BlockLocationServiceImpl.java:88): a vehicle record is used only within this
+// long of its timestamp.
+const tripUpdateMaxAge = 5 * time.Minute
+
+// tripUpdateExpired reports whether Java would have stopped using a trip update.
+// Java checks the record against the current time, not a request's target time,
+// and a record's time comes from its trip update when that has a timestamp
+// (GtfsRealtimeTripLibrary.java:1106-1108), so a newer position does not refresh
+// it. Ingestion fills in a missing timestamp from the feed's time.
+func (api *RestAPI) tripUpdateExpired(tripUpdate gtfs.Trip) bool {
+	return tripUpdate.Timestamp != nil && api.recordTimeExpired(*tripUpdate.Timestamp)
+}
+
+func (api *RestAPI) recordTimeExpired(recordTime time.Time) bool {
+	age := api.Clock.Now().Sub(recordTime)
+	return age < -tripUpdateMaxAge || age > tripUpdateMaxAge
+}
+
+// tripUpdateVehicleHasPosition reports whether a trip update's named or assigned
+// vehicle reports positions, so it is found as a position vehicle instead. Vehicle IDs
+// are only unique within an agency, so a position vehicle attributed to another
+// agency than tripID's is a different vehicle.
+func (api *RestAPI) tripUpdateVehicleHasPosition(ctx context.Context, tripUpdate gtfs.Trip, tripID string, serviceDate time.Time) bool {
+	if !namesVehicle(tripUpdate) {
+		return api.preferredPositionVehicle(ctx, tripID, serviceDate) != nil
+	}
+	tripAgencyID, known := api.tripAgencyID(ctx, tripID)
+	if !known {
+		return false
+	}
+	vehicle, err := api.GtfsManager.GetVehicleByID(tripAgencyID, tripUpdate.Vehicle.ID.ID)
+	return err == nil && vehicle != nil && !isTripUpdateVehicle(vehicle)
+}
+
 type tripUpdateForTrip struct {
 	tripID string
 	tu     gtfs.Trip
 }
 
-// collectBlockTripUpdates flattens every TripUpdate matching any tripID
-// into a slice in the order they appear, preserving block-trip-start order
-// when the caller passes a sorted slice.
+// collectBlockTripUpdates returns the TripUpdates of a block's record, or none
+// once that record has expired. Java builds one record from the block's updates,
+// timed by the last timestamp, so they expire together.
 func (api *RestAPI) collectBlockTripUpdates(tripIDs []string) []tripUpdateForTrip {
+	tripUpdates := api.blockTripUpdates(tripIDs)
+	if recordTime, hasTime := blockRecordTime(tripUpdates); hasTime && api.recordTimeExpired(recordTime) {
+		return nil
+	}
+	return tripUpdates
+}
+
+// blockTripUpdates flattens every TripUpdate matching any tripID into a slice in
+// the order they appear, preserving block-trip-start order when the caller passes
+// a sorted slice.
+func (api *RestAPI) blockTripUpdates(tripIDs []string) []tripUpdateForTrip {
 	var out []tripUpdateForTrip
 	for _, id := range tripIDs {
 		for _, tu := range api.GtfsManager.GetTripUpdatesForTrip(id) {
@@ -116,11 +214,16 @@ type deviationSample struct {
 // blockDeviationSamples mirrors how AbstractBlockLocationServiceImpl turns a
 // block's timepoint predictions into ScheduleDeviationSamples. Every
 // non-skipped StopTimeUpdate across the block that resolves to a scheduled
-// stop time contributes one sample keyed by that stop's scheduled arrival.
+// stop time (see sampleEntryForSTU) contributes one sample keyed by that stop's
+// scheduled arrival.
 // A departure prediction is preferred over an arrival one, and a later
 // update for the same key replaces an earlier one. Sorted by key.
 func (api *RestAPI) blockDeviationSamples(ctx context.Context, tripIDs []string, serviceDate, currentTime time.Time) []deviationSample {
-	tripUpdates := api.collectBlockTripUpdates(tripIDs)
+	return api.recordDeviationSamples(ctx, api.collectBlockTripUpdates(tripIDs), serviceDate, currentTime)
+}
+
+// recordDeviationSamples builds stop-level samples from one record's updates.
+func (api *RestAPI) recordDeviationSamples(ctx context.Context, tripUpdates []tripUpdateForTrip, serviceDate, currentTime time.Time) []deviationSample {
 	if !slices.ContainsFunc(tripUpdates, func(t tripUpdateForTrip) bool { return len(t.tu.StopTimeUpdates) > 0 }) {
 		return nil
 	}
@@ -132,7 +235,7 @@ func (api *RestAPI) blockDeviationSamples(ctx context.Context, tripIDs []string,
 			if stu.ScheduleRelationship == gtfsrt.TripUpdate_StopTimeUpdate_SKIPPED {
 				continue
 			}
-			schedArr, schedDep := scheduleEntryForSTU(scheduled[t.tripID], stu, serviceDate, currentTime)
+			schedArr, schedDep := sampleEntryForSTU(scheduled[t.tripID], stu, serviceDate, currentTime)
 			if deviation, ok := stuDeviation(stu, schedArr, schedDep, serviceDate); ok {
 				deviationByArrival[schedArr] = deviation
 			}
@@ -149,6 +252,32 @@ func (api *RestAPI) blockDeviationSamples(ctx context.Context, tripIDs []string,
 	return samples
 }
 
+// sampleEntryForSTU resolves the stop time a StopTimeUpdate samples. Java matches
+// stop_sequence against StopTimeEntry.getSequence(), the stop's zero-based index
+// in the trip, unlike the per-stop prediction path, which uses the GTFS
+// stop_sequence. An update with no stop ID is first resolved by GTFS sequence
+// (GtfsRealtimeTripLibrary.java:1129-1140). A feed numbering stops from 1
+// therefore matches nothing and builds no samples, which live Java confirms. It
+// returns zeroes on no match.
+func sampleEntryForSTU(schedMap map[string][]schedEntry, stu gtfs.StopTimeUpdate, serviceDate, currentTime time.Time) (schedArr, schedDep int64) {
+	if stu.StopSequence == nil {
+		return scheduleEntryForSTU(schedMap, stu, serviceDate, currentTime)
+	}
+	sequence := int64(*stu.StopSequence)
+	for stopID, entries := range schedMap {
+		if stu.StopID != nil && stopID != *stu.StopID {
+			continue
+		}
+		for _, e := range entries {
+			resolved := stu.StopID != nil || e.seq == sequence
+			if resolved && e.position == sequence {
+				return e.arr, e.dep
+			}
+		}
+	}
+	return 0, 0
+}
+
 // deviationSampleCache memoizes blockDeviationSamples for one request. The
 // plural handlers resolve many arrivals on the same block, and each sample
 // build queries the block's schedule. A nil cache computes every time.
@@ -159,15 +288,24 @@ type deviationSampleCache map[deviationSampleKey][]deviationSample
 type deviationSampleKey struct {
 	firstTripID     string
 	serviceMidnight int64
+	record          deviationRecordKey
+}
+
+// deviationRecordKey separates records that share a block, including the own-trip
+// anonymous updates a named vehicle can consume.
+type deviationRecordKey struct {
+	agencyID  string
+	vehicleID string
+	tripID    string
 }
 
 // samplesFor returns the cached samples for the block, calling compute and
 // caching its result on the first lookup.
-func (c deviationSampleCache) samplesFor(blockTripIDs []string, serviceMidnight time.Time, compute func() []deviationSample) []deviationSample {
+func (c deviationSampleCache) samplesFor(blockTripIDs []string, serviceMidnight time.Time, record deviationRecordKey, compute func() []deviationSample) []deviationSample {
 	if c == nil || len(blockTripIDs) == 0 {
 		return compute()
 	}
-	key := deviationSampleKey{firstTripID: blockTripIDs[0], serviceMidnight: serviceMidnight.Unix()}
+	key := deviationSampleKey{firstTripID: blockTripIDs[0], serviceMidnight: serviceMidnight.Unix(), record: record}
 	if samples, ok := c[key]; ok {
 		return samples
 	}
@@ -263,9 +401,10 @@ func pickTripLevelDeviation(tripUpdates []tripUpdateForTrip) (int, bool, bool) {
 	return deviation, true, false
 }
 
-// schedEntry captures one (stop_sequence, arrival, departure) tuple for a
-// stop_id; loop/lasso trips need multiple entries per stop_id.
-type schedEntry struct{ seq, arr, dep int64 }
+// schedEntry captures one stop time for a stop_id; loop/lasso trips need
+// multiple entries per stop_id. position is the stop's zero-based index in its
+// trip, which seq (the GTFS stop_sequence) need not equal.
+type schedEntry struct{ seq, position, arr, dep int64 }
 
 // loadScheduledForTrips batch-loads every trip's scheduled stop-time entries
 // (keyed by stop_id, with multiple entries per stop_id for loop trips) via
@@ -284,13 +423,16 @@ func (api *RestAPI) loadScheduledForTrips(ctx context.Context, tripIDs []string)
 	if err != nil {
 		return out
 	}
+	positionInTrip := make(map[string]int64, len(tripIDs))
 	for _, st := range stopTimes {
 		m := out[st.TripID]
 		m[st.StopID] = append(m[st.StopID], schedEntry{
-			seq: st.StopSequence,
-			arr: st.ArrivalTime / int64(time.Second),
-			dep: st.DepartureTime / int64(time.Second),
+			seq:      st.StopSequence,
+			position: positionInTrip[st.TripID],
+			arr:      st.ArrivalTime / int64(time.Second),
+			dep:      st.DepartureTime / int64(time.Second),
 		})
+		positionInTrip[st.TripID]++
 	}
 	return out
 }
@@ -403,8 +545,8 @@ func stuPredictedFromEvent(event *gtfs.StopTimeEvent, sched int64, serviceDate t
 
 // pickClosestSTUDeviation implements Java's updateBestScheduleDeviation:
 // across every STU in every block trip's TripUpdate, pick the one whose
-// predicted stop-time is closest to currentTime; tiebreak prefers stops
-// still in the future.
+// predicted stop-time is closest to currentTime, or the first still in the
+// future once the incumbent is past: see shouldReplace.
 func (api *RestAPI) pickClosestSTUDeviation(ctx context.Context, tripUpdates []tripUpdateForTrip, serviceDate, currentTime time.Time) (int, bool) {
 	scheduled := api.loadScheduledForTrips(ctx, uniqueTripIDs(tripUpdates))
 	picker := newSTUDeviationPicker(utils.CalculateSecondsSinceServiceDate(currentTime, serviceDate))
@@ -452,17 +594,12 @@ func (p *stuDeviationPicker) consider(scheduledSec, predictedSec int64) {
 	}
 }
 
-// shouldReplace decides whether a candidate STU displaces the incumbent.
-// A strictly-closer candidate always wins. When deltas are equal, a future
-// candidate is preferred over a past incumbent — Java's tiebreak favors
-// upcoming stops. Future candidates whose delta exceeds the incumbent's
-// must NOT bypass the delta comparison, so future-preference is gated on
-// `delta <= p.bestDelta`.
+// shouldReplace mirrors Java's updateBestScheduleDeviation
+// (GtfsRealtimeTripLibrary.java:1266): a strictly-closer candidate wins, and so
+// does the first upcoming candidate over a past incumbent, however far away it
+// is. A bus that has already served a stop reports its delay from the next one.
 func (p *stuDeviationPicker) shouldReplace(delta int64, isInPast bool) bool {
-	if delta < p.bestDelta {
-		return true
-	}
-	return !isInPast && p.bestIsInPast && delta <= p.bestDelta
+	return delta < p.bestDelta || (!isInPast && p.bestIsInPast)
 }
 
 func absInt64(v int64) int64 {
@@ -555,7 +692,24 @@ func (api *RestAPI) blockTripIDsSortedByStartTime(ctx context.Context, tripIDs [
 //
 // Uses the cached trips.min_arrival_time / max_departure_time columns via a
 // single batched query — no per-trip stop_times fetch.
+//
+// A request-scoped snapshotCache (see WithSnapshotCache) memoizes the result per
+// trip and service date.
 func (api *RestAPI) blockShiftTripIDsSortedByStartTime(ctx context.Context, targetTripID string, serviceDate time.Time) []string {
+	cache := snapshotCacheFrom(ctx)
+	if cache == nil {
+		return api.loadBlockShiftTripIDs(ctx, targetTripID, serviceDate)
+	}
+	key := blockShiftKey{tripID: targetTripID, serviceDateUnix: serviceDate.UnixNano()}
+	tripIDs, cached := cache.blockShiftTripIDs[key]
+	if !cached {
+		tripIDs = api.loadBlockShiftTripIDs(ctx, targetTripID, serviceDate)
+		cache.blockShiftTripIDs[key] = tripIDs
+	}
+	return slices.Clone(tripIDs)
+}
+
+func (api *RestAPI) loadBlockShiftTripIDs(ctx context.Context, targetTripID string, serviceDate time.Time) []string {
 	rawTripIDs := api.blockTripIDsForServiceDate(ctx, targetTripID, serviceDate)
 	if len(rawTripIDs) <= 1 {
 		return rawTripIDs
@@ -651,7 +805,7 @@ func (api *RestAPI) GetStopDelaysFromTripUpdates(tripID string, stopTimes []*gtf
 	}
 
 	tripUpdates := api.GtfsManager.GetTripUpdatesForTrip(tripID)
-	if len(tripUpdates) == 0 {
+	if len(tripUpdates) == 0 || api.tripUpdateExpired(tripUpdates[0]) {
 		return delays
 	}
 

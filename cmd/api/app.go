@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -111,6 +111,30 @@ func cliProtectedAPIKeys(protectedAPIKeysFlag string, env string) []string {
 	return appconf.DefaultProtectedAPIKeys(env)
 }
 
+// flagVisited reports whether any of the named flags was set on the command
+// line. Used so defaults (for example -api-keys=test) are not treated as
+// explicit when distinguishing flag vs env precedence.
+func flagVisited(names ...string) bool {
+	wanted := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		wanted[name] = struct{}{}
+	}
+	visited := false
+	flag.Visit(func(f *flag.Flag) {
+		if _, ok := wanted[f.Name]; ok {
+			visited = true
+		}
+	})
+	return visited
+}
+
+// apiKeysFlagExplicit reports whether -api-keys was set on the command line.
+// The flag defaults to "test", so callers must use flag.Visit (not a non-empty
+// value check) to distinguish an explicit set from the default.
+func apiKeysFlagExplicit() bool {
+	return flagVisited("api-keys")
+}
+
 func parseLogLevel(level string) slog.Level {
 	switch strings.ToLower(strings.TrimSpace(level)) {
 	case "debug":
@@ -141,6 +165,10 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 	appMetrics := metrics.NewWithLogger(logger)
 	gtfsCfg.Metrics = appMetrics
 
+	// Select clock implementation based on environment
+	appClock := createClock(cfg.Env)
+	gtfsCfg.Clock = appClock
+
 	gtfsManager, err := gtfs.InitGTFSManager(ctx, gtfsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize GTFS manager: %w", err)
@@ -154,9 +182,6 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 		gtfsManager.DirectionCalculator = directionCalculator
 	}
 
-	// Select clock implementation based on environment
-	appClock := createClock(cfg.Env)
-
 	coreApp := &app.Application{
 		Config:              cfg,
 		GtfsConfig:          gtfsCfg,
@@ -168,11 +193,11 @@ func BuildApplication(ctx context.Context, cfg appconf.Config, gtfsCfg gtfs.Conf
 
 	// Start DB stats collector using a provider so metrics follow DB hot-swap.
 	if gtfsManager != nil {
-		appMetrics.StartDBStatsCollector(func() *sql.DB {
+		appMetrics.StartDBStatsCollector(func() metrics.DBStatsProvider {
 			if gtfsManager.GtfsDB == nil {
 				return nil
 			}
-			return gtfsManager.GtfsDB.DB
+			return gtfsManager.GtfsDB
 		}, 15*time.Second)
 	}
 
@@ -215,7 +240,7 @@ func CreateServer(coreApp *app.Application, cfg appconf.Config, logger *slog.Log
 	// leaves web UI and other endpoints untouched.
 	// Order (innermost to outermost): expiry -> version.
 	var apiHandler http.Handler = mux
-	apiHandler = restapi.GtfsExpiryMiddleware(api.GtfsManager)(apiHandler)
+	apiHandler = restapi.GtfsExpiryMiddleware(api.GtfsManager, api.Clock)(apiHandler)
 	apiHandler = api.VersionValidationMiddleware(apiHandler)
 
 	// Apply compression around apiHandler (the mux plus API-specific middleware)
@@ -338,6 +363,7 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 
 	// Build JSON config structure
 	jsonConfig := map[string]any{
+		"role":               cfg.Role,
 		"port":               cfg.Port,
 		"env":                envStr,
 		"api-keys":           fmt.Sprintf("%s (%d keys)", appconf.RedactedValue, len(cfg.ApiKeys)),
@@ -360,9 +386,9 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 	for _, feedCfg := range gtfsCfg.RTFeeds {
 		feed := map[string]any{
 			"id":                    feedCfg.ID,
-			"trip-updates-url":      feedCfg.TripUpdatesURL,
-			"vehicle-positions-url": feedCfg.VehiclePositionsURL,
-			"service-alerts-url":    feedCfg.ServiceAlertsURL,
+			"trip-updates-url":      appconf.RedactURL(feedCfg.TripUpdatesURL),
+			"vehicle-positions-url": appconf.RedactURL(feedCfg.VehiclePositionsURL),
+			"service-alerts-url":    appconf.RedactURL(feedCfg.ServiceAlertsURL),
 			"refresh-interval":      feedCfg.RefreshInterval,
 			"enabled":               feedCfg.Enabled,
 		}
@@ -388,8 +414,9 @@ func dumpConfigJSON(cfg appconf.Config, gtfsCfg gtfs.Config) {
 }
 
 // dumpStaticFeeds returns the static feeds with their secrets redacted.
-// GtfsStaticFeed carries the config-file keys, so the dump loads again
-// through appconf.LoadFromFile.
+// The redacted values still allow the dump to be parsed by
+// appconf.LoadFromFile, but the redacted URLs and auth values cannot be used
+// to fetch the configured feeds.
 func dumpStaticFeeds(feeds []appconf.GtfsStaticFeed) []appconf.GtfsStaticFeed {
 	dumped := make([]appconf.GtfsStaticFeed, 0, len(feeds))
 	for _, feed := range feeds {

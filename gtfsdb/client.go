@@ -3,6 +3,7 @@ package gtfsdb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -44,6 +45,14 @@ func NewClient(config Config) (*Client, error) {
 		return nil, fmt.Errorf("unable to backfill empty stop codes: %w", err)
 	}
 
+	// Route lookups for stops read this index with no fallback, so an empty one would
+	// drop route references from every response that lists them. It runs first because
+	// stop_agencies is built from it.
+	if err := client.backfillStopRouteIndex(context.Background()); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("unable to backfill stop route index: %w", err)
+	}
+
 	// The search-stop handler reads a stop's agency straight from this index with no
 	// fallback, so a missing or stale index yields an empty combined ID rather than a
 	// merely degraded one - this must succeed before the client is usable.
@@ -71,19 +80,14 @@ func (c *Client) backfillStopAgencyIndex(ctx context.Context) error {
 
 	if !legacy {
 		var indexed, joinable int
-		// joinable checks stop times that resolve to a route, not merely that stop_times
-		// has rows: a stop_times row with a dangling trip_id or route_id would otherwise
-		// make BuildStopAgencies insert nothing every time, leaving indexed permanently 0
-		// and triggering a full rebuild on every NewClient forever.
+		// joinable checks the stop_routes rows BuildStopAgencies reads, not merely that
+		// stop_times has rows: stop times with a dangling trip_id or route_id produce no
+		// stop_routes rows, so BuildStopAgencies would insert nothing every time, leaving
+		// indexed permanently 0 and triggering a full rebuild on every NewClient forever.
 		err := c.DB.QueryRowContext(ctx, `
 			SELECT
 				(SELECT EXISTS (SELECT 1 FROM stop_agencies)),
-				(SELECT EXISTS (
-					SELECT 1
-					FROM stop_times
-					JOIN trips ON stop_times.trip_id = trips.id
-					JOIN routes ON trips.route_id = routes.id
-				))
+				(SELECT EXISTS (SELECT 1 FROM stop_routes))
 		`).Scan(&indexed, &joinable)
 		if err != nil {
 			return fmt.Errorf("failed to check stop agency index: %w", err)
@@ -101,6 +105,36 @@ func (c *Client) backfillStopAgencyIndex(ctx context.Context) error {
 			}
 		}
 		return buildStopAgencyIndex(ctx, c.Queries.WithTx(tx))
+	})
+}
+
+// backfillStopRouteIndex builds stop_routes for a database imported before the table
+// existed. An import is skipped when the feed hash is unchanged, so such a database would
+// otherwise keep an empty index for as long as its feed stays the same. It rebuilds only
+// when some stop_time joins to a route, so a feed whose stop_times resolve to nothing
+// doesn't rebuild on every start.
+func (c *Client) backfillStopRouteIndex(ctx context.Context) error {
+	var indexed, joinable int
+	err := c.DB.QueryRowContext(ctx, `
+		SELECT
+			(SELECT EXISTS (SELECT 1 FROM stop_routes)),
+			(SELECT EXISTS (
+				SELECT 1
+				FROM stop_times
+				JOIN trips ON stop_times.trip_id = trips.id
+				JOIN routes ON trips.route_id = routes.id
+			))
+	`).Scan(&indexed, &joinable)
+	if err != nil {
+		return fmt.Errorf("failed to check stop route index: %w", err)
+	}
+	if indexed > 0 || joinable == 0 {
+		return nil
+	}
+
+	slog.Default().Info("rebuilding stop route index")
+	return c.withTransaction(ctx, nil, "backfill_stop_route_index", func(tx *sql.Tx) error {
+		return buildStopRouteIndex(ctx, c.Queries.WithTx(tx))
 	})
 }
 
@@ -157,4 +191,21 @@ func recreateStopAgenciesTable(ctx context.Context, tx *sql.Tx) error {
 
 func (c *Client) Close() error {
 	return c.DB.Close()
+}
+
+// Ping verifies a connection to the database is still alive, establishing a
+// connection if necessary.
+func (c *Client) Ping(ctx context.Context) error {
+	if c == nil || c.DB == nil {
+		return errors.New("database client is not initialized")
+	}
+	return c.DB.PingContext(ctx)
+}
+
+// Stats returns database connection pool statistics.
+func (c *Client) Stats() sql.DBStats {
+	if c == nil || c.DB == nil {
+		return sql.DBStats{}
+	}
+	return c.DB.Stats()
 }
